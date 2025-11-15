@@ -1,0 +1,613 @@
+{% extends 'analytics/base.html' %}
+
+{% block title %}Learning Dashboard - mCube Analytics{% endblock %}
+
+{% block content %}
+
+<!-- P&L Dashboard Section -->
+<div class="card" id="pnl-dashboard">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+        <h2>Real-Time P&L Dashboard</h2>
+        <button id="refresh-pnl" class="btn btn-success">Refresh P&L Data</button>
+    </div>
+
+    <div id="pnl-loading" style="text-align: center; padding: 40px; display: none;">
+        <div style="font-size: 18px; color: #666;">Loading P&L data...</div>
+    </div>
+
+    <!-- Account Summary Cards -->
+    <div id="account-summary-container"></div>
+
+    <!-- Strategy-Level P&L -->
+    <div class="card" style="margin-top: 20px;" id="strategy-pnl-section">
+        <h3>Strategy Performance</h3>
+        <div id="strategy-chart-container" style="margin-bottom: 20px;">
+            <canvas id="strategyPnlChart" style="max-height: 300px;"></canvas>
+        </div>
+        <div id="strategy-table-container"></div>
+    </div>
+
+    <!-- Active Positions -->
+    <div class="card" style="margin-top: 20px;" id="active-positions-section">
+        <h3>Active Positions</h3>
+        <div id="active-positions-container"></div>
+    </div>
+
+    <!-- Daily P&L Chart -->
+    <div class="card" style="margin-top: 20px;">
+        <h3>Daily P&L Trend (Last 30 Days)</h3>
+        <canvas id="dailyPnlChart" style="max-height: 300px;"></canvas>
+    </div>
+
+    <!-- Weekly P&L Chart -->
+    <div class="card" style="margin-top: 20px;">
+        <h3>Weekly P&L Performance</h3>
+        <canvas id="weeklyPnlChart" style="max-height: 300px;"></canvas>
+    </div>
+</div>
+
+<!-- Learning Dashboard Section -->
+<div class="card">
+    <h2>Learning Engine Control</h2>
+
+    {% if active_session %}
+    <div style="background-color: #d4edda; padding: 15px; border-radius: 4px; margin-bottom: 20px;">
+        <strong>Active Session:</strong> {{ active_session.name }}
+        <br>
+        <strong>Status:</strong> <span class="badge badge-success">{{ active_session.status }}</span>
+        <br>
+        <strong>Started:</strong> {{ active_session.started_at|date:"Y-m-d H:i:s" }}
+    </div>
+
+    {% if user.is_superuser or user.groups.filter.name='Admin' %}
+    <form method="post" action="{% url 'analytics:stop_learning' active_session.id %}" style="display: inline;">
+        {% csrf_token %}
+        <button type="submit" class="btn btn-danger">Stop Learning</button>
+    </form>
+    <form method="post" action="{% url 'analytics:pause_learning' active_session.id %}" style="display: inline; margin-left: 10px;">
+        {% csrf_token %}
+        <button type="submit" class="btn btn-warning">Pause Learning</button>
+    </form>
+    {% endif %}
+
+    {% elif recent_session and recent_session.status == 'PAUSED' %}
+    <div style="background-color: #fff3cd; padding: 15px; border-radius: 4px; margin-bottom: 20px;">
+        <strong>Paused Session:</strong> {{ recent_session.name }}
+        <br>
+        <strong>Status:</strong> <span class="badge badge-warning">{{ recent_session.status }}</span>
+    </div>
+
+    {% if user.is_superuser or user.groups.filter.name='Admin' %}
+    <form method="post" action="{% url 'analytics:resume_learning' recent_session.id %}" style="display: inline;">
+        {% csrf_token %}
+        <button type="submit" class="btn btn-success">Resume Learning</button>
+    </form>
+    <form method="post" action="{% url 'analytics:stop_learning' recent_session.id %}" style="display: inline; margin-left: 10px;">
+        {% csrf_token %}
+        <button type="submit" class="btn btn-danger">Stop Learning</button>
+    </form>
+    {% endif %}
+
+    {% else %}
+    <div style="background-color: #e2e8f0; padding: 15px; border-radius: 4px; margin-bottom: 20px;">
+        <strong>No active learning session</strong>
+    </div>
+
+    {% if user.is_superuser or user.groups.filter.name='Admin' %}
+        {% if can_start_learning %}
+        <form method="post" action="{% url 'analytics:start_learning' %}" style="margin-bottom: 20px;">
+            {% csrf_token %}
+            <div class="form-group">
+                <label for="name">Session Name:</label>
+                <input type="text" id="name" name="name" placeholder="Learning Session {{ recent_session.id|add:1|default:1 }}" class="form-control">
+            </div>
+            <button type="submit" class="btn btn-success">Start Learning</button>
+        </form>
+        {% else %}
+        <div style="background-color: #fed7d7; padding: 15px; border-radius: 4px; margin-top: 20px;">
+            Need at least 10 closed trades to start learning. Currently have {{ total_trades }} trades.
+        </div>
+        {% endif %}
+    {% endif %}
+    {% endif %}
+</div>
+
+<div class="stat-grid">
+    <div class="stat-card">
+        <div class="stat-label">Total Trades</div>
+        <div class="stat-value">{{ total_trades }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">Analyzed Trades</div>
+        <div class="stat-value">{{ analyzed_trades }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">Patterns Found</div>
+        <div class="stat-value">{{ patterns|length }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">Pending Suggestions</div>
+        <div class="stat-value">{{ suggestions|length }}</div>
+    </div>
+</div>
+
+{% if recent_session %}
+<div class="card">
+    <h2>Session Statistics</h2>
+    <table>
+        <tr>
+            <th>Metric</th>
+            <th>Value</th>
+        </tr>
+        <tr>
+            <td>Trades Analyzed</td>
+            <td>{{ recent_session.trades_analyzed }}</td>
+        </tr>
+        <tr>
+            <td>Patterns Discovered</td>
+            <td>{{ recent_session.patterns_discovered }}</td>
+        </tr>
+        <tr>
+            <td>Parameters Adjusted</td>
+            <td>{{ recent_session.parameters_adjusted }}</td>
+        </tr>
+        {% if recent_session.pre_learning_win_rate %}
+        <tr>
+            <td>Pre-Learning Win Rate</td>
+            <td>{{ recent_session.pre_learning_win_rate }}%</td>
+        </tr>
+        {% endif %}
+        {% if recent_session.post_learning_win_rate %}
+        <tr>
+            <td>Post-Learning Win Rate</td>
+            <td>{{ recent_session.post_learning_win_rate }}%</td>
+        </tr>
+        {% endif %}
+        {% if recent_session.improvement_pct %}
+        <tr>
+            <td>Improvement</td>
+            <td>{{ recent_session.improvement_pct }}%</td>
+        </tr>
+        {% endif %}
+    </table>
+</div>
+{% endif %}
+
+{% if patterns %}
+<div class="card">
+    <h2>Recent Patterns Discovered</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>Pattern</th>
+                <th>Type</th>
+                <th>Success Rate</th>
+                <th>Confidence</th>
+                <th>Actionable</th>
+                <th>Action</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for pattern in patterns %}
+            <tr>
+                <td><strong>{{ pattern.name }}</strong></td>
+                <td><span class="badge badge-info">{{ pattern.pattern_type }}</span></td>
+                <td>{{ pattern.success_rate }}%</td>
+                <td>{{ pattern.confidence_score }}%</td>
+                <td>
+                    {% if pattern.is_actionable %}
+                    <span class="badge badge-success">Yes</span>
+                    {% else %}
+                    <span class="badge badge-warning">No</span>
+                    {% endif %}
+                </td>
+                <td>
+                    <a href="{% url 'analytics:view_pattern_detail' pattern.id %}" class="btn btn-sm">View</a>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    <div style="margin-top: 15px;">
+        <a href="{% url 'analytics:view_patterns' %}" class="btn">View All Patterns</a>
+    </div>
+</div>
+{% endif %}
+
+{% if suggestions and user.is_superuser or user.groups.filter.name='Admin' %}
+<div class="card">
+    <h2>Pending Suggestions</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>Parameter</th>
+                <th>Current</th>
+                <th>Suggested</th>
+                <th>Expected Improvement</th>
+                <th>Confidence</th>
+                <th>Risk</th>
+                <th>Action</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for suggestion in suggestions %}
+            <tr>
+                <td><strong>{{ suggestion.parameter_name }}</strong></td>
+                <td>{{ suggestion.current_value }}</td>
+                <td>{{ suggestion.suggested_value }}</td>
+                <td>+{{ suggestion.expected_improvement_pct }}%</td>
+                <td>{{ suggestion.confidence }}%</td>
+                <td><span class="badge badge-{% if suggestion.risk_level == 'LOW' %}success{% elif suggestion.risk_level == 'MEDIUM' %}warning{% else %}danger{% endif %}">{{ suggestion.risk_level }}</span></td>
+                <td>
+                    <form method="post" action="{% url 'analytics:approve_suggestion' suggestion.id %}" style="display: inline;">
+                        {% csrf_token %}
+                        <button type="submit" class="btn btn-success btn-sm">Approve</button>
+                    </form>
+                    <form method="post" action="{% url 'analytics:reject_suggestion' suggestion.id %}" style="display: inline;">
+                        {% csrf_token %}
+                        <button type="submit" class="btn btn-danger btn-sm">Reject</button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    <div style="margin-top: 15px;">
+        <a href="{% url 'analytics:view_suggestions' %}" class="btn">View All Suggestions</a>
+    </div>
+</div>
+{% endif %}
+
+{% if recent_metrics %}
+<div class="card">
+    <h2>Recent Performance Metrics</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>Metric Type</th>
+                <th>Value</th>
+                <th>Time Period</th>
+                <th>Calculated</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for metric in recent_metrics %}
+            <tr>
+                <td>{{ metric.get_metric_type_display }}</td>
+                <td><strong>{{ metric.metric_value }}</strong></td>
+                <td>{{ metric.time_period|default:"All Time" }}</td>
+                <td>{{ metric.calculation_date|date:"Y-m-d H:i" }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// P&L Dashboard JavaScript
+let dailyPnlChart, weeklyPnlChart, strategyPnlChart;
+
+// Function to fetch and display P&L data
+function loadPnlData() {
+    const loadingDiv = document.getElementById('pnl-loading');
+    loadingDiv.style.display = 'block';
+
+    fetch('{% url "analytics:api_pnl_data" %}')
+        .then(response => response.json())
+        .then(data => {
+            loadingDiv.style.display = 'none';
+
+            if (data.success && data.accounts && data.accounts.length > 0) {
+                // Render account summaries
+                renderAccountSummaries(data.accounts);
+
+                // Render charts for first account
+                const firstAccount = data.accounts[0];
+                renderStrategyChart(firstAccount.strategy_summary);
+                renderActivePositions(firstAccount.active_positions);
+                renderDailyPnlChart(firstAccount.daily_pnl);
+                renderWeeklyPnlChart(firstAccount.weekly_pnl);
+            } else {
+                document.getElementById('account-summary-container').innerHTML =
+                    '<div style="padding: 20px; text-align: center; color: #666;">No P&L data available. Create some positions to see data here.</div>';
+            }
+        })
+        .catch(error => {
+            loadingDiv.style.display = 'none';
+            console.error('Error loading P&L data:', error);
+            document.getElementById('account-summary-container').innerHTML =
+                '<div style="padding: 20px; text-align: center; color: #e53e3e;">Error loading P&L data. Please try again.</div>';
+        });
+}
+
+// Render account summary cards
+function renderAccountSummaries(accounts) {
+    const container = document.getElementById('account-summary-container');
+    let html = '';
+
+    accounts.forEach(accountData => {
+        const summary = accountData.account_summary;
+        const pnlClass = summary.total_pnl >= 0 ? 'success' : 'danger';
+        const todaysPnlClass = summary.todays_pnl >= 0 ? 'success' : 'danger';
+
+        html += `
+            <div class="card" style="margin-bottom: 20px;">
+                <h3 style="margin-top: 0;">${summary.account_name} (${summary.broker})</h3>
+
+                <div class="stat-grid">
+                    <div class="stat-card">
+                        <div class="stat-label">Total P&L</div>
+                        <div class="stat-value" style="color: ${summary.total_pnl >= 0 ? '#48bb78' : '#f56565'};">
+                            ${summary.total_pnl_formatted}
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Today's P&L</div>
+                        <div class="stat-value" style="color: ${summary.todays_pnl >= 0 ? '#48bb78' : '#f56565'};">
+                            ${summary.todays_pnl_formatted}
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Realized P&L</div>
+                        <div class="stat-value" style="color: ${summary.realized_pnl >= 0 ? '#48bb78' : '#f56565'};">
+                            ${summary.realized_pnl_formatted}
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Unrealized P&L</div>
+                        <div class="stat-value" style="color: ${summary.unrealized_pnl >= 0 ? '#48bb78' : '#f56565'};">
+                            ${summary.unrealized_pnl_formatted}
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Win Rate</div>
+                        <div class="stat-value">${summary.win_rate_formatted}</div>
+                        <div style="font-size: 12px; color: #718096;">${summary.winning_trades}W / ${summary.losing_trades}L</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Active Positions</div>
+                        <div class="stat-value">${summary.active_positions_count}</div>
+                    </div>
+                </div>
+            </div>
+        `;
+    });
+
+    container.innerHTML = html;
+}
+
+// Render strategy performance chart
+function renderStrategyChart(strategies) {
+    if (!strategies || strategies.length === 0) {
+        document.getElementById('strategy-pnl-section').style.display = 'none';
+        return;
+    }
+
+    const ctx = document.getElementById('strategyPnlChart');
+
+    // Destroy existing chart
+    if (strategyPnlChart) {
+        strategyPnlChart.destroy();
+    }
+
+    const labels = strategies.map(s => s.strategy_type);
+    const pnlData = strategies.map(s => s.total_pnl);
+    const colors = pnlData.map(val => val >= 0 ? 'rgba(72, 187, 120, 0.7)' : 'rgba(245, 101, 101, 0.7)');
+
+    strategyPnlChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: labels,
+            datasets: [{
+                label: 'Total P&L',
+                data: pnlData,
+                backgroundColor: colors,
+                borderColor: colors.map(c => c.replace('0.7', '1')),
+                borderWidth: 1
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: true,
+            plugins: {
+                legend: { display: false },
+                title: { display: false }
+            },
+            scales: {
+                y: { beginAtZero: true }
+            }
+        }
+    });
+
+    // Render strategy table
+    let tableHtml = `
+        <table>
+            <thead>
+                <tr>
+                    <th>Strategy</th>
+                    <th>Total P&L</th>
+                    <th>Realized</th>
+                    <th>Unrealized</th>
+                    <th>Active</th>
+                    <th>Closed</th>
+                    <th>Win Rate</th>
+                </tr>
+            </thead>
+            <tbody>
+    `;
+
+    strategies.forEach(s => {
+        const pnlColor = s.total_pnl >= 0 ? '#48bb78' : '#f56565';
+        tableHtml += `
+            <tr>
+                <td><strong>${s.strategy_type}</strong></td>
+                <td style="color: ${pnlColor}; font-weight: bold;">${s.total_pnl_formatted}</td>
+                <td>${s.realized_pnl_formatted}</td>
+                <td>${s.unrealized_pnl_formatted}</td>
+                <td>${s.active_positions}</td>
+                <td>${s.closed_positions}</td>
+                <td>${s.win_rate_formatted}</td>
+            </tr>
+        `;
+    });
+
+    tableHtml += '</tbody></table>';
+    document.getElementById('strategy-table-container').innerHTML = tableHtml;
+}
+
+// Render active positions
+function renderActivePositions(positions) {
+    if (!positions || positions.length === 0) {
+        document.getElementById('active-positions-section').style.display = 'none';
+        return;
+    }
+
+    let html = `
+        <table>
+            <thead>
+                <tr>
+                    <th>Instrument</th>
+                    <th>Direction</th>
+                    <th>Qty</th>
+                    <th>Entry</th>
+                    <th>Current</th>
+                    <th>P&L</th>
+                    <th>P&L %</th>
+                    <th>Entry Time</th>
+                </tr>
+            </thead>
+            <tbody>
+    `;
+
+    positions.forEach(pos => {
+        const pnlColor = pos.pnl >= 0 ? '#48bb78' : '#f56565';
+        const directionBadge = pos.direction === 'LONG' ? 'success' : (pos.direction === 'SHORT' ? 'danger' : 'warning');
+
+        html += `
+            <tr>
+                <td><strong>${pos.instrument}</strong></td>
+                <td><span class="badge badge-${directionBadge}">${pos.direction}</span></td>
+                <td>${pos.quantity} x ${pos.lot_size}</td>
+                <td>Rs.${pos.entry_price.toFixed(2)}</td>
+                <td>Rs.${pos.current_price.toFixed(2)}</td>
+                <td style="color: ${pnlColor}; font-weight: bold;">${pos.pnl_formatted}</td>
+                <td style="color: ${pnlColor};">${pos.pnl_pct_formatted}</td>
+                <td>${new Date(pos.entry_time).toLocaleString()}</td>
+            </tr>
+        `;
+    });
+
+    html += '</tbody></table>';
+    document.getElementById('active-positions-container').innerHTML = html;
+}
+
+// Render daily P&L chart
+function renderDailyPnlChart(dailyData) {
+    if (!dailyData || dailyData.length === 0) return;
+
+    const ctx = document.getElementById('dailyPnlChart');
+
+    if (dailyPnlChart) {
+        dailyPnlChart.destroy();
+    }
+
+    // Reverse to show oldest to newest
+    const reversed = [...dailyData].reverse();
+    const labels = reversed.map(d => d.date);
+    const pnlData = reversed.map(d => d.total_pnl);
+
+    dailyPnlChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: labels,
+            datasets: [{
+                label: 'Daily P&L',
+                data: pnlData,
+                borderColor: 'rgba(102, 126, 234, 1)',
+                backgroundColor: 'rgba(102, 126, 234, 0.1)',
+                tension: 0.1,
+                fill: true
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: true,
+            plugins: {
+                legend: { display: true },
+                title: { display: false }
+            },
+            scales: {
+                y: { beginAtZero: true }
+            }
+        }
+    });
+}
+
+// Render weekly P&L chart
+function renderWeeklyPnlChart(weeklyData) {
+    if (!weeklyData || weeklyData.length === 0) return;
+
+    const ctx = document.getElementById('weeklyPnlChart');
+
+    if (weeklyPnlChart) {
+        weeklyPnlChart.destroy();
+    }
+
+    // Reverse to show oldest to newest
+    const reversed = [...weeklyData].reverse();
+    const labels = reversed.map(d => `${d.period_start} to ${d.period_end}`);
+    const pnlData = reversed.map(d => d.total_pnl);
+    const colors = pnlData.map(val => val >= 0 ? 'rgba(72, 187, 120, 0.7)' : 'rgba(245, 101, 101, 0.7)');
+
+    weeklyPnlChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: labels,
+            datasets: [{
+                label: 'Weekly P&L',
+                data: pnlData,
+                backgroundColor: colors,
+                borderColor: colors.map(c => c.replace('0.7', '1')),
+                borderWidth: 1
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: true,
+            plugins: {
+                legend: { display: false },
+                title: { display: false }
+            },
+            scales: {
+                y: { beginAtZero: true }
+            }
+        }
+    });
+}
+
+// Event listener for refresh button
+document.getElementById('refresh-pnl').addEventListener('click', loadPnlData);
+
+// Load P&L data on page load
+document.addEventListener('DOMContentLoaded', loadPnlData);
+
+// Auto-refresh learning status every 30 seconds
+setInterval(function() {
+    fetch('{% url "analytics:api_learning_status" %}')
+        .then(response => response.json())
+        .then(data => {
+            if (data.status === 'running' && !document.querySelector('.badge-success')) {
+                // Status changed to running, reload page
+                location.reload();
+            } else if (data.status === 'stopped' && document.querySelector('.badge-success')) {
+                // Status changed to stopped, reload page
+                location.reload();
+            }
+        });
+}, 30000);
+</script>
+{% endblock %}

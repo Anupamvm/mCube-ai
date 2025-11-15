@@ -1,0 +1,52 @@
+# Django
+Django==4.2.7
+django-environ==0.11.2
+
+# Database (SQLite is default, no extra driver needed)
+
+# Background Tasks
+django-background-tasks==1.2.8  # For on-demand background tasks
+django-compat==1.0.15
+
+# Celery & Task Queue
+celery==5.3.4  # Distributed task queue
+redis==5.0.1  # Redis client for Celery broker/backend
+
+# API Clients
+requests==2.31.0
+websocket-client==1.6.4
+
+# Broker APIs
+breeze-connect==1.0.62
+# neo-api-client==1.1.2  # Kotak Neo - install manually or use correct package name
+yfinance>=0.2.31  # Yahoo Finance for market data
+
+# Data Processing
+pandas>=2.2.0
+numpy>=1.26.0
+ta>=0.11.0  # Technical Analysis library
+# ta-lib==0.4.28  # Commented out - requires manual installation
+
+# LLM & AI
+chromadb==0.4.18
+sentence-transformers==2.2.2
+
+# Web Scraping
+beautifulsoup4>=4.12.2
+html5lib>=1.1  # Parser for BeautifulSoup
+selenium>=4.15.2
+chromedriver-autoinstaller>=0.6.4
+
+# Alerts & Notifications
+python-telegram-bot==20.7
+telethon==1.33.1  # For advanced Telegram features
+twilio==8.10.0
+
+# Utilities
+python-dateutil==2.8.2
+pytz==2023.3
+
+# Development
+pytest==7.4.3
+pytest-django==4.7.0
+black==23.11.0

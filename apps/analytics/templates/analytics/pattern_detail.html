@@ -1,0 +1,130 @@
+{% extends 'analytics/base.html' %}
+
+{% block title %}{{ pattern.name }} - Pattern Details{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div style="display: flex; justify-content: space-between; align-items: start;">
+        <div>
+            <h2>{{ pattern.name }}</h2>
+            <p style="color: #718096; margin-top: 5px;">{{ pattern.description }}</p>
+        </div>
+        <span class="badge badge-{% if pattern.validation_status == 'ACTIVE' %}success{% elif pattern.validation_status == 'TESTING' %}warning{% else %}danger{% endif %}" style="font-size: 14px;">
+            {{ pattern.get_validation_status_display }}
+        </span>
+    </div>
+</div>
+
+<div class="stat-grid">
+    <div class="stat-card">
+        <div class="stat-label">Pattern Type</div>
+        <div class="stat-value" style="font-size: 18px;">{{ pattern.get_pattern_type_display }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">Success Rate</div>
+        <div class="stat-value" style="color: {% if pattern.success_rate >= 65 %}#38a169{% elif pattern.success_rate >= 50 %}#ed8936{% else %}#f56565{% endif %}">
+            {{ pattern.success_rate }}%
+        </div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">Confidence Score</div>
+        <div class="stat-value">{{ pattern.confidence_score }}%</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">Total Occurrences</div>
+        <div class="stat-value">{{ pattern.occurrences }}</div>
+    </div>
+</div>
+
+<div class="stat-grid" style="grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));">
+    <div class="stat-card">
+        <div class="stat-label">Profitable</div>
+        <div class="stat-value" style="color: #38a169; font-size: 24px;">{{ pattern.profitable_occurrences }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">Unprofitable</div>
+        <div class="stat-value" style="color: #f56565; font-size: 24px;">{{ pattern.unprofitable_occurrences }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">Avg Profit</div>
+        <div class="stat-value" style="color: #38a169; font-size: 24px;">¹{{ pattern.avg_profit|floatformat:2 }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">Avg Loss</div>
+        <div class="stat-value" style="color: #f56565; font-size: 24px;">¹{{ pattern.avg_loss|floatformat:2 }}</div>
+    </div>
+</div>
+
+<div class="card">
+    <h3>Pattern Conditions</h3>
+    <table>
+        <thead>
+            <tr>
+                <th>Condition</th>
+                <th>Value</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for key, value in pattern.conditions.items %}
+            <tr>
+                <td><strong>{{ key|title }}</strong></td>
+                <td>{{ value }}</td>
+            </tr>
+            {% empty %}
+            <tr>
+                <td colspan="2" style="text-align: center; color: #718096;">No specific conditions defined</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+{% if pattern.is_actionable %}
+<div class="card" style="background-color: #d4edda; border-left: 4px solid #38a169;">
+    <h3 style="margin-top: 0;">Actionable Pattern</h3>
+    <p><strong>Recommendation:</strong></p>
+    <p style="font-size: 16px;">{{ pattern.recommendation }}</p>
+</div>
+{% else %}
+<div class="card" style="background-color: #fff3cd; border-left: 4px solid #ed8936;">
+    <h3 style="margin-top: 0;">Pattern Under Testing</h3>
+    <p>This pattern is still being validated and should not yet influence trading decisions.</p>
+    {% if pattern.recommendation %}
+    <p><strong>Preliminary Recommendation:</strong> {{ pattern.recommendation }}</p>
+    {% endif %}
+</div>
+{% endif %}
+
+<div class="card">
+    <h3>Metadata</h3>
+    <table>
+        <tr>
+            <th>Field</th>
+            <th>Value</th>
+        </tr>
+        <tr>
+            <td>Session</td>
+            <td>{{ pattern.session.name }}</td>
+        </tr>
+        <tr>
+            <td>Discovered</td>
+            <td>{{ pattern.created_at|date:"Y-m-d H:i:s" }}</td>
+        </tr>
+        {% if pattern.last_validated %}
+        <tr>
+            <td>Last Validated</td>
+            <td>{{ pattern.last_validated|date:"Y-m-d H:i:s" }}</td>
+        </tr>
+        {% endif %}
+        <tr>
+            <td>Last Updated</td>
+            <td>{{ pattern.updated_at|date:"Y-m-d H:i:s" }}</td>
+        </tr>
+    </table>
+</div>
+
+<div style="margin-top: 20px;">
+    <a href="{% url 'analytics:view_patterns' %}" class="btn">Back to Patterns</a>
+</div>
+
+{% endblock %}

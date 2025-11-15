@@ -1,0 +1,73 @@
+{% extends 'brokers/base.html' %}
+
+{% block title %}Historical Data - mCube{% endblock %}
+
+{% block content %}
+<div class="card">
+    <h2>NIFTY Historical Data</h2>
+
+    <form method="post">
+        {% csrf_token %}
+        <div class="form-group">
+            <label for="days">Number of Days:</label>
+            <input type="number" id="days" name="days" value="1000" min="1" max="3000">
+        </div>
+        <div class="form-group">
+            <label for="interval">Interval:</label>
+            <select id="interval" name="interval">
+                <option value="1minute">1 Minute</option>
+                <option value="5minute">5 Minutes</option>
+                <option value="30minute">30 Minutes</option>
+                <option value="1day" selected>1 Day</option>
+            </select>
+        </div>
+        <button type="submit" class="btn btn-success">Fetch Historical Data</button>
+    </form>
+
+    <p><strong>Total Records in Database:</strong> {{ total_records }}</p>
+</div>
+
+{% if page_obj %}
+<div class="card">
+    <h3>Latest Records</h3>
+    <table>
+        <thead>
+            <tr>
+                <th>Date</th>
+                <th>Open</th>
+                <th>High</th>
+                <th>Low</th>
+                <th>Close</th>
+                <th>Volume</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for record in page_obj %}
+            <tr>
+                <td>{{ record.datetime|date:"Y-m-d H:i" }}</td>
+                <td>₹{{ record.open|floatformat:2 }}</td>
+                <td>₹{{ record.high|floatformat:2 }}</td>
+                <td>₹{{ record.low|floatformat:2 }}</td>
+                <td>₹{{ record.close|floatformat:2 }}</td>
+                <td>{{ record.volume }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <div style="margin-top: 20px;">
+        {% if page_obj.has_previous %}
+        <a href="?page=1" class="btn">First</a>
+        <a href="?page={{ page_obj.previous_page_number }}" class="btn">Previous</a>
+        {% endif %}
+
+        <span>Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}</span>
+
+        {% if page_obj.has_next %}
+        <a href="?page={{ page_obj.next_page_number }}" class="btn">Next</a>
+        <a href="?page={{ page_obj.paginator.num_pages }}" class="btn">Last</a>
+        {% endif %}
+    </div>
+</div>
+{% endif %}
+{% endblock %}

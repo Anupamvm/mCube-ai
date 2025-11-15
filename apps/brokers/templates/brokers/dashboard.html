@@ -1,0 +1,44 @@
+{% extends 'brokers/base.html' %}
+
+{% block title %}Broker Dashboard - mCube{% endblock %}
+
+{% block content %}
+<div class="card">
+    <h2>Broker Overview</h2>
+    <p>Quick overview of all connected brokers and their current status.</p>
+</div>
+
+<div class="card">
+    <h3>Kotak Neo</h3>
+    {% if kotak_limit %}
+    <p><strong>Margin Available:</strong> ₹{{ kotak_limit.margin_available|floatformat:2 }}</p>
+    <p><strong>Margin Used:</strong> ₹{{ kotak_limit.margin_used|floatformat:2 }}</p>
+    <p><strong>Last Updated:</strong> {{ kotak_limit.fetched_at }}</p>
+    <p><strong>Active Positions:</strong> {{ kotak_positions|length }}</p>
+    <a href="{% url 'brokers:kotakneo_data' %}" class="btn">View Full Data</a>
+    {% else %}
+    <p>No data available. <a href="{% url 'brokers:kotakneo_login' %}">Login to Kotak Neo</a></p>
+    {% endif %}
+</div>
+
+<div class="card">
+    <h3>ICICI Breeze</h3>
+    {% if breeze_limit %}
+    <p><strong>Margin Available:</strong> ₹{{ breeze_limit.margin_available|floatformat:2 }}</p>
+    <p><strong>Margin Used:</strong> ₹{{ breeze_limit.margin_used|floatformat:2 }}</p>
+    <p><strong>Last Updated:</strong> {{ breeze_limit.fetched_at }}</p>
+    <p><strong>Active Positions:</strong> {{ breeze_positions|length }}</p>
+    <a href="{% url 'brokers:breeze_data' %}" class="btn">View Full Data</a>
+    {% else %}
+    <p>No data available. <a href="{% url 'brokers:breeze_login' %}">Login to Breeze</a></p>
+    {% endif %}
+</div>
+
+<div class="card">
+    <h3>Quick Actions</h3>
+    <a href="{% url 'brokers:option_chain' %}" class="btn">Fetch Option Chain</a>
+    <a href="{% url 'brokers:historical' %}" class="btn">Fetch Historical Data</a>
+    <a href="{% url 'brokers:api_positions' %}" class="btn">API: All Positions</a>
+    <a href="{% url 'brokers:api_limits' %}" class="btn">API: All Limits</a>
+</div>
+{% endblock %}

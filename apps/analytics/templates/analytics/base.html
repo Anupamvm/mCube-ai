@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}mCube Analytics{% endblock %}</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        .header h1 {
+            margin: 0;
+        }
+        .nav {
+            background-color: #5a67d8;
+            padding: 10px;
+            margin-bottom: 20px;
+        }
+        .nav a {
+            color: white;
+            text-decoration: none;
+            padding: 10px 15px;
+            display: inline-block;
+            transition: background-color 0.3s;
+        }
+        .nav a:hover {
+            background-color: #4c51bf;
+        }
+        .messages {
+            margin-bottom: 20px;
+        }
+        .message {
+            padding: 15px;
+            margin-bottom: 10px;
+            border-radius: 4px;
+        }
+        .message.success {
+            background-color: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .message.error {
+            background-color: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        .message.info {
+            background-color: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+        }
+        .card {
+            background-color: white;
+            padding: 20px;
+            margin-bottom: 20px;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        .card h2 {
+            margin-top: 0;
+            color: #2d3748;
+        }
+        .btn {
+            display: inline-block;
+            padding: 10px 20px;
+            background-color: #667eea;
+            color: white;
+            text-decoration: none;
+            border-radius: 4px;
+            border: none;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background-color 0.3s;
+        }
+        .btn:hover {
+            background-color: #5a67d8;
+        }
+        .btn-success {
+            background-color: #48bb78;
+        }
+        .btn-success:hover {
+            background-color: #38a169;
+        }
+        .btn-danger {
+            background-color: #f56565;
+        }
+        .btn-danger:hover {
+            background-color: #e53e3e;
+        }
+        .btn-warning {
+            background-color: #ed8936;
+        }
+        .btn-warning:hover {
+            background-color: #dd6b20;
+        }
+        .btn-sm {
+            padding: 6px 12px;
+            font-size: 12px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        table th, table td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #e2e8f0;
+        }
+        table th {
+            background-color: #f7fafc;
+            font-weight: 600;
+            color: #2d3748;
+        }
+        table tr:hover {
+            background-color: #f7fafc;
+        }
+        .badge {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+        .badge-success {
+            background-color: #c6f6d5;
+            color: #22543d;
+        }
+        .badge-warning {
+            background-color: #feebc8;
+            color: #744210;
+        }
+        .badge-danger {
+            background-color: #fed7d7;
+            color: #742a2a;
+        }
+        .badge-info {
+            background-color: #bee3f8;
+            color: #2c5282;
+        }
+        .stat-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+        .stat-card {
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            text-align: center;
+        }
+        .stat-value {
+            font-size: 32px;
+            font-weight: bold;
+            color: #667eea;
+            margin: 10px 0;
+        }
+        .stat-label {
+            font-size: 14px;
+            color: #718096;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 500;
+            color: #2d3748;
+        }
+        .form-group input, .form-group select, .form-group textarea {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #cbd5e0;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+    </style>
+    {% block extra_css %}{% endblock %}
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+</head>
+<body>
+    <div class="header">
+        <div class="container">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <h1>mCube Analytics & Learning Engine</h1>
+                {% if user.is_authenticated %}
+                <div style="color: white; font-size: 14px;">
+                    <span style="margin-right: 15px;">
+                        {{ user.get_full_name|default:user.username }}
+                        {% if user.is_superuser %}
+                        <span style="background-color: #f56565; padding: 2px 8px; border-radius: 3px; margin-left: 5px;">Admin</span>
+                        {% elif user.groups.all.0 %}
+                        <span style="background-color: #4299e1; padding: 2px 8px; border-radius: 3px; margin-left: 5px;">{{ user.groups.all.0.name }}</span>
+                        {% endif %}
+                    </span>
+                    <a href="{% url 'brokers:logout' %}" style="color: white; text-decoration: none; background-color: rgba(255,255,255,0.2); padding: 5px 15px; border-radius: 4px;">Logout</a>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <div class="nav">
+        <div class="container">
+            <a href="{% url 'analytics:learning_dashboard' %}">Learning Dashboard</a>
+            <a href="{% url 'analytics:view_patterns' %}">Patterns</a>
+            {% if user.is_superuser or user.groups.filter.name='Admin' %}
+            <a href="{% url 'analytics:view_suggestions' %}">Suggestions</a>
+            {% endif %}
+            <a href="{% url 'brokers:dashboard' %}">Brokers</a>
+        </div>
+    </div>
+
+    <div class="container">
+        {% if messages %}
+        <div class="messages">
+            {% for message in messages %}
+            <div class="message {{ message.tags }}">
+                {{ message }}
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
+
+        {% block content %}{% endblock %}
+    </div>
+
+    {% block extra_js %}{% endblock %}
+</body>
+</html>

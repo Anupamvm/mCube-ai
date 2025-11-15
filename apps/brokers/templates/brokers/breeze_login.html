@@ -1,0 +1,32 @@
+{% extends 'brokers/base.html' %}
+
+{% block title %}Breeze Login - mCube{% endblock %}
+
+{% block content %}
+<div class="card">
+    <h2>ICICI Breeze - Session Token</h2>
+    <p>Enter your daily session token from ICICI Direct portal to authenticate with Breeze API.</p>
+
+    <form method="post">
+        {% csrf_token %}
+        <div class="form-group">
+            <label for="session_token">Session Token:</label>
+            <input type="text" id="session_token" name="session_token" required
+                   placeholder="Enter session token from ICICI portal">
+        </div>
+
+        <button type="submit" class="btn btn-success">Save Token</button>
+    </form>
+</div>
+
+<div class="card">
+    <h3>How to get Session Token</h3>
+    <ol>
+        <li>Login to ICICI Direct portal (https://secure.icicidirect.com)</li>
+        <li>Navigate to API section or developer console</li>
+        <li>Generate a new session token for today</li>
+        <li>Copy the token and paste it above</li>
+        <li>Note: Session tokens expire daily and must be refreshed</li>
+    </ol>
+</div>
+{% endblock %}

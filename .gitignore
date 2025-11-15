@@ -1,0 +1,74 @@
+# Python
+*.py[cod]
+*$py.class
+*.so
+__pycache__/
+*.egg
+*.egg-info/
+dist/
+build/
+*.whl
+
+# Virtual Environment
+venv/
+env/
+ENV/
+.venv
+
+# Django
+*.log
+db.sqlite3
+db.sqlite3-journal
+/static/
+/media/
+*.pot
+*.pyc
+local_settings.py
+
+# Environment Variables
+.env
+.env.local
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Celery
+celerybeat-schedule
+celerybeat.pid
+
+# Testing
+.coverage
+.pytest_cache/
+htmlcov/
+.tox/
+
+# Data & Logs
+# LLM Models (GGUF files can be several GB)
+models/gguf/*.gguf
+models/ollama/*.Modelfile
+models/metadata.json
+
+# ChromaDB vector database
+chroma_db/
+*.parquet
+*.duckdb*
+
+# Data & Logs
+/data/db.sqlite3
+/data/*.db
+/logs/*.log
+/data/chromadb/*
+/data/backups/*
+
+# Temporary files
+*.tmp
+*.bak
+*.cache
+
+# OS
+Thumbs.db

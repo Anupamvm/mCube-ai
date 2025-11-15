@@ -1,0 +1,109 @@
+{% extends 'analytics/base.html' %}
+
+{% block title %}Patterns - mCube Analytics{% endblock %}
+
+{% block content %}
+<div class="card">
+    <h2>Discovered Trading Patterns</h2>
+
+    <div style="margin-bottom: 20px;">
+        <form method="get" style="display: flex; gap: 10px; align-items: end;">
+            <div class="form-group" style="margin-bottom: 0;">
+                <label for="type">Pattern Type:</label>
+                <select name="type" id="type" style="width: 200px;">
+                    <option value="">All Types</option>
+                    <option value="ENTRY_TIMING" {% if pattern_type == 'ENTRY_TIMING' %}selected{% endif %}>Entry Timing</option>
+                    <option value="EXIT_TIMING" {% if pattern_type == 'EXIT_TIMING' %}selected{% endif %}>Exit Timing</option>
+                    <option value="STRIKE_SELECTION" {% if pattern_type == 'STRIKE_SELECTION' %}selected{% endif %}>Strike Selection</option>
+                    <option value="MARKET_CONDITION" {% if pattern_type == 'MARKET_CONDITION' %}selected{% endif %}>Market Condition</option>
+                    <option value="DELTA_BEHAVIOR" {% if pattern_type == 'DELTA_BEHAVIOR' %}selected{% endif %}>Delta Behavior</option>
+                    <option value="VIX_PATTERN" {% if pattern_type == 'VIX_PATTERN' %}selected{% endif %}>VIX Pattern</option>
+                    <option value="OTHER" {% if pattern_type == 'OTHER' %}selected{% endif %}>Other</option>
+                </select>
+            </div>
+            <div class="form-group" style="margin-bottom: 0;">
+                <label>
+                    <input type="checkbox" name="actionable" value="1" {% if actionable_only %}checked{% endif %}>
+                    Actionable Only
+                </label>
+            </div>
+            <button type="submit" class="btn">Filter</button>
+            {% if pattern_type or actionable_only %}
+            <a href="{% url 'analytics:view_patterns' %}" class="btn">Clear Filters</a>
+            {% endif %}
+        </form>
+    </div>
+
+    {% if patterns %}
+    <table>
+        <thead>
+            <tr>
+                <th>Pattern Name</th>
+                <th>Type</th>
+                <th>Occurrences</th>
+                <th>Success Rate</th>
+                <th>Confidence</th>
+                <th>Avg Profit</th>
+                <th>Avg Loss</th>
+                <th>Status</th>
+                <th>Actionable</th>
+                <th>Action</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for pattern in patterns %}
+            <tr>
+                <td><strong>{{ pattern.name }}</strong></td>
+                <td><span class="badge badge-info">{{ pattern.get_pattern_type_display }}</span></td>
+                <td>
+                    {{ pattern.occurrences }}
+                    <small style="color: #718096;">
+                        ({{ pattern.profitable_occurrences }} wins / {{ pattern.unprofitable_occurrences }} losses)
+                    </small>
+                </td>
+                <td>
+                    <strong style="color: {% if pattern.success_rate >= 65 %}#38a169{% elif pattern.success_rate >= 50 %}#ed8936{% else %}#f56565{% endif %}">
+                        {{ pattern.success_rate }}%
+                    </strong>
+                </td>
+                <td>{{ pattern.confidence_score }}%</td>
+                <td style="color: #38a169;">¹{{ pattern.avg_profit|floatformat:2 }}</td>
+                <td style="color: #f56565;">¹{{ pattern.avg_loss|floatformat:2 }}</td>
+                <td>
+                    <span class="badge badge-{% if pattern.validation_status == 'ACTIVE' %}success{% elif pattern.validation_status == 'TESTING' %}warning{% else %}danger{% endif %}">
+                        {{ pattern.get_validation_status_display }}
+                    </span>
+                </td>
+                <td>
+                    {% if pattern.is_actionable %}
+                    <span class="badge badge-success">Yes</span>
+                    {% else %}
+                    <span class="badge badge-warning">No</span>
+                    {% endif %}
+                </td>
+                <td>
+                    <a href="{% url 'analytics:view_pattern_detail' pattern.id %}" class="btn btn-sm">View Details</a>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <div style="background-color: #e2e8f0; padding: 30px; text-align: center; border-radius: 4px;">
+        <p style="margin: 0; color: #718096;">No patterns found. Start a learning session to discover patterns.</p>
+    </div>
+    {% endif %}
+</div>
+
+<div class="card">
+    <h3>About Pattern Recognition</h3>
+    <p>
+        The learning engine analyzes historical trade data to discover patterns that correlate with profitable or unprofitable outcomes.
+    </p>
+    <ul>
+        <li><strong>Success Rate:</strong> Percentage of profitable trades when this pattern occurs</li>
+        <li><strong>Confidence:</strong> Statistical confidence in this pattern based on sample size</li>
+        <li><strong>Actionable:</strong> Whether this pattern should influence trading decisions (high confidence + high success rate)</li>
+    </ul>
+</div>
+{% endblock %}

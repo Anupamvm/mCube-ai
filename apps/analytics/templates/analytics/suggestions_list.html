@@ -1,0 +1,173 @@
+{% extends 'analytics/base.html' %}
+
+{% block title %}Parameter Suggestions - mCube Analytics{% endblock %}
+
+{% block content %}
+<div class="card">
+    <h2>Parameter Adjustment Suggestions</h2>
+
+    <div style="margin-bottom: 20px;">
+        <form method="get" style="display: flex; gap: 10px; align-items: end;">
+            <div class="form-group" style="margin-bottom: 0;">
+                <label for="status">Status:</label>
+                <select name="status" id="status" style="width: 200px;">
+                    <option value="">All Statuses</option>
+                    <option value="SUGGESTED" {% if status == 'SUGGESTED' %}selected{% endif %}>Suggested</option>
+                    <option value="APPROVED" {% if status == 'APPROVED' %}selected{% endif %}>Approved</option>
+                    <option value="APPLIED" {% if status == 'APPLIED' %}selected{% endif %}>Applied</option>
+                    <option value="REJECTED" {% if status == 'REJECTED' %}selected{% endif %}>Rejected</option>
+                    <option value="TESTING" {% if status == 'TESTING' %}selected{% endif %}>Testing</option>
+                </select>
+            </div>
+            <button type="submit" class="btn">Filter</button>
+            {% if status %}
+            <a href="{% url 'analytics:view_suggestions' %}" class="btn">Clear Filter</a>
+            {% endif %}
+        </form>
+    </div>
+
+    {% if suggestions %}
+    <table>
+        <thead>
+            <tr>
+                <th>Parameter</th>
+                <th>Category</th>
+                <th>Current Value</th>
+                <th>Suggested Value</th>
+                <th>Expected Improvement</th>
+                <th>Confidence</th>
+                <th>Risk Level</th>
+                <th>Status</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for suggestion in suggestions %}
+            <tr>
+                <td>
+                    <strong>{{ suggestion.parameter_name }}</strong>
+                    <br>
+                    <small style="color: #718096;">{{ suggestion.reason|truncatewords:15 }}</small>
+                </td>
+                <td><span class="badge badge-info">{{ suggestion.parameter_category }}</span></td>
+                <td><code>{{ suggestion.current_value }}</code></td>
+                <td><code style="background-color: #d4edda; padding: 2px 6px; border-radius: 3px;">{{ suggestion.suggested_value }}</code></td>
+                <td style="color: #38a169;"><strong>+{{ suggestion.expected_improvement_pct }}%</strong></td>
+                <td>{{ suggestion.confidence }}%</td>
+                <td>
+                    <span class="badge badge-{% if suggestion.risk_level == 'LOW' %}success{% elif suggestion.risk_level == 'MEDIUM' %}warning{% else %}danger{% endif %}">
+                        {{ suggestion.risk_level }}
+                    </span>
+                </td>
+                <td>
+                    <span class="badge badge-{% if suggestion.status == 'SUGGESTED' %}info{% elif suggestion.status == 'APPROVED' %}success{% elif suggestion.status == 'APPLIED' %}success{% elif suggestion.status == 'REJECTED' %}danger{% else %}warning{% endif %}">
+                        {{ suggestion.status }}
+                    </span>
+                </td>
+                <td>
+                    {% if suggestion.status == 'SUGGESTED' %}
+                    <button onclick="showDetails({{ suggestion.id }})" class="btn btn-sm">Details</button>
+                    <form method="post" action="{% url 'analytics:approve_suggestion' suggestion.id %}" style="display: inline; margin-left: 5px;">
+                        {% csrf_token %}
+                        <button type="submit" class="btn btn-success btn-sm">Approve</button>
+                    </form>
+                    <button onclick="showRejectForm({{ suggestion.id }})" class="btn btn-danger btn-sm">Reject</button>
+                    {% elif suggestion.status == 'APPROVED' %}
+                    <span style="color: #718096; font-size: 12px;">
+                        Reviewed by {{ suggestion.reviewed_by.username }}
+                        <br>
+                        {{ suggestion.reviewed_at|date:"Y-m-d H:i" }}
+                    </span>
+                    {% elif suggestion.status == 'REJECTED' %}
+                    <span style="color: #718096; font-size: 12px;">
+                        Rejected by {{ suggestion.reviewed_by.username }}
+                        {% if suggestion.review_notes %}
+                        <br>
+                        <em>{{ suggestion.review_notes|truncatewords:10 }}</em>
+                        {% endif %}
+                    </span>
+                    {% endif %}
+                </td>
+            </tr>
+            <tr id="details-{{ suggestion.id }}" style="display: none;">
+                <td colspan="9" style="background-color: #f7fafc; padding: 20px;">
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+                        <div>
+                            <h4 style="margin-top: 0;">Full Reason</h4>
+                            <p>{{ suggestion.reason }}</p>
+                        </div>
+                        <div>
+                            <h4 style="margin-top: 0;">Supporting Data</h4>
+                            <pre style="background-color: #e2e8f0; padding: 10px; border-radius: 4px; overflow-x: auto;">{{ suggestion.supporting_data }}</pre>
+                        </div>
+                    </div>
+                    <button onclick="hideDetails({{ suggestion.id }})" class="btn btn-sm">Hide Details</button>
+                </td>
+            </tr>
+            <tr id="reject-{{ suggestion.id }}" style="display: none;">
+                <td colspan="9" style="background-color: #fed7d7; padding: 20px;">
+                    <form method="post" action="{% url 'analytics:reject_suggestion' suggestion.id %}">
+                        {% csrf_token %}
+                        <div class="form-group">
+                            <label for="reason-{{ suggestion.id }}">Rejection Reason:</label>
+                            <textarea id="reason-{{ suggestion.id }}" name="reason" rows="3" placeholder="Explain why this suggestion is being rejected..." required></textarea>
+                        </div>
+                        <button type="submit" class="btn btn-danger">Confirm Rejection</button>
+                        <button type="button" onclick="hideRejectForm({{ suggestion.id }})" class="btn">Cancel</button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <div style="background-color: #e2e8f0; padding: 30px; text-align: center; border-radius: 4px;">
+        <p style="margin: 0; color: #718096;">
+            {% if status %}
+            No suggestions with status "{{ status }}".
+            {% else %}
+            No parameter suggestions yet. Start a learning session to generate suggestions.
+            {% endif %}
+        </p>
+    </div>
+    {% endif %}
+</div>
+
+<div class="card">
+    <h3>About Parameter Suggestions</h3>
+    <p>
+        The learning engine analyzes discovered patterns to suggest parameter adjustments that could improve trading performance.
+    </p>
+    <ul>
+        <li><strong>Expected Improvement:</strong> Estimated improvement in win rate or P&L based on historical data</li>
+        <li><strong>Confidence:</strong> Statistical confidence in this suggestion</li>
+        <li><strong>Risk Level:</strong>
+            <ul>
+                <li><span class="badge badge-success">LOW</span> - Minor adjustment, easy to revert</li>
+                <li><span class="badge badge-warning">MEDIUM</span> - Moderate impact, test carefully</li>
+                <li><span class="badge badge-danger">HIGH</span> - Significant change, requires thorough testing</li>
+            </ul>
+        </li>
+    </ul>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function showDetails(suggestionId) {
+    document.getElementById('details-' + suggestionId).style.display = 'table-row';
+}
+
+function hideDetails(suggestionId) {
+    document.getElementById('details-' + suggestionId).style.display = 'none';
+}
+
+function showRejectForm(suggestionId) {
+    document.getElementById('reject-' + suggestionId).style.display = 'table-row';
+}
+
+function hideRejectForm(suggestionId) {
+    document.getElementById('reject-' + suggestionId).style.display = 'none';
+}
+</script>
+{% endblock %}

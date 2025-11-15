@@ -1,0 +1,55 @@
+{% extends 'brokers/base.html' %}
+
+{% block title %}Option Chain - mCube{% endblock %}
+
+{% block content %}
+<div class="card">
+    <h2>Option Chain Quotes</h2>
+
+    <form method="post">
+        {% csrf_token %}
+        <div class="form-group">
+            <label>Stock Code: {{ stock_code }}</label>
+        </div>
+        <div class="form-group">
+            <label>Product Type: {{ product_type }}</label>
+        </div>
+        <div class="form-group">
+            <label>Next Expiry: {{ expiry_date }}</label>
+        </div>
+        <button type="submit" class="btn btn-success">Fetch Option Chain</button>
+    </form>
+</div>
+
+{% if quotes %}
+<div class="card">
+    <h3>Latest Quotes ({{ quotes|length }} records)</h3>
+    <table>
+        <thead>
+            <tr>
+                <th>Strike</th>
+                <th>Type</th>
+                <th>LTP</th>
+                <th>Bid</th>
+                <th>Ask</th>
+                <th>OI</th>
+                <th>Volume</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for q in quotes|slice:":100" %}
+            <tr>
+                <td>{{ q.strike_price }}</td>
+                <td>{{ q.right|upper }}</td>
+                <td>₹{{ q.ltp|floatformat:2 }}</td>
+                <td>₹{{ q.best_bid_price|floatformat:2 }}</td>
+                <td>₹{{ q.best_offer_price|floatformat:2 }}</td>
+                <td>{{ q.open_interest }}</td>
+                <td>{{ q.total_quantity_traded }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+{% endblock %}

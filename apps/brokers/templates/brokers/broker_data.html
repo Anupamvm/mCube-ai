@@ -1,0 +1,95 @@
+{% extends 'brokers/base.html' %}
+
+{% block title %}{{ broker }} Data - mCube{% endblock %}
+
+{% block content %}
+<div class="card">
+    <h2>{{ broker }} - Limits & Funds</h2>
+
+    {% if limit %}
+    <table>
+        <tr>
+            <th>Field</th>
+            <th>Value</th>
+        </tr>
+        <tr>
+            <td>Margin Available</td>
+            <td>₹{{ limit.margin_available|floatformat:2 }}</td>
+        </tr>
+        <tr>
+            <td>Margin Used</td>
+            <td>₹{{ limit.margin_used|floatformat:2 }}</td>
+        </tr>
+        <tr>
+            <td>Fetched At</td>
+            <td>{{ limit.fetched_at }}</td>
+        </tr>
+
+        {% if limit.broker == 'ICICI' %}
+        <tr>
+            <td>Total Bank Balance</td>
+            <td>₹{{ limit.total_bank_balance|floatformat:2 }}</td>
+        </tr>
+        <tr>
+            <td>Allocated F&O</td>
+            <td>₹{{ limit.allocated_fno|floatformat:2 }}</td>
+        </tr>
+        {% endif %}
+
+        {% if limit.broker == 'KOTAK' %}
+        <tr>
+            <td>Net Balance</td>
+            <td>₹{{ limit.net_balance|floatformat:2 }}</td>
+        </tr>
+        <tr>
+            <td>Collateral Value</td>
+            <td>₹{{ limit.collateral_value|floatformat:2 }}</td>
+        </tr>
+        {% endif %}
+    </table>
+    {% else %}
+    <p>No limit data available.</p>
+    {% endif %}
+</div>
+
+<div class="card">
+    <h2>{{ broker }} - Current Positions</h2>
+
+    {% if has_open_positions %}
+    <p style="color: #e67e22; font-weight: bold;">⚠️ Open positions detected!</p>
+    {% endif %}
+
+    {% if positions %}
+    <table>
+        <thead>
+            <tr>
+                <th>Symbol</th>
+                <th>Net Qty</th>
+                <th>Avg Price</th>
+                <th>LTP</th>
+                <th>Realized P&L</th>
+                <th>Unrealized P&L</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for pos in positions %}
+            <tr>
+                <td>{{ pos.symbol }}</td>
+                <td>{{ pos.net_quantity }}</td>
+                <td>₹{{ pos.average_price|floatformat:2 }}</td>
+                <td>₹{{ pos.ltp|floatformat:2 }}</td>
+                <td style="color: {% if pos.realized_pnl >= 0 %}green{% else %}red{% endif %}">
+                    ₹{{ pos.realized_pnl|floatformat:2 }}
+                </td>
+                <td style="color: {% if pos.unrealized_pnl >= 0 %}green{% else %}red{% endif %}">
+                    ₹{{ pos.unrealized_pnl|floatformat:2 }}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p>No positions found.</p>
+    {% endif %}
+</div>
+{% endblock %}
