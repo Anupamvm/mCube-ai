@@ -14,11 +14,11 @@ redis==5.0.1  # Redis client for Celery broker/backend
 
 # API Clients
 requests==2.31.0
-websocket-client==1.6.4
+websocket-client>=1.7.0  # Updated for neo-api-client compatibility
 
 # Broker APIs
 breeze-connect==1.0.62
-# neo-api-client==1.1.2  # Kotak Neo - install manually or use correct package name
+# kotak-neo-api is included in the repo - install manually: pip install -e ./kotak-neo-api
 yfinance>=0.2.31  # Yahoo Finance for market data
 
 # Data Processing

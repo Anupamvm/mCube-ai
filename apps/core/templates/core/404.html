@@ -1,0 +1,114 @@
+{% extends "core/base.html" %}
+
+{% block title %}Page Not Found - mCube Trading System{% endblock %}
+
+{% block content %}
+<div class="error-page">
+    <div class="error-content">
+        <div class="error-code">404</div>
+        <div class="error-icon">🔍</div>
+        <h1 class="error-title">Page Not Found</h1>
+        <p class="error-message">
+            Sorry, the page you're looking for doesn't exist or has been moved.
+        </p>
+        <div class="error-actions">
+            <a href="/" class="btn btn-large btn-primary">Go Home</a>
+            <a href="/admin/" class="btn btn-large btn-secondary">Admin Panel</a>
+        </div>
+        <div class="error-links">
+            <p>You might be looking for:</p>
+            <ul>
+                <li><a href="/admin/positions/position/">Positions</a></li>
+                <li><a href="/admin/orders/order/">Orders</a></li>
+                <li><a href="/admin/accounts/brokeraccount/">Accounts</a></li>
+                <li><a href="/admin/analytics/performancemetric/">Analytics</a></li>
+            </ul>
+        </div>
+    </div>
+</div>
+
+<style>
+.error-page {
+    min-height: 60vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 2rem;
+}
+
+.error-content {
+    text-align: center;
+    max-width: 600px;
+}
+
+.error-code {
+    font-size: 8rem;
+    font-weight: 700;
+    background: linear-gradient(135deg, #f59e0b 0%, #ef4444 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    line-height: 1;
+    margin-bottom: 1rem;
+}
+
+.error-icon {
+    font-size: 5rem;
+    margin-bottom: 1.5rem;
+}
+
+.error-title {
+    font-size: 2.5rem;
+    font-weight: 700;
+    color: var(--dark);
+    margin-bottom: 1rem;
+}
+
+.error-message {
+    font-size: 1.25rem;
+    color: var(--secondary-color);
+    margin-bottom: 2rem;
+}
+
+.error-actions {
+    display: flex;
+    gap: 1rem;
+    justify-content: center;
+    margin-bottom: 2rem;
+}
+
+.error-links {
+    background: white;
+    padding: 1.5rem;
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-md);
+}
+
+.error-links p {
+    font-weight: 600;
+    color: var(--dark);
+    margin-bottom: 1rem;
+}
+
+.error-links ul {
+    list-style: none;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem;
+    justify-content: center;
+}
+
+.error-links a {
+    color: var(--primary-color);
+    padding: 0.5rem 1rem;
+    border-radius: var(--radius-sm);
+    background: var(--light);
+    transition: all 0.2s ease;
+}
+
+.error-links a:hover {
+    background: var(--primary-color);
+    color: white;
+}
+</style>
+{% endblock %}

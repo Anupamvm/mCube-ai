@@ -1,0 +1,189 @@
+{% extends "core/base.html" %}
+
+{% block title %}Home - mCube Trading System{% endblock %}
+
+{% block content %}
+<!-- Hero Section -->
+<section class="hero-section">
+    <div class="hero-content">
+        <h1 class="hero-title">Welcome to mCube Trading System</h1>
+        <p class="hero-subtitle">AI-Powered Multi-Strategy F&O Trading Platform</p>
+        <p class="hero-description">
+            Automated trading system for Indian F&O markets with intelligent strategy execution,
+            risk management, and real-time monitoring powered by advanced AI algorithms.
+        </p>
+
+        {% if not user.is_authenticated %}
+        <div class="hero-actions">
+            <a href="{% url 'brokers:login' %}" class="btn btn-large btn-primary">Get Started</a>
+            <a href="#features" class="btn btn-large btn-secondary">Learn More</a>
+        </div>
+        {% endif %}
+    </div>
+</section>
+
+{% if user.is_authenticated %}
+<!-- Dashboard Stats -->
+<section class="dashboard-stats">
+    <h2 class="section-title">System Overview</h2>
+    <div class="stats-grid">
+        <div class="stat-card">
+            <div class="stat-icon">📈</div>
+            <div class="stat-info">
+                <h3>Active Positions</h3>
+                <p class="stat-value">{{ active_positions|default:0 }}</p>
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon">🏦</div>
+            <div class="stat-info">
+                <h3>Active Accounts</h3>
+                <p class="stat-value">{{ active_accounts|default:0 }}</p>
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon">📋</div>
+            <div class="stat-info">
+                <h3>Today's Orders</h3>
+                <p class="stat-value">{{ today_orders|default:0 }}</p>
+            </div>
+        </div>
+        <div class="stat-card {% if total_pnl >= 0 %}profit{% else %}loss{% endif %}">
+            <div class="stat-icon">💰</div>
+            <div class="stat-info">
+                <h3>Total P&L</h3>
+                <p class="stat-value">₹{{ total_pnl|floatformat:2|default:"0.00" }}</p>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Quick Actions -->
+<section class="quick-actions">
+    <h2 class="section-title">Quick Actions</h2>
+    <div class="actions-grid">
+        <a href="/admin/positions/position/" class="action-card">
+            <div class="action-icon">📊</div>
+            <h3>View Positions</h3>
+            <p>Monitor active positions and P&L</p>
+        </a>
+        <a href="/admin/orders/order/" class="action-card">
+            <div class="action-icon">🎯</div>
+            <h3>Manage Orders</h3>
+            <p>View and manage trading orders</p>
+        </a>
+        <a href="/admin/accounts/brokeraccount/" class="action-card">
+            <div class="action-icon">💼</div>
+            <h3>Broker Accounts</h3>
+            <p>Manage broker accounts & balances</p>
+        </a>
+        <a href="/admin/analytics/performancemetric/" class="action-card">
+            <div class="action-icon">📈</div>
+            <h3>Analytics</h3>
+            <p>View performance metrics</p>
+        </a>
+        <a href="/admin/risk/circuitbreaker/" class="action-card">
+            <div class="action-icon">🛡️</div>
+            <h3>Risk Management</h3>
+            <p>Circuit breakers & limits</p>
+        </a>
+        {% if is_admin %}
+        <a href="/test/" class="action-card">
+            <div class="action-icon">⚙️</div>
+            <h3>System Tests</h3>
+            <p>Run comprehensive system tests</p>
+        </a>
+        {% endif %}
+    </div>
+</section>
+{% endif %}
+
+<!-- Features Section -->
+<section id="features" class="features-section">
+    <h2 class="section-title">Key Features</h2>
+    <div class="features-grid">
+        <div class="feature-card">
+            <div class="feature-icon">🤖</div>
+            <h3>AI-Powered Analysis</h3>
+            <p>LLM-based trade validation for intelligent decision making and market analysis</p>
+        </div>
+        <div class="feature-card">
+            <div class="feature-icon">🎯</div>
+            <h3>Multi-Strategy Approach</h3>
+            <p>Diversified trading strategies across options and futures for optimal risk-reward balance</p>
+        </div>
+        <div class="feature-card">
+            <div class="feature-icon">🛡️</div>
+            <h3>Risk Management</h3>
+            <p>Automated circuit breakers, position limits, and real-time delta monitoring</p>
+        </div>
+        <div class="feature-card">
+            <div class="feature-icon">⚡</div>
+            <h3>Real-Time Monitoring</h3>
+            <p>21 Celery tasks monitoring positions, P&L, and market conditions 24/7</p>
+        </div>
+        <div class="feature-card">
+            <div class="feature-icon">📱</div>
+            <h3>Telegram Control</h3>
+            <p>14 bot commands for manual control and instant notifications anywhere</p>
+        </div>
+        <div class="feature-card">
+            <div class="feature-icon">📊</div>
+            <h3>Advanced Analytics</h3>
+            <p>Performance tracking, trade logs, and detailed P&L reports</p>
+        </div>
+    </div>
+</section>
+
+<!-- Documentation Section (for authenticated admin users) -->
+{% if user.is_authenticated and is_admin %}
+<section id="docs" class="docs-section">
+    <h2 class="section-title">Documentation</h2>
+    <div class="docs-grid">
+        <a href="{% url 'core:view_documentation' 'quick_start' %}" target="_blank" class="doc-card">
+            <div class="doc-icon">🚀</div>
+            <h3>Quick Start</h3>
+            <p>30-minute setup guide</p>
+        </a>
+        <a href="{% url 'core:view_documentation' 'setup_guide' %}" target="_blank" class="doc-card">
+            <div class="doc-icon">📖</div>
+            <h3>Setup Guide</h3>
+            <p>Complete installation instructions</p>
+        </a>
+        <a href="{% url 'core:view_documentation' 'celery_setup' %}" target="_blank" class="doc-card">
+            <div class="doc-icon">⚙️</div>
+            <h3>Celery Tasks</h3>
+            <p>Background task configuration</p>
+        </a>
+        <a href="{% url 'core:view_documentation' 'telegram_bot' %}" target="_blank" class="doc-card">
+            <div class="doc-icon">📱</div>
+            <h3>Telegram Bot</h3>
+            <p>Bot commands & usage</p>
+        </a>
+        <a href="{% url 'core:view_documentation' 'url_config' %}" target="_blank" class="doc-card">
+            <div class="doc-icon">🔗</div>
+            <h3>URL Configuration</h3>
+            <p>URL routing guide</p>
+        </a>
+        <a href="{% url 'core:view_documentation' 'auth_guide' %}" target="_blank" class="doc-card">
+            <div class="doc-icon">🔐</div>
+            <h3>Authentication</h3>
+            <p>Login & permissions guide</p>
+        </a>
+    </div>
+</section>
+{% endif %}
+
+<!-- System Status (for authenticated users) -->
+{% if user.is_authenticated and is_admin %}
+<section class="system-status">
+    <h2 class="section-title">System Health</h2>
+    <div class="status-info">
+        <p>✅ System operational</p>
+        <p>🔄 Last check: Just now</p>
+        <a href="/test/" class="btn btn-primary">Run Full System Test</a>
+    </div>
+</section>
+{% endif %}
+
+{% endblock %}

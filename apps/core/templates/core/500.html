@@ -1,0 +1,162 @@
+{% extends "core/base.html" %}
+
+{% block title %}Server Error - mCube Trading System{% endblock %}
+
+{% block content %}
+<div class="error-page">
+    <div class="error-content">
+        <div class="error-code">500</div>
+        <div class="error-icon">⚠️</div>
+        <h1 class="error-title">Server Error</h1>
+        <p class="error-message">
+            Oops! Something went wrong on our end. We're working to fix it.
+        </p>
+        <div class="error-info">
+            <h3>What happened?</h3>
+            <p>
+                An unexpected error occurred while processing your request.
+                This issue has been logged and our team will investigate.
+            </p>
+            <h3>What can you do?</h3>
+            <ul>
+                <li>Try refreshing the page</li>
+                <li>Go back to the home page and try again</li>
+                <li>Check the system logs if you're an administrator</li>
+                <li>Contact support if the problem persists</li>
+            </ul>
+        </div>
+        <div class="error-actions">
+            <a href="/" class="btn btn-large btn-primary">Go Home</a>
+            <a href="javascript:window.location.reload()" class="btn btn-large btn-secondary">Refresh Page</a>
+        </div>
+        {% if user.is_authenticated and user.is_superuser %}
+        <div class="admin-info">
+            <p>👨‍💼 <strong>Admin Actions:</strong></p>
+            <a href="/admin/">Admin Panel</a> |
+            <a href="/test/">System Tests</a> |
+            <a href="/logs/" target="_blank">View Logs</a>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<style>
+.error-page {
+    min-height: 60vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 2rem;
+}
+
+.error-content {
+    text-align: center;
+    max-width: 600px;
+}
+
+.error-code {
+    font-size: 8rem;
+    font-weight: 700;
+    background: linear-gradient(135deg, #dc2626 0%, #991b1b 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    line-height: 1;
+    margin-bottom: 1rem;
+}
+
+.error-icon {
+    font-size: 5rem;
+    margin-bottom: 1.5rem;
+}
+
+.error-title {
+    font-size: 2.5rem;
+    font-weight: 700;
+    color: var(--dark);
+    margin-bottom: 1rem;
+}
+
+.error-message {
+    font-size: 1.25rem;
+    color: var(--secondary-color);
+    margin-bottom: 2rem;
+}
+
+.error-info {
+    background: white;
+    padding: 1.5rem;
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-md);
+    margin-bottom: 2rem;
+    text-align: left;
+}
+
+.error-info h3 {
+    color: var(--dark);
+    margin-bottom: 0.75rem;
+    font-size: 1.15rem;
+    margin-top: 1rem;
+}
+
+.error-info h3:first-child {
+    margin-top: 0;
+}
+
+.error-info p {
+    color: var(--secondary-color);
+    line-height: 1.6;
+    margin-bottom: 1rem;
+}
+
+.error-info ul {
+    list-style: none;
+    padding-left: 0;
+}
+
+.error-info li {
+    padding: 0.5rem 0;
+    padding-left: 1.5rem;
+    position: relative;
+    color: var(--secondary-color);
+}
+
+.error-info li:before {
+    content: "→";
+    position: absolute;
+    left: 0;
+    color: var(--danger-color);
+    font-weight: bold;
+}
+
+.error-actions {
+    display: flex;
+    gap: 1rem;
+    justify-content: center;
+    margin-bottom: 1.5rem;
+}
+
+.admin-info {
+    background: var(--light);
+    padding: 1rem;
+    border-radius: var(--radius-md);
+    border-left: 4px solid var(--warning-color);
+}
+
+.admin-info p {
+    margin-bottom: 0.5rem;
+    color: var(--dark);
+}
+
+.admin-info a {
+    color: var(--primary-color);
+    margin: 0 0.5rem;
+}
+
+@media (max-width: 768px) {
+    .error-actions {
+        flex-direction: column;
+    }
+}
+</style>
+{% endblock %}

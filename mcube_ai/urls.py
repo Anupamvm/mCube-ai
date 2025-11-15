@@ -16,11 +16,43 @@ Including another URLconf
 """
 from django.contrib import admin
 from django.urls import path, include
+from django.conf import settings
+from django.conf.urls.static import static
+from django.views.generic import RedirectView
+from apps.core.views import home_page
 
 urlpatterns = [
+    # Home page
+    path('', home_page, name='home'),
+
+    # Admin interface
     path('admin/', admin.site.urls),
-    path('api/data/', include('apps.data.urls')),
-    path('brokers/', include('apps.brokers.urls')),
-    path('analytics/', include('apps.analytics.urls')),
+
+    # Direct access to test page (redirects to /system/test/)
+    path('test/', RedirectView.as_view(url='/system/test/', permanent=False), name='test_redirect'),
+
+    # Core system URLs (includes test page at /system/test/)
     path('system/', include('apps.core.urls')),
+
+    # App URLs
+    path('accounts/', include('apps.accounts.urls')),
+    path('brokers/', include('apps.brokers.urls')),
+    path('data/', include('apps.data.urls')),
+    path('analytics/', include('apps.analytics.urls')),
+    path('positions/', include('apps.positions.urls')),
+    path('orders/', include('apps.orders.urls')),
+    path('strategies/', include('apps.strategies.urls')),
+    path('risk/', include('apps.risk.urls')),
+    path('alerts/', include('apps.alerts.urls')),
+    path('llm/', include('apps.llm.urls')),
 ]
+
+# Serve static files in development
+if settings.DEBUG:
+    urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT if hasattr(settings, 'STATIC_ROOT') else None)
+
+# Custom error handlers
+handler404 = 'apps.core.views.error_404'
+handler403 = 'apps.core.views.error_403'
+handler500 = 'apps.core.views.error_500'
+handler400 = 'apps.core.views.error_400'

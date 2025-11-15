@@ -9,15 +9,7 @@ This module provides integration with Kotak Neo broker API for:
 
 import logging
 import re
-import sys
-from pathlib import Path
-
-# Add kotak_neo_sdk to path
-sdk_path = Path(__file__).parent.parent / 'kotak_neo_sdk'
-if str(sdk_path) not in sys.path:
-    sys.path.insert(0, str(sdk_path))
-
-from neo_api import NeoAPI
+from neo_api_client import NeoAPI
 from django.utils import timezone
 from apps.core.models import CredentialStore
 from apps.core.constants import BROKER_KOTAK

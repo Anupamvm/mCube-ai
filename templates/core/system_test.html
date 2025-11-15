@@ -289,13 +289,11 @@
         <div class="test-category">
             <div class="category-header">
                 <h2>{{ category.category }}</h2>
-                {% with passed=category.tests|selectattr:"status", "equalto", "pass"|list|length %}
-                {% if passed == category.tests|length %}
-                    <span class="category-badge pass">{{ passed }}/{{ category.tests|length }} Passed</span>
+                {% if category.passed == category.tests|length %}
+                    <span class="category-badge pass">{{ category.passed }}/{{ category.tests|length }} Passed</span>
                 {% else %}
-                    <span class="category-badge fail">{{ passed }}/{{ category.tests|length }} Passed</span>
+                    <span class="category-badge fail">{{ category.passed }}/{{ category.tests|length }} Passed</span>
                 {% endif %}
-                {% endwith %}
             </div>
 
             {% for test in category.tests %}

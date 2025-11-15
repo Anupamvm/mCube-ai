@@ -222,7 +222,7 @@
         <div class="container">
             <a href="{% url 'analytics:learning_dashboard' %}">Learning Dashboard</a>
             <a href="{% url 'analytics:view_patterns' %}">Patterns</a>
-            {% if user.is_superuser or user.groups.filter.name='Admin' %}
+            {% if user.is_superuser %}
             <a href="{% url 'analytics:view_suggestions' %}">Suggestions</a>
             {% endif %}
             <a href="{% url 'brokers:dashboard' %}">Brokers</a>

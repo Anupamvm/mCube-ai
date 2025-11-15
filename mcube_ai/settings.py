@@ -63,6 +63,10 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    # Custom middleware
+    'apps.core.middleware.URLLoggingMiddleware',
+    'apps.core.middleware.ErrorHandlingMiddleware',
+    'apps.core.middleware.SecurityHeadersMiddleware',
 ]
 
 ROOT_URLCONF = 'mcube_ai.urls'
@@ -139,9 +143,9 @@ STATIC_URL = 'static/'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # Authentication settings
-LOGIN_URL = '/brokers/login/'
-LOGIN_REDIRECT_URL = '/brokers/'
-LOGOUT_REDIRECT_URL = '/brokers/login/'
+LOGIN_URL = '/brokers/login/'  # Use broker login page
+LOGIN_REDIRECT_URL = '/'  # Redirect to home page after login
+LOGOUT_REDIRECT_URL = '/'  # Redirect to home page after logout
 
 
 # =============================================================================

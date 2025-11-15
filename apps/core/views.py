@@ -16,13 +16,242 @@ from decimal import Decimal
 logger = logging.getLogger(__name__)
 
 
+def home_page(request):
+    """
+    Home page view - Main landing page for mCube Trading System
+    Shows system overview, quick actions, and navigation
+    """
+    context = {}
+
+    # If user is authenticated, show dashboard info
+    if request.user.is_authenticated:
+        try:
+            from apps.positions.models import Position
+            from apps.accounts.models import BrokerAccount
+            from apps.orders.models import Order
+
+            # Get active positions count
+            active_positions = Position.objects.filter(status='ACTIVE').count()
+
+            # Get active accounts
+            active_accounts = BrokerAccount.objects.filter(is_active=True).count()
+
+            # Get today's orders
+            today = datetime.now().date()
+            today_orders = Order.objects.filter(created_at__date=today).count()
+
+            # Get total P&L for today
+            total_pnl = sum([
+                pos.calculate_unrealized_pnl() or Decimal('0')
+                for pos in Position.objects.filter(status='ACTIVE')
+            ])
+
+            context.update({
+                'active_positions': active_positions,
+                'active_accounts': active_accounts,
+                'today_orders': today_orders,
+                'total_pnl': total_pnl,
+                'is_admin': is_admin_user(request.user),
+            })
+        except Exception as e:
+            logger.error(f"Error fetching dashboard data: {e}")
+            context['error'] = 'Unable to fetch dashboard data'
+
+    return render(request, 'core/home.html', context)
+
+
+def error_400(request, exception):
+    """Custom 400 bad request page - Always succeeds"""
+    try:
+        context = {
+            'error_code': '400',
+            'error_title': 'Bad Request',
+            'error_message': 'The request could not be understood by the server.',
+            'error_details': str(exception) if exception else 'Invalid request format.',
+            'show_home_link': True,
+        }
+        return render(request, 'core/error.html', context, status=400)
+    except Exception as e:
+        logger.error(f"Error in error_400 handler: {e}")
+        return _fallback_error_response('400', 'Bad Request')
+
+
+def error_403(request, exception):
+    """Custom 403 forbidden page - Always succeeds"""
+    try:
+        context = {
+            'error_code': '403',
+            'error_title': 'Forbidden',
+            'error_message': 'You do not have permission to access this resource.',
+            'error_details': str(exception) if exception else 'Access denied.',
+            'show_login_link': not request.user.is_authenticated if hasattr(request, 'user') else True,
+            'show_home_link': True,
+        }
+        return render(request, 'core/error.html', context, status=403)
+    except Exception as e:
+        logger.error(f"Error in error_403 handler: {e}")
+        return _fallback_error_response('403', 'Forbidden')
+
+
+def error_404(request, exception):
+    """Custom 404 error page - Always succeeds"""
+    try:
+        requested_url = getattr(request, 'path', '/unknown')
+        context = {
+            'error_code': '404',
+            'error_title': 'Page Not Found',
+            'error_message': f'The requested URL "{requested_url}" was not found on this server.',
+            'error_details': 'Please check the URL and try again, or navigate to the home page.',
+            'show_home_link': True,
+            'available_urls': get_available_urls() if settings.DEBUG else None,
+        }
+        return render(request, 'core/error.html', context, status=404)
+    except Exception as e:
+        logger.error(f"Error in error_404 handler: {e}")
+        return _fallback_error_response('404', 'Page Not Found')
+
+
+def error_500(request):
+    """Custom 500 server error page - Always succeeds"""
+    try:
+        context = {
+            'error_code': '500',
+            'error_title': 'Internal Server Error',
+            'error_message': 'An unexpected error occurred while processing your request.',
+            'error_details': 'Our team has been notified. Please try again later.',
+            'show_home_link': True,
+        }
+        return render(request, 'core/error.html', context, status=500)
+    except Exception as e:
+        logger.error(f"Error in error_500 handler: {e}")
+        return _fallback_error_response('500', 'Internal Server Error')
+
+
+def _fallback_error_response(code, title):
+    """
+    Ultimate fallback error response when even error handlers fail.
+    Returns inline HTML without any dependencies.
+    """
+    from django.http import HttpResponse
+    html = f'''
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>{code} - {title}</title>
+        <style>
+            body {{
+                font-family: Arial, sans-serif;
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                min-height: 100vh;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                margin: 0;
+                padding: 20px;
+            }}
+            .error-box {{
+                background: white;
+                padding: 40px;
+                border-radius: 10px;
+                box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+                text-align: center;
+                max-width: 500px;
+            }}
+            h1 {{ color: #667eea; margin: 0 0 10px 0; font-size: 60px; }}
+            h2 {{ color: #333; margin: 0 0 20px 0; }}
+            p {{ color: #666; margin-bottom: 30px; }}
+            a {{
+                display: inline-block;
+                padding: 10px 30px;
+                background: #667eea;
+                color: white;
+                text-decoration: none;
+                border-radius: 5px;
+                margin: 5px;
+            }}
+            a:hover {{ background: #5568d3; }}
+        </style>
+    </head>
+    <body>
+        <div class="error-box">
+            <h1>{code}</h1>
+            <h2>{title}</h2>
+            <p>Something went wrong. Please try again.</p>
+            <a href="/">Go to Home</a>
+            <a href="javascript:history.back()">Go Back</a>
+        </div>
+    </body>
+    </html>
+    '''
+    return HttpResponse(html, status=int(code))
+
+
+def get_available_urls():
+    """Get list of available URLs for debugging (only in DEBUG mode)"""
+    from django.urls import get_resolver
+    from django.urls.resolvers import URLPattern, URLResolver
+
+    def extract_urls(urlpatterns, prefix=''):
+        urls = []
+        for pattern in urlpatterns:
+            if isinstance(pattern, URLPattern):
+                urls.append(prefix + str(pattern.pattern))
+            elif isinstance(pattern, URLResolver):
+                urls.extend(extract_urls(pattern.url_patterns, prefix + str(pattern.pattern)))
+        return urls
+
+    try:
+        resolver = get_resolver()
+        return sorted(set(extract_urls(resolver.url_patterns)))
+    except Exception as e:
+        logger.error(f"Error getting available URLs: {e}")
+        return []
+
+
 def is_admin_user(user):
     """Check if user is admin (superuser or in Admin group)"""
     return user.is_superuser or user.groups.filter(name='Admin').exists()
 
 
 @login_required
-@user_passes_test(is_admin_user, login_url='/brokers/login/')
+@user_passes_test(is_admin_user, login_url='/login/')
+def view_documentation(request, doc_name):
+    """
+    Serve markdown documentation files to admin users.
+    """
+    import os
+    from django.http import Http404, HttpResponse
+
+    # Define allowed documentation files
+    allowed_docs = {
+        'quick_start': 'QUICK_START.md',
+        'setup_guide': 'SETUP_GUIDE.md',
+        'celery_setup': 'CELERY_SETUP.md',
+        'telegram_bot': 'TELEGRAM_BOT_GUIDE.md',
+        'url_config': 'URL_CONFIGURATION.md',
+        'auth_guide': 'AUTHENTICATION_GUIDE.md',
+        'fixes_summary': 'FIXES_SUMMARY.md',
+    }
+
+    if doc_name not in allowed_docs:
+        raise Http404("Documentation not found")
+
+    file_path = os.path.join(settings.BASE_DIR, allowed_docs[doc_name])
+
+    if not os.path.exists(file_path):
+        raise Http404("Documentation file not found")
+
+    # Return the file as plain text for browser viewing
+    with open(file_path, 'r', encoding='utf-8') as f:
+        content = f.read()
+
+    return HttpResponse(content, content_type='text/plain; charset=utf-8')
+
+
+@login_required
+@user_passes_test(is_admin_user, login_url='/login/')
 def system_test_page(request):
     """
     Comprehensive system test page for testing all critical functionalities.
@@ -41,6 +270,10 @@ def system_test_page(request):
         'background_tasks': test_background_tasks(),
         'django_admin': test_django_admin(),
     }
+
+    # Add passed count to each category
+    for category in test_results.values():
+        category['passed'] = sum(1 for test in category['tests'] if test['status'] == 'pass')
 
     # Calculate summary statistics
     total_tests = sum(len(category['tests']) for category in test_results.values())
@@ -482,6 +715,82 @@ def test_trendlyne():
             'name': 'Scraping Dependencies',
             'status': 'fail',
             'message': f'Missing: {str(e)}',
+        })
+
+    # Test 9: Trendlyne Tool Module
+    try:
+        from apps.data.tools import trendlyne
+        from apps.data.tools.trendlyne import (
+            get_all_trendlyne_data,
+            getFnOData,
+            getMarketSnapshotData,
+            getTrendlyneForecasterData
+        )
+
+        tests.append({
+            'name': 'Trendlyne Tool Module',
+            'status': 'pass',
+            'message': 'Tool module and functions available',
+        })
+    except Exception as e:
+        tests.append({
+            'name': 'Trendlyne Tool Module',
+            'status': 'fail',
+            'message': f'Error: {str(e)}',
+        })
+
+    # Test 10: ContractData Model
+    try:
+        from apps.data.models import ContractData
+        count = ContractData.objects.count()
+        latest = ContractData.objects.order_by('-created_at').first()
+
+        tests.append({
+            'name': 'ContractData Model (F&O)',
+            'status': 'pass',
+            'message': f'Found {count} records. Latest: {latest.symbol if latest else "None"}',
+        })
+    except Exception as e:
+        tests.append({
+            'name': 'ContractData Model (F&O)',
+            'status': 'fail',
+            'message': f'Error: {str(e)}',
+        })
+
+    # Test 11: TLStockData Model
+    try:
+        from apps.data.models import TLStockData
+        count = TLStockData.objects.count()
+        latest = TLStockData.objects.order_by('-created_at').first()
+
+        tests.append({
+            'name': 'TLStockData Model (Market Snapshot)',
+            'status': 'pass',
+            'message': f'Found {count} records. Latest: {latest.stock_name if latest else "None"}',
+        })
+    except Exception as e:
+        tests.append({
+            'name': 'TLStockData Model (Market Snapshot)',
+            'status': 'fail',
+            'message': f'Error: {str(e)}',
+        })
+
+    # Test 12: ContractStockData Model
+    try:
+        from apps.data.models import ContractStockData
+        count = ContractStockData.objects.count()
+        latest = ContractStockData.objects.order_by('-created_at').first()
+
+        tests.append({
+            'name': 'ContractStockData Model',
+            'status': 'pass',
+            'message': f'Found {count} records. Latest: {latest.stock_name if latest else "None"}',
+        })
+    except Exception as e:
+        tests.append({
+            'name': 'ContractStockData Model',
+            'status': 'fail',
+            'message': f'Error: {str(e)}',
         })
 
     return {'category': 'Trendlyne Integration', 'tests': tests}

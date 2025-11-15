@@ -42,7 +42,7 @@ def login_view(request):
     Handle user login.
     """
     if request.user.is_authenticated:
-        return redirect('brokers:dashboard')
+        return redirect('home')
 
     if request.method == 'POST':
         username = request.POST.get('username')
@@ -53,8 +53,8 @@ def login_view(request):
             auth_login(request, user)
             messages.success(request, f"Welcome back, {user.get_full_name() or user.username}!")
 
-            # Redirect to next or dashboard
-            next_url = request.GET.get('next', 'brokers:dashboard')
+            # Redirect to next or home page
+            next_url = request.GET.get('next', 'home')
             return redirect(next_url)
         else:
             messages.error(request, "Invalid username or password.")
@@ -69,7 +69,7 @@ def logout_view(request):
     """
     auth_logout(request)
     messages.success(request, "You have been logged out successfully.")
-    return redirect('brokers:login')
+    return redirect('home')
 
 
 # =============================================================================

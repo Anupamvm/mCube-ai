@@ -145,7 +145,7 @@
         <div class="container">
             <a href="{% url 'brokers:dashboard' %}">Dashboard</a>
             {% if user.is_authenticated %}
-                {% if user.is_superuser or user.groups.filter.name='Admin' %}
+                {% if user.is_superuser %}
                 <a href="{% url 'brokers:kotakneo_login' %}">Kotak Neo Config</a>
                 <a href="{% url 'brokers:breeze_login' %}">Breeze Config</a>
                 {% endif %}
