@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ page_title }} - mCube AI</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; padding: 20px; }
+        .container { max-width: 1400px; margin: 0 auto; }
+        .header { background: white; padding: 30px; border-radius: 10px; margin-bottom: 30px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1); }
+        .header h1 { color: #2d3748; font-size: 32px; margin-bottom: 10px; }
+        .card { background: white; border-radius: 10px; padding: 25px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1); margin-bottom: 20px; }
+        .card h2 { color: #2d3748; font-size: 20px; margin-bottom: 20px; }
+        .placeholder { text-align: center; padding: 60px 20px; color: #718096; }
+        .placeholder p { font-size: 18px; margin-bottom: 20px; }
+        .status-badge { display: inline-block; background: #bee3f8; color: #2c5282; padding: 10px 20px; border-radius: 20px; font-weight: 600; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>{{ page_title }}</h1>
+            <p>Real-time monitoring of active positions with P&L and exit decision tracking</p>
+        </div>
+
+        <div class="card">
+            <h2>Active Positions</h2>
+            {% if active_positions %}
+                <div>
+                    {% for position in active_positions %}
+                        <div style="padding: 20px; border-bottom: 1px solid #e2e8f0;">
+                            <h3>{{ position.instrument }} ({{ position.direction }})</h3>
+                            <p>Entry: {{ position.entry_price }} | Current: {{ position.current_price }}</p>
+                            <p>P&L: {{ position.calculate_unrealized_pnl|floatformat:0 }} ({{ position|pnl_percentage|floatformat:2 }}%)</p>
+                        </div>
+                    {% endfor %}
+                </div>
+            {% else %}
+                <div class="placeholder">
+                    <p>No active positions currently</p>
+                    <span class="status-badge">Ready to enter</span>
+                </div>
+            {% endif %}
+        </div>
+
+        <div class="card">
+            <h2>Coming Soon</h2>
+            <div class="placeholder">
+                <p>Real-time monitoring dashboard under development</p>
+                <p>Features:</p>
+                <ul style="text-align: left; display: inline-block; margin-top: 20px;">
+                    <li>Live P&L calculation</li>
+                    <li>Exit decision tree</li>
+                    <li>Delta monitoring (for options)</li>
+                    <li>SL/Target proximity alerts</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

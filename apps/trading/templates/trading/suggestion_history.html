@@ -1,0 +1,266 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Trade History - mCube AI{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <!-- Header -->
+    <div class="row mb-4">
+        <div class="col-md-8">
+            <h1 class="h3 mb-0">Trade Suggestion History</h1>
+        </div>
+        <div class="col-md-4 text-end">
+            <a href="{% url 'trading:pending_suggestions' %}" class="btn btn-outline-secondary">
+                <i class="fas fa-inbox"></i> Pending Suggestions
+            </a>
+        </div>
+    </div>
+
+    <!-- Filter Section -->
+    <div class="card mb-4">
+        <div class="card-body">
+            <form method="GET" class="row g-3">
+                <div class="col-md-6">
+                    <label for="statusFilter" class="form-label">Filter by Status</label>
+                    <select class="form-select" id="statusFilter" name="status" onchange="this.form.submit()">
+                        <option value="">All Statuses</option>
+                        {% for value, label in status_choices %}
+                            <option value="{{ value }}" {% if request.GET.status == value %}selected{% endif %}>
+                                {{ label }}
+                            </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                {% if request.GET.status %}
+                    <div class="col-md-6">
+                        <label>&nbsp;</label>
+                        <div>
+                            <a href="{% url 'trading:suggestion_history' %}" class="btn btn-outline-secondary">
+                                Clear Filter
+                            </a>
+                        </div>
+                    </div>
+                {% endif %}
+            </form>
+        </div>
+    </div>
+
+    <!-- Summary Statistics -->
+    <div class="row mb-4">
+        <div class="col-md-2">
+            <div class="card border-info text-center">
+                <div class="card-body">
+                    <h6 class="text-info">Total</h6>
+                    <h3 class="mb-0">{{ suggestions.count }}</h3>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-2">
+            <div class="card border-warning text-center">
+                <div class="card-body">
+                    <h6 class="text-warning">Pending</h6>
+                    <h3 class="mb-0">
+                        {{ suggestions|dictsort:"status"|length }}
+                    </h3>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-2">
+            <div class="card border-success text-center">
+                <div class="card-body">
+                    <h6 class="text-success">Executed</h6>
+                    <h3 class="mb-0">
+                        {{ suggestions|dictsort:"status"|length }}
+                    </h3>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-2">
+            <div class="card border-danger text-center">
+                <div class="card-body">
+                    <h6 class="text-danger">Rejected</h6>
+                    <h3 class="mb-0">
+                        {{ suggestions|dictsort:"status"|length }}
+                    </h3>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-2">
+            <div class="card border-secondary text-center">
+                <div class="card-body">
+                    <h6 class="text-secondary">Expired</h6>
+                    <h3 class="mb-0">
+                        {{ suggestions|dictsort:"status"|length }}
+                    </h3>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-2">
+            <div class="card border-info text-center">
+                <div class="card-body">
+                    <h6 class="text-info">Auto-Approved</h6>
+                    <h3 class="mb-0">
+                        {{ suggestions|dictsort:"is_auto_trade"|length }}
+                    </h3>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Suggestions Timeline -->
+    <div class="card">
+        <div class="card-header bg-light">
+            <h6 class="mb-0">All Trade Suggestions</h6>
+        </div>
+        {% if suggestions %}
+            <div class="card-body p-0">
+                <div class="timeline p-4">
+                    {% for suggestion in suggestions %}
+                        <div class="timeline-item mb-4 pb-4 border-bottom" style="position: relative;">
+                            <div style="position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: linear-gradient(180deg, #17a2b8, #6c757d);" class="timeline-bar"></div>
+
+                            <div class="ms-4">
+                                <!-- Header -->
+                                <div class="d-flex justify-content-between align-items-start mb-2">
+                                    <div>
+                                        <h6 class="mb-1">
+                                            <a href="{% url 'trading:suggestion_detail' suggestion.id %}">
+                                                Trade Suggestion #{{ suggestion.id }}
+                                            </a>
+                                        </h6>
+                                        <small class="text-muted">{{ suggestion.created_at|date:"M d, Y H:i:s" }}</small>
+                                    </div>
+                                    <div class="ms-3">
+                                        {% if suggestion.status == 'PENDING' %}
+                                            <span class="badge bg-warning text-dark">PENDING</span>
+                                        {% elif suggestion.status == 'APPROVED' %}
+                                            <span class="badge bg-info">APPROVED</span>
+                                        {% elif suggestion.status == 'AUTO_APPROVED' %}
+                                            <span class="badge bg-success">AUTO-APPROVED</span>
+                                        {% elif suggestion.status == 'REJECTED' %}
+                                            <span class="badge bg-danger">REJECTED</span>
+                                        {% elif suggestion.status == 'EXECUTED' %}
+                                            <span class="badge bg-primary">EXECUTED</span>
+                                        {% elif suggestion.status == 'EXPIRED' %}
+                                            <span class="badge bg-secondary">EXPIRED</span>
+                                        {% elif suggestion.status == 'CANCELLED' %}
+                                            <span class="badge bg-secondary">CANCELLED</span>
+                                        {% endif %}
+                                    </div>
+                                </div>
+
+                                <!-- Details Row -->
+                                <div class="row mb-3">
+                                    <div class="col-md-8">
+                                        <div class="row">
+                                            <div class="col-3">
+                                                <small class="text-muted">Strategy</small>
+                                                <p class="mb-0">{{ suggestion.get_strategy_display }}</p>
+                                            </div>
+                                            <div class="col-3">
+                                                <small class="text-muted">Instrument</small>
+                                                <p class="mb-0"><strong>{{ suggestion.instrument }}</strong></p>
+                                            </div>
+                                            <div class="col-3">
+                                                <small class="text-muted">Direction</small>
+                                                <p class="mb-0">
+                                                    {% if suggestion.direction == 'LONG' %}
+                                                        <span class="badge bg-success">{{ suggestion.direction }}</span>
+                                                    {% elif suggestion.direction == 'SHORT' %}
+                                                        <span class="badge bg-danger">{{ suggestion.direction }}</span>
+                                                    {% else %}
+                                                        <span class="badge bg-secondary">{{ suggestion.direction }}</span>
+                                                    {% endif %}
+                                                </p>
+                                            </div>
+                                            <div class="col-3">
+                                                <small class="text-muted">Type</small>
+                                                <p class="mb-0">{{ suggestion.suggestion_type }}</p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-4 text-end">
+                                        <a href="{% url 'trading:suggestion_detail' suggestion.id %}" class="btn btn-sm btn-outline-primary">
+                                            <i class="fas fa-eye"></i> View Details
+                                        </a>
+                                    </div>
+                                </div>
+
+                                <!-- Approval Info -->
+                                {% if suggestion.approved_by or suggestion.approval_notes %}
+                                    <div class="alert alert-light p-2 mb-0">
+                                        {% if suggestion.approved_by %}
+                                            <small>
+                                                <strong>Approved by:</strong> {{ suggestion.approved_by.get_full_name|default:suggestion.approved_by.username }}
+                                                {% if suggestion.approval_timestamp %}
+                                                    at {{ suggestion.approval_timestamp|date:"M d, Y H:i" }}
+                                                {% endif %}
+                                            </small>
+                                            <br>
+                                        {% endif %}
+                                        {% if suggestion.approval_notes %}
+                                            <small><strong>Notes:</strong> {{ suggestion.approval_notes }}</small>
+                                        {% endif %}
+                                    </div>
+                                {% endif %}
+                            </div>
+                        </div>
+                    {% endfor %}
+                </div>
+            </div>
+        {% else %}
+            <div class="card-body text-center py-5">
+                <i class="fas fa-inbox" style="font-size: 3rem; color: #ccc; margin-bottom: 1rem; display: block;"></i>
+                <p class="text-muted mb-0">No suggestions match your filter</p>
+            </div>
+        {% endif %}
+    </div>
+
+    <!-- Pagination Info -->
+    {% if suggestions.count > 0 %}
+        <div class="mt-4 text-center text-muted">
+            <small>Showing {{ suggestions.count }} suggestion{{ suggestions.count|pluralize }}</small>
+        </div>
+    {% endif %}
+</div>
+
+<style>
+    .timeline {
+        position: relative;
+    }
+
+    .timeline-item {
+        transition: background-color 0.3s ease;
+    }
+
+    .timeline-item:hover {
+        background-color: #f8f9fa;
+        border-radius: 4px;
+    }
+
+    .timeline-bar {
+        left: -18px !important;
+    }
+
+    .border-info {
+        border-left: 3px solid #17a2b8 !important;
+    }
+
+    .border-warning {
+        border-left: 3px solid #ffc107 !important;
+    }
+
+    .border-success {
+        border-left: 3px solid #28a745 !important;
+    }
+
+    .border-danger {
+        border-left: 3px solid #dc3545 !important;
+    }
+
+    .border-secondary {
+        border-left: 3px solid #6c757d !important;
+    }
+</style>
+{% endblock %}

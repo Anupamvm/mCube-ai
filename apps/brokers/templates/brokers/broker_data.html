@@ -1,4 +1,5 @@
 {% extends 'brokers/base.html' %}
+{% load indian_formatting %}
 
 {% block title %}{{ broker }} Data - mCube{% endblock %}
 
@@ -14,11 +15,11 @@
         </tr>
         <tr>
             <td>Margin Available</td>
-            <td>₹{{ limit.margin_available|floatformat:2 }}</td>
+            <td>{{ limit.margin_available|indian_currency }}</td>
         </tr>
         <tr>
             <td>Margin Used</td>
-            <td>₹{{ limit.margin_used|floatformat:2 }}</td>
+            <td>{{ limit.margin_used|indian_currency }}</td>
         </tr>
         <tr>
             <td>Fetched At</td>
@@ -28,22 +29,22 @@
         {% if limit.broker == 'ICICI' %}
         <tr>
             <td>Total Bank Balance</td>
-            <td>₹{{ limit.total_bank_balance|floatformat:2 }}</td>
+            <td>{{ limit.total_bank_balance|indian_currency }}</td>
         </tr>
         <tr>
             <td>Allocated F&O</td>
-            <td>₹{{ limit.allocated_fno|floatformat:2 }}</td>
+            <td>{{ limit.allocated_fno|indian_currency }}</td>
         </tr>
         {% endif %}
 
         {% if limit.broker == 'KOTAK' %}
         <tr>
             <td>Net Balance</td>
-            <td>₹{{ limit.net_balance|floatformat:2 }}</td>
+            <td>{{ limit.net_balance|indian_currency }}</td>
         </tr>
         <tr>
             <td>Collateral Value</td>
-            <td>₹{{ limit.collateral_value|floatformat:2 }}</td>
+            <td>{{ limit.collateral_value|indian_currency }}</td>
         </tr>
         {% endif %}
     </table>
@@ -76,13 +77,13 @@
             <tr>
                 <td>{{ pos.symbol }}</td>
                 <td>{{ pos.net_quantity }}</td>
-                <td>₹{{ pos.average_price|floatformat:2 }}</td>
-                <td>₹{{ pos.ltp|floatformat:2 }}</td>
+                <td>{{ pos.average_price|indian_currency }}</td>
+                <td>{{ pos.ltp|indian_currency }}</td>
                 <td style="color: {% if pos.realized_pnl >= 0 %}green{% else %}red{% endif %}">
-                    ₹{{ pos.realized_pnl|floatformat:2 }}
+                    {{ pos.realized_pnl|indian_currency }}
                 </td>
                 <td style="color: {% if pos.unrealized_pnl >= 0 %}green{% else %}red{% endif %}">
-                    ₹{{ pos.unrealized_pnl|floatformat:2 }}
+                    {{ pos.unrealized_pnl|indian_currency }}
                 </td>
             </tr>
             {% endfor %}

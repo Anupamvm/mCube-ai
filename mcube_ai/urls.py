@@ -45,6 +45,7 @@ urlpatterns = [
     path('risk/', include('apps.risk.urls')),
     path('alerts/', include('apps.alerts.urls')),
     path('llm/', include('apps.llm.urls')),
+    path('trading/', include('apps.trading.urls')),
 ]
 
 # Serve static files in development

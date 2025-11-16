@@ -1,0 +1,182 @@
+{% extends "core/base.html" %}
+
+{% block title %}Breeze Session Token Input - mCube Trading System{% endblock %}
+
+{% block content %}
+<div class="token-input-page">
+    <div class="token-card">
+        <h2>🔐 Breeze API Login Verification</h2>
+        <p class="subtitle">Enter your Breeze session token to verify API connectivity</p>
+
+        <div class="info-box">
+            <h3>How to get your session token:</h3>
+            <ol>
+                <li>Log in to <a href="https://api.icicidirect.com/apiuser/login?api_key={{ api_key }}" target="_blank">Breeze API Portal</a></li>
+                <li>After login, you'll receive a session token</li>
+                <li>Copy the session token and paste it below</li>
+            </ol>
+        </div>
+
+        <form method="post" class="token-form">
+            {% csrf_token %}
+            <div class="form-group">
+                <label for="session_token">Session Token</label>
+                <input
+                    type="text"
+                    id="session_token"
+                    name="session_token"
+                    class="form-control"
+                    placeholder="Enter your Breeze session token"
+                    required
+                    autocomplete="off"
+                >
+            </div>
+
+            <div class="form-actions">
+                <button type="submit" class="btn btn-primary">Verify Login</button>
+                <a href="{% url 'core:system_test' %}" class="btn btn-secondary">Cancel</a>
+            </div>
+        </form>
+
+        <div class="credentials-info">
+            <p><strong>Account:</strong> {{ username }}</p>
+            <p><strong>API Key:</strong> {{ api_key|default:"Not configured" }}</p>
+        </div>
+    </div>
+</div>
+
+<style>
+    .token-input-page {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        min-height: 60vh;
+        padding: 2rem;
+    }
+
+    .token-card {
+        background: white;
+        border-radius: 12px;
+        padding: 2rem;
+        max-width: 600px;
+        width: 100%;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    }
+
+    .token-card h2 {
+        color: #2d3748;
+        margin-bottom: 0.5rem;
+    }
+
+    .subtitle {
+        color: #718096;
+        margin-bottom: 1.5rem;
+    }
+
+    .info-box {
+        background: #f7fafc;
+        border-left: 4px solid #4299e1;
+        padding: 1rem;
+        border-radius: 6px;
+        margin-bottom: 1.5rem;
+    }
+
+    .info-box h3 {
+        color: #2d3748;
+        font-size: 1rem;
+        margin-bottom: 0.5rem;
+    }
+
+    .info-box ol {
+        margin-left: 1.5rem;
+        color: #4a5568;
+    }
+
+    .info-box li {
+        margin-bottom: 0.5rem;
+    }
+
+    .info-box a {
+        color: #4299e1;
+        text-decoration: underline;
+    }
+
+    .token-form {
+        margin-bottom: 1.5rem;
+    }
+
+    .form-group {
+        margin-bottom: 1.5rem;
+    }
+
+    .form-group label {
+        display: block;
+        font-weight: 600;
+        color: #2d3748;
+        margin-bottom: 0.5rem;
+    }
+
+    .form-control {
+        width: 100%;
+        padding: 0.75rem;
+        border: 1px solid #cbd5e0;
+        border-radius: 6px;
+        font-size: 1rem;
+        font-family: monospace;
+    }
+
+    .form-control:focus {
+        outline: none;
+        border-color: #4299e1;
+        box-shadow: 0 0 0 3px rgba(66, 153, 225, 0.1);
+    }
+
+    .form-actions {
+        display: flex;
+        gap: 1rem;
+    }
+
+    .btn {
+        padding: 0.75rem 1.5rem;
+        border-radius: 6px;
+        font-weight: 500;
+        cursor: pointer;
+        text-decoration: none;
+        display: inline-block;
+        border: none;
+        transition: all 0.2s ease;
+    }
+
+    .btn-primary {
+        background: #4299e1;
+        color: white;
+    }
+
+    .btn-primary:hover {
+        background: #3182ce;
+    }
+
+    .btn-secondary {
+        background: #e2e8f0;
+        color: #2d3748;
+    }
+
+    .btn-secondary:hover {
+        background: #cbd5e0;
+    }
+
+    .credentials-info {
+        padding-top: 1.5rem;
+        border-top: 1px solid #e2e8f0;
+    }
+
+    .credentials-info p {
+        color: #4a5568;
+        margin-bottom: 0.5rem;
+    }
+
+    .credentials-info strong {
+        color: #2d3748;
+    }
+</style>
+{% endblock %}

@@ -5,30 +5,77 @@ Comprehensive broker API with:
 - Authentication & session management
 - Margin checking
 - Position fetching
-- Order placement  
+- Order placement
 - Quote fetching
 - Historical data
 - Option chain
 
+Implements BrokerInterface for consistency across broker integrations.
+
 Usage:
     from tools.neo import NeoAPI
-    
+
     api = NeoAPI()
     api.login()
-    
+
     # Check margin
-    margin = api.get_margin()
-    
+    margin = api.get_available_margin()
+
     # Place order
-    order_id = api.place_order('NIFTY', 'BUY', 50, 'MARKET')
+    order_id = api.place_order('NIFTY25NOV20000CE', 'B', 50, 'MARKET')
+
+    # Using factory pattern
+    from apps.brokers.interfaces import BrokerFactory
+    broker = BrokerFactory.get_broker('kotakneo')
+    broker.login()
+    margin = broker.get_available_margin()
 """
 
 from typing import Dict, List, Optional
 from datetime import datetime
 import pandas as pd
+import re
+import logging
+
+try:
+    from apps.brokers.interfaces import BrokerInterface, MarginData, Position, Order, Quote
+except ImportError:
+    # Fallback if interface is not available
+    BrokerInterface = object
+    MarginData = dict
+    Position = dict
+    Order = dict
+    Quote = dict
 
 
-class NeoAPI:
+def _parse_float(val):
+    """
+    Extract numeric content from val and return as float.
+    Falls back to 0.0 if parsing fails.
+    - strips commas and percent signs
+    """
+    if val is None:
+        return 0.0
+    if isinstance(val, (int, float)):
+        return float(val)
+    s = str(val).strip()
+    if not s:
+        return 0.0
+    s = s.replace(',', '')
+    if s.endswith('%'):
+        s = s[:-1]
+    m = re.search(r'-?\d+\.?\d*', s)
+    if not m:
+        logging.warning(f"Float parse: no numeric data in '{val}', defaulting to 0.0")
+        return 0.0
+    try:
+        return float(m.group())
+    except ValueError:
+        logging.warning(f"Float parse: invalid conversion for '{val}', defaulting to 0.0")
+        return 0.0
+
+
+class NeoAPI(BrokerInterface if isinstance(BrokerInterface, type) else object):
     """
     Comprehensive Kotak Neo API wrapper
     
@@ -63,36 +110,46 @@ class NeoAPI:
     def login(self) -> bool:
         """
         Login to Kotak Neo and establish session
-        
+
         Returns:
             bool: True if login successful
         """
         try:
             from neo_api_client import NeoAPI as KotakNeoAPI
-            
+            from apps.core.models import CredentialStore
+
+            # Get fresh credentials to access session_token
+            creds = CredentialStore.objects.filter(service='kotakneo').first()
+            if not creds:
+                raise Exception("Kotak Neo credentials not found in database")
+
             self.neo = KotakNeoAPI(
                 consumer_key=self.consumer_key,
                 consumer_secret=self.consumer_secret,
                 environment='prod'
             )
-            
-            # Login
+
+            # Login with PAN (username field stores PAN)
             response = self.neo.login(
-                mobilenumber=self.mobile_number,
-                password=self.password
+                pan=creds.username,
+                password=creds.password
             )
-            
+
             if response:
-                # Generate OTP (for first time)
-                # otp_response = self.neo.session_2fa(OTP="123456")
-                
-                self.session_active = True
-                print("✅ Neo login successful")
-                return True
+                # Complete 2FA with OTP/session token
+                session_response = self.neo.session_2fa(OTP=creds.session_token)
+
+                if session_response and session_response.get('data'):
+                    self.session_active = True
+                    print("✅ Neo login successful")
+                    return True
+                else:
+                    print(f"❌ Neo 2FA failed: {session_response}")
+                    return False
             else:
                 print(f"❌ Neo login failed: {response}")
                 return False
-                
+
         except Exception as e:
             print(f"❌ Neo login error: {e}")
             return False
@@ -113,7 +170,7 @@ class NeoAPI:
     def get_margin(self) -> Dict:
         """
         Get available margin/funds
-        
+
         Returns:
             dict: {
                 'available_margin': float,
@@ -125,29 +182,33 @@ class NeoAPI:
         try:
             if not self.session_active:
                 self.login()
-            
-            response = self.neo.limits()
-            
-            if response and response.get('data'):
-                data = response['data']
-                
-                # Neo returns margin data differently
-                available = float(data.get('available_margin', 0) or data.get('net', 0))
-                used = float(data.get('utilized_margin', 0) or 0)
-                total = float(data.get('gross', 0) or 0)
-                
+
+            # Call limits with segment/exchange/product parameters like working code
+            response = self.neo.limits(segment="ALL", exchange="ALL", product="ALL")
+
+            if response:
+                # Response is a dict directly (not nested in 'data')
+                # Map fields according to working code
+                available = _parse_float(response.get('Collateral'))
+                used = _parse_float(response.get('MarginUsed'))
+                net = _parse_float(response.get('Net'))
+                collateral_value = _parse_float(response.get('CollateralValue'))
+
                 return {
                     'available_margin': available,
                     'used_margin': used,
-                    'total_margin': total,
+                    'total_margin': net,
                     'cash': available,
-                    'raw': data
+                    'collateral': collateral_value,
+                    'raw': response
                 }
-            
+
             return {}
-            
+
         except Exception as e:
             print(f"Error fetching margin: {e}")
+            import traceback
+            traceback.print_exc()
             return {}
     
     def get_available_margin(self) -> float:
@@ -175,37 +236,102 @@ class NeoAPI:
     
     # ========== POSITIONS ==========
     
-    def get_positions(self) -> List[Dict]:
+    def get_positions(self) -> List[Position]:
         """
         Get all open positions
-        
+
         Returns:
-            list: List of position dicts
+            list: List of Position objects
         """
         try:
             if not self.session_active:
                 self.login()
-            
+
             response = self.neo.positions()
-            
-            if response and response.get('data'):
-                return response['data']
-            
-            return []
-            
+
+            if not response or not response.get('data'):
+                return []
+
+            raw_positions = response.get('data', [])
+            positions = []
+
+            for p in raw_positions:
+                # Parse quantities like working code
+                buy_qty = int(p.get('cfBuyQty', 0)) + int(p.get('flBuyQty', 0))
+                sell_qty = int(p.get('cfSellQty', 0)) + int(p.get('flSellQty', 0))
+                net_q = buy_qty - sell_qty
+
+                # Parse amounts
+                buy_amt = _parse_float(p.get('cfBuyAmt', 0)) + _parse_float(p.get('buyAmt', 0))
+                sell_amt = _parse_float(p.get('cfSellAmt', 0)) + _parse_float(p.get('sellAmt', 0))
+                ltp = _parse_float(p.get('stkPrc', 0))
+
+                # Calculate average price
+                if net_q > 0 and buy_qty:
+                    avg_price = buy_amt / buy_qty
+                elif net_q < 0 and sell_qty:
+                    avg_price = sell_amt / sell_qty
+                else:
+                    avg_price = 0.0
+
+                # Calculate P&L
+                realized_pnl = sell_amt - buy_amt
+                unrealized_pnl = net_q * ltp
+
+                # Create Position object if interface available
+                try:
+                    from apps.brokers.interfaces import Position as PositionClass
+                    pos = PositionClass(
+                        symbol=p.get('sym', p.get('trdSym', '')),
+                        quantity=net_q,
+                        average_price=avg_price,
+                        current_price=ltp,
+                        pnl=unrealized_pnl,
+                        pnl_percentage=(unrealized_pnl / (buy_amt if buy_amt else 1)) * 100 if buy_amt else 0.0,
+                        exchange=p.get('exSeg', ''),
+                        product=p.get('prod', ''),
+                        raw_data=p
+                    )
+                    positions.append(pos)
+                except ImportError:
+                    # Fallback to dict
+                    positions.append({
+                        'symbol': p.get('sym', p.get('trdSym', '')),
+                        'quantity': net_q,
+                        'average_price': avg_price,
+                        'ltp': ltp,
+                        'pnl': unrealized_pnl,
+                        'buy_qty': buy_qty,
+                        'sell_qty': sell_qty,
+                        'raw': p
+                    })
+
+            return positions
+
         except Exception as e:
             print(f"Error fetching positions: {e}")
+            import traceback
+            traceback.print_exc()
             return []
     
     def isOpenPos(self) -> bool:
         """
         Check if any open positions exist
-        
+
         Returns:
             bool: True if open positions exist
         """
         positions = self.get_positions()
         return len(positions) > 0
+
+    def has_open_positions(self) -> bool:
+        """
+        Check if any open positions exist (interface implementation)
+
+        Returns:
+            bool: True if open positions exist
+        """
+        return self.isOpenPos()
     
     def get_position_pnl(self) -> float:
         """
@@ -416,25 +542,87 @@ class NeoAPI:
     def is_market_open(self) -> bool:
         """
         Check if market is currently open
-        
+
         Returns:
             bool: True if market is open
         """
         try:
             now = datetime.now()
-            
+
             # Check if it's a weekday
             if now.weekday() >= 5:  # Saturday or Sunday
                 return False
-            
+
             # Check market hours (9:15 AM to 3:30 PM)
             market_open = now.replace(hour=9, minute=15, second=0)
             market_close = now.replace(hour=15, minute=30, second=0)
-            
+
             return market_open <= now <= market_close
-            
+
         except Exception as e:
             print(f"Error checking market status: {e}")
+            return False
+
+    def search_symbol(self, symbol: str, **kwargs) -> List[Dict]:
+        """
+        Search for a symbol in broker's database (interface implementation)
+
+        Args:
+            symbol: Symbol to search
+            **kwargs: Additional parameters (exchange, etc.)
+
+        Returns:
+            list: Matching symbols
+        """
+        try:
+            if not self.session_active:
+                self.login()
+
+            exchange = kwargs.get('exchange', 'NSE')
+            return self.search_scrip(symbol=symbol, exchange=exchange)
+        except Exception as e:
+            print(f"Error searching symbol: {e}")
+            return []
+
+    def subscribe_live_feed(self, symbols: List[str], **kwargs) -> bool:
+        """
+        Subscribe to live price feed (interface implementation)
+
+        Args:
+            symbols: List of symbols (instrument tokens)
+            **kwargs: Additional parameters
+
+        Returns:
+            bool: True if subscription successful
+        """
+        try:
+            if not self.session_active:
+                self.login()
+
+            self.subscribe(symbols)
+            return True
+        except Exception as e:
+            print(f"Error subscribing to live feed: {e}")
+            return False
+
+    def unsubscribe_live_feed(self, symbols: List[str]) -> bool:
+        """
+        Unsubscribe from live price feed (interface implementation)
+
+        Args:
+            symbols: List of symbols (instrument tokens)
+
+        Returns:
+            bool: True if unsubscription successful
+        """
+        try:
+            if not self.session_active:
+                self.login()
+
+            self.un_subscribe(symbols)
+            return True
+        except Exception as e:
+            print(f"Error unsubscribing from live feed: {e}")
             return False
 
 

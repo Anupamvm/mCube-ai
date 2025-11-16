@@ -48,11 +48,11 @@
                 <p class="stat-value">{{ today_orders|default:0 }}</p>
             </div>
         </div>
-        <div class="stat-card {% if total_pnl >= 0 %}profit{% else %}loss{% endif %}">
+        <div class="stat-card">
             <div class="stat-icon">💰</div>
             <div class="stat-info">
                 <h3>Total P&L</h3>
-                <p class="stat-value">₹{{ total_pnl|floatformat:2|default:"0.00" }}</p>
+                <p class="stat-value">{{ total_pnl|default:"₹0.00" }}</p>
             </div>
         </div>
     </div>

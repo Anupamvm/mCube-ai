@@ -1,0 +1,554 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Trade Suggestion #{{ suggestion.id }} - mCube AI{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <!-- Header -->
+    <div class="row mb-4">
+        <div class="col-md-8">
+            <div class="d-flex align-items-center">
+                <h1 class="h3 mb-0">Trade Suggestion #{{ suggestion.id }}</h1>
+                <span class="ms-3">
+                    {% if suggestion.status == 'PENDING' %}
+                        <span class="badge bg-warning text-dark">PENDING</span>
+                    {% elif suggestion.status == 'APPROVED' %}
+                        <span class="badge bg-info">APPROVED</span>
+                    {% elif suggestion.status == 'AUTO_APPROVED' %}
+                        <span class="badge bg-success">AUTO-APPROVED</span>
+                    {% elif suggestion.status == 'REJECTED' %}
+                        <span class="badge bg-danger">REJECTED</span>
+                    {% elif suggestion.status == 'EXECUTED' %}
+                        <span class="badge bg-primary">EXECUTED</span>
+                    {% endif %}
+                </span>
+            </div>
+        </div>
+        <div class="col-md-4 text-end">
+            <a href="{% url 'trading:pending_suggestions' %}" class="btn btn-outline-secondary">
+                <i class="fas fa-arrow-left"></i> Back to Suggestions
+            </a>
+        </div>
+    </div>
+
+    <!-- Messages -->
+    {% if messages %}
+        {% for message in messages %}
+            <div class="alert alert-{{ message.tags }} alert-dismissible fade show" role="alert">
+                {{ message }}
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            </div>
+        {% endfor %}
+    {% endif %}
+
+    <!-- Quick Summary -->
+    <div class="row mb-4">
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header bg-light">
+                    <h6 class="mb-0">Trade Summary</h6>
+                </div>
+                <div class="card-body">
+                    <div class="row mb-3">
+                        <div class="col-6">
+                            <p class="text-muted mb-1">Strategy</p>
+                            <p class="h6 mb-0">{{ suggestion.get_strategy_display }}</p>
+                        </div>
+                        <div class="col-6">
+                            <p class="text-muted mb-1">Type</p>
+                            <p class="h6 mb-0">{{ suggestion.suggestion_type }}</p>
+                        </div>
+                    </div>
+                    <div class="row mb-3">
+                        <div class="col-6">
+                            <p class="text-muted mb-1">Instrument</p>
+                            <p class="h6 mb-0">{{ suggestion.instrument }}</p>
+                        </div>
+                        <div class="col-6">
+                            <p class="text-muted mb-1">Direction</p>
+                            <p class="h6 mb-0">
+                                {% if suggestion.direction == 'LONG' %}
+                                    <span class="badge bg-success">{{ suggestion.direction }}</span>
+                                {% elif suggestion.direction == 'SHORT' %}
+                                    <span class="badge bg-danger">{{ suggestion.direction }}</span>
+                                {% else %}
+                                    <span class="badge bg-secondary">{{ suggestion.direction }}</span>
+                                {% endif %}
+                            </p>
+                        </div>
+                    </div>
+                    <div class="row">
+                        <div class="col-6">
+                            <p class="text-muted mb-1">Created</p>
+                            <p class="h6 mb-0">{{ suggestion.created_at|date:"M d, Y H:i" }}</p>
+                        </div>
+                        <div class="col-6">
+                            <p class="text-muted mb-1">Expires</p>
+                            <p class="h6 mb-0">
+                                {% if suggestion.expires_at %}
+                                    {{ suggestion.expires_at|date:"M d, Y H:i" }}
+                                {% else %}
+                                    Never
+                                {% endif %}
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Position Details -->
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header bg-light">
+                    <h6 class="mb-0">Position Details</h6>
+                </div>
+                <div class="card-body">
+                    {% if position_details %}
+                        <div class="row mb-2">
+                            <div class="col-6">
+                                <p class="text-muted mb-1">Quantity</p>
+                                <p class="h6 mb-0">{{ position_details.quantity }}</p>
+                            </div>
+                            <div class="col-6">
+                                <p class="text-muted mb-1">Lot Size</p>
+                                <p class="h6 mb-0">{{ position_details.lot_size }}</p>
+                            </div>
+                        </div>
+                        {% if position_details.entry_price %}
+                            <div class="row mb-2">
+                                <div class="col-6">
+                                    <p class="text-muted mb-1">Entry Price</p>
+                                    <p class="h6 mb-0">{{ position_details.entry_price }}</p>
+                                </div>
+                                <div class="col-6">
+                                    <p class="text-muted mb-1">Current Price</p>
+                                    <p class="h6 mb-0">{{ position_details.entry_price }}</p>
+                                </div>
+                            </div>
+                        {% endif %}
+                        <div class="row mb-2">
+                            <div class="col-6">
+                                <p class="text-muted mb-1">Stop Loss</p>
+                                <p class="h6 mb-0">{{ position_details.stop_loss|default:"-" }}</p>
+                            </div>
+                            <div class="col-6">
+                                <p class="text-muted mb-1">Target</p>
+                                <p class="h6 mb-0">{{ position_details.target|default:"-" }}</p>
+                            </div>
+                        </div>
+                        <div class="row">
+                            <div class="col-12">
+                                <p class="text-muted mb-1">Margin Required</p>
+                                <p class="h6 mb-0">{{ position_details.margin_required|default:"-" }}</p>
+                            </div>
+                        </div>
+                    {% else %}
+                        <p class="text-muted">No position details available</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Risk & Reward Analysis -->
+    {% if position_details.max_profit or position_details.support_level %}
+        <div class="row mb-4">
+            <!-- Max Profit & Loss -->
+            {% if position_details.max_profit %}
+                <div class="col-md-4 mb-3">
+                    <div class="card border-success">
+                        <div class="card-header bg-success text-white">
+                            <h6 class="mb-0">Max Profit Potential</h6>
+                        </div>
+                        <div class="card-body">
+                            <h3 class="text-success mb-2">₹{{ position_details.max_profit|default:"-" }}</h3>
+                            {% if position_details.max_profit_pct %}
+                                <p class="text-muted mb-0">{{ position_details.max_profit_pct|floatformat:1 }}% on margin</p>
+                            {% endif %}
+                            {% if position_details.profitable_range %}
+                                <hr>
+                                <small class="text-muted">Profitable range:</small>
+                                <p class="small mb-0">
+                                    {{ position_details.profitable_range.lower|default:"-" }} to {{ position_details.profitable_range.upper|default:"-" }}
+                                </p>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+            {% endif %}
+
+            <!-- Risk Analysis -->
+            {% if position_details.max_loss or position_details.risk_reward_ratio %}
+                <div class="col-md-4 mb-3">
+                    <div class="card border-danger">
+                        <div class="card-header bg-danger text-white">
+                            <h6 class="mb-0">Risk Analysis</h6>
+                        </div>
+                        <div class="card-body">
+                            {% if position_details.max_loss %}
+                                <p class="text-muted mb-1">Max Loss</p>
+                                <h4 class="text-danger mb-3">₹{{ position_details.max_loss|default:"-" }}</h4>
+                            {% endif %}
+                            {% if position_details.risk_reward_ratio %}
+                                <p class="text-muted mb-1">Risk/Reward Ratio</p>
+                                <h4 class="text-info">1 : {{ position_details.risk_reward_ratio|floatformat:2 }}</h4>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+            {% endif %}
+
+            <!-- Support & Resistance -->
+            {% if position_details.support_level or position_details.resistance_level %}
+                <div class="col-md-4 mb-3">
+                    <div class="card border-primary">
+                        <div class="card-header bg-primary text-white">
+                            <h6 class="mb-0">Support & Resistance</h6>
+                        </div>
+                        <div class="card-body">
+                            <div class="mb-3">
+                                <p class="text-muted mb-1">Resistance</p>
+                                <p class="h5 text-danger mb-0">{{ position_details.resistance_level|default:"-" }}</p>
+                                <small class="text-muted">{{ position_details.resistance_distance_pct|floatformat:1 }}% away</small>
+                            </div>
+                            <hr>
+                            <div>
+                                <p class="text-muted mb-1">Support</p>
+                                <p class="h5 text-success mb-0">{{ position_details.support_level|default:"-" }}</p>
+                                <small class="text-muted">{{ position_details.support_distance_pct|floatformat:1 }}% away</small>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            {% endif %}
+        </div>
+    {% endif %}
+
+    <!-- Profit/Loss Scenarios -->
+    {% if reasoning.final_decision.risk_reward.scenarios_count or reasoning.scoring.composite_breakdown %}
+        <div class="card mb-4">
+            <div class="card-header bg-light">
+                <h6 class="mb-0 cursor-pointer" data-bs-toggle="collapse" data-bs-target="#scenariosCollapse">
+                    <i class="fas fa-chevron-down"></i> Profit/Loss Scenarios at Different Price Levels
+                </h6>
+            </div>
+            <div class="collapse show" id="scenariosCollapse">
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="table table-sm table-striped">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Price Move</th>
+                                    <th>Target Price</th>
+                                    <th>Profit/Loss</th>
+                                    <th>% Return</th>
+                                    <th>Status</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% if reasoning.scoring.composite_breakdown %}
+                                    <!-- For futures scenarios -->
+                                    <tr>
+                                        <td>Neutral (0%)</td>
+                                        <td>{{ position_details.entry_price|default:"-" }}</td>
+                                        <td>₹0</td>
+                                        <td>0%</td>
+                                        <td><span class="badge bg-secondary">Breakeven</span></td>
+                                    </tr>
+                                    <tr class="table-success">
+                                        <td>+2% Move</td>
+                                        <td>{{ position_details.entry_price|floatformat:2 }}</td>
+                                        <td class="text-success">+₹{{ position_details.max_profit|default:"-" }}</td>
+                                        <td class="text-success">+{{ position_details.risk_reward_ratio|floatformat:0 }}%</td>
+                                        <td><span class="badge bg-success">Profit</span></td>
+                                    </tr>
+                                    <tr class="table-danger">
+                                        <td>-2% Move (SL)</td>
+                                        <td>{{ position_details.stop_loss|default:"-" }}</td>
+                                        <td class="text-danger">-₹{{ position_details.max_loss|default:"-" }}</td>
+                                        <td class="text-danger">-{{ position_details.risk_reward_ratio|floatformat:0 }}%</td>
+                                        <td><span class="badge bg-danger">Loss (SL Hit)</span></td>
+                                    </tr>
+                                    <tr class="table-success">
+                                        <td>+5% Move</td>
+                                        <td>-</td>
+                                        <td class="text-success">+₹{{ position_details.max_profit|default:"-" }}</td>
+                                        <td class="text-success">Higher gain</td>
+                                        <td><span class="badge bg-success">Profit</span></td>
+                                    </tr>
+                                    <tr class="table-danger">
+                                        <td>-5% Move</td>
+                                        <td>-</td>
+                                        <td class="text-danger">-₹{{ position_details.max_loss|default:"-" }}</td>
+                                        <td class="text-danger">Max loss</td>
+                                        <td><span class="badge bg-danger">Loss (SL)</span></td>
+                                    </tr>
+                                    <tr class="table-danger">
+                                        <td>-10% Move</td>
+                                        <td>-</td>
+                                        <td class="text-danger">-₹{{ position_details.max_loss|default:"-" }}</td>
+                                        <td class="text-danger">Max loss</td>
+                                        <td><span class="badge bg-danger">Loss (SL)</span></td>
+                                    </tr>
+                                {% endif %}
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="alert alert-info mt-3 mb-0">
+                        <strong>Key Points:</strong>
+                        <ul class="mb-0">
+                            <li>Trade profits if market moves in your favor beyond entry price</li>
+                            <li>Stop-loss at ₹{{ position_details.stop_loss|default:"-" }} limits maximum loss</li>
+                            <li>Target at ₹{{ position_details.target|default:"-" }} gives potential profit of ₹{{ position_details.max_profit|default:"-" }}</li>
+                            <li>Risk/Reward ratio of {{ position_details.risk_reward_ratio|default:"-" }} means you risk ₹1 to make ₹{{ position_details.risk_reward_ratio|floatformat:1 }}</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+    {% endif %}
+
+    <!-- Algorithm Reasoning (Expandable) -->
+    <div class="card mb-4">
+        <div class="card-header bg-light">
+            <h6 class="mb-0 cursor-pointer" data-bs-toggle="collapse" data-bs-target="#reasoningCollapse">
+                <i class="fas fa-chevron-down"></i> Algorithm Reasoning
+            </h6>
+        </div>
+        <div class="collapse show" id="reasoningCollapse">
+            <div class="card-body">
+                {% if reasoning %}
+                    <div class="row">
+                        <!-- Calculations -->
+                        {% if reasoning.calculations or reasoning.title %}
+                            <div class="col-md-6 mb-4">
+                                <h6 class="border-bottom pb-2">Algorithm Analysis</h6>
+                                {% if reasoning.title %}
+                                    <p class="mb-2"><strong>{{ reasoning.title }}</strong></p>
+                                {% endif %}
+                                {% if reasoning.summary %}
+                                    <p class="text-muted">{{ reasoning.summary }}</p>
+                                {% endif %}
+
+                                {% if reasoning.calculations %}
+                                    <h6 class="mt-3 mb-2">Calculations</h6>
+                                    <div style="background: #f8f9fa; padding: 12px; border-radius: 4px; font-family: monospace; font-size: 0.85rem; max-height: 400px; overflow-y: auto;">
+                                        {% include "trading/includes/json_display.html" with data=reasoning.calculations %}
+                                    </div>
+                                {% endif %}
+                            </div>
+                        {% endif %}
+
+                        <!-- Filters & Scoring -->
+                        <div class="col-md-6 mb-4">
+                            {% if reasoning.filters %}
+                                <h6 class="border-bottom pb-2">Filters & Validation</h6>
+                                <div style="background: #f8f9fa; padding: 12px; border-radius: 4px; font-family: monospace; font-size: 0.85rem; max-height: 400px; overflow-y: auto;">
+                                    {% include "trading/includes/json_display.html" with data=reasoning.filters %}
+                                </div>
+                            {% endif %}
+
+                            {% if reasoning.scoring %}
+                                <h6 class="border-bottom pb-2 mt-3">Scoring Breakdown</h6>
+                                <div style="background: #f8f9fa; padding: 12px; border-radius: 4px; font-family: monospace; font-size: 0.85rem; max-height: 400px; overflow-y: auto;">
+                                    {% include "trading/includes/json_display.html" with data=reasoning.scoring %}
+                                </div>
+                            {% endif %}
+                        </div>
+                    </div>
+
+                    <!-- Final Decision -->
+                    {% if reasoning.final_decision %}
+                        <div class="mt-4 pt-4 border-top">
+                            <h6 class="border-bottom pb-2">Final Decision</h6>
+                            <div style="background: #f8f9fa; padding: 12px; border-radius: 4px; font-family: monospace; font-size: 0.85rem; max-height: 300px; overflow-y: auto;">
+                                {% include "trading/includes/json_display.html" with data=reasoning.final_decision %}
+                            </div>
+                        </div>
+                    {% endif %}
+
+                    <!-- LLM Validation -->
+                    {% if reasoning.llm_validation %}
+                        <div class="mt-4 pt-4 border-top">
+                            <h6 class="border-bottom pb-2">LLM Validation</h6>
+                            <div style="background: #f8f9fa; padding: 12px; border-radius: 4px; font-family: monospace; font-size: 0.85rem; max-height: 300px; overflow-y: auto;">
+                                {% include "trading/includes/json_display.html" with data=reasoning.llm_validation %}
+                            </div>
+                        </div>
+                    {% endif %}
+
+                    <!-- Raw JSON (for debugging) -->
+                    <div class="mt-4 pt-4 border-top">
+                        <details>
+                            <summary class="cursor-pointer"><small class="text-muted">View Raw JSON</small></summary>
+                            <pre style="background: #f8f9fa; padding: 12px; border-radius: 4px; overflow-x: auto; margin-top: 12px;">{{ reasoning|safe }}</pre>
+                        </details>
+                    </div>
+                {% else %}
+                    <p class="text-muted">No algorithm reasoning available</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Approval History -->
+    <div class="card mb-4">
+        <div class="card-header bg-light">
+            <h6 class="mb-0">Approval History</h6>
+        </div>
+        <div class="card-body">
+            {% if suggestion.logs.all %}
+                <div class="timeline">
+                    {% for log in suggestion.logs.all|dictsort:"-created_at" %}
+                        <div class="timeline-item mb-3">
+                            <div class="d-flex">
+                                <div class="timeline-marker">
+                                    {% if log.action == 'CREATED' %}
+                                        <i class="fas fa-circle text-info" style="font-size: 0.7rem;"></i>
+                                    {% elif log.action == 'APPROVED' %}
+                                        <i class="fas fa-check-circle text-success"></i>
+                                    {% elif log.action == 'AUTO_APPROVED' %}
+                                        <i class="fas fa-check-circle text-success" style="opacity: 0.7;"></i>
+                                    {% elif log.action == 'REJECTED' %}
+                                        <i class="fas fa-times-circle text-danger"></i>
+                                    {% elif log.action == 'EXECUTED' %}
+                                        <i class="fas fa-play-circle text-primary"></i>
+                                    {% else %}
+                                        <i class="fas fa-circle-notch text-muted"></i>
+                                    {% endif %}
+                                </div>
+                                <div class="ms-3">
+                                    <p class="mb-1">
+                                        <strong>{{ log.get_action_display }}</strong>
+                                        <small class="text-muted">at {{ log.created_at|date:"M d, Y H:i:s" }}</small>
+                                    </p>
+                                    {% if log.user %}
+                                        <p class="mb-1"><small class="text-muted">By: {{ log.user.get_full_name|default:log.user.username }}</small></p>
+                                    {% endif %}
+                                    {% if log.notes %}
+                                        <p class="mb-0"><small>{{ log.notes }}</small></p>
+                                    {% endif %}
+                                </div>
+                            </div>
+                        </div>
+                    {% endfor %}
+                </div>
+            {% else %}
+                <p class="text-muted">No logs available</p>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Action Buttons -->
+    {% if suggestion.is_pending %}
+        <div class="row">
+            <div class="col-12">
+                <div class="d-flex gap-2 justify-content-end">
+                    <form method="POST" action="{% url 'trading:approve' suggestion.id %}" style="display: inline;">
+                        {% csrf_token %}
+                        <button type="submit" class="btn btn-success btn-lg">
+                            <i class="fas fa-check"></i> Approve & Proceed
+                        </button>
+                    </form>
+                    <button type="button" class="btn btn-danger btn-lg" data-bs-toggle="modal" data-bs-target="#rejectModal">
+                        <i class="fas fa-times"></i> Reject
+                    </button>
+                </div>
+            </div>
+        </div>
+    {% elif suggestion.is_approved and not suggestion.status == 'EXECUTED' %}
+        <div class="row">
+            <div class="col-12">
+                <div class="d-flex gap-2 justify-content-end">
+                    <a href="{% url 'trading:execute_suggestion' suggestion.id %}" class="btn btn-primary btn-lg">
+                        <i class="fas fa-play"></i> Execute Trade
+                    </a>
+                </div>
+            </div>
+        </div>
+    {% endif %}
+</div>
+
+<!-- Reject Modal -->
+{% if suggestion.is_pending %}
+    <div class="modal fade" id="rejectModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header bg-danger text-white">
+                    <h5 class="modal-title">Reject Suggestion</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <form method="POST" action="{% url 'trading:reject' suggestion.id %}">
+                    {% csrf_token %}
+                    <div class="modal-body">
+                        <p>Are you sure you want to reject this trade suggestion for <strong>{{ suggestion.instrument }} {{ suggestion.direction }}</strong>?</p>
+                        <p class="text-muted">This action cannot be undone.</p>
+                        <div class="mb-3">
+                            <label for="reason" class="form-label">Reason for Rejection</label>
+                            <textarea class="form-control" id="reason" name="reason" rows="3" placeholder="Why are you rejecting this suggestion?" required></textarea>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                        <button type="submit" class="btn btn-danger">Reject</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+{% endif %}
+
+<style>
+    .timeline-marker {
+        min-width: 24px;
+        text-align: center;
+    }
+
+    .cursor-pointer {
+        cursor: pointer;
+    }
+
+    details summary::-webkit-details-marker {
+        display: none;
+    }
+
+    details summary::before {
+        content: "▶ ";
+        margin-right: 4px;
+    }
+
+    details[open] summary::before {
+        content: "▼ ";
+    }
+</style>
+
+<!-- JSON Display Template (inlined) -->
+<script>
+    function formatJson(obj, indent = 0) {
+        const indentStr = '  '.repeat(indent);
+        const nextIndentStr = '  '.repeat(indent + 1);
+
+        if (obj === null) return 'null';
+        if (typeof obj === 'boolean') return obj.toString();
+        if (typeof obj === 'string') return `"${obj}"`;
+        if (typeof obj === 'number') return obj.toString();
+
+        if (Array.isArray(obj)) {
+            if (obj.length === 0) return '[]';
+            const items = obj.map(item => `${nextIndentStr}${formatJson(item, indent + 1)}`).join(',\n');
+            return `[\n${items}\n${indentStr}]`;
+        }
+
+        if (typeof obj === 'object') {
+            const keys = Object.keys(obj);
+            if (keys.length === 0) return '{}';
+            const items = keys.map(key => `${nextIndentStr}"${key}": ${formatJson(obj[key], indent + 1)}`).join(',\n');
+            return `{\n${items}\n${indentStr}}`;
+        }
+
+        return obj.toString();
+    }
+</script>
+{% endblock %}

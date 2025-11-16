@@ -1,0 +1,260 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Auto-Trade Configuration - mCube AI{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <!-- Header -->
+    <div class="row mb-4">
+        <div class="col-md-8">
+            <h1 class="h3 mb-0">Auto-Trade Configuration</h1>
+        </div>
+        <div class="col-md-4 text-end">
+            <a href="{% url 'trading:pending_suggestions' %}" class="btn btn-outline-secondary">
+                <i class="fas fa-arrow-left"></i> Back to Suggestions
+            </a>
+        </div>
+    </div>
+
+    <!-- Messages -->
+    {% if messages %}
+        {% for message in messages %}
+            <div class="alert alert-{{ message.tags }} alert-dismissible fade show" role="alert">
+                {{ message }}
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            </div>
+        {% endfor %}
+    {% endif %}
+
+    <!-- Info Alert -->
+    <div class="alert alert-info alert-dismissible fade show" role="alert">
+        <i class="fas fa-info-circle me-2"></i>
+        <strong>Auto-Trade System</strong> - Configure automatic approval thresholds for each strategy.
+        When a trade suggestion meets the configured threshold, it will be automatically approved and executed according to your settings.
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    </div>
+
+    {% if configs %}
+        <div class="row">
+            {% for strategy_name, config in configs.items %}
+                <div class="col-md-6 mb-4">
+                    <div class="card">
+                        <div class="card-header {% if config.is_enabled %}bg-success{% else %}bg-secondary{% endif %} text-white">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <h5 class="mb-0">{{ strategy_name }}</h5>
+                                <span class="badge {% if config.is_enabled %}bg-light text-success{% else %}bg-dark{% endif %}">
+                                    {% if config.is_enabled %}ENABLED{% else %}DISABLED{% endif %}
+                                </span>
+                            </div>
+                        </div>
+
+                        <form method="POST" class="card-body">
+                            {% csrf_token %}
+                            <input type="hidden" name="strategy" value="{{ config.strategy }}">
+
+                            <!-- Toggle Enable/Disable -->
+                            <div class="mb-4">
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" name="is_enabled" id="is_enabled_{{ config.id }}"
+                                           {% if config.is_enabled %}checked{% endif %}>
+                                    <label class="form-check-label" for="is_enabled_{{ config.id }}">
+                                        <strong>Enable Auto-Trade for {{ config.get_strategy_display }}</strong>
+                                    </label>
+                                </div>
+                                <small class="text-muted d-block mt-2">
+                                    When enabled, trade suggestions will be automatically approved and executed if they meet the threshold below.
+                                </small>
+                            </div>
+
+                            <hr>
+
+                            <!-- Auto-Approval Threshold -->
+                            <div class="mb-4">
+                                <label for="threshold_{{ config.id }}" class="form-label">
+                                    <strong>Auto-Approval Threshold</strong>
+                                </label>
+                                <div class="input-group">
+                                    <input type="number"
+                                           class="form-control"
+                                           id="threshold_{{ config.id }}"
+                                           name="auto_approve_threshold"
+                                           value="{{ config.auto_approve_threshold }}"
+                                           min="0"
+                                           max="100"
+                                           step="0.01"
+                                           placeholder="Enter threshold">
+                                    <span class="input-group-text">
+                                        {% if config.strategy == 'kotak_strangle' %}
+                                            % LLM Confidence
+                                        {% else %}
+                                            / 100 Score
+                                        {% endif %}
+                                    </span>
+                                </div>
+                                <small class="text-muted d-block mt-2">
+                                    {% if config.strategy == 'kotak_strangle' %}
+                                        For Options Strategy: Minimum LLM confidence percentage required for auto-approval (0-100)
+                                    {% else %}
+                                        For Futures Strategy: Minimum composite score required for auto-approval (0-100)
+                                    {% endif %}
+                                </small>
+                            </div>
+
+                            <!-- Risk Controls -->
+                            <div class="card border-warning mb-4">
+                                <div class="card-header bg-light">
+                                    <h6 class="mb-0">Risk Controls</h6>
+                                </div>
+                                <div class="card-body">
+                                    <div class="mb-3">
+                                        <label for="max_daily_{{ config.id }}" class="form-label">Max Daily Positions</label>
+                                        <input type="number"
+                                               class="form-control"
+                                               id="max_daily_{{ config.id }}"
+                                               name="max_daily_positions"
+                                               value="{{ config.max_daily_positions }}"
+                                               min="1"
+                                               max="100"
+                                               disabled>
+                                        <small class="text-muted">Maximum number of positions allowed per day</small>
+                                    </div>
+
+                                    <div class="mb-0">
+                                        <label for="max_loss_{{ config.id }}" class="form-label">Max Daily Loss</label>
+                                        <div class="input-group">
+                                            <span class="input-group-text">₹</span>
+                                            <input type="number"
+                                                   class="form-control"
+                                                   id="max_loss_{{ config.id }}"
+                                                   name="max_daily_loss"
+                                                   value="{{ config.max_daily_loss }}"
+                                                   min="0"
+                                                   step="1000"
+                                                   disabled>
+                                        </div>
+                                        <small class="text-muted">Maximum loss allowed per day (system will stop trading if exceeded)</small>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Special Rules -->
+                            <div class="card border-danger mb-4">
+                                <div class="card-header bg-light">
+                                    <h6 class="mb-0">Special Rules</h6>
+                                </div>
+                                <div class="card-body">
+                                    <div class="form-check mb-3">
+                                        <input class="form-check-input" type="checkbox"
+                                               id="weekend_{{ config.id }}"
+                                               {% if config.require_human_on_weekend %}checked{% endif %}
+                                               disabled>
+                                        <label class="form-check-label" for="weekend_{{ config.id }}">
+                                            Require human approval on weekends
+                                        </label>
+                                        <small class="text-muted d-block">Ensures a trader reviews weekend suggestions</small>
+                                    </div>
+
+                                    <div class="form-check mb-0">
+                                        <input class="form-check-input" type="checkbox"
+                                               id="vix_{{ config.id }}"
+                                               {% if config.require_human_on_high_vix %}checked{% endif %}
+                                               disabled>
+                                        <label class="form-check-label" for="vix_{{ config.id }}">
+                                            Require human approval when VIX > <strong>{{ config.vix_threshold }}</strong>
+                                        </label>
+                                        <small class="text-muted d-block">Prevents auto-trading during high volatility periods</small>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Action Buttons -->
+                            <div class="d-flex gap-2">
+                                <button type="submit" class="btn btn-primary">
+                                    <i class="fas fa-save"></i> Save Configuration
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            {% endfor %}
+        </div>
+    {% else %}
+        <div class="alert alert-warning">
+            <i class="fas fa-exclamation-triangle me-2"></i>
+            No strategies available. Please ensure strategies are configured in the system.
+        </div>
+    {% endif %}
+
+    <!-- How It Works Section -->
+    <div class="card mt-5">
+        <div class="card-header bg-light">
+            <h6 class="mb-0">How Auto-Trade Works</h6>
+        </div>
+        <div class="card-body">
+            <div class="row">
+                <div class="col-md-6">
+                    <h6>For Kotak Strangle (Options):</h6>
+                    <ol class="small">
+                        <li>Algorithm calculates LLM confidence score</li>
+                        <li>If confidence ≥ your threshold, suggestion is automatically approved</li>
+                        <li>Position is created and trading begins automatically</li>
+                        <li>You can still manually reject if needed</li>
+                    </ol>
+
+                    <h6 class="mt-3">Current Process:</h6>
+                    <p class="small text-muted">
+                        PENDING <i class="fas fa-arrow-right"></i>
+                        AUTO_APPROVED <i class="fas fa-arrow-right"></i>
+                        EXECUTED
+                    </p>
+                </div>
+
+                <div class="col-md-6">
+                    <h6>For ICICI Futures:</h6>
+                    <ol class="small">
+                        <li>Algorithm calculates composite score (OI + Sector + Technical)</li>
+                        <li>If score ≥ your threshold, suggestion is automatically approved</li>
+                        <li>Position is created and trading begins automatically</li>
+                        <li>Risk controls prevent excessive daily losses</li>
+                    </ol>
+
+                    <h6 class="mt-3">Key Features:</h6>
+                    <ul class="small text-muted">
+                        <li>✓ Daily position limit prevents over-trading</li>
+                        <li>✓ Max loss limit stops trading if daily loss exceeded</li>
+                        <li>✓ Weekend/High VIX rules for market conditions</li>
+                    </ul>
+                </div>
+            </div>
+
+            <hr class="my-4">
+
+            <div class="alert alert-danger mb-0">
+                <strong>⚠️ Important Warning:</strong>
+                <ul class="small mb-0 mt-2">
+                    <li>Auto-trading involves real money and real risk</li>
+                    <li>Ensure you understand the algorithms and thresholds before enabling</li>
+                    <li>Start with conservative thresholds and monitor closely</li>
+                    <li>You are fully responsible for any losses incurred</li>
+                    <li>The platform is not liable for automated trading decisions</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+    .card {
+        box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075);
+    }
+
+    .border-warning {
+        border-left: 4px solid #ffc107 !important;
+    }
+
+    .border-danger {
+        border-left: 4px solid #dc3545 !important;
+    }
+</style>
+{% endblock %}

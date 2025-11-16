@@ -18,6 +18,7 @@ Key Rules:
 """
 
 import logging
+import json
 from decimal import Decimal
 from datetime import datetime, time, date
 from typing import Dict, Tuple, Optional
@@ -35,6 +36,8 @@ from apps.data.models import ContractData
 from apps.brokers.models import HistoricalPrice
 from apps.positions.models import Position
 from apps.accounts.models import BrokerAccount
+from apps.trading.services import TradeSuggestionService, OptionsSuggestionFormatter
+from apps.trading.risk_calculator import OptionsRiskCalculator, SupportResistanceCalculator
 
 logger = logging.getLogger(__name__)
 
@@ -466,8 +469,8 @@ def execute_kotak_strangle_entry(account: BrokerAccount) -> Dict:
             'details': {'error': str(e)}
         }
 
-    # STEP 9: Place Orders
-    logger.info("STEP 9: Order Placement")
+    # STEP 9: Create Trade Suggestion
+    logger.info("STEP 9: Trade Suggestion Creation")
     logger.info("-" * 80)
 
     try:
@@ -476,64 +479,166 @@ def execute_kotak_strangle_entry(account: BrokerAccount) -> Dict:
         stop_loss = Decimal('0')  # Premium goes to zero
         target = premium_collected * Decimal('0.70')  # 70% profit on premium
 
-        # Create position
-        success, position, message = create_position(
-            account=account,
-            strategy_type='WEEKLY_NIFTY_STRANGLE',
-            instrument='NIFTY',
-            direction='NEUTRAL',  # Strangle is market-neutral
-            quantity=quantity,
-            lot_size=lot_size,
-            entry_price=total_premium,
-            stop_loss=stop_loss,
-            target=target,
-            expiry_date=selected_expiry,
-            margin_used=margin_used,
-            call_strike=Decimal(str(strikes['call_strike'])),
-            put_strike=Decimal(str(strikes['put_strike'])),
-            premium_collected=premium_collected,
-            current_delta=Decimal('0'),  # Initially delta-neutral
-        )
-
-        if success:
-            logger.info(f"✅ Position created successfully: {position.id}")
-            logger.info(f"   Instrument: {position.instrument}")
-            logger.info(f"   Call Strike: {position.call_strike}")
-            logger.info(f"   Put Strike: {position.put_strike}")
-            logger.info(f"   Premium Collected: ₹{position.premium_collected:,.0f}")
-            logger.info(f"   Margin Used: ₹{position.margin_used:,.0f}")
-            logger.info("")
-            logger.info("=" * 100)
-
-            return {
-                'success': True,
-                'message': 'Kotak Strangle position created successfully',
-                'position': position,
-                'details': {
-                    'strikes': strikes,
-                    'expiry': selected_expiry,
-                    'premium_collected': premium_collected,
-                    'margin_used': margin_used,
-                    'quantity': quantity
+        # Prepare algorithm reasoning (complete analysis details)
+        algorithm_reasoning = {
+            'title': 'Kotak Strangle Strategy',
+            'summary': 'Short Strangle position to collect premium',
+            'calculations': {
+                'spot_price': str(spot_price),
+                'vix': str(vix),
+                'days_to_expiry': days_to_expiry,
+                'strike_distance': str(strikes['strike_distance']),
+                'adjusted_delta': str(strikes['adjusted_delta']),
+                'adjustment_reason': strikes['adjustment_reason'],
+                'call_premium': str(call_premium),
+                'put_premium': str(put_premium),
+                'total_premium': str(total_premium),
+                'premium_collected': str(premium_collected),
+            },
+            'filters': {
+                'filters_passed': filters_passed,
+                'filters_failed': filters_failed,
+                'entry_time_valid': True,
+                'position_count_check': morning_check_result['message'],
+            },
+            'position_sizing': {
+                'usable_margin': str(usable_margin),
+                'lot_size': lot_size,
+                'lots': lots,
+                'quantity': quantity,
+                'margin_per_lot': str(margin_per_lot),
+                'margin_used': str(margin_used),
+            },
+            'final_decision': {
+                'recommendation': 'SELL_STRANGLE',
+                'position_details': {
+                    'instrument': 'NIFTY',
+                    'strategy': 'Short Strangle',
+                    'call_strike': strikes['call_strike'],
+                    'put_strike': strikes['put_strike'],
+                    'total_quantity': quantity,
+                    'quantity_per_lot': lot_size,
+                    'premium_collected': str(premium_collected),
+                    'margin_used': str(margin_used),
+                    'stop_loss': str(stop_loss),
+                    'target': str(target),
+                    'expiry_date': str(selected_expiry),
+                },
+                'risk_reward': {
+                    'max_profit': str(risk_scenarios['max_profit']),
+                    'profitable_range': risk_scenarios['profit_zone'],
+                    'breakeven_call': str(risk_scenarios['call_breakeven']),
+                    'breakeven_put': str(risk_scenarios['put_breakeven']),
+                    'scenarios_count': len(risk_scenarios['scenarios']),
+                },
+                'support_resistance': {
+                    'support_level': str(support_resistance['support']),
+                    'resistance_level': str(support_resistance['resistance']),
+                    'next_support': str(support_resistance['next_support']),
+                    'next_resistance': str(support_resistance['next_resistance']),
                 }
             }
-        else:
-            logger.error(f"❌ Position creation failed: {message}")
-            logger.info("=" * 100)
-            return {
-                'success': False,
-                'message': message,
-                'position': None,
-                'details': {}
+        }
+
+        # Calculate risk/reward scenarios
+        risk_scenarios = OptionsRiskCalculator.calculate_scenarios(
+            current_price=spot_price,
+            call_strike=strikes['call_strike'],
+            put_strike=strikes['put_strike'],
+            call_premium=call_premium,
+            put_premium=put_premium,
+            quantity=quantity,
+            lot_size=lot_size
+        )
+
+        # Calculate target and SL recommendations
+        target_sl = OptionsRiskCalculator.calculate_target_and_sl(
+            current_price=spot_price,
+            call_strike=strikes['call_strike'],
+            put_strike=strikes['put_strike'],
+            call_premium=call_premium,
+            put_premium=put_premium,
+            quantity=quantity
+        )
+
+        # Support and Resistance (TODO: Fetch actual price data)
+        # For now, using placeholder data
+        support_resistance = SupportResistanceCalculator.calculate_next_levels(
+            current_price=spot_price,
+            support_level=spot_price * Decimal('0.99'),  # 1% below
+            resistance_level=spot_price * Decimal('1.01')  # 1% above
+        )
+
+        # Prepare position details with risk metrics
+        position_details = {
+            'instrument': 'NIFTY',
+            'strategy': 'Short Strangle',
+            'call_strike': strikes['call_strike'],
+            'put_strike': strikes['put_strike'],
+            'quantity': quantity,
+            'lot_size': lot_size,
+            'entry_price': None,  # Will be fetched from market at execution
+            'premium_collected': str(premium_collected),
+            'margin_required': str(margin_used),
+            'stop_loss': str(stop_loss),
+            'target': str(target),
+            'expiry_date': str(selected_expiry),
+            # Risk metrics
+            'max_profit': str(risk_scenarios['max_profit']),
+            'max_profit_pct': str((risk_scenarios['max_profit'] / margin_used * 100) if margin_used > 0 else 0),
+            'profitable_range': {
+                'lower': str(risk_scenarios['profit_zone']['lower']),
+                'upper': str(risk_scenarios['profit_zone']['upper']),
+            },
+            'support_level': str(support_resistance['support']),
+            'support_distance': str(support_resistance['support_distance']),
+            'support_distance_pct': str(support_resistance['support_distance_pct']),
+            'resistance_level': str(support_resistance['resistance']),
+            'resistance_distance': str(support_resistance['resistance_distance']),
+            'resistance_distance_pct': str(support_resistance['resistance_distance_pct']),
+        }
+
+        # Create trade suggestion
+        suggestion = TradeSuggestionService.create_suggestion(
+            user=account.user,
+            strategy='kotak_strangle',
+            suggestion_type='OPTIONS',
+            instrument='NIFTY',
+            direction='NEUTRAL',
+            algorithm_reasoning=algorithm_reasoning,
+            position_details=position_details
+        )
+
+        logger.info(f"✅ Trade suggestion created successfully: {suggestion.id}")
+        logger.info(f"   Status: {suggestion.get_status_display()}")
+        logger.info(f"   Auto-Trade: {suggestion.is_auto_trade}")
+        logger.info(f"   Premium Collected: ₹{premium_collected:,.0f}")
+        logger.info(f"   Margin Used: ₹{margin_used:,.0f}")
+        logger.info("")
+        logger.info("=" * 100)
+
+        return {
+            'success': True,
+            'message': f'Trade suggestion #{suggestion.id} created (Status: {suggestion.get_status_display()})',
+            'suggestion': suggestion,
+            'details': {
+                'strikes': strikes,
+                'expiry': selected_expiry,
+                'premium_collected': premium_collected,
+                'margin_used': margin_used,
+                'quantity': quantity,
+                'suggestion_status': suggestion.get_status_display(),
+                'is_auto_trade': suggestion.is_auto_trade,
             }
+        }
 
     except Exception as e:
-        msg = f"❌ Order placement failed: {str(e)}"
+        msg = f"❌ Trade suggestion creation failed: {str(e)}"
         logger.error(msg, exc_info=True)
         logger.info("=" * 100)
         return {
             'success': False,
             'message': msg,
-            'position': None,
+            'suggestion': None,
             'details': {'error': str(e)}
         }

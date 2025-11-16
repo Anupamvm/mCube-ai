@@ -4,7 +4,7 @@ Core views for mCube Trading System
 This module contains system-wide views including the comprehensive test page.
 """
 
-from django.shortcuts import render
+from django.shortcuts import render, redirect
 from django.contrib.auth.decorators import login_required, user_passes_test
 from django.db import connection
 from django.conf import settings
@@ -12,6 +12,8 @@ import requests
 import logging
 from datetime import datetime, timedelta
 from decimal import Decimal
+from tools.neo import _parse_float
+from apps.core.utils import format_currency
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +52,7 @@ def home_page(request):
                 'active_positions': active_positions,
                 'active_accounts': active_accounts,
                 'today_orders': today_orders,
-                'total_pnl': total_pnl,
+                'total_pnl': format_currency(total_pnl),
                 'is_admin': is_admin_user(request.user),
             })
         except Exception as e:
@@ -252,6 +254,615 @@ def view_documentation(request, doc_name):
 
 @login_required
 @user_passes_test(is_admin_user, login_url='/login/')
+def trigger_trendlyne_download(request):
+    """
+    Trigger Trendlyne FULL CYCLE: Download → Parse → Populate Database
+
+    Downloads all Trendlyne data files and populates all database models:
+    - ContractData (F&O contracts)
+    - ContractStockData (Stock-specific contract data)
+    - TLStockData (Market snapshot)
+    - And all other Trendlyne models
+    """
+    from django.contrib import messages
+    import threading
+
+    # Only allow POST requests
+    if request.method != 'POST':
+        messages.error(request, "Invalid request method")
+        return redirect('core:system_test')
+
+    try:
+        def full_download_and_populate_task():
+            try:
+                from apps.data.tools.trendlyne import get_all_trendlyne_data
+                from django.core.management import call_command
+                from io import StringIO
+
+                # Step 1: Download all data from Trendlyne
+                logger.info("Step 1/2: Downloading all Trendlyne data files...")
+                results = get_all_trendlyne_data()
+                logger.info(f"Trendlyne download completed: {results}")
+
+                # Step 2: Parse and populate all database models
+                logger.info("Step 2/2: Parsing files and populating database models...")
+                import subprocess
+                result = subprocess.run(
+                    ['python', 'parse_all_trendlyne_data.py'],
+                    cwd='/Users/anupammangudkar/Projects/mCube-ai/mCube-ai',
+                    capture_output=True,
+                    text=True,
+                    timeout=300
+                )
+                logger.info(f"Parser output: {result.stdout}")
+
+                # Get summary statistics
+                from apps.data.models import (
+                    ContractData, ContractStockData, TLStockData,
+                    OptionChain, Event, NewsArticle, InvestorCall, KnowledgeBase
+                )
+
+                stats = {
+                    'ContractData': ContractData.objects.count(),
+                    'ContractStockData': ContractStockData.objects.count(),
+                    'TLStockData': TLStockData.objects.count(),
+                    'OptionChain': OptionChain.objects.count(),
+                    'Event': Event.objects.count(),
+                    'NewsArticle': NewsArticle.objects.count(),
+                    'InvestorCall': InvestorCall.objects.count(),
+                    'KnowledgeBase': KnowledgeBase.objects.count(),
+                }
+
+                total = sum(stats.values())
+                logger.info(f"Full Trendlyne cycle completed: {total} total records populated")
+                logger.info(f"Breakdown: {stats}")
+
+            except Exception as e:
+                logger.error(f"Trendlyne full cycle failed: {e}", exc_info=True)
+
+        thread = threading.Thread(target=full_download_and_populate_task, daemon=True)
+        thread.start()
+
+        messages.success(request, "Trendlyne full cycle initiated (Download → Parse → Populate Database). This will populate ContractData, ContractStockData, TLStockData and all other models. Refresh in 2-3 minutes to see updated statistics.")
+
+    except Exception as e:
+        messages.error(request, f"Failed to start Trendlyne full cycle: {str(e)}")
+        logger.error(f"Error triggering Trendlyne full cycle: {e}", exc_info=True)
+
+    return redirect('core:system_test')
+
+
+@login_required
+@user_passes_test(is_admin_user, login_url='/login/')
+def trigger_fno_data_download(request):
+    """
+    Trigger F&O Contract Data download and database population
+    Downloads only contract data and populates ContractData model
+    """
+    from django.contrib import messages
+    import threading
+
+    if request.method != 'POST':
+        messages.error(request, "Invalid request method")
+        return redirect('core:system_test')
+
+    try:
+        def fno_download_task():
+            try:
+                from django.core.management import call_command
+                from io import StringIO
+
+                # Run the trendlyne_data_manager command with --parse-all
+                out = StringIO()
+                call_command('trendlyne_data_manager', '--parse-all', stdout=out)
+
+                from apps.data.models import ContractData
+                record_count = ContractData.objects.count()
+
+                logger.info(f"F&O data population completed: {record_count} contract records")
+
+            except Exception as e:
+                logger.error(f"F&O data population failed: {e}", exc_info=True)
+
+        thread = threading.Thread(target=fno_download_task, daemon=True)
+        thread.start()
+
+        messages.success(request, "F&O data population initiated. Refresh in 30 seconds to see updated record counts.")
+
+    except Exception as e:
+        messages.error(request, f"Failed to start F&O data population: {str(e)}")
+        logger.error(f"Error triggering F&O data: {e}", exc_info=True)
+
+    return redirect('core:system_test')
+
+
+@login_required
+@user_passes_test(is_admin_user, login_url='/login/')
+def trigger_trendlyne_full_cycle(request):
+    """
+    Trigger complete Trendlyne data pipeline:
+    1. Clear previous files
+    2. Download new data
+    3. Parse & populate database
+    4. Clean temporary files
+
+    This provides comprehensive data refresh with all statistics
+    """
+    from django.contrib import messages
+    import threading
+
+    if request.method != 'POST':
+        messages.error(request, "Invalid request method")
+        return redirect('core:system_test')
+
+    try:
+        def full_cycle_task():
+            try:
+                from django.core.management import call_command
+                from io import StringIO
+
+                # Run the full cycle command
+                out = StringIO()
+                call_command('trendlyne_data_manager', '--full-cycle', stdout=out)
+
+                # Get summary statistics
+                from apps.data.models import (
+                    ContractData, ContractStockData, TLStockData,
+                    OptionChain, Event, NewsArticle, InvestorCall, KnowledgeBase
+                )
+
+                stats = {
+                    'ContractData': ContractData.objects.count(),
+                    'ContractStockData': ContractStockData.objects.count(),
+                    'TLStockData': TLStockData.objects.count(),
+                    'OptionChain': OptionChain.objects.count(),
+                    'Event': Event.objects.count(),
+                    'NewsArticle': NewsArticle.objects.count(),
+                    'InvestorCall': InvestorCall.objects.count(),
+                    'KnowledgeBase': KnowledgeBase.objects.count(),
+                }
+
+                total = sum(stats.values())
+                logger.info(f"Full Trendlyne cycle completed: {total} total records | {stats}")
+
+            except Exception as e:
+                logger.error(f"Full Trendlyne cycle failed: {e}", exc_info=True)
+
+        thread = threading.Thread(target=full_cycle_task, daemon=True)
+        thread.start()
+
+        messages.success(request, "Full Trendlyne data cycle initiated (Download → Parse → Populate → Cleanup). Refresh in 60 seconds to see all updated statistics.")
+
+    except Exception as e:
+        messages.error(request, f"Failed to start Trendlyne full cycle: {str(e)}")
+        logger.error(f"Error triggering Trendlyne full cycle: {e}", exc_info=True)
+
+    return redirect('core:system_test')
+
+
+@login_required
+@user_passes_test(is_admin_user, login_url='/login/')
+def trigger_market_snapshot_download(request):
+    """
+    Trigger Market Snapshot data download and database population.
+    Only downloads if existing files are older than 10 minutes.
+    """
+    from django.contrib import messages
+    import threading
+    import os
+    from datetime import datetime
+
+    if request.method != 'POST':
+        messages.error(request, "Invalid request method")
+        return redirect('core:system_test')
+
+    try:
+        def market_snapshot_task():
+            try:
+                from apps.data.tools.trendlyne import getMarketSnapshotData, init_driver_with_download, login_to_trendlyne
+                from django.conf import settings
+
+                data_dir = os.path.join(settings.BASE_DIR, 'apps', 'data', 'tldata')
+                os.makedirs(data_dir, exist_ok=True)
+
+                # Check if existing files are fresh (< 10 minutes)
+                snapshot_files = [f for f in os.listdir(data_dir) if f.startswith('market_snapshot_') and (f.endswith('.csv') or f.endswith('.xlsx'))]
+
+                should_download = True
+                if snapshot_files:
+                    snapshot_files.sort(reverse=True)
+                    latest_file = snapshot_files[0]
+                    file_path = os.path.join(data_dir, latest_file)
+                    file_time = datetime.fromtimestamp(os.path.getmtime(file_path))
+                    age_minutes = (datetime.now() - file_time).total_seconds() / 60
+
+                    if age_minutes < 10:
+                        logger.info(f"Market Snapshot data is fresh ({age_minutes:.1f} minutes old). Skipping download.")
+                        should_download = False
+
+                if should_download:
+                    # Initialize driver and login
+                    driver = init_driver_with_download(data_dir)
+                    try:
+                        login_success = login_to_trendlyne(driver)
+                        if not login_success:
+                            logger.error("Failed to login to Trendlyne")
+                            return
+
+                        # Download market snapshot
+                        logger.info("Downloading Market Snapshot data from Trendlyne...")
+                        getMarketSnapshotData(driver, download_dir=data_dir)
+                        logger.info("Market Snapshot data download completed")
+
+                    finally:
+                        driver.quit()
+
+                # Parse and populate database
+                from django.core.management import call_command
+                from io import StringIO
+
+                logger.info("Parsing Market Snapshot data into database...")
+                out = StringIO()
+                call_command('trendlyne_data_manager', '--parse-market-snapshot', stdout=out)
+
+                from apps.data.models import TLStockData
+                record_count = TLStockData.objects.count()
+
+                logger.info(f"Market Snapshot data population completed: {record_count} stock records")
+
+            except Exception as e:
+                logger.error(f"Market Snapshot data task failed: {e}", exc_info=True)
+
+        thread = threading.Thread(target=market_snapshot_task, daemon=True)
+        thread.start()
+
+        messages.success(request, "Market Snapshot data download initiated. Will check file freshness (< 10 min) before downloading. Refresh in 30 seconds to see results.")
+
+    except Exception as e:
+        messages.error(request, f"Failed to start Market Snapshot download: {str(e)}")
+        logger.error(f"Error triggering Market Snapshot: {e}", exc_info=True)
+
+    return redirect('core:system_test')
+
+
+@login_required
+@user_passes_test(is_admin_user, login_url='/login/')
+def trigger_forecaster_download(request):
+    """
+    Trigger Forecaster data download (21 screener pages).
+    Only downloads if existing files are older than 10 minutes.
+    """
+    from django.contrib import messages
+    import threading
+    import os
+    from datetime import datetime
+
+    if request.method != 'POST':
+        messages.error(request, "Invalid request method")
+        return redirect('core:system_test')
+
+    try:
+        def forecaster_task():
+            try:
+                from apps.data.tools.trendlyne import getTrendlyneForecasterData, init_driver_with_download, login_to_trendlyne
+                from django.conf import settings
+
+                data_dir = os.path.join(settings.BASE_DIR, 'apps', 'data', 'tldata')
+                forecaster_dir = os.path.join(data_dir, 'forecaster')
+                os.makedirs(forecaster_dir, exist_ok=True)
+
+                # Check if existing files are fresh (< 10 minutes)
+                forecaster_files = [f for f in os.listdir(forecaster_dir) if f.startswith('trendlyne_') and f.endswith('.csv')] if os.path.exists(forecaster_dir) else []
+
+                should_download = True
+                if forecaster_files:
+                    file_times = [os.path.getmtime(os.path.join(forecaster_dir, f)) for f in forecaster_files]
+                    most_recent_time = datetime.fromtimestamp(max(file_times))
+                    age_minutes = (datetime.now() - most_recent_time).total_seconds() / 60
+
+                    if age_minutes < 10:
+                        logger.info(f"Forecaster data is fresh ({age_minutes:.1f} minutes old). Skipping download.")
+                        should_download = False
+
+                if should_download:
+                    # Initialize driver and login
+                    driver = init_driver_with_download(data_dir)
+                    try:
+                        login_success = login_to_trendlyne(driver)
+                        if not login_success:
+                            logger.error("Failed to login to Trendlyne")
+                            return
+
+                        # Download forecaster data (21 pages)
+                        logger.info("Downloading Forecaster data (21 pages) from Trendlyne...")
+                        getTrendlyneForecasterData(driver, output_dir=forecaster_dir)
+                        logger.info("Forecaster data download completed")
+
+                    finally:
+                        driver.quit()
+
+                # Count files
+                forecaster_files = [f for f in os.listdir(forecaster_dir) if f.startswith('trendlyne_') and f.endswith('.csv')]
+                logger.info(f"Forecaster data ready: {len(forecaster_files)} CSV files")
+
+            except Exception as e:
+                logger.error(f"Forecaster data task failed: {e}", exc_info=True)
+
+        thread = threading.Thread(target=forecaster_task, daemon=True)
+        thread.start()
+
+        messages.success(request, "Forecaster data download initiated (21 screener pages). Will check file freshness (< 10 min) before downloading. Refresh in 60 seconds to see results.")
+
+    except Exception as e:
+        messages.error(request, f"Failed to start Forecaster download: {str(e)}")
+        logger.error(f"Error triggering Forecaster: {e}", exc_info=True)
+
+    return redirect('core:system_test')
+
+
+@login_required
+@user_passes_test(is_admin_user, login_url='/login/')
+def verify_kotak_login(request):
+    """
+    Verify Kotak Neo API login
+    """
+    from django.contrib import messages
+
+    if request.method != 'POST':
+        messages.error(request, "Invalid request method")
+        return redirect('core:system_test')
+
+    try:
+        from apps.core.models import CredentialStore
+        from tools.neo import NeoAPI
+
+        # Get credentials
+        creds = CredentialStore.objects.filter(service='kotakneo').first()
+        if not creds:
+            messages.error(request, "Kotak Neo credentials not found")
+            return redirect('core:system_test')
+
+        # Attempt login
+        neo = NeoAPI()
+        success = neo.login()
+
+        if success:
+            # Fetch account data to verify connection
+            try:
+                margin = neo.get_margin()
+                positions = neo.get_positions()
+
+                # Also fetch holdings (equity stocks)
+                try:
+                    holdings_resp = neo.neo.holdings()
+                    holdings = holdings_resp.get('data', []) if holdings_resp else []
+                except Exception as e:
+                    logger.warning(f"Could not fetch holdings: {e}")
+                    holdings = []
+
+                logger.info(f"Kotak Neo margin data: {margin}")
+                logger.info(f"Kotak Neo positions count: {len(positions) if positions else 0}")
+                logger.info(f"Kotak Neo holdings count: {len(holdings) if holdings else 0}")
+
+                # margin is a dict, positions are Position objects or dicts
+                available_margin = margin.get('available_margin', 0) if isinstance(margin, dict) else 0
+                position_count = len(positions) if positions else 0
+                holding_count = len(holdings) if holdings else 0
+
+                # Calculate total investment from positions (F&O)
+                total_investment = 0
+                for p in positions:
+                    if hasattr(p, 'quantity') and hasattr(p, 'average_price'):
+                        # Position object
+                        qty = p.quantity
+                        avg_price = p.average_price
+                        investment = abs(qty * avg_price)
+                        logger.info(f"Position: {p.symbol}, qty={qty}, avg_price={avg_price}, investment={investment}")
+                        total_investment += investment
+                    elif isinstance(p, dict):
+                        # Dict fallback
+                        qty = p.get('quantity', 0)
+                        avg_price = p.get('average_price', 0)
+                        investment = abs(qty * avg_price)
+                        logger.info(f"Position (dict): qty={qty}, avg_price={avg_price}, investment={investment}")
+                        total_investment += investment
+
+                # Add investment from holdings (equity stocks)
+                for h in holdings:
+                    qty = int(h.get('flHoldQty', 0)) + int(h.get('dpHoldQty', 0))
+                    avg_price = _parse_float(h.get('avg', 0)) if 'avg' in h else _parse_float(h.get('avgPrc', 0))
+                    investment = abs(qty * avg_price)
+                    logger.info(f"Holding: {h.get('trdSym', 'Unknown')}, qty={qty}, avg_price={avg_price}, investment={investment}")
+                    total_investment += investment
+
+                logger.info(f"Total investment calculated: {total_investment}")
+
+                # Store verification details in session
+                request.session['kotak_login_verified'] = True
+                request.session['kotak_login_time'] = str(datetime.now())
+                request.session['kotak_available_margin'] = float(available_margin)
+                request.session['kotak_position_count'] = position_count
+                request.session['kotak_holding_count'] = holding_count
+                request.session['kotak_total_investment'] = float(total_investment)
+
+                messages.success(
+                    request,
+                    f"✅ Kotak Neo login successful! "
+                    f"Available Margin: {format_currency(available_margin)}, "
+                    f"F&O Positions: {position_count}, "
+                    f"Stock Holdings: {holding_count}, "
+                    f"Total Investment: {format_currency(total_investment)}"
+                )
+            except Exception as e:
+                logger.warning(f"Kotak Neo login successful but couldn't fetch account data: {e}")
+                request.session['kotak_login_verified'] = True
+                request.session['kotak_login_time'] = str(datetime.now())
+                messages.success(request, f"✅ Kotak Neo login successful for {creds.username}!")
+        else:
+            request.session['kotak_login_verified'] = False
+            messages.error(request, f"❌ Kotak Neo login failed for {creds.username}")
+
+    except Exception as e:
+        messages.error(request, f"❌ Kotak Neo login error: {str(e)}")
+        logger.error(f"Kotak Neo login verification error: {e}", exc_info=True)
+
+    return redirect('core:system_test')
+
+
+@login_required
+@user_passes_test(is_admin_user, login_url='/login/')
+def verify_breeze_login(request):
+    """
+    Verify Breeze API login - requires session token input
+    """
+    from django.contrib import messages
+
+    from django.shortcuts import render
+    from apps.core.models import CredentialStore
+    from django.utils import timezone
+    from tools.breeze import BreezeAPI
+
+    # Get credentials
+    creds = CredentialStore.objects.filter(service='breeze').first()
+    if not creds:
+        messages.error(request, "Breeze credentials not found")
+        return redirect('core:system_test')
+
+    if request.method == 'GET':
+        # Check if we have a valid token from today
+        has_valid_token = (
+            creds.session_token and
+            creds.last_session_update and
+            creds.last_session_update.date() == timezone.now().date()
+        )
+
+        if has_valid_token:
+            # Token is valid for today, attempt auto-login without asking for token
+            logger.info("Breeze has valid token from today, attempting auto-login")
+            session_token = creds.session_token
+            # Don't save again, just use existing token
+            skip_save = True
+        else:
+            # Token missing or expired, show form
+            logger.info("Breeze token missing or expired, showing form")
+            context = {
+                'username': creds.username,
+                'api_key': creds.api_key,
+            }
+            return render(request, 'core/breeze_token_input.html', context)
+
+    elif request.method == 'POST':
+        # Get session token from form
+        session_token = request.POST.get('session_token', '').strip()
+        if not session_token:
+            messages.error(request, "Session token is required")
+            return redirect('core:verify_breeze_login')
+
+        # Store new session token
+        creds.session_token = session_token
+        creds.last_session_update = timezone.now()
+        creds.save()
+        skip_save = False
+        logger.info(f"Saved new session token for Breeze: {creds.session_token[:10] if creds.session_token else 'None'}...")
+
+    else:
+        return redirect('core:system_test')
+
+    # Common login logic for both GET (with valid token) and POST (with new token)
+    try:
+        # Refresh from database to ensure we have the latest data
+        if not skip_save:
+            creds.refresh_from_db()
+
+        breeze = BreezeAPI()
+        logger.info(f"BreezeAPI loaded session token: {breeze.session_token[:10] if breeze.session_token else 'None'}...")
+        success = breeze.login()
+
+        if success:
+            # Fetch account data to verify connection
+            try:
+                margin = breeze.get_margin()
+                positions = breeze.get_positions()
+
+                # Also fetch holdings (equity stocks)
+                try:
+                    holdings_resp = breeze.breeze.get_portfolio_holdings()
+                    holdings = holdings_resp.get('Success', []) if holdings_resp else []
+                except Exception as e:
+                    logger.warning(f"Could not fetch holdings: {e}")
+                    holdings = []
+
+                logger.info(f"Breeze margin data: {margin}")
+                logger.info(f"Breeze positions count: {len(positions) if positions else 0}")
+                logger.info(f"Breeze holdings count: {len(holdings) if holdings else 0}")
+
+                # margin is a dict, positions are Position objects or dicts
+                available_margin = margin.get('available_margin', 0) if isinstance(margin, dict) else 0
+                position_count = len(positions) if positions else 0
+                holding_count = len(holdings) if holdings else 0
+
+                # Calculate total investment from positions (F&O)
+                total_investment = 0
+                for p in positions:
+                    if hasattr(p, 'quantity') and hasattr(p, 'average_price'):
+                        # Position object
+                        qty = p.quantity
+                        avg_price = p.average_price
+                        investment = abs(qty * avg_price)
+                        logger.info(f"Position: {p.symbol}, qty={qty}, avg_price={avg_price}, investment={investment}")
+                        total_investment += investment
+                    elif isinstance(p, dict):
+                        # Dict fallback
+                        qty = p.get('quantity', 0)
+                        avg_price = p.get('average_price', 0)
+                        investment = abs(qty * avg_price)
+                        logger.info(f"Position (dict): qty={qty}, avg_price={avg_price}, investment={investment}")
+                        total_investment += investment
+
+                # Add investment from holdings (equity stocks)
+                for h in holdings:
+                    qty = int(h.get('quantity', 0))
+                    avg_price = _parse_float(h.get('average_price', 0))
+                    investment = abs(qty * avg_price)
+                    logger.info(f"Holding: {h.get('stock_code', 'Unknown')}, qty={qty}, avg_price={avg_price}, investment={investment}")
+                    total_investment += investment
+
+                logger.info(f"Total investment calculated: {total_investment}")
+
+                # Store verification details in session
+                request.session['breeze_login_verified'] = True
+                request.session['breeze_login_time'] = str(datetime.now())
+                request.session['breeze_available_margin'] = float(available_margin)
+                request.session['breeze_position_count'] = position_count
+                request.session['breeze_holding_count'] = holding_count
+                request.session['breeze_total_investment'] = float(total_investment)
+
+                messages.success(
+                    request,
+                    f"✅ Breeze login successful! "
+                    f"Available Margin: {format_currency(available_margin)}, "
+                    f"F&O Positions: {position_count}, "
+                    f"Stock Holdings: {holding_count}, "
+                    f"Total Investment: {format_currency(total_investment)}"
+                )
+            except Exception as e:
+                logger.warning(f"Breeze login successful but couldn't fetch account data: {e}")
+                request.session['breeze_login_verified'] = True
+                request.session['breeze_login_time'] = str(datetime.now())
+                messages.success(request, f"✅ Breeze login successful for {creds.username}!")
+        else:
+            request.session['breeze_login_verified'] = False
+            messages.error(request, f"❌ Breeze login failed")
+
+    except Exception as e:
+        messages.error(request, f"❌ Breeze login error: {str(e)}")
+        logger.error(f"Breeze login verification error: {e}", exc_info=True)
+
+    return redirect('core:system_test')
+
+
+@login_required
+@user_passes_test(is_admin_user, login_url='/login/')
 def system_test_page(request):
     """
     Comprehensive system test page for testing all critical functionalities.
@@ -264,11 +875,12 @@ def system_test_page(request):
         'data': test_data_app(),
         'orders': test_orders(),
         'positions': test_positions(),
-        'accounts': test_accounts(),
+        'accounts': test_accounts(request),
         'llm': test_llm(),
         'redis': test_redis(),
         'background_tasks': test_background_tasks(),
         'django_admin': test_django_admin(),
+        'telegram': test_telegram(),
     }
 
     # Add passed count to each category
@@ -502,7 +1114,10 @@ def test_trendlyne():
 
     # Test 2: Trendlyne website accessibility
     try:
-        response = requests.get('https://trendlyne.com', timeout=10)
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        }
+        response = requests.get('https://trendlyne.com', headers=headers, timeout=10)
 
         if response.status_code == 200:
             tests.append({
@@ -514,7 +1129,7 @@ def test_trendlyne():
             tests.append({
                 'name': 'Trendlyne Website Access',
                 'status': 'fail',
-                'message': f'HTTP {response.status_code}',
+                'message': f'HTTP {response.status_code} - Website may be blocking automated requests',
             })
     except Exception as e:
         tests.append({
@@ -539,7 +1154,7 @@ def test_trendlyne():
             'message': f'Error: {str(e)}',
         })
 
-    # Test 4: Trendlyne data directory
+    # Test 4: Trendlyne data directory and database population
     try:
         import os
         from django.conf import settings
@@ -560,22 +1175,70 @@ def test_trendlyne():
                     total_files += len([f for f in files if f.endswith('.csv')])
 
         if existing_dirs:
+            # Get comprehensive database statistics
+            try:
+                from apps.data.models import (
+                    ContractData, ContractStockData, TLStockData,
+                    OptionChain, Event, NewsArticle, InvestorCall, KnowledgeBase
+                )
+
+                db_stats = {
+                    'ContractData': ContractData.objects.count(),
+                    'ContractStockData': ContractStockData.objects.count(),
+                    'TLStockData': TLStockData.objects.count(),
+                    'OptionChain': OptionChain.objects.count(),
+                    'Event': Event.objects.count(),
+                    'NewsArticle': NewsArticle.objects.count(),
+                    'InvestorCall': InvestorCall.objects.count(),
+                    'KnowledgeBase': KnowledgeBase.objects.count(),
+                }
+
+                total_records = sum(db_stats.values())
+
+                # Format with Indian numbering
+                formatted_total = format_currency(total_records).replace('₹', '')
+
+                # Build detailed breakdown
+                breakdown_parts = []
+                for model_name, count in db_stats.items():
+                    if count > 0:
+                        formatted_count = format_currency(count).replace('₹', '')
+                        # Shorten model names for display
+                        short_name = model_name.replace('Data', '').replace('Contract', 'Cont.')
+                        breakdown_parts.append(f"{short_name}: {formatted_count}")
+
+                breakdown_str = " | ".join(breakdown_parts) if breakdown_parts else "No data populated yet"
+
+                status = 'pass' if total_records > 0 else 'warning'
+                message = f'Downloaded {total_files} CSV files | Populated {formatted_total} total rows | {breakdown_str}'
+
+            except Exception as db_error:
+                logger.warning(f"Could not fetch database stats: {db_error}")
+                message = f'Found {len(existing_dirs)} data dirs with {total_files} CSV files | Database stats unavailable'
+                status = 'warning'
+
             tests.append({
                 'name': 'Trendlyne Data Directory',
-                'status': 'pass',
-                'message': f'Found {len(existing_dirs)} data dirs with {total_files} CSV files',
+                'status': status,
+                'message': message,
+                'trigger_url': '/system/test/trigger-trendlyne/',
+                'trigger_label': 'Download & Populate All',
             })
         else:
             tests.append({
                 'name': 'Trendlyne Data Directory',
                 'status': 'fail',
                 'message': 'No data directories found (not downloaded yet)',
+                'trigger_url': '/system/test/trigger-trendlyne/',
+                'trigger_label': 'Download & Populate Now',
             })
     except Exception as e:
         tests.append({
             'name': 'Trendlyne Data Directory',
             'status': 'fail',
             'message': f'Error: {str(e)}',
+            'trigger_url': '/system/test/trigger-trendlyne/',
+            'trigger_label': 'Try Download',
         })
 
     # Test 5: F&O Data freshness
@@ -584,10 +1247,10 @@ def test_trendlyne():
         from django.conf import settings
         from datetime import datetime, timedelta
 
-        data_dir = os.path.join(settings.BASE_DIR, 'apps', 'data', 'tldata')
+        data_dir = os.path.join(settings.BASE_DIR, 'trendlyne_data')
 
         if os.path.exists(data_dir):
-            fno_files = [f for f in os.listdir(data_dir) if f.startswith('fno_data_') and f.endswith('.csv')]
+            fno_files = [f for f in os.listdir(data_dir) if f.startswith('contract_') and (f.endswith('.csv') or f.endswith('.xlsx'))]
 
             if fno_files:
                 fno_files.sort(reverse=True)
@@ -596,23 +1259,38 @@ def test_trendlyne():
                 file_time = datetime.fromtimestamp(os.path.getmtime(file_path))
                 age_days = (datetime.now() - file_time).days
 
-                status = 'pass' if age_days <= 7 else 'fail'
+                status = 'pass' if age_days <= 1 else 'warning' if age_days <= 7 else 'fail'
+
+                # Get record count from database
+                try:
+                    from apps.data.models import ContractData
+                    record_count = ContractData.objects.count()
+                    message = f'Latest: {latest_file} ({age_days} days old) | Updated {record_count} records at {file_time.strftime("%Y-%m-%d %H:%M:%S")}'
+                except:
+                    message = f'Latest: {latest_file} ({age_days} days old) | Updated at {file_time.strftime("%Y-%m-%d %H:%M:%S")}'
+
                 tests.append({
                     'name': 'F&O Data Freshness',
                     'status': status,
-                    'message': f'Latest: {latest_file} ({age_days} days old)',
+                    'message': message,
+                    'trigger_url': '/system/test/trigger-fno-data/',
+                    'trigger_label': 'Populate Data',
                 })
             else:
                 tests.append({
                     'name': 'F&O Data Freshness',
                     'status': 'fail',
-                    'message': 'No F&O data files found',
+                    'message': 'No F&O data files found in trendlyne_data directory',
+                    'trigger_url': '/system/test/trigger-trendlyne-full/',
+                    'trigger_label': 'Download & Populate',
                 })
         else:
             tests.append({
                 'name': 'F&O Data Freshness',
                 'status': 'fail',
-                'message': 'Data directory not found',
+                'message': 'Data directory not found at /trendlyne_data',
+                'trigger_url': '/system/test/trigger-trendlyne-full/',
+                'trigger_label': 'Create & Download',
             })
     except Exception as e:
         tests.append({
@@ -630,7 +1308,7 @@ def test_trendlyne():
         data_dir = os.path.join(settings.BASE_DIR, 'apps', 'data', 'tldata')
 
         if os.path.exists(data_dir):
-            snapshot_files = [f for f in os.listdir(data_dir) if f.startswith('market_snapshot_') and f.endswith('.csv')]
+            snapshot_files = [f for f in os.listdir(data_dir) if f.startswith('market_snapshot_') and (f.endswith('.csv') or f.endswith('.xlsx'))]
 
             if snapshot_files:
                 snapshot_files.sort(reverse=True)
@@ -638,65 +1316,124 @@ def test_trendlyne():
                 file_path = os.path.join(data_dir, latest_file)
                 file_time = datetime.fromtimestamp(os.path.getmtime(file_path))
                 age_days = (datetime.now() - file_time).days
+                age_minutes = (datetime.now() - file_time).total_seconds() / 60
+
+                # Get database record count
+                try:
+                    from apps.data.models import TLStockData
+                    db_count = TLStockData.objects.count()
+                    db_info = f"Updated {format_currency(db_count).replace('₹', '')} rows in database"
+                except:
+                    db_info = "Database not populated"
 
                 status = 'pass' if age_days <= 7 else 'fail'
+
+                # Show "Refresh" button if older than 10 minutes
+                trigger_label = 'Refresh Data' if age_minutes > 10 else 'Download Again'
+
+                # Format download time
+                download_time = file_time.strftime("%d %b %Y at %I:%M %p")
+
                 tests.append({
                     'name': 'Market Snapshot Data',
                     'status': status,
-                    'message': f'Latest: {latest_file} ({age_days} days old)',
+                    'message': f'Downloaded latest files on {download_time} | {db_info}',
+                    'trigger_url': '/system/test/trigger-market-snapshot/',
+                    'trigger_label': trigger_label,
                 })
             else:
                 tests.append({
                     'name': 'Market Snapshot Data',
                     'status': 'fail',
                     'message': 'No market snapshot files found',
+                    'trigger_url': '/system/test/trigger-market-snapshot/',
+                    'trigger_label': 'Download Now',
                 })
         else:
             tests.append({
                 'name': 'Market Snapshot Data',
                 'status': 'fail',
                 'message': 'Data directory not found',
+                'trigger_url': '/system/test/trigger-market-snapshot/',
+                'trigger_label': 'Create & Download',
             })
     except Exception as e:
         tests.append({
             'name': 'Market Snapshot Data',
             'status': 'fail',
             'message': f'Error: {str(e)}',
+            'trigger_url': '/system/test/trigger-market-snapshot/',
+            'trigger_label': 'Try Download',
         })
 
     # Test 7: Forecaster Data (21 pages)
     try:
         import os
         from django.conf import settings
+        from datetime import datetime
 
-        data_dir = os.path.join(settings.BASE_DIR, 'apps', 'data', 'trendlynedata')
+        data_dir = os.path.join(settings.BASE_DIR, 'apps', 'data', 'tldata', 'forecaster')
 
         if os.path.exists(data_dir):
             forecaster_files = [f for f in os.listdir(data_dir) if f.startswith('trendlyne_') and f.endswith('.csv')]
 
             if forecaster_files:
+                # Check age of most recent file
+                file_times = [os.path.getmtime(os.path.join(data_dir, f)) for f in forecaster_files]
+                most_recent_time = datetime.fromtimestamp(max(file_times))
+                age_minutes = (datetime.now() - most_recent_time).total_seconds() / 60
+
+                trigger_label = 'Refresh Data' if age_minutes > 10 else 'Download Again'
+
+                # Format download time
+                download_time = most_recent_time.strftime("%d %b %Y at %I:%M %p")
+
+                # Count total rows across all CSV files
+                total_rows = 0
+                try:
+                    import csv
+                    for file in forecaster_files:
+                        file_path = os.path.join(data_dir, file)
+                        with open(file_path, 'r', encoding='utf-8') as f:
+                            reader = csv.reader(f)
+                            # Subtract 1 for header row
+                            row_count = sum(1 for row in reader) - 1
+                            total_rows += row_count
+
+                    rows_info = f"Contains {format_currency(total_rows).replace('₹', '')} total rows"
+                except:
+                    rows_info = f"{len(forecaster_files)} files downloaded"
+
                 tests.append({
                     'name': 'Forecaster Data (21 Pages)',
                     'status': 'pass' if len(forecaster_files) >= 15 else 'fail',
-                    'message': f'Found {len(forecaster_files)} forecaster CSV files',
+                    'message': f'Downloaded latest files on {download_time} | {rows_info} across {len(forecaster_files)} CSV files',
+                    'trigger_url': '/system/test/trigger-forecaster/',
+                    'trigger_label': trigger_label,
                 })
             else:
                 tests.append({
                     'name': 'Forecaster Data (21 Pages)',
                     'status': 'fail',
                     'message': 'No forecaster data files found',
+                    'trigger_url': '/system/test/trigger-forecaster/',
+                    'trigger_label': 'Download Now',
                 })
         else:
             tests.append({
                 'name': 'Forecaster Data (21 Pages)',
                 'status': 'fail',
                 'message': 'Data directory not found',
+                'trigger_url': '/system/test/trigger-forecaster/',
+                'trigger_label': 'Create & Download',
             })
     except Exception as e:
         tests.append({
             'name': 'Forecaster Data (21 Pages)',
             'status': 'fail',
             'message': f'Error: {str(e)}',
+            'trigger_url': '/system/test/trigger-forecaster/',
+            'trigger_label': 'Try Download',
         })
 
     # Test 8: Selenium and BeautifulSoup packages
@@ -791,6 +1528,85 @@ def test_trendlyne():
             'name': 'ContractStockData Model',
             'status': 'fail',
             'message': f'Error: {str(e)}',
+        })
+
+    # Test 13: Trendlyne Database Records Summary
+    try:
+        from apps.data.models import (
+            ContractData, ContractStockData, TLStockData,
+            OptionChain, Event, NewsArticle, InvestorCall, KnowledgeBase
+        )
+        from datetime import datetime
+
+        # Count records across all tables
+        record_stats = {
+            'ContractData': ContractData.objects.count(),
+            'ContractStockData': ContractStockData.objects.count(),
+            'TLStockData': TLStockData.objects.count(),
+            'OptionChain': OptionChain.objects.count(),
+            'Event': Event.objects.count(),
+            'NewsArticle': NewsArticle.objects.count(),
+            'InvestorCall': InvestorCall.objects.count(),
+            'KnowledgeBase': KnowledgeBase.objects.count(),
+        }
+
+        total_records = sum(record_stats.values())
+
+        # Get latest update time from most recently updated record
+        latest_times = []
+        for model in [ContractData, ContractStockData, TLStockData, OptionChain,
+                      Event, NewsArticle, InvestorCall, KnowledgeBase]:
+            latest = model.objects.order_by('-created_at').first()
+            if latest:
+                latest_times.append(latest.created_at)
+
+        if latest_times:
+            most_recent = max(latest_times)
+            last_update = most_recent.strftime("%d %b %Y at %I:%M %p")
+        else:
+            last_update = "Never"
+
+        # Build detailed message with Indian formatting
+        formatted_total = format_currency(total_records).replace('₹', '')
+
+        # Format each model count with Indian numbering
+        stats_parts = []
+        for model_name, count in record_stats.items():
+            if count > 0:
+                formatted_count = format_currency(count).replace('₹', '')
+                # Shorten model names
+                short_name = model_name.replace('Data', '').replace('Contract', 'Cont.')
+                stats_parts.append(f"{short_name}: {formatted_count}")
+
+        stats_msg = " | ".join(stats_parts) if stats_parts else "No data"
+        message = f'Total: {formatted_total} rows | Last updated: {last_update} | {stats_msg}'
+
+        # Determine status
+        if total_records > 0:
+            status = 'pass'
+        else:
+            status = 'fail'
+
+        trigger_label = 'Refresh Data'
+        trigger_url = '/system/test/trigger-trendlyne-full/'
+
+        if total_records == 0:
+            trigger_label = 'Download & Populate Now'
+
+        tests.append({
+            'name': 'Trendlyne Database Summary',
+            'status': status,
+            'message': message,
+            'trigger_url': trigger_url,
+            'trigger_label': trigger_label,
+        })
+    except Exception as e:
+        tests.append({
+            'name': 'Trendlyne Database Summary',
+            'status': 'fail',
+            'message': f'Error: {str(e)}',
+            'trigger_url': '/system/test/trigger-trendlyne-full/',
+            'trigger_label': 'Download & Populate',
         })
 
     return {'category': 'Trendlyne Integration', 'tests': tests}
@@ -1018,7 +1834,7 @@ def test_positions():
             tests.append({
                 'name': 'P&L Calculation',
                 'status': 'pass',
-                'message': f'Latest position P&L: {pnl}',
+                'message': f'Latest position P&L: {format_currency(pnl) if pnl is not None else "N/A"}',
             })
         else:
             tests.append({
@@ -1054,7 +1870,7 @@ def test_positions():
     return {'category': 'Positions', 'tests': tests}
 
 
-def test_accounts():
+def test_accounts(request=None):
     """Test account management functionalities"""
     tests = []
 
@@ -1076,25 +1892,98 @@ def test_accounts():
             'message': f'Error: {str(e)}',
         })
 
-    # Test 2: API credentials
+    # Test 2: Kotak Neo Login Verification
     try:
-        from apps.accounts.models import APICredential
-        count = APICredential.objects.count()
-        valid = APICredential.objects.filter(is_valid=True).count()
+        from apps.core.models import CredentialStore
+        from datetime import datetime
+        kotak_creds = CredentialStore.objects.filter(service='kotakneo').first()
 
-        tests.append({
-            'name': 'API Credentials',
-            'status': 'pass' if count > 0 else 'fail',
-            'message': f'Total: {count}, Valid: {valid}' if count > 0 else 'No credentials configured',
-        })
+        if kotak_creds:
+            # Check session for verification status
+            kotak_verified = request.session.get('kotak_login_verified', False) if request else False
+            kotak_time = request.session.get('kotak_login_time', '') if request else ''
+
+            if kotak_verified:
+                # Get account data from session
+                kotak_margin = request.session.get('kotak_available_margin', 0) if request else 0
+                kotak_positions = request.session.get('kotak_position_count', 0) if request else 0
+                kotak_holdings = request.session.get('kotak_holding_count', 0) if request else 0
+                kotak_investment = request.session.get('kotak_total_investment', 0) if request else 0
+
+                tests.append({
+                    'name': 'Kotak Neo Login Verification',
+                    'status': 'pass',
+                    'message': f'✅ Login verified for {kotak_creds.username} | Margin: {format_currency(kotak_margin)} | F&O: {kotak_positions} | Stocks: {kotak_holdings} | Investment: {format_currency(kotak_investment)}',
+                    'trigger_url': '/system/test/verify-kotak-login/',
+                    'trigger_label': 'Re-verify',
+                })
+            else:
+                tests.append({
+                    'name': 'Kotak Neo Login Verification',
+                    'status': 'fail',
+                    'message': f'Credentials found for {kotak_creds.username} - Click to verify login',
+                    'trigger_url': '/system/test/verify-kotak-login/',
+                    'trigger_label': 'Verify Login',
+                })
+        else:
+            tests.append({
+                'name': 'Kotak Neo Login Verification',
+                'status': 'fail',
+                'message': 'No Kotak Neo credentials configured',
+            })
     except Exception as e:
         tests.append({
-            'name': 'API Credentials',
+            'name': 'Kotak Neo Login Verification',
             'status': 'fail',
             'message': f'Error: {str(e)}',
         })
 
-    # Test 3: Capital calculation
+    # Test 3: Breeze Login Verification
+    try:
+        from apps.core.models import CredentialStore
+        breeze_creds = CredentialStore.objects.filter(service='breeze').first()
+
+        if breeze_creds:
+            # Check session for verification status
+            breeze_verified = request.session.get('breeze_login_verified', False) if request else False
+            breeze_time = request.session.get('breeze_login_time', '') if request else ''
+
+            if breeze_verified:
+                # Get account data from session
+                breeze_margin = request.session.get('breeze_available_margin', 0) if request else 0
+                breeze_positions = request.session.get('breeze_position_count', 0) if request else 0
+                breeze_holdings = request.session.get('breeze_holding_count', 0) if request else 0
+                breeze_investment = request.session.get('breeze_total_investment', 0) if request else 0
+
+                tests.append({
+                    'name': 'Breeze Login Verification',
+                    'status': 'pass',
+                    'message': f'✅ Login verified for {breeze_creds.username} | Margin: {format_currency(breeze_margin)} | F&O: {breeze_positions} | Stocks: {breeze_holdings} | Investment: {format_currency(breeze_investment)}',
+                    'trigger_url': '/system/test/verify-breeze-login/',
+                    'trigger_label': 'Re-verify',
+                })
+            else:
+                tests.append({
+                    'name': 'Breeze Login Verification',
+                    'status': 'fail',
+                    'message': f'Credentials found for {breeze_creds.username} - Click to verify login',
+                    'trigger_url': '/system/test/verify-breeze-login/',
+                    'trigger_label': 'Verify Login',
+                })
+        else:
+            tests.append({
+                'name': 'Breeze Login Verification',
+                'status': 'fail',
+                'message': 'No Breeze credentials configured',
+            })
+    except Exception as e:
+        tests.append({
+            'name': 'Breeze Login Verification',
+            'status': 'fail',
+            'message': f'Error: {str(e)}',
+        })
+
+    # Test 4: Capital calculation
     try:
         from apps.accounts.models import BrokerAccount
         account = BrokerAccount.objects.filter(is_active=True).first()
@@ -1105,7 +1994,7 @@ def test_accounts():
             tests.append({
                 'name': 'Capital Calculations',
                 'status': 'pass',
-                'message': f'Available: {available}, Total P&L: {total_pnl}',
+                'message': f'Available: {format_currency(available)}, Total P&L: {format_currency(total_pnl)}',
             })
         else:
             tests.append({
@@ -1325,3 +2214,672 @@ def test_django_admin():
         })
 
     return {'category': 'Django Admin', 'tests': tests}
+
+
+def test_telegram():
+    """Test Telegram integration with detailed response testing"""
+    tests = []
+
+    # Test 1: Telegram client configuration
+    try:
+        from apps.alerts.services import get_telegram_client
+        telegram_client = get_telegram_client()
+
+        is_enabled = telegram_client.is_enabled()
+        tests.append({
+            'name': 'Telegram Client Configuration',
+            'status': 'pass' if is_enabled else 'warning',
+            'message': 'Telegram client configured' if is_enabled else 'Telegram not configured (TELEGRAM_BOT_TOKEN missing)',
+        })
+    except Exception as e:
+        tests.append({
+            'name': 'Telegram Client Configuration',
+            'status': 'fail',
+            'message': f'Error: {str(e)}',
+        })
+
+    # Test 2: Test simple message (with response validation)
+    try:
+        from apps.alerts.services import get_telegram_client
+        telegram_client = get_telegram_client()
+
+        if telegram_client.is_enabled():
+            test_message = "Test message from mCube System Test Page"
+            success, response = telegram_client.send_message(test_message)
+
+            tests.append({
+                'name': 'Send Simple Message',
+                'status': 'pass' if success else 'fail',
+                'message': response if success else f'Send failed: {response}',
+                'trigger_url': '/core/test/trigger-telegram-simple/',
+                'trigger_label': 'Send Again',
+            })
+        else:
+            tests.append({
+                'name': 'Send Simple Message',
+                'status': 'warning',
+                'message': 'Skipped - Telegram not configured',
+                'trigger_url': '/core/test/trigger-telegram-simple/',
+                'trigger_label': 'Test (Configure First)',
+            })
+    except Exception as e:
+        tests.append({
+            'name': 'Send Simple Message',
+            'status': 'fail',
+            'message': f'Error: {str(e)}',
+        })
+
+    # Test 3: Test priority message (CRITICAL)
+    try:
+        from apps.alerts.services import get_telegram_client
+        telegram_client = get_telegram_client()
+
+        if telegram_client.is_enabled():
+            test_message = "This is a critical test message"
+            success, response = telegram_client.send_priority_message(test_message, priority='CRITICAL')
+
+            tests.append({
+                'name': 'Send Priority Message (CRITICAL)',
+                'status': 'pass' if success else 'fail',
+                'message': 'Critical alert sent' if success else f'Failed: {response}',
+                'trigger_url': '/core/test/trigger-telegram-critical/',
+                'trigger_label': 'Trigger',
+            })
+        else:
+            tests.append({
+                'name': 'Send Priority Message (CRITICAL)',
+                'status': 'warning',
+                'message': 'Skipped - Telegram not configured',
+                'trigger_url': '/core/test/trigger-telegram-critical/',
+                'trigger_label': 'Test (Configure First)',
+            })
+    except Exception as e:
+        tests.append({
+            'name': 'Send Priority Message (CRITICAL)',
+            'status': 'fail',
+            'message': f'Error: {str(e)}',
+        })
+
+    # Test 4: Test position alert (SL_HIT)
+    try:
+        from apps.alerts.services import get_telegram_client
+        telegram_client = get_telegram_client()
+
+        if telegram_client.is_enabled():
+            position_data = {
+                'account_name': 'DEMO_ACCOUNT',
+                'instrument': 'NIFTY24NOV2424000CE',
+                'direction': 'LONG',
+                'quantity': 10,
+                'entry_price': 100.00,
+                'current_price': 210.00,
+                'stop_loss': 200.00,
+                'target': 50.00,
+                'unrealized_pnl': -55000.00,
+                'message': 'STOP-LOSS BREACHED - IMMEDIATE ACTION REQUIRED'
+            }
+            success, response = telegram_client.send_position_alert('SL_HIT', position_data)
+
+            tests.append({
+                'name': 'Position Alert - Stop-Loss Hit',
+                'status': 'pass' if success else 'fail',
+                'message': 'SL_HIT alert sent with full position details' if success else f'Failed: {response}',
+                'trigger_url': '/core/test/trigger-telegram-sl-alert/',
+                'trigger_label': 'Send Alert',
+            })
+        else:
+            tests.append({
+                'name': 'Position Alert - Stop-Loss Hit',
+                'status': 'warning',
+                'message': 'Skipped - Telegram not configured',
+                'trigger_url': '/core/test/trigger-telegram-sl-alert/',
+                'trigger_label': 'Test (Configure First)',
+            })
+    except Exception as e:
+        tests.append({
+            'name': 'Position Alert - Stop-Loss Hit',
+            'status': 'fail',
+            'message': f'Error: {str(e)}',
+        })
+
+    # Test 5: Test position alert (TARGET_HIT)
+    try:
+        from apps.alerts.services import get_telegram_client
+        telegram_client = get_telegram_client()
+
+        if telegram_client.is_enabled():
+            position_data = {
+                'account_name': 'DEMO_ACCOUNT',
+                'instrument': 'NIFTY24NOV2424000CE',
+                'direction': 'LONG',
+                'quantity': 10,
+                'entry_price': 100.00,
+                'current_price': 35.00,
+                'stop_loss': 150.00,
+                'target': 50.00,
+                'unrealized_pnl': 37500.00,
+                'message': 'Target achieved! Consider booking profits.'
+            }
+            success, response = telegram_client.send_position_alert('TARGET_HIT', position_data)
+
+            tests.append({
+                'name': 'Position Alert - Target Hit',
+                'status': 'pass' if success else 'fail',
+                'message': 'TARGET_HIT alert sent' if success else f'Failed: {response}',
+                'trigger_url': '/core/test/trigger-telegram-target-alert/',
+                'trigger_label': 'Send Alert',
+            })
+        else:
+            tests.append({
+                'name': 'Position Alert - Target Hit',
+                'status': 'warning',
+                'message': 'Skipped - Telegram not configured',
+                'trigger_url': '/core/test/trigger-telegram-target-alert/',
+                'trigger_label': 'Test (Configure First)',
+            })
+    except Exception as e:
+        tests.append({
+            'name': 'Position Alert - Target Hit',
+            'status': 'fail',
+            'message': f'Error: {str(e)}',
+        })
+
+    # Test 6: Test risk alert (WARNING)
+    try:
+        from apps.alerts.services import get_telegram_client
+        telegram_client = get_telegram_client()
+
+        if telegram_client.is_enabled():
+            risk_data = {
+                'account_name': 'DEMO_ACCOUNT',
+                'action_required': 'WARNING',
+                'trading_allowed': True,
+                'active_circuit_breakers': 0,
+                'warnings': [
+                    {'type': 'DAILY_LOSS', 'utilization': 75.5},
+                    {'type': 'WEEKLY_LOSS', 'utilization': 45.0}
+                ],
+                'message': 'Daily loss limit at 75.5%. Exercise caution with new positions.'
+            }
+            success, response = telegram_client.send_risk_alert(risk_data)
+
+            tests.append({
+                'name': 'Risk Alert - Warning',
+                'status': 'pass' if success else 'fail',
+                'message': 'Risk warning sent' if success else f'Failed: {response}',
+                'trigger_url': '/core/test/trigger-telegram-risk-alert/',
+                'trigger_label': 'Send Alert',
+            })
+        else:
+            tests.append({
+                'name': 'Risk Alert - Warning',
+                'status': 'warning',
+                'message': 'Skipped - Telegram not configured',
+                'trigger_url': '/core/test/trigger-telegram-risk-alert/',
+                'trigger_label': 'Test (Configure First)',
+            })
+    except Exception as e:
+        tests.append({
+            'name': 'Risk Alert - Warning',
+            'status': 'fail',
+            'message': f'Error: {str(e)}',
+        })
+
+    # Test 7: Test risk alert (EMERGENCY - Circuit Breaker)
+    try:
+        from apps.alerts.services import get_telegram_client
+        telegram_client = get_telegram_client()
+
+        if telegram_client.is_enabled():
+            risk_data = {
+                'account_name': 'DEMO_ACCOUNT',
+                'action_required': 'EMERGENCY_EXIT',
+                'trading_allowed': False,
+                'active_circuit_breakers': 1,
+                'breached_limits': [
+                    {'type': 'DAILY_LOSS', 'current': 55000, 'limit': 50000}
+                ],
+                'message': 'CIRCUIT BREAKER ACTIVATED! Daily loss limit exceeded. All trading stopped.'
+            }
+            success, response = telegram_client.send_risk_alert(risk_data)
+
+            tests.append({
+                'name': 'Risk Alert - Circuit Breaker (Emergency)',
+                'status': 'pass' if success else 'fail',
+                'message': 'Emergency alert sent (trading disabled)' if success else f'Failed: {response}',
+                'trigger_url': '/core/test/trigger-telegram-circuit-breaker/',
+                'trigger_label': 'Send Alert',
+            })
+        else:
+            tests.append({
+                'name': 'Risk Alert - Circuit Breaker (Emergency)',
+                'status': 'warning',
+                'message': 'Skipped - Telegram not configured',
+                'trigger_url': '/core/test/trigger-telegram-circuit-breaker/',
+                'trigger_label': 'Test (Configure First)',
+            })
+    except Exception as e:
+        tests.append({
+            'name': 'Risk Alert - Circuit Breaker (Emergency)',
+            'status': 'fail',
+            'message': f'Error: {str(e)}',
+        })
+
+    # Test 8: Test daily summary
+    try:
+        from apps.alerts.services import get_telegram_client
+        from datetime import date
+        telegram_client = get_telegram_client()
+
+        if telegram_client.is_enabled():
+            summary_data = {
+                'date': date.today().strftime('%Y-%m-%d'),
+                'total_pnl': 15750.00,
+                'realized_pnl': 12000.00,
+                'unrealized_pnl': 3750.00,
+                'total_trades': 5,
+                'winning_trades': 3,
+                'losing_trades': 2,
+                'win_rate': 60.0,
+                'active_positions': 1,
+                'capital_deployed': 250000,
+                'margin_available': 750000,
+                'max_drawdown': 2.5,
+                'daily_loss_limit_used': 31.5
+            }
+            success, response = telegram_client.send_daily_summary(summary_data)
+
+            tests.append({
+                'name': 'Daily Trading Summary',
+                'status': 'pass' if success else 'fail',
+                'message': 'Daily summary sent with complete statistics' if success else f'Failed: {response}',
+                'trigger_url': '/core/test/trigger-telegram-summary/',
+                'trigger_label': 'Send Summary',
+            })
+        else:
+            tests.append({
+                'name': 'Daily Trading Summary',
+                'status': 'warning',
+                'message': 'Skipped - Telegram not configured',
+                'trigger_url': '/core/test/trigger-telegram-summary/',
+                'trigger_label': 'Test (Configure First)',
+            })
+    except Exception as e:
+        tests.append({
+            'name': 'Daily Trading Summary',
+            'status': 'fail',
+            'message': f'Error: {str(e)}',
+        })
+
+    # Test 9: Alert Manager integration (database storage)
+    try:
+        from apps.alerts.services import get_alert_manager
+        alert_manager = get_alert_manager()
+
+        # Create a test system alert
+        test_alert = alert_manager.create_system_alert(
+            alert_type='SYSTEM_TEST',
+            title='System Test Alert',
+            message='Testing AlertManager integration with database storage',
+            priority='INFO',
+            send_telegram=True
+        )
+
+        if test_alert:
+            # Verify alert was stored
+            from apps.alerts.models import Alert
+            stored_alert = Alert.objects.filter(id=test_alert.id).first()
+
+            tests.append({
+                'name': 'AlertManager - Database Integration',
+                'status': 'pass' if stored_alert else 'fail',
+                'message': f'Alert stored in DB (ID: {test_alert.id}) with {test_alert.logs.count()} delivery logs' if stored_alert else 'Alert not found in database',
+            })
+        else:
+            tests.append({
+                'name': 'AlertManager - Database Integration',
+                'status': 'fail',
+                'message': 'Failed to create alert',
+            })
+    except Exception as e:
+        tests.append({
+            'name': 'AlertManager - Database Integration',
+            'status': 'fail',
+            'message': f'Error: {str(e)}',
+        })
+
+    # Test 10: Alert log verification (response tracking)
+    try:
+        from apps.alerts.models import Alert, AlertLog
+
+        # Get the most recent alert
+        latest_alert = Alert.objects.order_by('-created_at').first()
+
+        if latest_alert:
+            logs = latest_alert.logs.all()
+            log_count = logs.count()
+
+            # Check for successful deliveries
+            successful_logs = logs.filter(status='sent').count()
+            failed_logs = logs.filter(status='failed').count()
+
+            status_msg = f'Logs: {log_count} total, {successful_logs} sent, {failed_logs} failed'
+
+            tests.append({
+                'name': 'Alert Log Verification',
+                'status': 'pass' if successful_logs > 0 else 'warning',
+                'message': status_msg,
+            })
+        else:
+            tests.append({
+                'name': 'Alert Log Verification',
+                'status': 'warning',
+                'message': 'No alerts in database yet',
+            })
+    except Exception as e:
+        tests.append({
+            'name': 'Alert Log Verification',
+            'status': 'fail',
+            'message': f'Error: {str(e)}',
+        })
+
+    return {'category': 'Telegram', 'tests': tests}
+
+
+# =============================================================================
+# TELEGRAM TEST TRIGGER ENDPOINTS
+# =============================================================================
+
+@login_required
+@user_passes_test(is_admin_user, login_url='/login/')
+def trigger_telegram_simple(request):
+    """Send a simple test message to Telegram"""
+    from django.contrib import messages
+
+    if request.method != 'POST':
+        messages.error(request, "Invalid request method")
+        return redirect('core:system_test')
+
+    try:
+        from apps.alerts.services import get_telegram_client
+        telegram_client = get_telegram_client()
+
+        if not telegram_client.is_enabled():
+            messages.warning(request, "Telegram client not configured (TELEGRAM_BOT_TOKEN missing)")
+            return redirect('core:system_test')
+
+        test_message = "Test message from mCube System Test Page - Simple message test"
+        success, response = telegram_client.send_message(test_message)
+
+        if success:
+            messages.success(request, f"✅ Simple message sent successfully")
+            logger.info("Simple Telegram message sent successfully")
+        else:
+            messages.error(request, f"❌ Failed to send message: {response}")
+            logger.error(f"Failed to send simple Telegram message: {response}")
+
+    except Exception as e:
+        messages.error(request, f"❌ Error sending message: {str(e)}")
+        logger.error(f"Error in trigger_telegram_simple: {e}", exc_info=True)
+
+    return redirect('core:system_test')
+
+
+@login_required
+@user_passes_test(is_admin_user, login_url='/login/')
+def trigger_telegram_critical(request):
+    """Send a critical priority test message to Telegram"""
+    from django.contrib import messages
+
+    if request.method != 'POST':
+        messages.error(request, "Invalid request method")
+        return redirect('core:system_test')
+
+    try:
+        from apps.alerts.services import get_telegram_client
+        telegram_client = get_telegram_client()
+
+        if not telegram_client.is_enabled():
+            messages.warning(request, "Telegram client not configured")
+            return redirect('core:system_test')
+
+        test_message = "CRITICAL: This is a test critical priority message from mCube System"
+        success, response = telegram_client.send_priority_message(test_message, priority='CRITICAL')
+
+        if success:
+            messages.success(request, f"✅ Critical priority message sent")
+            logger.info("Critical Telegram message sent successfully")
+        else:
+            messages.error(request, f"❌ Failed to send critical message: {response}")
+
+    except Exception as e:
+        messages.error(request, f"❌ Error: {str(e)}")
+        logger.error(f"Error in trigger_telegram_critical: {e}", exc_info=True)
+
+    return redirect('core:system_test')
+
+
+@login_required
+@user_passes_test(is_admin_user, login_url='/login/')
+def trigger_telegram_sl_alert(request):
+    """Send a stop-loss hit position alert to Telegram"""
+    from django.contrib import messages
+
+    if request.method != 'POST':
+        messages.error(request, "Invalid request method")
+        return redirect('core:system_test')
+
+    try:
+        from apps.alerts.services import get_telegram_client
+        telegram_client = get_telegram_client()
+
+        if not telegram_client.is_enabled():
+            messages.warning(request, "Telegram client not configured")
+            return redirect('core:system_test')
+
+        position_data = {
+            'account_name': 'TEST_ACCOUNT',
+            'instrument': 'NIFTY24NOV2424000CE',
+            'direction': 'LONG',
+            'quantity': 10,
+            'entry_price': 100.00,
+            'current_price': 210.00,
+            'stop_loss': 200.00,
+            'target': 50.00,
+            'unrealized_pnl': -55000.00,
+            'message': 'STOP-LOSS BREACHED - IMMEDIATE ACTION REQUIRED'
+        }
+        success, response = telegram_client.send_position_alert('SL_HIT', position_data)
+
+        if success:
+            messages.success(request, f"✅ Stop-Loss hit alert sent")
+            logger.info("SL_HIT alert sent to Telegram")
+        else:
+            messages.error(request, f"❌ Failed to send SL alert: {response}")
+
+    except Exception as e:
+        messages.error(request, f"❌ Error: {str(e)}")
+        logger.error(f"Error in trigger_telegram_sl_alert: {e}", exc_info=True)
+
+    return redirect('core:system_test')
+
+
+@login_required
+@user_passes_test(is_admin_user, login_url='/login/')
+def trigger_telegram_target_alert(request):
+    """Send a target hit position alert to Telegram"""
+    from django.contrib import messages
+
+    if request.method != 'POST':
+        messages.error(request, "Invalid request method")
+        return redirect('core:system_test')
+
+    try:
+        from apps.alerts.services import get_telegram_client
+        telegram_client = get_telegram_client()
+
+        if not telegram_client.is_enabled():
+            messages.warning(request, "Telegram client not configured")
+            return redirect('core:system_test')
+
+        position_data = {
+            'account_name': 'TEST_ACCOUNT',
+            'instrument': 'NIFTY24NOV2424000CE',
+            'direction': 'LONG',
+            'quantity': 10,
+            'entry_price': 100.00,
+            'current_price': 35.00,
+            'stop_loss': 150.00,
+            'target': 50.00,
+            'unrealized_pnl': 37500.00,
+            'message': 'Target achieved! Consider booking profits.'
+        }
+        success, response = telegram_client.send_position_alert('TARGET_HIT', position_data)
+
+        if success:
+            messages.success(request, f"✅ Target hit alert sent")
+            logger.info("TARGET_HIT alert sent to Telegram")
+        else:
+            messages.error(request, f"❌ Failed to send target alert: {response}")
+
+    except Exception as e:
+        messages.error(request, f"❌ Error: {str(e)}")
+        logger.error(f"Error in trigger_telegram_target_alert: {e}", exc_info=True)
+
+    return redirect('core:system_test')
+
+
+@login_required
+@user_passes_test(is_admin_user, login_url='/login/')
+def trigger_telegram_risk_alert(request):
+    """Send a risk warning alert to Telegram"""
+    from django.contrib import messages
+
+    if request.method != 'POST':
+        messages.error(request, "Invalid request method")
+        return redirect('core:system_test')
+
+    try:
+        from apps.alerts.services import get_telegram_client
+        telegram_client = get_telegram_client()
+
+        if not telegram_client.is_enabled():
+            messages.warning(request, "Telegram client not configured")
+            return redirect('core:system_test')
+
+        risk_data = {
+            'account_name': 'TEST_ACCOUNT',
+            'action_required': 'WARNING',
+            'trading_allowed': True,
+            'active_circuit_breakers': 0,
+            'warnings': [
+                {'type': 'DAILY_LOSS', 'utilization': 75.5},
+                {'type': 'WEEKLY_LOSS', 'utilization': 45.0}
+            ],
+            'message': 'Daily loss limit at 75.5%. Exercise caution with new positions.'
+        }
+        success, response = telegram_client.send_risk_alert(risk_data)
+
+        if success:
+            messages.success(request, f"✅ Risk warning alert sent")
+            logger.info("Risk warning alert sent to Telegram")
+        else:
+            messages.error(request, f"❌ Failed to send risk alert: {response}")
+
+    except Exception as e:
+        messages.error(request, f"❌ Error: {str(e)}")
+        logger.error(f"Error in trigger_telegram_risk_alert: {e}", exc_info=True)
+
+    return redirect('core:system_test')
+
+
+@login_required
+@user_passes_test(is_admin_user, login_url='/login/')
+def trigger_telegram_circuit_breaker(request):
+    """Send an emergency circuit breaker alert to Telegram"""
+    from django.contrib import messages
+
+    if request.method != 'POST':
+        messages.error(request, "Invalid request method")
+        return redirect('core:system_test')
+
+    try:
+        from apps.alerts.services import get_telegram_client
+        telegram_client = get_telegram_client()
+
+        if not telegram_client.is_enabled():
+            messages.warning(request, "Telegram client not configured")
+            return redirect('core:system_test')
+
+        risk_data = {
+            'account_name': 'TEST_ACCOUNT',
+            'action_required': 'EMERGENCY_EXIT',
+            'trading_allowed': False,
+            'active_circuit_breakers': 1,
+            'breached_limits': [
+                {'type': 'DAILY_LOSS', 'current': 55000, 'limit': 50000}
+            ],
+            'message': 'CIRCUIT BREAKER ACTIVATED! Daily loss limit exceeded. All trading stopped.'
+        }
+        success, response = telegram_client.send_risk_alert(risk_data)
+
+        if success:
+            messages.success(request, f"✅ Emergency circuit breaker alert sent")
+            logger.info("Circuit breaker emergency alert sent to Telegram")
+        else:
+            messages.error(request, f"❌ Failed to send emergency alert: {response}")
+
+    except Exception as e:
+        messages.error(request, f"❌ Error: {str(e)}")
+        logger.error(f"Error in trigger_telegram_circuit_breaker: {e}", exc_info=True)
+
+    return redirect('core:system_test')
+
+
+@login_required
+@user_passes_test(is_admin_user, login_url='/login/')
+def trigger_telegram_summary(request):
+    """Send a daily trading summary to Telegram"""
+    from django.contrib import messages
+    from datetime import date
+
+    if request.method != 'POST':
+        messages.error(request, "Invalid request method")
+        return redirect('core:system_test')
+
+    try:
+        from apps.alerts.services import get_telegram_client
+        telegram_client = get_telegram_client()
+
+        if not telegram_client.is_enabled():
+            messages.warning(request, "Telegram client not configured")
+            return redirect('core:system_test')
+
+        summary_data = {
+            'date': date.today().strftime('%Y-%m-%d'),
+            'total_pnl': 15750.00,
+            'realized_pnl': 12000.00,
+            'unrealized_pnl': 3750.00,
+            'total_trades': 5,
+            'winning_trades': 3,
+            'losing_trades': 2,
+            'win_rate': 60.0,
+            'active_positions': 1,
+            'capital_deployed': 250000,
+            'margin_available': 750000,
+            'max_drawdown': 2.5,
+            'daily_loss_limit_used': 31.5
+        }
+        success, response = telegram_client.send_daily_summary(summary_data)
+
+        if success:
+            messages.success(request, f"✅ Daily trading summary sent")
+            logger.info("Daily summary sent to Telegram")
+        else:
+            messages.error(request, f"❌ Failed to send summary: {response}")
+
+    except Exception as e:
+        messages.error(request, f"❌ Error: {str(e)}")
+        logger.error(f"Error in trigger_telegram_summary: {e}", exc_info=True)
+
+    return redirect('core:system_test')

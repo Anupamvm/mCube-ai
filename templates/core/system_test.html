@@ -150,6 +150,11 @@
             color: #22543d;
         }
 
+        .test-status.warning {
+            background: #feebc8;
+            color: #744210;
+        }
+
         .test-status.fail {
             background: #fed7d7;
             color: #742a2a;
@@ -170,6 +175,34 @@
             color: #718096;
             font-size: 14px;
             line-height: 1.5;
+        }
+
+        .test-actions {
+            margin-left: 15px;
+            display: flex;
+            align-items: center;
+        }
+
+        .trigger-btn {
+            background: #4299e1;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .trigger-btn:hover {
+            background: #3182ce;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        .trigger-btn:active {
+            transform: translateY(0);
         }
 
         .timestamp {
@@ -241,6 +274,42 @@
         .btn-secondary:hover {
             background: rgba(255, 255, 255, 0.3);
         }
+
+        .messages {
+            margin: 20px 0;
+        }
+
+        .alert {
+            padding: 15px 20px;
+            border-radius: 8px;
+            margin-bottom: 10px;
+            font-size: 14px;
+            line-height: 1.5;
+        }
+
+        .alert-success {
+            background: #c6f6d5;
+            color: #22543d;
+            border-left: 4px solid #38a169;
+        }
+
+        .alert-error {
+            background: #fed7d7;
+            color: #742a2a;
+            border-left: 4px solid #e53e3e;
+        }
+
+        .alert-warning {
+            background: #feebc8;
+            color: #744210;
+            border-left: 4px solid #dd6b20;
+        }
+
+        .alert-info {
+            background: #bee3f8;
+            color: #2c5282;
+            border-left: 4px solid #3182ce;
+        }
     </style>
 </head>
 <body>
@@ -249,6 +318,16 @@
             <h1>mCube AI - System Test Dashboard</h1>
             <p>Comprehensive system health check for all critical functionalities</p>
         </div>
+
+        {% if messages %}
+        <div class="messages">
+            {% for message in messages %}
+            <div class="alert alert-{{ message.tags }}">
+                {{ message }}
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
 
         <div class="stats">
             <div class="stat-card total">
@@ -299,12 +378,20 @@
             {% for test in category.tests %}
             <div class="test-item">
                 <div class="test-status {{ test.status }}">
-                    {% if test.status == 'pass' %}✓{% else %}✗{% endif %}
+                    {% if test.status == 'pass' %}✓{% elif test.status == 'warning' %}⚠{% else %}✗{% endif %}
                 </div>
                 <div class="test-content">
                     <div class="test-name">{{ test.name }}</div>
                     <div class="test-message">{{ test.message }}</div>
                 </div>
+                {% if test.trigger_url %}
+                <div class="test-actions">
+                    <form method="post" action="{{ test.trigger_url }}" style="display: inline;">
+                        {% csrf_token %}
+                        <button type="submit" class="trigger-btn">{{ test.trigger_label }}</button>
+                    </form>
+                </div>
+                {% endif %}
             </div>
             {% endfor %}
         </div>

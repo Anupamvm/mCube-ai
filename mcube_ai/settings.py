@@ -53,6 +53,7 @@ INSTALLED_APPS = [
     'apps.analytics.apps.AnalyticsConfig',
     'apps.alerts.apps.AlertsConfig',
     'apps.brokers.apps.BrokersConfig',
+    'apps.trading.apps.TradingConfig',
 ]
 
 MIDDLEWARE = [

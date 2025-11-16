@@ -27,6 +27,9 @@ from .formatting import (
     shorten_large_number,
 )
 
+# Convenience alias - format_currency is the same as format_indian_currency
+format_currency = format_indian_currency
+
 from .validators import (
     is_valid_strike,
     is_within_market_hours,
@@ -51,6 +54,7 @@ __all__ = [
 
     # Formatting utilities
     'format_indian_currency',
+    'format_currency',  # Alias for format_indian_currency
     'format_percentage',
     'format_quantity',
     'format_decimal',

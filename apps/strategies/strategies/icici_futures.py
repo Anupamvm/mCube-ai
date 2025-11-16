@@ -26,6 +26,7 @@ Screening Process:
 """
 
 import logging
+import json
 from decimal import Decimal
 from datetime import datetime, time, date
 from typing import Dict, List, Tuple, Optional
@@ -48,6 +49,8 @@ from apps.llm.services.trade_validator import validate_trade
 from apps.data.models import ContractStockData, ContractData
 from apps.positions.models import Position
 from apps.accounts.models import BrokerAccount
+from apps.trading.services import TradeSuggestionService, FuturesSuggestionFormatter
+from apps.trading.risk_calculator import FuturesRiskCalculator, SupportResistanceCalculator
 
 logger = logging.getLogger(__name__)
 
@@ -633,68 +636,168 @@ def execute_icici_futures_entry(
             'details': {'error': str(e)}
         }
 
-    # STEP 7: Place Order
-    logger.info("STEP 7: Order Placement")
+    # STEP 7: Create Trade Suggestion
+    logger.info("STEP 7: Trade Suggestion Creation")
     logger.info("-" * 80)
 
     try:
-        # Create position
-        success, position, message = create_position(
-            account=account,
-            strategy_type='LLM_VALIDATED_FUTURES',
-            instrument=f"{symbol}_FUT",
-            direction=direction,
-            quantity=quantity,
-            lot_size=lot_size,
-            entry_price=current_price,
-            stop_loss=stop_loss,
-            target=target,
-            expiry_date=selected_expiry,
-            margin_used=margin_used,
-        )
-
-        if success:
-            logger.info(f"✅ Position created successfully: {position.id}")
-            logger.info(f"   Symbol: {symbol}")
-            logger.info(f"   Direction: {direction}")
-            logger.info(f"   Entry Price: ₹{position.entry_price:,.2f}")
-            logger.info(f"   Quantity: {position.quantity}")
-            logger.info(f"   Stop-Loss: ₹{position.stop_loss:,.2f}")
-            logger.info(f"   Target: ₹{position.target:,.2f}")
-            logger.info(f"   Margin Used: ₹{position.margin_used:,.0f}")
-            logger.info("")
-            logger.info("=" * 100)
-
-            return {
-                'success': True,
-                'message': 'ICICI Futures position created successfully',
-                'position': position,
-                'details': {
+        # Prepare algorithm reasoning (complete analysis details)
+        algorithm_reasoning = {
+            'title': 'ICICI Futures Strategy',
+            'summary': 'Multi-factor scoring for directional trade',
+            'scoring': {
+                'oi_score': oi_analysis.get('oi_score', 0),
+                'sector_score': sector_analysis.get('score', 0),
+                'technical_score': 0,  # Would be calculated in analyze_technical
+                'composite_total': composite_score,
+                'composite_breakdown': {
+                    'oi_analysis': {
+                        'signal': oi_analysis.get('signal'),
+                        'buildup_type': oi_analysis.get('buildup_type'),
+                        'buildup_sentiment': oi_analysis.get('buildup_sentiment'),
+                        'price_change_pct': oi_analysis.get('price_change_pct'),
+                        'oi_change_pct': oi_analysis.get('oi_change_pct'),
+                        'pcr': oi_analysis.get('pcr'),
+                    },
+                    'sector_analysis': {
+                        'verdict': sector_analysis.get('verdict'),
+                        'performance': sector_analysis.get('performance'),
+                        'allow_long': sector_analysis.get('allow_long'),
+                        'allow_short': sector_analysis.get('allow_short'),
+                    },
+                    'technical_analysis': technical_analysis
+                }
+            },
+            'llm_validation': {
+                'approved': llm_result.get('approved', False),
+                'confidence': llm_result.get('confidence', 0),
+                'reasoning': llm_result.get('reasoning', ''),
+                'confidence_pct': f"{llm_result.get('confidence', 0)*100:.1f}%"
+            },
+            'position_parameters': {
+                'entry_time_valid': True,
+                'position_count_check': morning_check_result['message'],
+                'days_to_expiry': days_to_expiry,
+            },
+            'final_decision': {
+                'recommendation': 'DIRECTIONAL_TRADE',
+                'position_details': {
                     'symbol': symbol,
                     'direction': direction,
-                    'composite_score': composite_score,
-                    'llm_confidence': llm_result.get('confidence', 0),
-                    'expiry': selected_expiry,
-                    'margin_used': margin_used
+                    'entry_price': str(current_price),
+                    'quantity': quantity,
+                    'stop_loss': str(stop_loss),
+                    'target': str(target),
+                    'margin_required': str(margin_used),
+                    'max_loss': str(risk_scenarios['max_loss']),
+                    'max_profit': str(risk_scenarios['max_profit']),
+                    'risk_reward_ratio': str(risk_scenarios['risk_reward_ratio']),
+                    'expected_profit': str(risk_scenarios['max_profit']),
+                    'expiry_date': str(selected_expiry),
+                },
+                'risk_reward': {
+                    'max_profit': str(risk_scenarios['max_profit']),
+                    'max_loss': str(risk_scenarios['max_loss']),
+                    'risk_reward_ratio': str(risk_scenarios['risk_reward_ratio']),
+                    'scenarios_count': len(risk_scenarios['scenarios']),
+                },
+                'support_resistance': {
+                    'support_level': str(support_resistance['support']),
+                    'resistance_level': str(support_resistance['resistance']),
+                    'next_support': str(support_resistance['next_support']),
+                    'next_resistance': str(support_resistance['next_resistance']),
                 }
             }
-        else:
-            logger.error(f"❌ Position creation failed: {message}")
-            logger.info("=" * 100)
-            return {
-                'success': False,
-                'message': message,
-                'position': None,
-                'details': {}
+        }
+
+        # Calculate risk/reward scenarios
+        risk_scenarios = FuturesRiskCalculator.calculate_scenarios(
+            current_price=current_price,
+            direction=direction,
+            quantity=quantity,
+            stop_loss=stop_loss,
+            target=target
+        )
+
+        # Support and Resistance (TODO: Fetch actual price data from Trendlyne/broker)
+        # For now, using placeholder data based on recent volatility
+        volatility_range = current_price * Decimal('0.02')  # 2% volatility range
+        support_resistance = SupportResistanceCalculator.calculate_next_levels(
+            current_price=current_price,
+            support_level=current_price - volatility_range,
+            resistance_level=current_price + volatility_range
+        )
+
+        # Prepare position details with risk metrics
+        position_details = {
+            'symbol': symbol,
+            'direction': direction,
+            'entry_price': str(current_price),
+            'quantity': quantity,
+            'lot_size': lot_size,
+            'stop_loss': str(stop_loss),
+            'target': str(target),
+            'margin_required': str(margin_used),
+            'max_loss': str(risk_scenarios['max_loss']),
+            'max_profit': str(risk_scenarios['max_profit']),
+            'risk_reward_ratio': str(risk_scenarios['risk_reward_ratio']),
+            'expected_profit': str(risk_scenarios['max_profit']),
+            'expiry_date': str(selected_expiry),
+            # Support and Resistance
+            'support_level': str(support_resistance['support']),
+            'support_distance': str(support_resistance['support_distance']),
+            'support_distance_pct': str(support_resistance['support_distance_pct']),
+            'resistance_level': str(support_resistance['resistance']),
+            'resistance_distance': str(support_resistance['resistance_distance']),
+            'resistance_distance_pct': str(support_resistance['resistance_distance_pct']),
+            'next_support': str(support_resistance['next_support']),
+            'next_resistance': str(support_resistance['next_resistance']),
+        }
+
+        # Create trade suggestion
+        suggestion = TradeSuggestionService.create_suggestion(
+            user=account.user,
+            strategy='icici_futures',
+            suggestion_type='FUTURES',
+            instrument=symbol,
+            direction=direction,
+            algorithm_reasoning=algorithm_reasoning,
+            position_details=position_details
+        )
+
+        logger.info(f"✅ Trade suggestion created successfully: {suggestion.id}")
+        logger.info(f"   Status: {suggestion.get_status_display()}")
+        logger.info(f"   Auto-Trade: {suggestion.is_auto_trade}")
+        logger.info(f"   Symbol: {symbol}")
+        logger.info(f"   Direction: {direction}")
+        logger.info(f"   Entry Price: ₹{current_price:,.2f}")
+        logger.info(f"   Margin Used: ₹{margin_used:,.0f}")
+        logger.info("")
+        logger.info("=" * 100)
+
+        return {
+            'success': True,
+            'message': f'Trade suggestion #{suggestion.id} created (Status: {suggestion.get_status_display()})',
+            'suggestion': suggestion,
+            'details': {
+                'symbol': symbol,
+                'direction': direction,
+                'composite_score': composite_score,
+                'llm_confidence': llm_result.get('confidence', 0),
+                'expiry': selected_expiry,
+                'margin_used': margin_used,
+                'suggestion_status': suggestion.get_status_display(),
+                'is_auto_trade': suggestion.is_auto_trade,
             }
+        }
 
     except Exception as e:
-        msg = f"❌ Order placement failed: {str(e)}"
+        msg = f"❌ Trade suggestion creation failed: {str(e)}"
         logger.error(msg, exc_info=True)
         logger.info("=" * 100)
         return {
             'success': False,
             'message': msg,
-            'position': None,
+            'suggestion': None,
             'details': {'error': str(e)}
         }

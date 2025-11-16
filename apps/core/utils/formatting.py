@@ -77,7 +77,7 @@ def format_indian_currency(amount: Union[Decimal, float, int]) -> str:
         formatted += '.' + dec_part
 
     # Add currency symbol and negative sign
-    result = f"Rs.{formatted}"
+    result = f"₹{formatted}"
     if is_negative:
         result = f"-{result}"
 

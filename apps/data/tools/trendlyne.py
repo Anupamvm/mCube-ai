@@ -132,10 +132,10 @@ def login_to_trendlyne(driver):
             logger.info("✅ Trendlyne login successful")
             return True
         else:
-            logger.error("❌ Trendlyne login may have failed")
+            logger.error("❌ Trendlyne login may have failed - logout button not found")
             return False
     except Exception as e:
-        logger.error(f"Error during Trendlyne login: {e}")
+        logger.error(f"❌ Error during Trendlyne login: {e}", exc_info=True)
         return False
 
 
@@ -165,18 +165,23 @@ def getFnOData(driver, download_dir="tldata"):
         logger.info("📥 FnO download initiated...")
         time.sleep(10)
 
-        # Find the latest downloaded CSV file
-        files = [f for f in os.listdir(download_dir) if f.endswith(".csv")]
+        # Find the latest downloaded file (XLSX or CSV)
+        files = [f for f in os.listdir(download_dir) if f.endswith((".csv", ".xlsx"))]
         if not files:
-            logger.error("❌ No CSV found in download directory")
+            logger.error("❌ No CSV/XLSX found in download directory")
             return None
 
         files.sort(key=lambda x: os.path.getctime(os.path.join(download_dir, x)), reverse=True)
         latest_file = files[0]
+        file_ext = os.path.splitext(latest_file)[1]
 
-        new_filename = f"fno_data_{datetime.now().strftime('%Y-%m-%d')}.csv"
+        new_filename = f"fno_data_{datetime.now().strftime('%Y-%m-%d')}{file_ext}"
         old_path = os.path.join(download_dir, latest_file)
         new_path = os.path.join(download_dir, new_filename)
+
+        # Remove old file if it exists
+        if os.path.exists(new_path):
+            os.remove(new_path)
         os.rename(old_path, new_path)
 
         logger.info(f"✅ F&O data saved: {new_filename}")
@@ -212,17 +217,22 @@ def getMarketSnapshotData(driver, download_dir="tldata"):
         logger.info("📥 Market Snapshot download initiated...")
         time.sleep(10)
 
-        files = [f for f in os.listdir(download_dir) if f.endswith(".csv")]
+        files = [f for f in os.listdir(download_dir) if f.endswith((".csv", ".xlsx"))]
         if not files:
-            logger.error("❌ No CSV found in download directory")
+            logger.error("❌ No CSV/XLSX found in download directory")
             return None
 
         files.sort(key=lambda x: os.path.getctime(os.path.join(download_dir, x)), reverse=True)
         latest_file = files[0]
+        file_ext = os.path.splitext(latest_file)[1]
 
-        new_filename = f"market_snapshot_{datetime.now().strftime('%Y-%m-%d')}.csv"
+        new_filename = f"market_snapshot_{datetime.now().strftime('%Y-%m-%d')}{file_ext}"
         old_path = os.path.join(download_dir, latest_file)
         new_path = os.path.join(download_dir, new_filename)
+
+        # Remove old file if it exists
+        if os.path.exists(new_path):
+            os.remove(new_path)
         os.rename(old_path, new_path)
 
         logger.info(f"✅ Market Snapshot data saved: {new_filename}")
