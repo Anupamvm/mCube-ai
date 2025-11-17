@@ -1,248 +1,316 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{% block title %}mCube Analytics{% endblock %}</title>
-    <style>
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-            margin: 0;
-            padding: 0;
-            background-color: #f5f5f5;
-        }
-        .container {
-            max-width: 1200px;
-            margin: 0 auto;
-            padding: 20px;
-        }
-        .header {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            padding: 20px;
-            margin-bottom: 20px;
-        }
-        .header h1 {
-            margin: 0;
-        }
-        .nav {
-            background-color: #5a67d8;
-            padding: 10px;
-            margin-bottom: 20px;
-        }
-        .nav a {
-            color: white;
-            text-decoration: none;
-            padding: 10px 15px;
-            display: inline-block;
-            transition: background-color 0.3s;
-        }
-        .nav a:hover {
-            background-color: #4c51bf;
-        }
-        .messages {
-            margin-bottom: 20px;
-        }
-        .message {
-            padding: 15px;
-            margin-bottom: 10px;
-            border-radius: 4px;
-        }
-        .message.success {
-            background-color: #d4edda;
-            color: #155724;
-            border: 1px solid #c3e6cb;
-        }
-        .message.error {
-            background-color: #f8d7da;
-            color: #721c24;
-            border: 1px solid #f5c6cb;
-        }
-        .message.info {
-            background-color: #d1ecf1;
-            color: #0c5460;
-            border: 1px solid #bee5eb;
-        }
-        .card {
-            background-color: white;
-            padding: 20px;
-            margin-bottom: 20px;
-            border-radius: 8px;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-        }
-        .card h2 {
-            margin-top: 0;
-            color: #2d3748;
-        }
-        .btn {
-            display: inline-block;
-            padding: 10px 20px;
-            background-color: #667eea;
-            color: white;
-            text-decoration: none;
-            border-radius: 4px;
-            border: none;
-            cursor: pointer;
-            font-size: 14px;
-            transition: background-color 0.3s;
-        }
-        .btn:hover {
-            background-color: #5a67d8;
-        }
-        .btn-success {
-            background-color: #48bb78;
-        }
-        .btn-success:hover {
-            background-color: #38a169;
-        }
-        .btn-danger {
-            background-color: #f56565;
-        }
-        .btn-danger:hover {
-            background-color: #e53e3e;
-        }
-        .btn-warning {
-            background-color: #ed8936;
-        }
-        .btn-warning:hover {
-            background-color: #dd6b20;
-        }
-        .btn-sm {
-            padding: 6px 12px;
-            font-size: 12px;
-        }
-        table {
-            width: 100%;
-            border-collapse: collapse;
-        }
-        table th, table td {
-            padding: 12px;
-            text-align: left;
-            border-bottom: 1px solid #e2e8f0;
-        }
-        table th {
-            background-color: #f7fafc;
-            font-weight: 600;
-            color: #2d3748;
-        }
-        table tr:hover {
-            background-color: #f7fafc;
-        }
-        .badge {
-            display: inline-block;
-            padding: 4px 8px;
-            border-radius: 12px;
-            font-size: 12px;
-            font-weight: 600;
-        }
-        .badge-success {
-            background-color: #c6f6d5;
-            color: #22543d;
-        }
-        .badge-warning {
-            background-color: #feebc8;
-            color: #744210;
-        }
-        .badge-danger {
-            background-color: #fed7d7;
-            color: #742a2a;
-        }
-        .badge-info {
-            background-color: #bee3f8;
-            color: #2c5282;
-        }
-        .stat-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 15px;
-            margin-bottom: 20px;
-        }
-        .stat-card {
-            background-color: white;
-            padding: 20px;
-            border-radius: 8px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-            text-align: center;
-        }
-        .stat-value {
-            font-size: 32px;
-            font-weight: bold;
-            color: #667eea;
-            margin: 10px 0;
-        }
-        .stat-label {
-            font-size: 14px;
-            color: #718096;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }
-        .form-group {
-            margin-bottom: 15px;
-        }
-        .form-group label {
-            display: block;
-            margin-bottom: 5px;
-            font-weight: 500;
-            color: #2d3748;
-        }
-        .form-group input, .form-group select, .form-group textarea {
-            width: 100%;
-            padding: 10px;
-            border: 1px solid #cbd5e0;
-            border-radius: 4px;
-            box-sizing: border-box;
-        }
-    </style>
-    {% block extra_css %}{% endblock %}
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-</head>
-<body>
-    <div class="header">
-        <div class="container">
-            <div style="display: flex; justify-content: space-between; align-items: center;">
-                <h1>mCube Analytics & Learning Engine</h1>
-                {% if user.is_authenticated %}
-                <div style="color: white; font-size: 14px;">
-                    <span style="margin-right: 15px;">
-                        {{ user.get_full_name|default:user.username }}
-                        {% if user.is_superuser %}
-                        <span style="background-color: #f56565; padding: 2px 8px; border-radius: 3px; margin-left: 5px;">Admin</span>
-                        {% elif user.groups.all.0 %}
-                        <span style="background-color: #4299e1; padding: 2px 8px; border-radius: 3px; margin-left: 5px;">{{ user.groups.all.0.name }}</span>
-                        {% endif %}
-                    </span>
-                    <a href="{% url 'brokers:logout' %}" style="color: white; text-decoration: none; background-color: rgba(255,255,255,0.2); padding: 5px 15px; border-radius: 4px;">Logout</a>
-                </div>
-                {% endif %}
-            </div>
-        </div>
-    </div>
+{% extends "core/master_base.html" %}
 
-    <div class="nav">
-        <div class="container">
-            <a href="{% url 'analytics:learning_dashboard' %}">Learning Dashboard</a>
-            <a href="{% url 'analytics:view_patterns' %}">Patterns</a>
-            {% if user.is_superuser %}
-            <a href="{% url 'analytics:view_suggestions' %}">Suggestions</a>
-            {% endif %}
-            <a href="{% url 'brokers:dashboard' %}">Brokers</a>
-        </div>
-    </div>
+{% block page_background %}gradient-background{% endblock %}
 
-    <div class="container">
-        {% if messages %}
-        <div class="messages">
-            {% for message in messages %}
-            <div class="message {{ message.tags }}">
-                {{ message }}
-            </div>
-            {% endfor %}
-        </div>
-        {% endif %}
+{% block breadcrumb %}
+{% if breadcrumbs %}
+    {% include 'core/components/breadcrumb.html' %}
+{% endif %}
+{% endblock %}
 
-        {% block content %}{% endblock %}
-    </div>
+{% block extra_css %}
+<style>
+    /* Analytics-specific styles */
+    .analytics-header {
+        background: rgba(255, 255, 255, 0.95);
+        backdrop-filter: blur(10px);
+        padding: 2rem;
+        border-radius: var(--radius-lg);
+        margin-bottom: 2rem;
+        box-shadow: var(--shadow-lg);
+    }
 
-    {% block extra_js %}{% endblock %}
-</body>
-</html>
+    .analytics-header h1 {
+        margin: 0;
+        color: var(--darker);
+        font-size: 2rem;
+    }
+
+    .analytics-header p {
+        margin-top: 0.5rem;
+        color: var(--gray);
+    }
+
+    /* Analytics cards on gradient background */
+    body.gradient-background .card {
+        background: rgba(255, 255, 255, 0.95);
+        backdrop-filter: blur(10px);
+    }
+
+    /* Pattern cards */
+    .pattern-card {
+        background: var(--white);
+        padding: 1.5rem;
+        border-radius: var(--radius-lg);
+        box-shadow: var(--shadow-md);
+        margin-bottom: 1.5rem;
+        transition: all 0.3s ease;
+    }
+
+    .pattern-card:hover {
+        transform: translateY(-2px);
+        box-shadow: var(--shadow-xl);
+    }
+
+    .pattern-title {
+        font-size: 1.25rem;
+        font-weight: 600;
+        color: var(--darker);
+        margin-bottom: 0.5rem;
+    }
+
+    .pattern-meta {
+        display: flex;
+        gap: 1rem;
+        margin-bottom: 1rem;
+        flex-wrap: wrap;
+    }
+
+    .pattern-meta-item {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        font-size: 0.875rem;
+        color: var(--gray);
+    }
+
+    .pattern-meta-icon {
+        font-size: 1rem;
+    }
+
+    .pattern-description {
+        color: var(--gray);
+        line-height: 1.6;
+        margin-bottom: 1rem;
+    }
+
+    .pattern-stats {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+        gap: 1rem;
+        margin-top: 1rem;
+    }
+
+    .pattern-stat {
+        text-align: center;
+        padding: 0.75rem;
+        background: var(--lighter);
+        border-radius: var(--radius-md);
+    }
+
+    .pattern-stat-value {
+        font-size: 1.5rem;
+        font-weight: 700;
+        color: var(--primary);
+    }
+
+    .pattern-stat-label {
+        font-size: 0.75rem;
+        color: var(--gray);
+        text-transform: uppercase;
+        margin-top: 0.25rem;
+    }
+
+    /* Learning metrics */
+    .metric-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 1.5rem;
+        margin-bottom: 2rem;
+    }
+
+    .metric-card {
+        background: var(--white);
+        padding: 1.5rem;
+        border-radius: var(--radius-lg);
+        box-shadow: var(--shadow-md);
+        text-align: center;
+    }
+
+    .metric-icon {
+        font-size: 2.5rem;
+        margin-bottom: 1rem;
+    }
+
+    .metric-value {
+        font-size: 2rem;
+        font-weight: 700;
+        color: var(--darker);
+        margin-bottom: 0.5rem;
+    }
+
+    .metric-label {
+        font-size: 0.875rem;
+        color: var(--gray);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+
+    .metric-change {
+        margin-top: 0.5rem;
+        font-size: 0.875rem;
+        font-weight: 600;
+    }
+
+    .metric-change.positive {
+        color: var(--success);
+    }
+
+    .metric-change.negative {
+        color: var(--danger);
+    }
+
+    /* Suggestion cards */
+    .suggestion-card {
+        background: var(--white);
+        padding: 1.5rem;
+        border-radius: var(--radius-lg);
+        box-shadow: var(--shadow-md);
+        margin-bottom: 1.5rem;
+        border-left: 4px solid var(--primary);
+    }
+
+    .suggestion-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: start;
+        margin-bottom: 1rem;
+    }
+
+    .suggestion-title {
+        font-size: 1.125rem;
+        font-weight: 600;
+        color: var(--darker);
+    }
+
+    .suggestion-status {
+        padding: 0.375rem 0.75rem;
+        border-radius: var(--radius-full);
+        font-size: 0.75rem;
+        font-weight: 600;
+        text-transform: uppercase;
+    }
+
+    .suggestion-status.approved {
+        background: #d1fae5;
+        color: #065f46;
+    }
+
+    .suggestion-status.rejected {
+        background: #fee2e2;
+        color: #991b1b;
+    }
+
+    .suggestion-status.pending {
+        background: #fef3c7;
+        color: #92400e;
+    }
+
+    /* Data tables for analytics */
+    .analytics-table {
+        width: 100%;
+        background: var(--white);
+        border-radius: var(--radius-lg);
+        overflow: hidden;
+        box-shadow: var(--shadow-md);
+    }
+
+    .analytics-table thead {
+        background: var(--primary);
+        color: var(--white);
+    }
+
+    .analytics-table th {
+        padding: 1rem;
+        text-align: left;
+        font-weight: 600;
+        font-size: 0.875rem;
+    }
+
+    .analytics-table td {
+        padding: 1rem;
+        border-bottom: 1px solid var(--light);
+    }
+
+    .analytics-table tbody tr:hover {
+        background: var(--lighter);
+    }
+
+    /* Charts container */
+    .chart-container {
+        background: var(--white);
+        padding: 1.5rem;
+        border-radius: var(--radius-lg);
+        box-shadow: var(--shadow-md);
+        margin-bottom: 2rem;
+    }
+
+    .chart-title {
+        font-size: 1.25rem;
+        font-weight: 600;
+        color: var(--darker);
+        margin-bottom: 1.5rem;
+    }
+
+    /* Filter controls */
+    .filter-bar {
+        background: rgba(255, 255, 255, 0.95);
+        backdrop-filter: blur(10px);
+        padding: 1.5rem;
+        border-radius: var(--radius-lg);
+        margin-bottom: 2rem;
+        box-shadow: var(--shadow-md);
+    }
+
+    .filter-controls {
+        display: flex;
+        gap: 1rem;
+        flex-wrap: wrap;
+        align-items: end;
+    }
+
+    .filter-group {
+        flex: 1;
+        min-width: 200px;
+    }
+
+    /* Status indicators specific to analytics */
+    .confidence-indicator {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.375rem 0.75rem;
+        border-radius: var(--radius-full);
+        font-size: 0.813rem;
+        font-weight: 600;
+    }
+
+    .confidence-high {
+        background: #d1fae5;
+        color: #065f46;
+    }
+
+    .confidence-medium {
+        background: #fef3c7;
+        color: #92400e;
+    }
+
+    .confidence-low {
+        background: #fee2e2;
+        color: #991b1b;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<!-- Analytics Header -->
+<div class="analytics-header">
+    <h1>{% block page_title %}Analytics Dashboard{% endblock %}</h1>
+    <p>{% block page_description %}AI-powered trading analytics and insights{% endblock %}</p>
+</div>
+
+<!-- Page Content -->
+<div class="page-content">
+    {% block page_content %}{% endblock %}
+</div>
+{% endblock %}

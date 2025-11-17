@@ -192,10 +192,58 @@ else:
     print(f'✓ ICICI account already exists: {icici_account.account_name}')
 
 # ============================================================================
-# Trendlyne Credentials (Market Data Provider)
+# CredentialStore - Broker API Credentials
 # ============================================================================
 from apps.core.models import CredentialStore
 
+print("\nSetting up CredentialStore for broker APIs...")
+
+# Kotak Neo CredentialStore
+kotak_creds, created = CredentialStore.objects.get_or_create(
+    service='kotakneo',
+    name='default',
+    defaults={
+        'api_key': 'NkmJfGnAehLpdDm3wSPFR7iCMj4a',
+        'api_secret': 'H8Q60_oBa2PkSOBJXnk7zbOvGqUa',
+        'username': 'AAQHA1835B',  # PAN (used for login)
+        'password': 'Anupamvm2@',
+        'neo_password': 'Anupamvm2@',  # MPIN (update if different)
+        'pan': 'AAQHA1835B',  # PAN number
+        'session_token': '284321',
+    }
+)
+
+if created:
+    print('✓ Created Kotak Neo CredentialStore')
+else:
+    # Update username to PAN if it was set to mobile number
+    if kotak_creds.username in ['MOBILE_NUMBER_NEEDED', '9890688965']:
+        kotak_creds.username = 'AAQHA1835B'
+        kotak_creds.pan = 'AAQHA1835B'
+        kotak_creds.save()
+        print('✓ Updated Kotak Neo CredentialStore (PAN corrected)')
+    else:
+        print('✓ Kotak Neo CredentialStore already exists')
+
+# ICICI Breeze CredentialStore
+breeze_creds, created = CredentialStore.objects.get_or_create(
+    service='breeze',
+    name='default',
+    defaults={
+        'api_key': '6561_m2784f16J&R88P3429@66Y89^46',
+        'api_secret': 'l6_(162788u1p629549_)499O158881c',
+        'session_token': '52780531',
+    }
+)
+
+if created:
+    print('✓ Created ICICI Breeze CredentialStore')
+else:
+    print('✓ ICICI Breeze CredentialStore already exists')
+
+# ============================================================================
+# Trendlyne Credentials (Market Data Provider)
+# ============================================================================
 trendlyne_creds, created = CredentialStore.objects.get_or_create(
     service='trendlyne',
     name='default',
@@ -210,11 +258,31 @@ if created:
 else:
     print('✓ Trendlyne credentials already exist')
 
+# ============================================================================
+# Telegram Bot Credentials
+# ============================================================================
+telegram_creds, created = CredentialStore.objects.get_or_create(
+    service='telegram',
+    name='default',
+    defaults={
+        'api_key': '6386769117:AAHt_4krbiU0KlBdCLhhVgC-TCQVUnzvywo',  # Bot token
+        'username': '788423838',  # Your chat ID (stored in username field)
+    }
+)
+
+if created:
+    print('✓ Created Telegram bot credentials (@dmcube_bot)')
+else:
+    print('✓ Telegram bot credentials already exist (@dmcube_bot)')
+
 print('\n✓ All broker accounts and credentials configured!')
 print(f'  - Kotak: {kotak_account.account_name} (₹{kotak_account.allocated_capital:,.0f})')
 print(f'  - ICICI: {icici_account.account_name} (₹{icici_account.allocated_capital:,.0f})')
 print(f'  - Total Capital: ₹{kotak_account.allocated_capital + icici_account.allocated_capital:,.0f}')
+print(f'  - Kotak Neo API: CredentialStore configured (PAN: AAQHA1835B)')
+print(f'  - ICICI Breeze API: CredentialStore configured')
 print(f'  - Trendlyne: Market data access configured')
+print(f'  - Telegram Bot: @dmcube_bot configured (Chat ID: 788423838)')
 EOF
 
 # ============================================================================
@@ -239,8 +307,11 @@ echo "  Password: Anupamvm1!"
 echo ""
 echo "Broker Accounts:"
 echo "  Kotak Neo:    ₹6.0 Cr (Weekly Nifty Strangle)"
+echo "                PAN: AAQHA1835B"
 echo "  ICICI Breeze: ₹1.2 Cr (LLM-validated Futures)"
+echo "                Account: 52780531"
 echo "  Trendlyne:    Market data provider (configured)"
+echo "  Telegram Bot: @dmcube_bot (Chat ID: 788423838)"
 echo "  Total Capital: ₹7.2 Cr"
 echo ""
 echo "Next Steps:"
@@ -259,6 +330,9 @@ echo "     python manage.py process_tasks"
 echo ""
 echo "  5. (Optional) Start Celery worker:"
 echo "     celery -A mcube_ai worker -l info"
+echo ""
+echo "  6. (Optional) Start Telegram bot:"
+echo "     python manage.py run_telegram_bot"
 echo ""
 echo "============================================"
 echo ""

@@ -93,7 +93,7 @@
    - Average 3rd 50% of current balance margin
    - Trigger: Position down by 1% from entry
    - Action: Add equal quantity at current price
-   - Adjust: Tighten stop-loss to 0.5% from new average price
+   - Adjust: Tighten stop-loss to 0.5% from new average price but confirm from telegram bot before triggering stop loss
 
 ✅ STRANGLE DELTA MANAGEMENT
    - Monitor net delta continuously
@@ -140,8 +140,8 @@
 │                           ↕                                  │
 │  ┌───────────────────────────────────────────────────────┐  │
 │  │          Celery Workers (Background Tasks)            │  │
-│  │   • Market data sync (every 1 minute, 9AM-3:30PM)     │  │
-│  │   • Position monitoring (every 5 seconds)             │  │
+│  │   • Market data sync (every 5 minute, 9AM-3:30PM)     │  │
+│  │   • Position monitoring (every 5 minute)             │  │
 │  │   • Strategy evaluation (scheduled)                   │  │
 │  │   • Daily P&L reports (EOD)                           │  │
 │  └───────────────────────────────────────────────────────┘  │
@@ -261,7 +261,7 @@ ICICI_ACCOUNT_CONFIG = {
 
 **Strategy:** Directional futures trading based on multi-factor quantitative screening (OI analysis, sector strength, technical indicators) validated by local LLM.
 
-**Target Return:** ₹6 Lakhs monthly (~5% on margin, 0.5% on exposure)
+**Target Return:** ₹4 Lakhs monthly (1.2 cr of margin, 0.5% on exposure)
 
 ---
 

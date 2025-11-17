@@ -1,55 +1,98 @@
 {% extends 'brokers/base.html' %}
 
-{% block title %}Option Chain - mCube{% endblock %}
+{% block title %}Nifty Option Chain - mCube{% endblock %}
 
-{% block content %}
+{% block page_title %}Nifty Option Chain{% endblock %}
+
+{% block page_content %}
 <div class="card">
-    <h2>Option Chain Quotes</h2>
+    <h2>Nifty Option Chain - All Expiries</h2>
 
     <form method="post">
         {% csrf_token %}
-        <div class="form-group">
-            <label>Stock Code: {{ stock_code }}</label>
-        </div>
-        <div class="form-group">
-            <label>Product Type: {{ product_type }}</label>
-        </div>
-        <div class="form-group">
-            <label>Next Expiry: {{ expiry_date }}</label>
-        </div>
-        <button type="submit" class="btn btn-success">Fetch Option Chain</button>
+        <button type="submit" class="btn btn-success">Fetch Nifty Option Chain</button>
     </form>
+
+    {% if total_records %}
+    <p style="margin-top: 10px;">
+        <strong>Total Records:</strong> {{ total_records }}<br>
+        <strong>Spot Price:</strong> {% if spot_price %}₹{{ spot_price|floatformat:2 }}{% else %}N/A{% endif %}
+    </p>
+    {% endif %}
 </div>
 
-{% if quotes %}
+{% if expiry_dates %}
 <div class="card">
-    <h3>Latest Quotes ({{ quotes|length }} records)</h3>
-    <table>
-        <thead>
-            <tr>
-                <th>Strike</th>
-                <th>Type</th>
-                <th>LTP</th>
-                <th>Bid</th>
-                <th>Ask</th>
-                <th>OI</th>
-                <th>Volume</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for q in quotes|slice:":100" %}
-            <tr>
-                <td>{{ q.strike_price }}</td>
-                <td>{{ q.right|upper }}</td>
-                <td>₹{{ q.ltp|floatformat:2 }}</td>
-                <td>₹{{ q.best_bid_price|floatformat:2 }}</td>
-                <td>₹{{ q.best_offer_price|floatformat:2 }}</td>
-                <td>{{ q.open_interest }}</td>
-                <td>{{ q.total_quantity_traded }}</td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
+    <h3>Select Expiry</h3>
+    <form method="get">
+        <div class="form-group">
+            <label>Expiry Date:</label>
+            <select name="expiry" onchange="this.form.submit()">
+                {% for expiry in expiry_dates %}
+                <option value="{{ expiry }}" {% if expiry == selected_expiry %}selected{% endif %}>
+                    {{ expiry|date:"d-M-Y" }}
+                </option>
+                {% endfor %}
+            </select>
+        </div>
+    </form>
+</div>
+{% endif %}
+
+{% if option_chain %}
+<div class="card">
+    <h3>Option Chain for {{ selected_expiry|date:"d-M-Y" }} ({{ option_chain|length }} strikes)</h3>
+    <div style="overflow-x: auto;">
+        <table>
+            <thead>
+                <tr>
+                    <th colspan="5" style="text-align: center; background-color: #e8f5e9;">CALLS</th>
+                    <th style="text-align: center; background-color: #fff3e0;">STRIKE</th>
+                    <th colspan="5" style="text-align: center; background-color: #ffebee;">PUTS</th>
+                </tr>
+                <tr>
+                    <!-- Call columns -->
+                    <th>OI</th>
+                    <th>Volume</th>
+                    <th>LTP</th>
+                    <th>Bid</th>
+                    <th>Ask</th>
+                    <!-- Strike -->
+                    <th>Price</th>
+                    <!-- Put columns -->
+                    <th>Ask</th>
+                    <th>Bid</th>
+                    <th>LTP</th>
+                    <th>Volume</th>
+                    <th>OI</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for oc in option_chain %}
+                <tr {% if spot_price and oc.strike_price == spot_price|floatformat:0|add:"0.00" %}style="background-color: #fff9c4;"{% endif %}>
+                    <!-- Call data -->
+                    <td>{{ oc.call_oi|floatformat:0 }}</td>
+                    <td>{{ oc.call_volume|floatformat:0 }}</td>
+                    <td style="font-weight: bold;">₹{{ oc.call_ltp|floatformat:2 }}</td>
+                    <td>₹{{ oc.call_bid|floatformat:2 }}</td>
+                    <td>₹{{ oc.call_ask|floatformat:2 }}</td>
+                    <!-- Strike -->
+                    <td style="text-align: center; font-weight: bold; background-color: #f5f5f5;">{{ oc.strike_price|floatformat:2 }}</td>
+                    <!-- Put data -->
+                    <td>₹{{ oc.put_ask|floatformat:2 }}</td>
+                    <td>₹{{ oc.put_bid|floatformat:2 }}</td>
+                    <td style="font-weight: bold;">₹{{ oc.put_ltp|floatformat:2 }}</td>
+                    <td>{{ oc.put_volume|floatformat:0 }}</td>
+                    <td>{{ oc.put_oi|floatformat:0 }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% elif not error %}
+<div class="card">
+    <p>No option chain data available. Click "Fetch Nifty Option Chain" to load data.</p>
 </div>
 {% endif %}
 {% endblock %}

@@ -387,6 +387,116 @@ class OptionChainQuote(TimeStampedModel):
         return f"{self.stock_code} {self.expiry_date} {self.strike_price} {self.right.upper()}"
 
 
+class NiftyOptionChain(TimeStampedModel):
+    """
+    Nifty Option Chain data fetched from Breeze API
+
+    Stores comprehensive option chain data for NIFTY index including all expiries.
+    Data is cleared before each fresh fetch to avoid cluttering.
+    """
+
+    expiry_date = models.DateField(
+        help_text="Option expiry date"
+    )
+
+    strike_price = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        help_text="Strike price"
+    )
+
+    option_type = models.CharField(
+        max_length=10,
+        choices=[('CE', 'Call'), ('PE', 'Put')],
+        help_text="Option type (CE or PE)"
+    )
+
+    # Call Option Data
+    call_ltp = models.DecimalField(
+        max_digits=15,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text="Call LTP"
+    )
+
+    call_bid = models.DecimalField(
+        max_digits=15,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text="Call best bid price"
+    )
+
+    call_ask = models.DecimalField(
+        max_digits=15,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text="Call best ask price"
+    )
+
+    call_oi = models.BigIntegerField(
+        default=0,
+        help_text="Call open interest"
+    )
+
+    call_volume = models.BigIntegerField(
+        default=0,
+        help_text="Call volume"
+    )
+
+    # Put Option Data
+    put_ltp = models.DecimalField(
+        max_digits=15,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text="Put LTP"
+    )
+
+    put_bid = models.DecimalField(
+        max_digits=15,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text="Put best bid price"
+    )
+
+    put_ask = models.DecimalField(
+        max_digits=15,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text="Put best ask price"
+    )
+
+    put_oi = models.BigIntegerField(
+        default=0,
+        help_text="Put open interest"
+    )
+
+    put_volume = models.BigIntegerField(
+        default=0,
+        help_text="Put volume"
+    )
+
+    # Common fields
+    spot_price = models.DecimalField(
+        max_digits=15,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text="Nifty spot price at time of fetch"
+    )
+
+    class Meta:
+        db_table = 'nifty_option_chain'
+        verbose_name = 'Nifty Option Chain'
+        verbose_name_plural = 'Nifty Option Chains'
+        ordering = ['-created_at', 'expiry_date', 'strike_price']
+        indexes = [
+            models.Index(fields=['expiry_date', 'strike_price']),
+            models.Index(fields=['-created_at']),
+        ]
+
+    def __str__(self):
+        return f"NIFTY {self.expiry_date} {self.strike_price} {self.option_type}"
+
+
 class HistoricalPrice(TimeStampedModel):
     """
     Historical OHLCV data from Breeze API

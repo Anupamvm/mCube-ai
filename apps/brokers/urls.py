@@ -29,4 +29,7 @@ urlpatterns = [
     # API endpoints
     path('api/positions/', views.api_positions, name='api_positions'),
     path('api/limits/', views.api_limits, name='api_limits'),
+
+    # Future trade validation
+    path('validate-future-trade/', views.validate_future_trade, name='validate_future_trade'),
 ]

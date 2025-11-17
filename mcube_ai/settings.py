@@ -191,8 +191,8 @@ CELERY_WORKER_MAX_TASKS_PER_CHILD = 1000  # Restart worker after 1000 tasks (pre
 
 # Telegram Bot API settings (for alerts and notifications)
 # These should be moved to environment variables in production
-TELEGRAM_BOT_TOKEN = ''  # TODO: Add your Telegram bot token
-TELEGRAM_CHAT_ID = ''  # TODO: Add your Telegram chat ID
+TELEGRAM_BOT_TOKEN = '6386769117:AAHt_4krbiU0KlBdCLhhVgC-TCQVUnzvywo'  # @dmcube_bot
+TELEGRAM_CHAT_ID = '788423838'  # Will be auto-detected on first message
 
 
 # =============================================================================

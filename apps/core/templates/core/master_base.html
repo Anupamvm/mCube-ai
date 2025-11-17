@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}mCube Trading System{% endblock %}</title>
+    {% load static %}
+
+    <!-- Design System CSS -->
+    <link rel="stylesheet" href="{% static 'core/css/design-system.css' %}">
+    <link rel="stylesheet" href="{% static 'core/css/main.css' %}">
+
+    <!-- Page-specific CSS -->
+    {% block extra_css %}{% endblock %}
+
+    <style>
+        /* CSS Variables for Color System */
+        :root {
+            /* Primary Palette (Professional Blue) */
+            --primary: #2563eb;
+            --primary-hover: #1d4ed8;
+            --primary-light: #60a5fa;
+            --primary-dark: #1e40af;
+
+            /* Secondary Palette (Purple Gradient) */
+            --gradient-special: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            --purple: #667eea;
+            --purple-hover: #5a67d8;
+
+            /* Semantic Colors */
+            --success: #10b981;
+            --success-hover: #059669;
+            --warning: #f59e0b;
+            --warning-hover: #d97706;
+            --danger: #ef4444;
+            --danger-hover: #dc2626;
+            --info: #3b82f6;
+            --info-hover: #2563eb;
+
+            /* Neutrals */
+            --dark: #1e293b;
+            --darker: #0f172a;
+            --gray: #64748b;
+            --gray-light: #94a3b8;
+            --light: #f1f5f9;
+            --lighter: #f8fafc;
+            --white: #ffffff;
+
+            /* Gradients */
+            --gradient-hero: linear-gradient(135deg, #1e40af 0%, #6366f1 100%);
+            --gradient-dark: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+
+            /* Spacing */
+            --space-xs: 4px;
+            --space-sm: 8px;
+            --space-md: 16px;
+            --space-lg: 24px;
+            --space-xl: 32px;
+            --space-2xl: 48px;
+
+            /* Border Radius */
+            --radius-sm: 4px;
+            --radius-md: 8px;
+            --radius-lg: 12px;
+            --radius-full: 9999px;
+
+            /* Shadows */
+            --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+            --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+            --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+            --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
+        }
+
+        /* Page Background Classes */
+        body.gradient-background {
+            background: var(--gradient-special);
+            min-height: 100vh;
+        }
+
+        body.standard-background {
+            background: var(--lighter);
+            min-height: 100vh;
+        }
+    </style>
+</head>
+<body class="{% block page_background %}standard-background{% endblock %}">
+
+    <!-- Unified Navigation Bar -->
+    {% include 'core/components/navbar.html' %}
+
+    <!-- Breadcrumb Navigation (if provided) -->
+    {% block breadcrumb %}{% endblock %}
+
+    <!-- Main Content -->
+    <main class="main-content">
+        <div class="{% block container_class %}container{% endblock %}">
+            <!-- Django Messages -->
+            {% if messages %}
+            <div class="messages-container">
+                {% for message in messages %}
+                <div class="alert alert-{{ message.tags }}">
+                    <span class="alert-icon">
+                        {% if message.tags == 'success' %}✓{% elif message.tags == 'error' %}✗{% elif message.tags == 'warning' %}⚠{% else %}ℹ{% endif %}
+                    </span>
+                    <span class="alert-message">{{ message }}</span>
+                </div>
+                {% endfor %}
+            </div>
+            {% endif %}
+
+            <!-- Page Content -->
+            {% block content %}{% endblock %}
+        </div>
+    </main>
+
+    <!-- Footer -->
+    <footer class="main-footer">
+        <div class="container">
+            <div class="footer-content">
+                <div class="footer-left">
+                    <p>&copy; 2025 AVM Group. All rights reserved.</p>
+                    <p class="footer-product">mCube Trading System - An AVM Group Product</p>
+                </div>
+                <div class="footer-right">
+                    <p>
+                        <a href="#about">About</a> |
+                        <a href="#contact">Contact</a> |
+                        <a href="#privacy">Privacy</a> |
+                        <a href="#terms">Terms</a>
+                    </p>
+                </div>
+            </div>
+        </div>
+    </footer>
+
+    <!-- JavaScript -->
+    <script src="{% static 'core/js/main.js' %}"></script>
+    {% block extra_js %}{% endblock %}
+</body>
+</html>

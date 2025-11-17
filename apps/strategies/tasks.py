@@ -97,19 +97,25 @@ def evaluate_kotak_strangle_entry():
 
 
 @shared_task(name='apps.strategies.tasks.evaluate_kotak_strangle_exit')
-def evaluate_kotak_strangle_exit(mandatory=False):
+def evaluate_kotak_strangle_exit(profit_threshold=10000, mandatory=False):
     """
     Evaluate Kotak Strangle exit
 
-    Scheduled:
-    - Thursday @ 3:15 PM (conditional exit if ≥50% profit)
-    - Friday @ 3:15 PM (mandatory exit)
+    Scheduled: Daily @ 3:15 PM (Mon-Fri)
+
+    Exit Logic:
+    - Exit if unrealized P&L >= profit_threshold (e.g., ₹10,000)
+    - Exit if Friday (mandatory EOD exit before expiry)
+    - Exit if stop-loss hit (checked separately every 30s)
+    - Only runs if open positions exist
 
     Args:
-        mandatory: If True, exit regardless of profit (Friday)
+        profit_threshold: Minimum profit required to trigger exit (default: ₹10,000)
+        mandatory: If True, exit regardless of profit (Friday EOD)
     """
     logger.info("=" * 80)
-    logger.info(f"CELERY TASK: Kotak Strangle Exit Evaluation (Mandatory: {mandatory})")
+    logger.info(f"CELERY TASK: Kotak Strangle Exit Evaluation")
+    logger.info(f"Profit Threshold: ₹{profit_threshold:,.0f}, Mandatory: {mandatory}")
     logger.info("=" * 80)
 
     try:
@@ -128,15 +134,27 @@ def evaluate_kotak_strangle_exit(mandatory=False):
             return {'success': False, 'message': 'No active position'}
 
         logger.info(f"Evaluating position {position.id} for exit")
+        logger.info(f"Current P&L: ₹{position.unrealized_pnl:,.0f}")
 
         # Check exit conditions
         current_time = timezone.now()
         should_exit, reason, exit_type = should_exit_position(position, current_time)
 
+        # Check if Friday (mandatory exit)
+        if current_time.weekday() == 4:  # Friday
+            mandatory = True
+
+        # NEW: Check profit threshold
+        if position.unrealized_pnl >= Decimal(str(profit_threshold)):
+            should_exit = True
+            reason = f"Profit target reached: ₹{position.unrealized_pnl:,.0f} >= ₹{profit_threshold:,.0f}"
+            exit_type = "PROFIT_TARGET"
+            logger.info(f"✅ Profit threshold reached: ₹{position.unrealized_pnl:,.0f}")
+
         if mandatory:
             # Friday - exit regardless
             should_exit = True
-            reason = "Mandatory Friday EOD exit"
+            reason = "Mandatory Friday EOD exit (before weekly expiry)"
             exit_type = "EOD_MANDATORY"
 
         if should_exit:
@@ -180,15 +198,19 @@ def evaluate_kotak_strangle_exit(mandatory=False):
 
 
 @shared_task(name='apps.strategies.tasks.monitor_all_strangle_deltas')
-def monitor_all_strangle_deltas():
+def monitor_all_strangle_deltas(delta_threshold=300):
     """
     Monitor delta for all active strangle positions
 
-    Scheduled: Every 5 minutes during market hours
+    Scheduled: Every 15 minutes during market hours (configurable via UI)
 
-    Checks delta for all strangles and sends alerts if |delta| > 300
+    Checks delta for all strangles and sends alerts if |delta| > delta_threshold
+
+    Args:
+        delta_threshold: Alert if |Net Delta| exceeds this value (default: 300)
     """
     logger.info("CELERY TASK: Delta Monitoring for All Strangles")
+    logger.info(f"Delta Threshold: {delta_threshold}")
 
     try:
         # Get all active strangle positions
@@ -206,7 +228,7 @@ def monitor_all_strangle_deltas():
 
         for position in strangle_positions:
             try:
-                delta_result = monitor_delta(position, delta_threshold=Decimal('300'))
+                delta_result = monitor_delta(position, delta_threshold=Decimal(str(delta_threshold)))
 
                 if delta_result['delta_exceeded']:
                     alerts_sent += 1

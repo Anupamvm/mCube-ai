@@ -1,0 +1,570 @@
+{% load static %}
+
+<!-- Main Header / Navigation -->
+<header class="main-header">
+    <div class="container">
+        <div class="header-content">
+            <!-- Logo / Brand -->
+            <div class="logo">
+                <a href="/" class="logo-link">
+                    <img src="{% static 'core/images/avmgplogo.png' %}" alt="AVM Group" class="logo-image">
+                    <div class="logo-content">
+                        <h1>
+                            <span class="logo-text">mCube</span>
+                        </h1>
+                        <p class="tagline">An AVM Group Product</p>
+                    </div>
+                </a>
+            </div>
+
+            <!-- Mobile Menu Toggle -->
+            <button class="mobile-menu-toggle" aria-label="Toggle menu">
+                <span></span>
+                <span></span>
+                <span></span>
+            </button>
+
+            <!-- Main Navigation -->
+            <nav class="main-nav">
+                <ul>
+                    {% if user.is_authenticated %}
+                        <!-- Dashboard Dropdown -->
+                        <li class="dropdown">
+                            <a href="#" class="dropdown-toggle">Dashboard ▾</a>
+                            <ul class="dropdown-menu">
+                                <li><a href="/">Trading Overview</a></li>
+                                <li><a href="/#pnl">P&L Summary</a></li>
+                                <li><a href="/#actions">Quick Actions</a></li>
+                            </ul>
+                        </li>
+
+                        <!-- Brokers Dropdown -->
+                        <li class="dropdown">
+                            <a href="#" class="dropdown-toggle">Brokers ▾</a>
+                            <ul class="dropdown-menu">
+                                <li><a href="{% url 'brokers:dashboard' %}">Broker Dashboard</a></li>
+                                <li class="dropdown-divider"></li>
+                                <li class="dropdown-header">Kotak Neo</li>
+                                <li><a href="{% url 'brokers:kotakneo_login' %}">&nbsp;&nbsp;&nbsp;Login & Configuration</a></li>
+                                <li><a href="{% url 'brokers:kotakneo_data' %}">&nbsp;&nbsp;&nbsp;Data & Positions</a></li>
+                                <li class="dropdown-divider"></li>
+                                <li class="dropdown-header">ICICI Breeze</li>
+                                <li><a href="{% url 'brokers:breeze_login' %}">&nbsp;&nbsp;&nbsp;Login & Configuration</a></li>
+                                <li><a href="{% url 'brokers:breeze_data' %}">&nbsp;&nbsp;&nbsp;Data & Positions</a></li>
+                                <li><a href="{% url 'brokers:option_chain' %}">&nbsp;&nbsp;&nbsp;Option Chain</a></li>
+                                <li><a href="{% url 'brokers:historical' %}">&nbsp;&nbsp;&nbsp;Historical Data</a></li>
+                                <li class="dropdown-divider"></li>
+                                <li><a href="{% url 'brokers:validate_future_trade' %}" class="highlight-link">🎯 Validate Future Trade</a></li>
+                            </ul>
+                        </li>
+
+                        <!-- Trading Dropdown -->
+                        <li class="dropdown">
+                            <a href="#" class="dropdown-toggle">Trading ▾</a>
+                            <ul class="dropdown-menu">
+                                <li><a href="/trading/suggestions/">Trade Suggestions</a></li>
+                                <li><a href="/trading/history/">Suggestion History</a></li>
+                                <li><a href="/trading/config/auto-trade/">Auto-Trade Config</a></li>
+                            </ul>
+                        </li>
+
+                        <!-- Analytics Dropdown -->
+                        <li class="dropdown">
+                            <a href="#" class="dropdown-toggle">Analytics ▾</a>
+                            <ul class="dropdown-menu">
+                                <li><a href="/analytics/learning/">Learning Dashboard</a></li>
+                                <li><a href="/analytics/patterns/">Performance Patterns</a></li>
+                                <li><a href="/analytics/suggestions/">Trade Analysis</a></li>
+                            </ul>
+                        </li>
+
+                        <!-- Testing Dropdown (Admin Only) -->
+                        {% if user.is_superuser or user.groups.all.0.name == 'Admin' %}
+                        <li class="dropdown">
+                            <a href="#" class="dropdown-toggle">Testing ▾</a>
+                            <ul class="dropdown-menu">
+                                <li><a href="/algo_test/options/">Options Testing</a></li>
+                                <li><a href="/algo_test/futures/">Futures Testing</a></li>
+                                <li><a href="/algo_test/monitor/">Position Monitor</a></li>
+                                <li><a href="/algo_test/risk/">Risk Dashboard</a></li>
+                            </ul>
+                        </li>
+                        {% endif %}
+                    {% endif %}
+                </ul>
+            </nav>
+
+            <!-- User Info & Actions -->
+            <div class="header-actions">
+                {% if user.is_authenticated %}
+                    <!-- Notifications Icon (placeholder) -->
+                    <a href="#" class="notification-icon" title="Notifications">
+                        <span class="icon">🔔</span>
+                        <span class="badge">0</span>
+                    </a>
+
+                    <!-- User Dropdown -->
+                    <div class="dropdown user-dropdown">
+                        <a href="#" class="dropdown-toggle user-info">
+                            <span class="user-icon">👤</span>
+                            <span class="user-name">{{ user.get_full_name|default:user.username }}</span>
+                            {% if user.is_superuser %}
+                            <span class="user-badge admin">Admin</span>
+                            {% elif user.groups.all.0 %}
+                            <span class="user-badge">{{ user.groups.all.0.name }}</span>
+                            {% endif %}
+                            <span class="dropdown-arrow">▾</span>
+                        </a>
+                        <ul class="dropdown-menu dropdown-menu-right">
+                            <li><a href="#profile"><span class="menu-icon">👤</span> Profile</a></li>
+                            <li class="dropdown-divider"></li>
+                            {% if user.is_superuser or user.groups.all.0.name == 'Admin' %}
+                            <li><a href="/admin/"><span class="menu-icon">⚙️</span> Admin Panel</a></li>
+                            <li><a href="/test/"><span class="menu-icon">🧪</span> System Test</a></li>
+                            <li class="dropdown-divider"></li>
+                            {% endif %}
+                            <li><a href="#settings"><span class="menu-icon">⚙️</span> Settings</a></li>
+                            <li class="dropdown-divider"></li>
+                            <li><a href="{% url 'brokers:logout' %}" class="logout-link"><span class="menu-icon">🚪</span> Logout</a></li>
+                        </ul>
+                    </div>
+                {% else %}
+                    <a href="{% url 'brokers:login' %}" class="btn btn-primary">Login</a>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</header>
+
+<style>
+    /* ========================================
+       UNIFIED NAVBAR STYLES
+       ======================================== */
+
+    .main-header {
+        background: var(--gradient-dark);
+        color: var(--white);
+        box-shadow: var(--shadow-md);
+        position: sticky;
+        top: 0;
+        z-index: 1000;
+    }
+
+    .header-content {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0.75rem 0;
+        gap: 2rem;
+    }
+
+    /* Logo Styles */
+    .logo-link {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        text-decoration: none;
+        color: var(--white);
+    }
+
+    .logo-image {
+        height: 48px;
+        width: auto;
+    }
+
+    .logo-content h1 {
+        margin: 0;
+        font-size: 24px;
+        font-weight: 700;
+        color: var(--white);
+    }
+
+    .logo-content .logo-text {
+        background: linear-gradient(135deg, #60a5fa, #a78bfa);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+    }
+
+    .tagline {
+        margin: 0;
+        font-size: 11px;
+        color: var(--gray-light);
+        font-weight: 400;
+    }
+
+    /* Mobile Menu Toggle */
+    .mobile-menu-toggle {
+        display: none;
+        flex-direction: column;
+        gap: 4px;
+        background: none;
+        border: none;
+        cursor: pointer;
+        padding: 8px;
+    }
+
+    .mobile-menu-toggle span {
+        width: 24px;
+        height: 2px;
+        background: var(--white);
+        transition: all 0.3s ease;
+    }
+
+    /* Navigation Styles */
+    .main-nav ul {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: flex;
+        gap: 0.5rem;
+    }
+
+    .main-nav > ul > li {
+        position: relative;
+    }
+
+    .dropdown-toggle {
+        display: block;
+        padding: 0.75rem 1rem;
+        color: var(--white);
+        text-decoration: none;
+        font-weight: 500;
+        border-radius: var(--radius-md);
+        transition: all 0.2s ease;
+        white-space: nowrap;
+    }
+
+    .dropdown-toggle:hover {
+        background: rgba(255, 255, 255, 0.1);
+    }
+
+    /* Dropdown Menus */
+    .dropdown-menu {
+        display: none !important; /* Force hidden by default */
+        position: absolute;
+        top: 100%;
+        left: 0;
+        background: var(--white);
+        border-radius: var(--radius-md);
+        box-shadow: var(--shadow-xl);
+        min-width: 240px;
+        margin-top: 0.5rem;
+        padding: 0.5rem 0;
+        z-index: 1000;
+        max-height: 80vh;
+        overflow-y: auto;
+    }
+
+    .dropdown.active .dropdown-menu {
+        display: block !important; /* Show when active */
+        animation: fadeInDown 0.2s ease;
+    }
+
+    @keyframes fadeInDown {
+        from {
+            opacity: 0;
+            transform: translateY(-10px);
+        }
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    }
+
+    .dropdown-menu li {
+        list-style: none;
+    }
+
+    .dropdown-menu a {
+        display: block;
+        padding: 0.75rem 1.25rem;
+        color: var(--dark);
+        text-decoration: none;
+        transition: all 0.2s ease;
+    }
+
+    .dropdown-menu a:hover {
+        background: var(--lighter);
+        color: var(--primary);
+    }
+
+    .dropdown-menu .menu-icon {
+        margin-right: 0.5rem;
+        font-size: 16px;
+    }
+
+    .dropdown-divider {
+        height: 1px;
+        background: var(--light);
+        margin: 0.5rem 0;
+    }
+
+    .dropdown-header {
+        padding: 0.5rem 1.25rem;
+        font-size: 0.75rem;
+        font-weight: 700;
+        color: var(--gray);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+
+    .highlight-link {
+        color: var(--success) !important;
+        font-weight: 600;
+    }
+
+    /* User Dropdown Specific */
+    .dropdown-menu-right {
+        left: auto;
+        right: 0;
+    }
+
+    .user-dropdown .dropdown-menu {
+        min-width: 240px;
+    }
+
+    /* Header Actions */
+    .header-actions {
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+    }
+
+    .notification-icon {
+        position: relative;
+        color: var(--white);
+        text-decoration: none;
+        font-size: 20px;
+        padding: 0.5rem;
+        border-radius: var(--radius-md);
+        transition: all 0.2s ease;
+    }
+
+    .notification-icon:hover {
+        background: rgba(255, 255, 255, 0.1);
+    }
+
+    .notification-icon .badge {
+        position: absolute;
+        top: 4px;
+        right: 4px;
+        background: var(--danger);
+        color: var(--white);
+        font-size: 10px;
+        font-weight: 600;
+        padding: 2px 5px;
+        border-radius: var(--radius-full);
+        min-width: 18px;
+        text-align: center;
+    }
+
+    .user-info {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.5rem 1rem;
+        border-radius: var(--radius-md);
+        transition: all 0.2s ease;
+    }
+
+    .user-info:hover {
+        background: rgba(255, 255, 255, 0.1);
+    }
+
+    .user-icon {
+        font-size: 20px;
+    }
+
+    .user-name {
+        font-weight: 500;
+        color: var(--white);
+    }
+
+    .user-badge {
+        font-size: 11px;
+        padding: 3px 8px;
+        border-radius: var(--radius-full);
+        background: rgba(255, 255, 255, 0.2);
+        color: var(--white);
+        font-weight: 600;
+    }
+
+    .user-badge.admin {
+        background: var(--success);
+    }
+
+    .dropdown-arrow {
+        font-size: 12px;
+        color: var(--gray-light);
+    }
+
+    .logout-link {
+        color: var(--danger) !important;
+    }
+
+    /* Buttons */
+    .btn {
+        display: inline-block;
+        padding: 0.625rem 1.25rem;
+        border-radius: var(--radius-md);
+        font-weight: 600;
+        text-decoration: none;
+        transition: all 0.2s ease;
+        border: none;
+        cursor: pointer;
+    }
+
+    .btn-primary {
+        background: var(--primary);
+        color: var(--white);
+    }
+
+    .btn-primary:hover {
+        background: var(--primary-hover);
+        transform: translateY(-1px);
+        box-shadow: var(--shadow-md);
+    }
+
+    .btn-secondary {
+        background: rgba(255, 255, 255, 0.1);
+        color: var(--white);
+        border: 1px solid rgba(255, 255, 255, 0.2);
+    }
+
+    .btn-secondary:hover {
+        background: rgba(255, 255, 255, 0.2);
+    }
+
+    /* Responsive Design */
+    @media (max-width: 1024px) {
+        .mobile-menu-toggle {
+            display: flex;
+        }
+
+        .main-nav {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            background: var(--darker);
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.3s ease;
+        }
+
+        .main-nav.active {
+            max-height: 600px;
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .main-nav ul {
+            flex-direction: column;
+            padding: 1rem;
+        }
+
+        .dropdown-menu {
+            position: static;
+            box-shadow: none;
+            background: rgba(255, 255, 255, 0.05);
+            margin: 0.5rem 0 0 0;
+        }
+
+        .dropdown-menu a {
+            color: rgba(255, 255, 255, 0.9);
+        }
+
+        .dropdown-menu a:hover {
+            background: rgba(255, 255, 255, 0.1);
+            color: var(--white);
+        }
+
+        .dropdown-header {
+            color: rgba(255, 255, 255, 0.6);
+        }
+
+        .header-actions {
+            gap: 0.5rem;
+        }
+
+        .user-name {
+            display: none;
+        }
+    }
+
+    @media (max-width: 768px) {
+        .tagline {
+            display: none;
+        }
+
+        .logo-content h1 {
+            font-size: 20px;
+        }
+
+        .logo-image {
+            height: 40px;
+        }
+    }
+</style>
+
+<script>
+    // Navbar dropdown functionality
+    (function() {
+        'use strict';
+
+        // Wait for DOM to be ready
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', initDropdowns);
+        } else {
+            initDropdowns();
+        }
+
+        function initDropdowns() {
+            const dropdowns = document.querySelectorAll('.dropdown');
+
+            dropdowns.forEach(function(dropdown) {
+                const toggle = dropdown.querySelector('.dropdown-toggle');
+
+                if (toggle) {
+                    // Click on dropdown toggle
+                    toggle.addEventListener('click', function(e) {
+                        e.preventDefault();
+                        e.stopPropagation();
+
+                        // Close all other dropdowns
+                        dropdowns.forEach(function(other) {
+                            if (other !== dropdown) {
+                                other.classList.remove('active');
+                            }
+                        });
+
+                        // Toggle current dropdown
+                        dropdown.classList.toggle('active');
+                    });
+                }
+            });
+
+            // Close dropdowns when clicking outside
+            document.addEventListener('click', function(e) {
+                const clickedInsideDropdown = e.target.closest('.dropdown');
+                if (!clickedInsideDropdown) {
+                    dropdowns.forEach(function(dropdown) {
+                        dropdown.classList.remove('active');
+                    });
+                }
+            });
+
+            // Mobile menu toggle
+            const mobileToggle = document.querySelector('.mobile-menu-toggle');
+            const mainNav = document.querySelector('.main-nav');
+
+            if (mobileToggle && mainNav) {
+                mobileToggle.addEventListener('click', function(e) {
+                    e.stopPropagation();
+                    mainNav.classList.toggle('active');
+                    mobileToggle.classList.toggle('active');
+                });
+            }
+        }
+    })();
+</script>

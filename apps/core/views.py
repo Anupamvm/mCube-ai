@@ -256,13 +256,17 @@ def view_documentation(request, doc_name):
 @user_passes_test(is_admin_user, login_url='/login/')
 def trigger_trendlyne_download(request):
     """
-    Trigger Trendlyne FULL CYCLE: Download → Parse → Populate Database
+    Trigger Trendlyne Data Population
 
-    Downloads all Trendlyne data files and populates all database models:
+    Complete workflow:
+    1. Clear old data from database
+    2. Convert XLSX files to CSV
+    3. Parse CSV and populate database
+    4. Show final status
+
+    Populates:
     - ContractData (F&O contracts)
-    - ContractStockData (Stock-specific contract data)
-    - TLStockData (Market snapshot)
-    - And all other Trendlyne models
+    - TLStockData (Stock data with 163 fields)
     """
     from django.contrib import messages
     import threading
@@ -273,61 +277,40 @@ def trigger_trendlyne_download(request):
         return redirect('core:system_test')
 
     try:
-        def full_download_and_populate_task():
+        def populate_task():
             try:
-                from apps.data.tools.trendlyne import get_all_trendlyne_data
                 from django.core.management import call_command
                 from io import StringIO
 
-                # Step 1: Download all data from Trendlyne
-                logger.info("Step 1/2: Downloading all Trendlyne data files...")
-                results = get_all_trendlyne_data()
-                logger.info(f"Trendlyne download completed: {results}")
+                logger.info("Starting Trendlyne data population workflow...")
 
-                # Step 2: Parse and populate all database models
-                logger.info("Step 2/2: Parsing files and populating database models...")
-                import subprocess
-                result = subprocess.run(
-                    ['python', 'parse_all_trendlyne_data.py'],
-                    cwd='/Users/anupammangudkar/Projects/mCube-ai/mCube-ai',
-                    capture_output=True,
-                    text=True,
-                    timeout=300
-                )
-                logger.info(f"Parser output: {result.stdout}")
+                # Run the complete populate workflow
+                output = StringIO()
+                call_command('populate_trendlyne', stdout=output)
+                logger.info(f"Population output: {output.getvalue()}")
 
-                # Get summary statistics
-                from apps.data.models import (
-                    ContractData, ContractStockData, TLStockData,
-                    OptionChain, Event, NewsArticle, InvestorCall, KnowledgeBase
-                )
+                # Get final statistics
+                from apps.data.models import ContractData, TLStockData
 
-                stats = {
-                    'ContractData': ContractData.objects.count(),
-                    'ContractStockData': ContractStockData.objects.count(),
-                    'TLStockData': TLStockData.objects.count(),
-                    'OptionChain': OptionChain.objects.count(),
-                    'Event': Event.objects.count(),
-                    'NewsArticle': NewsArticle.objects.count(),
-                    'InvestorCall': InvestorCall.objects.count(),
-                    'KnowledgeBase': KnowledgeBase.objects.count(),
-                }
+                contract_count = ContractData.objects.count()
+                stock_count = TLStockData.objects.count()
+                total = contract_count + stock_count
 
-                total = sum(stats.values())
-                logger.info(f"Full Trendlyne cycle completed: {total} total records populated")
-                logger.info(f"Breakdown: {stats}")
+                logger.info(f"Trendlyne population completed: {total:,} total records")
+                logger.info(f"  - ContractData: {contract_count:,}")
+                logger.info(f"  - TLStockData: {stock_count:,}")
 
             except Exception as e:
-                logger.error(f"Trendlyne full cycle failed: {e}", exc_info=True)
+                logger.error(f"Trendlyne population failed: {e}", exc_info=True)
 
-        thread = threading.Thread(target=full_download_and_populate_task, daemon=True)
+        thread = threading.Thread(target=populate_task, daemon=True)
         thread.start()
 
-        messages.success(request, "Trendlyne full cycle initiated (Download → Parse → Populate Database). This will populate ContractData, ContractStockData, TLStockData and all other models. Refresh in 2-3 minutes to see updated statistics.")
+        messages.success(request, "Trendlyne data population started! Workflow: Clear old data → Convert XLSX → Parse CSV → Populate DB. Refresh in 1-2 minutes to see updated data.")
 
     except Exception as e:
-        messages.error(request, f"Failed to start Trendlyne full cycle: {str(e)}")
-        logger.error(f"Error triggering Trendlyne full cycle: {e}", exc_info=True)
+        messages.error(request, f"Failed to start population: {str(e)}")
+        logger.error(f"Error triggering Trendlyne population: {e}", exc_info=True)
 
     return redirect('core:system_test')
 

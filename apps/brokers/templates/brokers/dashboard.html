@@ -3,7 +3,9 @@
 
 {% block title %}Broker Dashboard - mCube{% endblock %}
 
-{% block content %}
+{% block page_title %}Broker Overview{% endblock %}
+
+{% block page_content %}
 <div class="card">
     <h2>Broker Overview</h2>
     <p>Quick overview of all connected brokers and their current status.</p>
@@ -41,5 +43,13 @@
     <a href="{% url 'brokers:historical' %}" class="btn">Fetch Historical Data</a>
     <a href="{% url 'brokers:api_positions' %}" class="btn">API: All Positions</a>
     <a href="{% url 'brokers:api_limits' %}" class="btn">API: All Limits</a>
+</div>
+
+<div class="card">
+    <h3>Strategy Testing</h3>
+    <p>Test trading strategies with live data without placing actual orders.</p>
+    <a href="{% url 'brokers:validate_future_trade' %}" class="btn btn-success" style="background-color: #48bb78; color: white;">
+        🎯 Validate Future Trade
+    </a>
 </div>
 {% endblock %}

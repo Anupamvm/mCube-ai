@@ -26,6 +26,7 @@ Usage:
 
 import logging
 import os
+import html
 from decimal import Decimal
 from datetime import datetime, timedelta
 from typing import Optional
@@ -42,6 +43,19 @@ from telegram.ext import (
 from django.utils import timezone
 from django.db.models import Sum, Count, Q
 from django.conf import settings
+from asgiref.sync import sync_to_async
+
+# Import telegram helper functions
+from apps.alerts.services.telegram_helpers import (
+    get_position_by_id,
+    get_active_positions_list,
+    fetch_live_positions,
+    get_risk_data,
+    get_pnl_data,
+    get_week_pnl_data,
+    close_position_sync,
+    close_all_positions_sync
+)
 
 # Import trading state management
 from apps.core.trading_state import is_trading_paused, pause_trading, resume_trading, get_trading_state
@@ -56,14 +70,36 @@ class TelegramBotHandler:
 
     def __init__(self):
         """Initialize bot handler"""
-        self.bot_token = getattr(settings, 'TELEGRAM_BOT_TOKEN', os.getenv('TELEGRAM_BOT_TOKEN'))
+        # Try to get credentials from CredentialStore first, then fall back to settings/env
+        self.bot_token = self._get_bot_token()
         self.authorized_chat_ids = self._get_authorized_chats()
 
         if not self.bot_token:
-            raise ValueError("TELEGRAM_BOT_TOKEN not configured in settings or environment")
+            raise ValueError("TELEGRAM_BOT_TOKEN not configured in CredentialStore, settings, or environment")
+
+    def _get_bot_token(self):
+        """Get bot token from CredentialStore, settings, or environment"""
+        try:
+            from apps.core.models import CredentialStore
+            creds = CredentialStore.objects.get(service='telegram', name='default')
+            return creds.api_key
+        except Exception:
+            # Fall back to settings or environment variable
+            return getattr(settings, 'TELEGRAM_BOT_TOKEN', os.getenv('TELEGRAM_BOT_TOKEN'))
 
     def _get_authorized_chats(self):
-        """Get list of authorized chat IDs"""
+        """Get list of authorized chat IDs from CredentialStore, settings, or environment"""
+        # Try CredentialStore first
+        try:
+            from apps.core.models import CredentialStore
+            creds = CredentialStore.objects.get(service='telegram', name='default')
+            chat_id = creds.username  # Chat ID stored in username field
+            if chat_id:
+                return [str(chat_id)]
+        except Exception:
+            pass
+
+        # Fall back to settings or environment variable
         chat_id = getattr(settings, 'TELEGRAM_CHAT_ID', os.getenv('TELEGRAM_CHAT_ID'))
         if chat_id:
             return [str(chat_id)]
@@ -85,6 +121,35 @@ class TelegramBotHandler:
         # Check if user's chat ID is in authorized list
         chat_id = str(update.effective_chat.id)
         return chat_id in self.authorized_chat_ids
+
+    async def handle_error(self, update: Update, error: Exception, command: str):
+        """
+        Handle errors gracefully and send user-friendly messages
+
+        Args:
+            update: Telegram update object
+            error: The exception that occurred
+            command: The command that failed (e.g., 'status', 'positions')
+        """
+        error_msg = str(error)
+        logger.error(f"Error in {command} command: {error_msg}", exc_info=True)
+
+        # User-friendly error messages
+        user_message = (
+            f"❌ <b>Error in /{command} command</b>\n\n"
+            f"Something went wrong while processing your request.\n\n"
+            f"<b>Details:</b> {error_msg[:200]}\n\n"
+            f"Please try again or contact support if the issue persists."
+        )
+
+        try:
+            # Check if this is a callback query or regular message
+            if update.callback_query:
+                await update.callback_query.edit_message_text(user_message, parse_mode='HTML')
+            elif update.message:
+                await update.message.reply_text(user_message, parse_mode='HTML')
+        except Exception as send_error:
+            logger.error(f"Failed to send error message: {send_error}")
 
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /start command"""
@@ -151,26 +216,38 @@ class TelegramBotHandler:
             from apps.positions.models import Position
             from apps.risk.models import CircuitBreaker
 
-            # Get account status
-            active_accounts = BrokerAccount.objects.filter(is_active=True).count()
-            total_accounts = BrokerAccount.objects.count()
+            # Get account status (wrapped in sync_to_async)
+            @sync_to_async
+            def get_account_counts():
+                return (
+                    BrokerAccount.objects.filter(is_active=True).count(),
+                    BrokerAccount.objects.count()
+                )
 
-            # Get position status
-            active_positions = Position.objects.filter(status='ACTIVE').count()
+            @sync_to_async
+            def get_position_count():
+                return Position.objects.filter(status='ACTIVE').count()
 
-            # Get risk status
-            active_breakers = CircuitBreaker.objects.filter(is_active=True).count()
+            @sync_to_async
+            def get_breaker_count():
+                return CircuitBreaker.objects.filter(is_active=True).count()
+
+            @sync_to_async
+            def get_today_pnl():
+                today = timezone.now().date()
+                today_positions = Position.objects.filter(
+                    status='CLOSED',
+                    exit_time__date=today
+                )
+                return today_positions.aggregate(Sum('realized_pnl'))['realized_pnl__sum'] or Decimal('0.00')
+
+            active_accounts, total_accounts = await get_account_counts()
+            active_positions = await get_position_count()
+            active_breakers = await get_breaker_count()
+            today_pnl = await get_today_pnl()
 
             # Trading pause status
             trading_status = "⏸ PAUSED" if is_trading_paused() else "▶️ RUNNING"
-
-            # Calculate today's P&L
-            today = timezone.now().date()
-            today_positions = Position.objects.filter(
-                status='CLOSED',
-                exit_timestamp__date=today
-            )
-            today_pnl = today_positions.aggregate(Sum('realized_pnl'))['realized_pnl__sum'] or Decimal('0.00')
 
             status_message = (
                 f"📊 <b>SYSTEM STATUS</b>\n"
@@ -194,52 +271,106 @@ class TelegramBotHandler:
             await update.message.reply_text(status_message, parse_mode='HTML')
 
         except Exception as e:
-            logger.error(f"Error in status command: {e}", exc_info=True)
-            await update.message.reply_text(f"❌ Error: {str(e)}")
+            await self.handle_error(update, e, 'status')
 
     async def positions_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle /positions command - list all active positions"""
+        """Handle /positions command - fetch and list live positions from broker accounts"""
         if not self.is_authorized(update):
             await update.message.reply_text("⛔ Unauthorized access")
             return
 
         try:
-            from apps.positions.models import Position
+            # Send "fetching" message
+            status_msg = await update.message.reply_text("📊 Fetching live positions from broker accounts...")
 
-            active_positions = Position.objects.filter(status='ACTIVE').select_related('account')
+            # Fetch live positions from both brokers
+            breeze_positions, kotak_positions, errors = await fetch_live_positions()
 
-            if not active_positions.exists():
-                await update.message.reply_text("ℹ️ No active positions")
+            # Count total positions
+            total_positions = len(breeze_positions) + len(kotak_positions)
+
+            if total_positions == 0 and not errors:
+                await status_msg.edit_text("ℹ️ No active positions found in any broker account")
                 return
 
-            message = f"📈 <b>ACTIVE POSITIONS ({active_positions.count()})</b>\n{'=' * 40}\n\n"
+            # Build detailed message
+            message = f"📈 <b>LIVE POSITIONS ({total_positions})</b>\n{'=' * 40}\n\n"
 
-            for pos in active_positions:
-                pnl = pos.unrealized_pnl or Decimal('0.00')
-                pnl_icon = "📈" if pnl >= 0 else "📉"
+            # Display ICICI Breeze positions
+            if breeze_positions:
+                message += f"<b>🏦 ICICI BREEZE ({len(breeze_positions)} positions)</b>\n\n"
 
-                message += (
-                    f"<b>#{pos.id}</b> - {pos.instrument}\n"
-                    f"  Account: {pos.account.account_name}\n"
-                    f"  Direction: {pos.direction}\n"
-                    f"  Entry: ₹{pos.entry_price:,.2f}\n"
-                    f"  Current: ₹{pos.current_price:,.2f}\n"
-                    f"  {pnl_icon} P&L: ₹{pnl:,.0f}\n"
-                    f"  Strategy: {pos.strategy_type}\n\n"
-                )
+                for pos in breeze_positions:
+                    # Convert Decimal to float for display
+                    pnl = float(pos.unrealized_pnl or 0)
+                    pnl_icon = "📈" if pnl >= 0 else "📉"
+                    direction = "LONG" if pos.net_quantity > 0 else "SHORT" if pos.net_quantity < 0 else "FLAT"
+
+                    # Escape HTML special characters
+                    symbol = html.escape(str(pos.symbol))
+                    exchange = html.escape(str(pos.exchange_segment))
+                    product = html.escape(str(pos.product))
+
+                    message += (
+                        f"<b>{symbol}</b>\n"
+                        f"  Exchange: {exchange}\n"
+                        f"  Product: {product}\n"
+                        f"  Direction: {direction}\n"
+                        f"  Quantity: {abs(pos.net_quantity)}\n"
+                        f"  Avg Price: ₹{float(pos.average_price):,.2f}\n"
+                        f"  LTP: ₹{float(pos.ltp):,.2f}\n"
+                        f"  {pnl_icon} Unrealized P&L: ₹{pnl:,.2f}\n\n"
+                    )
+
+            # Display Kotak Neo positions
+            if kotak_positions:
+                message += f"<b>🏦 KOTAK NEO ({len(kotak_positions)} positions)</b>\n\n"
+
+                for pos in kotak_positions:
+                    # Convert Decimal to float for display
+                    pnl = float(pos.unrealized_pnl or 0)
+                    pnl_icon = "📈" if pnl >= 0 else "📉"
+                    direction = "LONG" if pos.net_quantity > 0 else "SHORT" if pos.net_quantity < 0 else "FLAT"
+
+                    # Escape HTML special characters
+                    symbol = html.escape(str(pos.symbol))
+                    exchange = html.escape(str(pos.exchange_segment))
+                    product = html.escape(str(pos.product))
+
+                    message += (
+                        f"<b>{symbol}</b>\n"
+                        f"  Exchange: {exchange}\n"
+                        f"  Product: {product}\n"
+                        f"  Direction: {direction}\n"
+                        f"  Quantity: {abs(pos.net_quantity)}\n"
+                        f"  Avg Price: ₹{float(pos.average_price):,.2f}\n"
+                        f"  LTP: ₹{float(pos.ltp):,.2f}\n"
+                        f"  {pnl_icon} Unrealized P&L: ₹{pnl:,.2f}\n\n"
+                    )
+
+            # Display errors if any
+            if errors:
+                message += "\n<b>⚠️ ERRORS:</b>\n"
+                for broker, error in errors.items():
+                    error_escaped = html.escape(str(error)[:100])
+                    message += f"  {broker}: {error_escaped}...\n"
+
+            # Add summary - convert all Decimals to float to avoid type mismatch
+            total_pnl = sum(float(p.unrealized_pnl or 0) for p in breeze_positions + kotak_positions)
+            pnl_icon = "📈" if total_pnl >= 0 else "📉"
+            message += f"\n{pnl_icon} <b>Total Unrealized P&L: ₹{total_pnl:,.2f}</b>\n"
 
             # Add buttons for quick actions
             keyboard = [
                 [InlineKeyboardButton("🔄 Refresh", callback_data="positions_refresh")],
-                [InlineKeyboardButton("⚠️ Close All", callback_data="closeall_confirm")],
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
 
-            await update.message.reply_text(message, parse_mode='HTML', reply_markup=reply_markup)
+            # Update status message with full results
+            await status_msg.edit_text(message, parse_mode='HTML', reply_markup=reply_markup)
 
         except Exception as e:
-            logger.error(f"Error in positions command: {e}", exc_info=True)
-            await update.message.reply_text(f"❌ Error: {str(e)}")
+            await self.handle_error(update, e, 'positions')
 
     async def position_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /position <id> command - show specific position details"""
@@ -254,9 +385,7 @@ class TelegramBotHandler:
 
             position_id = int(context.args[0])
 
-            from apps.positions.models import Position
-
-            pos = Position.objects.select_related('account').get(id=position_id)
+            pos = await get_position_by_id(position_id)
 
             pnl = pos.realized_pnl if pos.status == 'CLOSED' else pos.unrealized_pnl or Decimal('0.00')
             pnl_icon = "📈" if pnl >= 0 else "📉"
@@ -306,8 +435,7 @@ class TelegramBotHandler:
         except ValueError:
             await update.message.reply_text("❌ Invalid position ID. Must be a number.")
         except Exception as e:
-            logger.error(f"Error in position command: {e}", exc_info=True)
-            await update.message.reply_text(f"❌ Error: {str(e)}")
+            await self.handle_error(update, e, 'position')
 
     async def accounts_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /accounts command - show all accounts"""
@@ -319,19 +447,25 @@ class TelegramBotHandler:
             from apps.accounts.models import BrokerAccount
             from apps.positions.models import Position
 
-            accounts = BrokerAccount.objects.all()
+            @sync_to_async
+            def get_accounts_with_positions():
+                accounts = list(BrokerAccount.objects.all())
+                result = []
+                for acc in accounts:
+                    active_pos = Position.objects.filter(account=acc, status='ACTIVE').first()
+                    result.append((acc, active_pos))
+                return result
 
-            if not accounts.exists():
+            accounts_data = await get_accounts_with_positions()
+
+            if not accounts_data:
                 await update.message.reply_text("ℹ️ No accounts configured")
                 return
 
-            message = f"🏦 <b>BROKER ACCOUNTS ({accounts.count()})</b>\n{'=' * 40}\n\n"
+            message = f"🏦 <b>BROKER ACCOUNTS ({len(accounts_data)})</b>\n{'=' * 40}\n\n"
 
-            for acc in accounts:
+            for acc, active_pos in accounts_data:
                 status_icon = "✅" if acc.is_active else "❌"
-
-                # Get active position for this account
-                active_pos = Position.objects.filter(account=acc, status='ACTIVE').first()
 
                 message += (
                     f"{status_icon} <b>{acc.account_name}</b> ({acc.broker})\n"
@@ -349,8 +483,7 @@ class TelegramBotHandler:
             await update.message.reply_text(message, parse_mode='HTML')
 
         except Exception as e:
-            logger.error(f"Error in accounts command: {e}", exc_info=True)
-            await update.message.reply_text(f"❌ Error: {str(e)}")
+            await self.handle_error(update, e, 'accounts')
 
     async def risk_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /risk command - show risk limits"""
@@ -359,24 +492,14 @@ class TelegramBotHandler:
             return
 
         try:
-            from apps.risk.models import RiskLimit, CircuitBreaker
-            from apps.accounts.models import BrokerAccount
+            accounts_data, active_breakers = await get_risk_data()
 
             message = f"⚠️ <b>RISK LIMITS</b>\n{'=' * 40}\n\n"
 
-            accounts = BrokerAccount.objects.filter(is_active=True)
-
-            for acc in accounts:
+            for acc, limits in accounts_data:
                 message += f"<b>{acc.account_name}</b>\n"
 
-                # Get today's limits
-                today = timezone.now().date()
-                limits = RiskLimit.objects.filter(
-                    account=acc,
-                    period_start=today
-                )
-
-                if limits.exists():
+                if limits:
                     for limit in limits:
                         utilization = limit.get_utilization_pct()
 
@@ -398,9 +521,8 @@ class TelegramBotHandler:
                 message += "\n"
 
             # Show active circuit breakers
-            active_breakers = CircuitBreaker.objects.filter(is_active=True)
-            if active_breakers.exists():
-                message += f"\n🚨 <b>ACTIVE CIRCUIT BREAKERS ({active_breakers.count()})</b>\n"
+            if active_breakers:
+                message += f"\n🚨 <b>ACTIVE CIRCUIT BREAKERS ({len(active_breakers)})</b>\n"
                 for breaker in active_breakers:
                     message += (
                         f"  • {breaker.account.account_name}\n"
@@ -411,8 +533,7 @@ class TelegramBotHandler:
             await update.message.reply_text(message, parse_mode='HTML')
 
         except Exception as e:
-            logger.error(f"Error in risk command: {e}", exc_info=True)
-            await update.message.reply_text(f"❌ Error: {str(e)}")
+            await self.handle_error(update, e, 'risk')
 
     async def pnl_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /pnl command - show today's P&L"""
@@ -421,22 +542,14 @@ class TelegramBotHandler:
             return
 
         try:
-            from apps.positions.models import Position
-
             today = timezone.now().date()
-            today_positions = Position.objects.filter(
-                status='CLOSED',
-                exit_timestamp__date=today
-            )
 
-            if not today_positions.exists():
+            total_pnl, winners, losers, total_trades = await get_pnl_data(today)
+
+            if total_pnl is None:
                 await update.message.reply_text("ℹ️ No closed positions today")
                 return
 
-            total_pnl = today_positions.aggregate(Sum('realized_pnl'))['realized_pnl__sum'] or Decimal('0.00')
-            winners = today_positions.filter(realized_pnl__gt=0).count()
-            losers = today_positions.filter(realized_pnl__lt=0).count()
-            total_trades = today_positions.count()
             win_rate = (winners / total_trades * 100) if total_trades > 0 else 0
 
             pnl_icon = "📈" if total_pnl >= 0 else "📉"
@@ -454,8 +567,7 @@ class TelegramBotHandler:
             await update.message.reply_text(message, parse_mode='HTML')
 
         except Exception as e:
-            logger.error(f"Error in pnl command: {e}", exc_info=True)
-            await update.message.reply_text(f"❌ Error: {str(e)}")
+            await self.handle_error(update, e, 'pnl')
 
     async def pnl_week_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /pnl_week command - show this week's P&L"""
@@ -464,25 +576,14 @@ class TelegramBotHandler:
             return
 
         try:
-            from apps.positions.models import Position
-
             today = timezone.now().date()
-            week_start = today - timedelta(days=today.weekday())
 
-            week_positions = Position.objects.filter(
-                status='CLOSED',
-                exit_timestamp__date__gte=week_start,
-                exit_timestamp__date__lte=today
-            )
+            total_pnl, winners, losers, total_trades, week_start = await get_week_pnl_data()
 
-            if not week_positions.exists():
+            if total_pnl is None:
                 await update.message.reply_text("ℹ️ No closed positions this week")
                 return
 
-            total_pnl = week_positions.aggregate(Sum('realized_pnl'))['realized_pnl__sum'] or Decimal('0.00')
-            winners = week_positions.filter(realized_pnl__gt=0).count()
-            losers = week_positions.filter(realized_pnl__lt=0).count()
-            total_trades = week_positions.count()
             win_rate = (winners / total_trades * 100) if total_trades > 0 else 0
 
             pnl_icon = "📈" if total_pnl >= 0 else "📉"
@@ -500,8 +601,7 @@ class TelegramBotHandler:
             await update.message.reply_text(message, parse_mode='HTML')
 
         except Exception as e:
-            logger.error(f"Error in pnl_week command: {e}", exc_info=True)
-            await update.message.reply_text(f"❌ Error: {str(e)}")
+            await self.handle_error(update, e, 'pnl_week')
 
     async def close_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /close <id> command - close specific position"""
@@ -516,10 +616,7 @@ class TelegramBotHandler:
 
             position_id = int(context.args[0])
 
-            from apps.positions.models import Position
-            from apps.positions.services.position_manager import close_position
-
-            pos = Position.objects.get(id=position_id)
+            pos = await get_position_by_id(position_id)
 
             if pos.status != 'ACTIVE':
                 await update.message.reply_text(f"❌ Position #{position_id} is not active (status: {pos.status})")
@@ -550,8 +647,7 @@ class TelegramBotHandler:
         except ValueError:
             await update.message.reply_text("❌ Invalid position ID. Must be a number.")
         except Exception as e:
-            logger.error(f"Error in close command: {e}", exc_info=True)
-            await update.message.reply_text(f"❌ Error: {str(e)}")
+            await self.handle_error(update, e, 'close')
 
     async def closeall_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /closeall command - close all positions (emergency)"""
@@ -560,11 +656,9 @@ class TelegramBotHandler:
             return
 
         try:
-            from apps.positions.models import Position
+            active_positions = await get_active_positions_list()
 
-            active_positions = Position.objects.filter(status='ACTIVE')
-
-            if not active_positions.exists():
+            if not active_positions:
                 await update.message.reply_text("ℹ️ No active positions to close")
                 return
 
@@ -579,7 +673,7 @@ class TelegramBotHandler:
 
             message = (
                 f"🚨 <b>EMERGENCY: CLOSE ALL POSITIONS</b>\n\n"
-                f"⚠️ This will close ALL {active_positions.count()} active positions.\n\n"
+                f"⚠️ This will close ALL {len(active_positions)} active positions.\n\n"
                 f"<b>Positions to be closed:</b>\n"
             )
 
@@ -592,8 +686,7 @@ class TelegramBotHandler:
             await update.message.reply_text(message, parse_mode='HTML', reply_markup=reply_markup)
 
         except Exception as e:
-            logger.error(f"Error in closeall command: {e}", exc_info=True)
-            await update.message.reply_text(f"❌ Error: {str(e)}")
+            await self.handle_error(update, e, 'closeall')
 
     async def pause_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /pause command - pause automated trading"""
@@ -601,23 +694,27 @@ class TelegramBotHandler:
             await update.message.reply_text("⛔ Unauthorized access")
             return
 
-        if is_trading_paused():
-            await update.message.reply_text("ℹ️ Trading is already paused")
-            return
+        try:
+            if is_trading_paused():
+                await update.message.reply_text("ℹ️ Trading is already paused")
+                return
 
-        pause_trading(reason="Manual pause via Telegram bot", paused_by="TELEGRAM_BOT")
+            pause_trading(reason="Manual pause via Telegram bot", paused_by="TELEGRAM_BOT")
 
-        message = (
-            "⏸ <b>TRADING PAUSED</b>\n\n"
-            "Automated trading has been paused.\n\n"
-            "• No new positions will be opened\n"
-            "• Existing positions will continue to be monitored\n"
-            "• Exit conditions will still be checked\n\n"
-            "Use /resume to resume automated trading."
-        )
+            message = (
+                "⏸ <b>TRADING PAUSED</b>\n\n"
+                "Automated trading has been paused.\n\n"
+                "• No new positions will be opened\n"
+                "• Existing positions will continue to be monitored\n"
+                "• Exit conditions will still be checked\n\n"
+                "Use /resume to resume automated trading."
+            )
 
-        await update.message.reply_text(message, parse_mode='HTML')
-        logger.warning("Trading paused via Telegram bot command")
+            await update.message.reply_text(message, parse_mode='HTML')
+            logger.warning("Trading paused via Telegram bot command")
+
+        except Exception as e:
+            await self.handle_error(update, e, 'pause')
 
     async def resume_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /resume command - resume automated trading"""
@@ -625,22 +722,26 @@ class TelegramBotHandler:
             await update.message.reply_text("⛔ Unauthorized access")
             return
 
-        if not is_trading_paused():
-            await update.message.reply_text("ℹ️ Trading is not paused")
-            return
+        try:
+            if not is_trading_paused():
+                await update.message.reply_text("ℹ️ Trading is not paused")
+                return
 
-        resume_trading()
+            resume_trading()
 
-        message = (
-            "▶️ <b>TRADING RESUMED</b>\n\n"
-            "Automated trading has been resumed.\n\n"
-            "• New positions can be opened\n"
-            "• All strategies are active\n"
-            "• Normal operations restored\n"
-        )
+            message = (
+                "▶️ <b>TRADING RESUMED</b>\n\n"
+                "Automated trading has been resumed.\n\n"
+                "• New positions can be opened\n"
+                "• All strategies are active\n"
+                "• Normal operations restored\n"
+            )
 
-        await update.message.reply_text(message, parse_mode='HTML')
-        logger.info("Trading resumed via Telegram bot command")
+            await update.message.reply_text(message, parse_mode='HTML')
+            logger.info("Trading resumed via Telegram bot command")
+
+        except Exception as e:
+            await self.handle_error(update, e, 'resume')
 
     async def logs_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /logs command - show recent system events"""
@@ -672,8 +773,7 @@ class TelegramBotHandler:
             await update.message.reply_text(message, parse_mode='HTML')
 
         except Exception as e:
-            logger.error(f"Error in logs command: {e}", exc_info=True)
-            await update.message.reply_text(f"❌ Error: {str(e)}")
+            await self.handle_error(update, e, 'logs')
 
     async def button_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle button callbacks"""
@@ -686,32 +786,77 @@ class TelegramBotHandler:
 
         try:
             if query.data == "positions_refresh":
-                # Refresh positions list
-                from apps.positions.models import Position
-                active_positions = Position.objects.filter(status='ACTIVE').select_related('account')
+                # Refresh positions list - fetch live from brokers
+                await query.edit_message_text("📊 Fetching live positions...")
 
-                if not active_positions.exists():
-                    await query.edit_message_text("ℹ️ No active positions")
+                breeze_positions, kotak_positions, errors = await fetch_live_positions()
+                total_positions = len(breeze_positions) + len(kotak_positions)
+
+                if total_positions == 0 and not errors:
+                    await query.edit_message_text("ℹ️ No active positions found in any broker account")
                     return
 
-                message = f"📈 <b>ACTIVE POSITIONS ({active_positions.count()})</b>\n{'=' * 40}\n\n"
+                # Build detailed message
+                message = f"📈 <b>LIVE POSITIONS ({total_positions})</b>\n{'=' * 40}\n\n"
 
-                for pos in active_positions:
-                    pnl = pos.unrealized_pnl or Decimal('0.00')
-                    pnl_icon = "📈" if pnl >= 0 else "📉"
+                # Display ICICI Breeze positions
+                if breeze_positions:
+                    message += f"<b>🏦 ICICI BREEZE ({len(breeze_positions)} positions)</b>\n\n"
+                    for pos in breeze_positions:
+                        # Convert Decimal to float for display
+                        pnl = float(pos.unrealized_pnl or 0)
+                        pnl_icon = "📈" if pnl >= 0 else "📉"
+                        direction = "LONG" if pos.net_quantity > 0 else "SHORT" if pos.net_quantity < 0 else "FLAT"
 
-                    message += (
-                        f"<b>#{pos.id}</b> - {pos.instrument}\n"
-                        f"  Account: {pos.account.account_name}\n"
-                        f"  Direction: {pos.direction}\n"
-                        f"  Entry: ₹{pos.entry_price:,.2f}\n"
-                        f"  Current: ₹{pos.current_price:,.2f}\n"
-                        f"  {pnl_icon} P&L: ₹{pnl:,.0f}\n\n"
-                    )
+                        # Escape HTML special characters
+                        symbol = html.escape(str(pos.symbol))
+                        exchange = html.escape(str(pos.exchange_segment))
+                        product = html.escape(str(pos.product))
+
+                        message += (
+                            f"<b>{symbol}</b>\n"
+                            f"  Exchange: {exchange} | Product: {product}\n"
+                            f"  Direction: {direction} | Qty: {abs(pos.net_quantity)}\n"
+                            f"  Avg: ₹{float(pos.average_price):,.2f} | LTP: ₹{float(pos.ltp):,.2f}\n"
+                            f"  {pnl_icon} P&L: ₹{pnl:,.2f}\n\n"
+                        )
+
+                # Display Kotak Neo positions
+                if kotak_positions:
+                    message += f"<b>🏦 KOTAK NEO ({len(kotak_positions)} positions)</b>\n\n"
+                    for pos in kotak_positions:
+                        # Convert Decimal to float for display
+                        pnl = float(pos.unrealized_pnl or 0)
+                        pnl_icon = "📈" if pnl >= 0 else "📉"
+                        direction = "LONG" if pos.net_quantity > 0 else "SHORT" if pos.net_quantity < 0 else "FLAT"
+
+                        # Escape HTML special characters
+                        symbol = html.escape(str(pos.symbol))
+                        exchange = html.escape(str(pos.exchange_segment))
+                        product = html.escape(str(pos.product))
+
+                        message += (
+                            f"<b>{symbol}</b>\n"
+                            f"  Exchange: {exchange} | Product: {product}\n"
+                            f"  Direction: {direction} | Qty: {abs(pos.net_quantity)}\n"
+                            f"  Avg: ₹{float(pos.average_price):,.2f} | LTP: ₹{float(pos.ltp):,.2f}\n"
+                            f"  {pnl_icon} P&L: ₹{pnl:,.2f}\n\n"
+                        )
+
+                # Display errors if any
+                if errors:
+                    message += "\n<b>⚠️ ERRORS:</b>\n"
+                    for broker, error in errors.items():
+                        error_escaped = html.escape(str(error)[:100])
+                        message += f"  {broker}: {error_escaped}...\n"
+
+                # Add summary - convert all Decimals to float to avoid type mismatch
+                total_pnl = sum(float(p.unrealized_pnl or 0) for p in breeze_positions + kotak_positions)
+                pnl_icon = "📈" if total_pnl >= 0 else "📉"
+                message += f"\n{pnl_icon} <b>Total Unrealized P&L: ₹{total_pnl:,.2f}</b>\n"
 
                 keyboard = [
                     [InlineKeyboardButton("🔄 Refresh", callback_data="positions_refresh")],
-                    [InlineKeyboardButton("⚠️ Close All", callback_data="closeall_confirm")],
                 ]
                 reply_markup = InlineKeyboardMarkup(keyboard)
 
@@ -721,12 +866,9 @@ class TelegramBotHandler:
                 # Confirm close specific position
                 position_id = int(query.data.split("_")[-1])
 
-                from apps.positions.models import Position
-                from apps.positions.services.position_manager import close_position
+                pos = await get_position_by_id(position_id)
 
-                pos = Position.objects.get(id=position_id)
-
-                success, closed_pos, message_text = close_position(
+                success, closed_pos, message_text = await close_position_sync(
                     position=pos,
                     exit_price=pos.current_price,
                     exit_reason="MANUAL_TELEGRAM_BOT"
@@ -750,27 +892,7 @@ class TelegramBotHandler:
 
             elif query.data == "confirm_closeall":
                 # Close all positions
-                from apps.positions.models import Position
-                from apps.positions.services.position_manager import close_position
-
-                active_positions = Position.objects.filter(status='ACTIVE')
-
-                closed_count = 0
-                failed_count = 0
-                total_pnl = Decimal('0.00')
-
-                for pos in active_positions:
-                    success, closed_pos, msg = close_position(
-                        position=pos,
-                        exit_price=pos.current_price,
-                        exit_reason="EMERGENCY_CLOSEALL_TELEGRAM_BOT"
-                    )
-
-                    if success:
-                        closed_count += 1
-                        total_pnl += closed_pos.realized_pnl
-                    else:
-                        failed_count += 1
+                closed_count, failed_count, total_pnl = await close_all_positions_sync()
 
                 result_message = (
                     f"✅ <b>CLOSE ALL COMPLETE</b>\n\n"
@@ -785,8 +907,7 @@ class TelegramBotHandler:
                 await query.edit_message_text("❌ Close all operation cancelled")
 
         except Exception as e:
-            logger.error(f"Error in button callback: {e}", exc_info=True)
-            await query.edit_message_text(f"❌ Error: {str(e)}")
+            await self.handle_error(update, e, 'button_callback')
 
     def run(self):
         """Run the bot"""

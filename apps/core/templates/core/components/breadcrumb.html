@@ -1,0 +1,109 @@
+<!-- Breadcrumb Navigation -->
+{% if breadcrumbs %}
+<nav class="breadcrumb-nav" aria-label="Breadcrumb">
+    <div class="container">
+        <ol class="breadcrumb">
+            <li class="breadcrumb-item">
+                <a href="/">
+                    <span class="breadcrumb-icon">🏠</span>
+                    <span class="breadcrumb-text">Home</span>
+                </a>
+            </li>
+            {% for crumb in breadcrumbs %}
+                {% if crumb.url %}
+                <li class="breadcrumb-item">
+                    <span class="breadcrumb-separator">›</span>
+                    <a href="{{ crumb.url }}">{{ crumb.title }}</a>
+                </li>
+                {% else %}
+                <li class="breadcrumb-item active" aria-current="page">
+                    <span class="breadcrumb-separator">›</span>
+                    <span>{{ crumb.title }}</span>
+                </li>
+                {% endif %}
+            {% endfor %}
+        </ol>
+    </div>
+</nav>
+
+<style>
+    /* ========================================
+       BREADCRUMB NAVIGATION STYLES
+       ======================================== */
+
+    .breadcrumb-nav {
+        background: var(--white);
+        border-bottom: 1px solid var(--light);
+        padding: 0.75rem 0;
+        margin-bottom: 1.5rem;
+    }
+
+    /* For gradient background pages */
+    body.gradient-background .breadcrumb-nav {
+        background: rgba(255, 255, 255, 0.95);
+        backdrop-filter: blur(10px);
+        box-shadow: var(--shadow-sm);
+    }
+
+    .breadcrumb {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        font-size: 14px;
+    }
+
+    .breadcrumb-item {
+        display: flex;
+        align-items: center;
+    }
+
+    .breadcrumb-item a {
+        color: var(--primary);
+        text-decoration: none;
+        padding: 0.25rem 0.5rem;
+        border-radius: var(--radius-sm);
+        transition: all 0.2s ease;
+        display: flex;
+        align-items: center;
+        gap: 0.25rem;
+    }
+
+    .breadcrumb-item a:hover {
+        background: var(--lighter);
+        color: var(--primary-hover);
+    }
+
+    .breadcrumb-item.active {
+        color: var(--gray);
+        font-weight: 500;
+    }
+
+    .breadcrumb-separator {
+        color: var(--gray-light);
+        margin: 0 0.5rem;
+        font-size: 16px;
+    }
+
+    .breadcrumb-icon {
+        font-size: 16px;
+    }
+
+    /* Responsive Design */
+    @media (max-width: 768px) {
+        .breadcrumb {
+            font-size: 13px;
+        }
+
+        .breadcrumb-text {
+            display: none;
+        }
+
+        .breadcrumb-separator {
+            margin: 0 0.25rem;
+        }
+    }
+</style>
+{% endif %}

@@ -1,0 +1,341 @@
+{% extends 'brokers/base.html' %}
+
+{% block title %}Validate Future Trade - mCube{% endblock %}
+
+{% block page_title %}Future Trade Validation{% endblock %}
+
+{% block content %}
+<style>
+    .validation-step {
+        background: white;
+        border-radius: 8px;
+        padding: 20px;
+        margin-bottom: 15px;
+        border-left: 4px solid #e2e8f0;
+    }
+
+    .validation-step.success {
+        border-left-color: #48bb78;
+        background: #f0fff4;
+    }
+
+    .validation-step.warning {
+        border-left-color: #ed8936;
+        background: #fffaf0;
+    }
+
+    .validation-step.error {
+        border-left-color: #f56565;
+        background: #fff5f5;
+    }
+
+    .validation-step.in_progress {
+        border-left-color: #4299e1;
+        background: #ebf8ff;
+    }
+
+    .step-header {
+        display: flex;
+        align-items: center;
+        margin-bottom: 10px;
+    }
+
+    .step-number {
+        width: 40px;
+        height: 40px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: bold;
+        margin-right: 15px;
+        font-size: 18px;
+    }
+
+    .step-number.success {
+        background: #48bb78;
+        color: white;
+    }
+
+    .step-number.warning {
+        background: #ed8936;
+        color: white;
+    }
+
+    .step-number.error {
+        background: #f56565;
+        color: white;
+    }
+
+    .step-number.in_progress {
+        background: #4299e1;
+        color: white;
+    }
+
+    .step-title {
+        font-size: 18px;
+        font-weight: 600;
+        color: #2d3748;
+        flex: 1;
+    }
+
+    .step-details {
+        color: #4a5568;
+        line-height: 1.6;
+    }
+
+    .breakdown-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 15px;
+        margin-top: 15px;
+        padding: 15px;
+        background: white;
+        border-radius: 6px;
+    }
+
+    .breakdown-item {
+        padding: 10px;
+        border-left: 3px solid #667eea;
+        background: #f7fafc;
+    }
+
+    .breakdown-label {
+        font-size: 12px;
+        color: #718096;
+        font-weight: 600;
+        text-transform: uppercase;
+        margin-bottom: 5px;
+    }
+
+    .breakdown-value {
+        font-size: 16px;
+        color: #2d3748;
+        font-weight: 600;
+    }
+
+    .opportunities-list {
+        margin-top: 15px;
+    }
+
+    .opportunity-item {
+        background: white;
+        padding: 12px 15px;
+        margin-bottom: 8px;
+        border-radius: 6px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+    .opportunity-symbol {
+        font-weight: 600;
+        color: #2d3748;
+    }
+
+    .opportunity-direction {
+        padding: 4px 12px;
+        border-radius: 4px;
+        font-size: 12px;
+        font-weight: 600;
+    }
+
+    .opportunity-direction.LONG {
+        background: #c6f6d5;
+        color: #22543d;
+    }
+
+    .opportunity-direction.SHORT {
+        background: #fed7d7;
+        color: #742a2a;
+    }
+
+    .opportunity-score {
+        font-size: 18px;
+        font-weight: bold;
+        color: #667eea;
+    }
+
+    .telegram-box {
+        background: #2d3748;
+        color: #e2e8f0;
+        padding: 20px;
+        border-radius: 8px;
+        font-family: 'Courier New', monospace;
+        font-size: 13px;
+        line-height: 1.8;
+        white-space: pre-wrap;
+        margin-top: 15px;
+    }
+
+    .workflow-list {
+        margin-top: 15px;
+        padding-left: 20px;
+    }
+
+    .workflow-list li {
+        margin-bottom: 8px;
+        color: #4a5568;
+    }
+
+    .trade-details-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 15px;
+        margin-top: 15px;
+    }
+
+    .detail-card {
+        background: white;
+        padding: 15px;
+        border-radius: 8px;
+        border: 1px solid #e2e8f0;
+    }
+
+    .detail-label {
+        font-size: 11px;
+        color: #718096;
+        font-weight: 600;
+        text-transform: uppercase;
+        margin-bottom: 5px;
+    }
+
+    .detail-value {
+        font-size: 16px;
+        color: #2d3748;
+        font-weight: 600;
+    }
+
+    .action-buttons {
+        margin-top: 20px;
+        display: flex;
+        gap: 10px;
+    }
+
+    .btn-refresh {
+        background: #667eea;
+        color: white;
+        padding: 12px 24px;
+        border-radius: 8px;
+        text-decoration: none;
+        font-weight: 600;
+        display: inline-block;
+        transition: all 0.2s ease;
+    }
+
+    .btn-refresh:hover {
+        background: #5a67d8;
+        transform: translateY(-2px);
+    }
+
+    .btn-back {
+        background: #a0aec0;
+        color: white;
+        padding: 12px 24px;
+        border-radius: 8px;
+        text-decoration: none;
+        font-weight: 600;
+        display: inline-block;
+        transition: all 0.2s ease;
+    }
+
+    .btn-back:hover {
+        background: #718096;
+    }
+</style>
+
+<div class="card">
+    <h2>Future Trade Validation Results</h2>
+    <p>Comprehensive analysis of ICICI Futures trading strategy with step-by-step decision explanations.</p>
+    <p style="color: #718096; font-size: 14px;">
+        <strong>Generated at:</strong> {{ timestamp|date:"Y-m-d H:i:s" }}
+    </p>
+</div>
+
+{% if error %}
+<div class="card" style="background: #fff5f5; border-left: 4px solid #f56565;">
+    <h3 style="color: #c53030;">Validation Error</h3>
+    <p style="color: #742a2a;">{{ error }}</p>
+</div>
+{% endif %}
+
+<!-- Validation Steps -->
+{% for step in validation_steps %}
+<div class="validation-step {{ step.status }}">
+    <div class="step-header">
+        <div class="step-number {{ step.status }}">
+            {% if step.status == 'success' %}✓{% elif step.status == 'warning' %}⚠{% elif step.status == 'error' %}✗{% else %}{{ step.step }}{% endif %}
+        </div>
+        <div class="step-title">Step {{ step.step }}: {{ step.title }}</div>
+    </div>
+
+    <div class="step-details">
+        {{ step.details }}
+
+        {% if step.opportunities %}
+        <div class="opportunities-list">
+            <strong style="display: block; margin-bottom: 10px;">Top Opportunities:</strong>
+            {% for opp in step.opportunities %}
+            <div class="opportunity-item">
+                <span class="opportunity-symbol">{{ opp.symbol }}</span>
+                <span class="opportunity-direction {{ opp.direction }}">{{ opp.direction }}</span>
+                <span class="opportunity-score">{{ opp.composite_score|floatformat:1 }}/100</span>
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
+
+        {% if step.breakdown %}
+        <div class="breakdown-grid">
+            {% for label, value in step.breakdown.items %}
+            <div class="breakdown-item">
+                <div class="breakdown-label">{{ label }}</div>
+                <div class="breakdown-value">{{ value }}</div>
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
+
+        {% if step.workflow %}
+        <div>
+            <strong style="display: block; margin-top: 15px; margin-bottom: 10px;">Workflow Steps:</strong>
+            <ul class="workflow-list">
+                {% for workflow_step in step.workflow %}
+                <li>{{ workflow_step }}</li>
+                {% endfor %}
+            </ul>
+        </div>
+        {% endif %}
+
+        {% if step.trade_details %}
+        <div class="trade-details-grid">
+            {% for label, value in step.trade_details.items %}
+            <div class="detail-card">
+                <div class="detail-label">{{ label }}</div>
+                <div class="detail-value">{{ value }}</div>
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endfor %}
+
+<!-- Telegram Message -->
+{% if telegram_message %}
+<div class="card">
+    <h3>Sample Telegram Notification</h3>
+    <p>This is how the trade suggestion would be sent via Telegram:</p>
+    <div class="telegram-box">{{ telegram_message }}</div>
+</div>
+{% endif %}
+
+<!-- Action Buttons -->
+<div class="card">
+    <div class="action-buttons">
+        <a href="{% url 'brokers:validate_future_trade' %}" class="btn-refresh">🔄 Run Validation Again</a>
+        <a href="{% url 'brokers:dashboard' %}" class="btn-back">← Back to Dashboard</a>
+    </div>
+</div>
+
+{% endblock %}

@@ -24,7 +24,7 @@ from decimal import Decimal
 
 from apps.core.models import CredentialStore
 from apps.core.constants import BROKER_ICICI
-from apps.brokers.models import BrokerLimit, BrokerPosition, OptionChainQuote, HistoricalPrice
+from apps.brokers.models import BrokerLimit, BrokerPosition, OptionChainQuote, HistoricalPrice, NiftyOptionChain
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +59,97 @@ def _parse_float(val):
         return 0.0
 
 
+def get_all_nifty_expiry_dates(max_expiries: int = 10, timeout: int = 15) -> List[str]:
+    """
+    Fetch all available NIFTY options expiry dates from NSE.
+
+    IMPORTANT: This function ONLY fetches the LIST OF EXPIRY DATES from NSE.
+    The actual option chain data (LTP, OI, volume, etc.) is ALWAYS fetched from Breeze API.
+
+    This fetches real contract expiry dates which properly handle holidays.
+    NSE adjusts expiry dates when Thursday is a trading holiday.
+
+    NOTE: NSE may block automated API access (403 errors). If this fails,
+    the caller should fallback to generating Thursday dates.
+
+    Args:
+        max_expiries: Maximum number of expiries to return (default 10)
+        timeout: Per-request timeout in seconds
+
+    Returns:
+        List[str]: List of expiry dates in 'DD-MMM-YYYY' format (e.g., ['21-NOV-2024', '28-NOV-2024', ...])
+
+    Raises:
+        RuntimeError: If data fetch/parsing fails or NSE blocks access
+    """
+    sess = requests.Session()
+
+    # Enhanced headers to avoid 403 errors
+    sess.headers.update({
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+                      "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.5",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Connection": "keep-alive",
+        "Upgrade-Insecure-Requests": "1",
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "none",
+        "Cache-Control": "max-age=0",
+    })
+
+    try:
+        # First, visit NSE homepage to get cookies
+        logger.info("Fetching NSE homepage to establish session...")
+        resp_home = sess.get(NSE_BASE, timeout=timeout)
+        if not resp_home.ok:
+            logger.warning(f"NSE homepage returned {resp_home.status_code}, continuing anyway...")
+
+        # Small delay to mimic human behavior
+        import time
+        time.sleep(1)
+
+        # Update headers for API request
+        sess.headers.update({
+            "Accept": "application/json, text/plain, */*",
+            "Referer": "https://www.nseindia.com/option-chain",
+        })
+
+        # Fetch the option chain JSON
+        logger.info("Fetching NIFTY option chain from NSE API...")
+        resp = sess.get(NSE_OC_URL, timeout=timeout)
+
+        if not resp.ok:
+            logger.error(f"NSE API request failed with status {resp.status_code}")
+            raise RuntimeError(f"NSE option chain request failed: {resp.status_code}")
+
+        data = resp.json()
+        expiry_list: List[str] = data["records"]["expiryDates"]
+
+        if not expiry_list:
+            raise RuntimeError("Expiry list is empty from NSE")
+
+        # Parse, sort, and return dates in proper format
+        def parse_dt(s: str) -> datetime:
+            return datetime.strptime(s, "%d-%b-%Y")
+
+        unique_dates = sorted({parse_dt(s) for s in expiry_list})
+
+        # Format as 'DD-MMM-YYYY' with uppercase month and limit to max_expiries
+        result = [dt.strftime("%d-%b-%Y").upper() for dt in unique_dates[:max_expiries]]
+
+        logger.info(f"Successfully fetched {len(result)} NIFTY expiry dates from NSE: {result[:5]}...")
+        return result
+
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Network error fetching NSE data: {e}")
+        raise RuntimeError(f"Failed to fetch NSE option chain data: {e}") from e
+    except (KeyError, ValueError, json.JSONDecodeError) as e:
+        logger.error(f"Failed to parse NSE response: {e}")
+        raise RuntimeError(f"Failed to parse NSE response: {e}") from e
+
+
 def get_next_nifty_expiry(next_expiry: bool = False, timeout: int = 10) -> str:
     """
     Fetch the nearest (or next) NIFTY options expiry date from NSE.
@@ -73,46 +164,14 @@ def get_next_nifty_expiry(next_expiry: bool = False, timeout: int = 10) -> str:
     Raises:
         RuntimeError: If data fetch/parsing fails
     """
-    sess = requests.Session()
-    sess.headers.update({
-        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-                      "(KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36",
-        "Accept": "application/json, text/plain, */*",
-        "Referer": "https://www.nseindia.com/option-chain",
-        "Accept-Language": "en-US,en;q=0.9",
-        "Connection": "keep-alive",
-    })
-
-    # Priming request to set cookies
-    resp_home = sess.get(NSE_BASE, timeout=timeout)
-    if not resp_home.ok:
-        raise RuntimeError(f"NSE homepage request failed: {resp_home.status_code}")
-
-    # Fetch the option chain JSON
-    resp = sess.get(NSE_OC_URL, timeout=timeout)
-    if not resp.ok:
-        raise RuntimeError(f"Option chain request failed: {resp.status_code}")
-
     try:
-        data = resp.json()
-        expiry_list: List[str] = data["records"]["expiryDates"]
-        if not expiry_list:
-            raise RuntimeError("Expiry list is empty")
-
-        # Parse to real dates and sort
-        def parse_dt(s: str) -> datetime:
-            return datetime.strptime(s, "%d-%b-%Y")
-
-        unique_dates = sorted({parse_dt(s) for s in expiry_list})
+        expiries = get_all_nifty_expiry_dates(max_expiries=5, timeout=timeout)
         index = 1 if next_expiry else 0
-        if index >= len(unique_dates):
+        if index >= len(expiries):
             raise IndexError("Requested next expiry but only one expiry was found")
-
-        # Format as 'DD-MMM-YYYY' with uppercase month
-        return unique_dates[index].strftime("%d-%b-%Y").upper()
-
-    except (KeyError, ValueError) as e:
-        raise RuntimeError(f"Failed to parse NSE response: {e}") from e
+        return expiries[index]
+    except Exception as e:
+        raise RuntimeError(f"Failed to get NIFTY expiry: {e}") from e
 
 
 def get_or_prompt_breeze_token():
@@ -256,33 +315,48 @@ def fetch_and_save_breeze_data():
     raw_positions = pos_resp.get('Success', [])
     pos_objs = []
     for p in raw_positions:
-        quantity = int(p.get('quantity') or 0)
-        avg_price_val = _parse_float(p.get('average_price'))
-        ltp_val = _parse_float(p.get('ltp') or p.get('price'))
-        buy_qty = quantity if quantity > 0 else 0
-        sell_qty = abs(quantity) if quantity < 0 else 0
-        buy_amt = buy_qty * avg_price_val
-        sell_amt = sell_qty * avg_price_val
-        unrealized = _parse_float(p.get('pnl'))
-        symbol = p.get('stock_code') or f"{p.get('underlying', '')} {p.get('strike_price', '')} {p.get('right', '')}".strip()
+        try:
+            quantity = int(p.get('quantity') or 0)
+            avg_price_val = _parse_float(p.get('average_price'))
+            ltp_val = _parse_float(p.get('ltp') or p.get('price'))
+            buy_qty = quantity if quantity > 0 else 0
+            sell_qty = abs(quantity) if quantity < 0 else 0
+            buy_amt = buy_qty * avg_price_val
+            sell_amt = sell_qty * avg_price_val
 
-        pos = BrokerPosition.objects.create(
-            broker=BROKER_ICICI,
-            fetched_at=dj_timezone.now(),
-            symbol=symbol,
-            exchange_segment=p.get('segment'),
-            product=p.get('product_type'),
-            buy_qty=buy_qty,
-            sell_qty=sell_qty,
-            net_quantity=quantity,
-            buy_amount=buy_amt,
-            sell_amount=sell_amt,
-            ltp=ltp_val,
-            average_price=avg_price_val,
-            realized_pnl=0.0,
-            unrealized_pnl=unrealized,
-        )
-        pos_objs.append(pos)
+            # FIXED: Calculate unrealized P&L correctly
+            # For LONG (quantity > 0): (LTP - Avg) * quantity
+            # For SHORT (quantity < 0): (Avg - LTP) * abs(quantity)
+            if quantity > 0:
+                unrealized = (ltp_val - avg_price_val) * quantity
+            elif quantity < 0:
+                unrealized = (avg_price_val - ltp_val) * abs(quantity)
+            else:
+                unrealized = 0.0
+
+            symbol = p.get('stock_code') or f"{p.get('underlying', '')} {p.get('strike_price', '')} {p.get('right', '')}".strip()
+
+            # Convert to Decimal for database
+            pos = BrokerPosition.objects.create(
+                broker=BROKER_ICICI,
+                fetched_at=dj_timezone.now(),
+                symbol=symbol,
+                exchange_segment=p.get('segment', ''),
+                product=p.get('product_type', ''),
+                buy_qty=buy_qty,
+                sell_qty=sell_qty,
+                net_quantity=quantity,
+                buy_amount=Decimal(str(buy_amt)),
+                sell_amount=Decimal(str(sell_amt)),
+                ltp=Decimal(str(ltp_val)),
+                average_price=Decimal(str(avg_price_val)),
+                realized_pnl=Decimal('0.00'),
+                unrealized_pnl=Decimal(str(unrealized)),
+            )
+            pos_objs.append(pos)
+        except (ValueError, Exception) as e:
+            logger.error(f"Error processing Breeze position {p.get('stock_code', 'UNKNOWN')}: {e}")
+            continue
 
     logger.info(f"Saved {len(pos_objs)} Breeze positions")
     return limit_record, pos_objs
@@ -389,6 +463,227 @@ def get_and_save_option_chain_quotes(stock_code, expiry_date=None, product_type=
 
     logger.info(f"Saved {len(objs)} option chain quotes")
     return objs
+
+
+def fetch_and_save_nifty_option_chain_all_expiries():
+    """
+    Fetch NIFTY option chain for all available expiries and save to NiftyOptionChain model.
+
+    DATA SOURCES:
+    - Expiry dates list: NSE (with fallback to generated Thursdays)
+    - ALL live option chain data (LTP, OI, volume, bid, ask, etc.): ICICI Breeze API ONLY
+
+    This function:
+    1. Gets list of expiry dates from NSE (or generates Thursdays as fallback)
+    2. For each expiry, fetches LIVE option chain data from Breeze API
+    3. Collects all data in memory first
+    4. Clears old data and bulk saves new data (prevents data loss on fetch failure)
+    5. Saves option chain data organized by strike price
+
+    Returns:
+        int: Total number of option chain records saved
+
+    Raises:
+        RuntimeError: If no data could be fetched or API calls fail
+    """
+    logger.info("Fetching NIFTY option chain for all expiries")
+
+    # Get Breeze client (will use existing valid session)
+    breeze = get_breeze_client()
+
+    # Quick session validation - try to get funds (this works even when customer_details doesn't)
+    try:
+        funds = breeze.get_funds()
+        if not funds or funds.get('Status') != 200:
+            raise RuntimeError("Breeze session appears to be invalid. Please refresh your session at /brokers/breeze/login/")
+        logger.info("Breeze session validated successfully")
+    except Exception as e:
+        logger.error(f"Breeze session validation failed: {e}")
+        raise RuntimeError(
+            "Could not validate Breeze session. Please ensure you are logged in at /brokers/breeze/login/. "
+            f"Error: {str(e)}"
+        )
+
+    # Get NIFTY spot price from Breeze
+    try:
+        quote = get_nifty_quote()
+        # Breeze returns 'ltp' (Last Traded Price) not 'last'
+        spot_price = Decimal(str(quote.get('ltp', 0))) if quote else Decimal('0.00')
+        logger.info(f"NIFTY spot price: ₹{spot_price:,.2f}")
+    except Exception as e:
+        logger.warning(f"Could not fetch NIFTY spot price: {e}")
+        spot_price = Decimal('0.00')
+
+    # STEP 1: Get list of expiry dates
+    # Try NSE first (real contract dates, handles holidays), fallback to generating Thursdays
+    # NOTE: NSE is ONLY used for getting the LIST of dates, NOT the actual option chain data
+    logger.info("Fetching NIFTY expiry dates...")
+
+    expiry_list = []
+
+    # Try to get real expiry dates from NSE first (may fail due to 403 blocking)
+    try:
+        expiry_list = get_all_nifty_expiry_dates(max_expiries=10, timeout=15)
+        logger.info(f"✓ Got {len(expiry_list)} real expiry dates from NSE (handles holidays): {expiry_list[:3]}...")
+    except Exception as nse_error:
+        logger.warning(f"NSE expiry fetch failed (this is normal if NSE blocks API): {nse_error}")
+        logger.info("Falling back to generating Thursday expiry dates...")
+
+        # Fallback: Generate NIFTY expiry dates (weekly expiries - Thursdays)
+        from datetime import datetime, timedelta
+        today = datetime.now().date()
+
+        current_date = today
+
+        # Find next 4 Thursdays
+        for _ in range(30):  # Look ahead 30 days to find Thursdays
+            if current_date.weekday() == 3:  # Thursday = 3
+                if current_date >= today:
+                    expiry_str = current_date.strftime("%d-%b-%Y").upper()
+                    expiry_list.append(expiry_str)
+                    if len(expiry_list) >= 4:  # Get 4 expiries
+                        break
+            current_date += timedelta(days=1)
+
+        if expiry_list:
+            logger.info(f"Generated {len(expiry_list)} fallback expiries: {expiry_list}")
+        else:
+            raise RuntimeError("Could not fetch or generate expiry dates")
+
+    logger.info(f"Using {len(expiry_list)} expiry dates for NIFTY option chain fetch (spot: ₹{spot_price})")
+
+    # Get Breeze client
+    breeze = get_breeze_client()
+
+    # Store new data temporarily before clearing old data
+    new_records = []
+    total_saved = 0
+
+    # STEP 2: Fetch LIVE option chain data from ICICI Breeze API
+    # ALL option chain data (LTP, OI, volume, bid, ask, etc.) comes from Breeze ONLY
+    for expiry_str in expiry_list:
+        try:
+            logger.info(f"Fetching live option chain from Breeze for expiry: {expiry_str}")
+
+            # Convert expiry to date object
+            expiry_date_obj = datetime.strptime(expiry_str, "%d-%b-%Y").date()
+
+            # Fetch calls and puts from Breeze API
+            calls_data = []
+            puts_data = []
+
+            try:
+                # Fetch CALL options from Breeze API
+                calls_resp = breeze.get_option_chain_quotes(
+                    stock_code="NIFTY",
+                    exchange_code="NFO",
+                    product_type="options",
+                    expiry_date=expiry_str,
+                    right="call",
+                )
+                if calls_resp and calls_resp.get("Success"):
+                    calls_data = calls_resp["Success"]
+                else:
+                    logger.warning(f"No calls data for {expiry_str}: {calls_resp.get('Error', 'Unknown error')}")
+            except Exception as e:
+                logger.warning(f"Failed to fetch calls for {expiry_str}: {e}")
+
+            try:
+                # Fetch PUT options from Breeze API
+                puts_resp = breeze.get_option_chain_quotes(
+                    stock_code="NIFTY",
+                    exchange_code="NFO",
+                    product_type="options",
+                    expiry_date=expiry_str,
+                    right="put",
+                )
+                if puts_resp and puts_resp.get("Success"):
+                    puts_data = puts_resp["Success"]
+                else:
+                    logger.warning(f"No puts data for {expiry_str}: {puts_resp.get('Error', 'Unknown error')}")
+            except Exception as e:
+                logger.warning(f"Failed to fetch puts for {expiry_str}: {e}")
+
+            # Organize data by strike price
+            strike_data = {}
+
+            # Process calls
+            for call in calls_data:
+                strike = Decimal(str(call.get('strike_price', 0.0) or 0.0))
+                if strike not in strike_data:
+                    strike_data[strike] = {'call': None, 'put': None}
+                strike_data[strike]['call'] = call
+
+            # Process puts
+            for put in puts_data:
+                strike = Decimal(str(put.get('strike_price', 0.0) or 0.0))
+                if strike not in strike_data:
+                    strike_data[strike] = {'call': None, 'put': None}
+                strike_data[strike]['put'] = put
+
+            # Collect records for bulk creation (don't save to DB yet)
+            for strike, options in strike_data.items():
+                call_data = options['call']
+                put_data = options['put']
+
+                # Create record object without saving to database
+                record = NiftyOptionChain(
+                    expiry_date=expiry_date_obj,
+                    strike_price=strike,
+                    option_type='CE',  # Store as one record with both CE and PE data
+                    # Call data
+                    call_ltp=Decimal(str(call_data.get('ltp', 0.0) or 0.0)) if call_data else Decimal('0.00'),
+                    call_bid=Decimal(str(call_data.get('best_bid_price', 0.0) or 0.0)) if call_data else Decimal('0.00'),
+                    call_ask=Decimal(str(call_data.get('best_offer_price', 0.0) or 0.0)) if call_data else Decimal('0.00'),
+                    call_oi=int(call_data.get('open_interest', 0) or 0) if call_data else 0,
+                    call_volume=int(call_data.get('total_quantity_traded', 0) or 0) if call_data else 0,
+                    # Put data
+                    put_ltp=Decimal(str(put_data.get('ltp', 0.0) or 0.0)) if put_data else Decimal('0.00'),
+                    put_bid=Decimal(str(put_data.get('best_bid_price', 0.0) or 0.0)) if put_data else Decimal('0.00'),
+                    put_ask=Decimal(str(put_data.get('best_offer_price', 0.0) or 0.0)) if put_data else Decimal('0.00'),
+                    put_oi=int(put_data.get('open_interest', 0) or 0) if put_data else 0,
+                    put_volume=int(put_data.get('total_quantity_traded', 0) or 0) if put_data else 0,
+                    # Common
+                    spot_price=spot_price,
+                )
+                new_records.append(record)
+                total_saved += 1
+
+            if strike_data:
+                logger.info(f"Collected {len(strike_data)} strikes for expiry {expiry_str}")
+            else:
+                logger.warning(f"No option chain data available for expiry {expiry_str}")
+
+        except Exception as e:
+            logger.error(f"Error processing expiry {expiry_str}: {e}")
+            continue
+
+    # Now that we've successfully collected all new data, delete old data and save new records
+    if new_records:
+        logger.info(f"Successfully fetched {total_saved} records. Clearing old data and saving new records...")
+
+        # Delete all old option chain data
+        deleted_count = NiftyOptionChain.objects.all().delete()[0]
+        logger.info(f"Deleted {deleted_count} old NiftyOptionChain records")
+
+        # Bulk create all new records
+        NiftyOptionChain.objects.bulk_create(new_records, batch_size=500)
+        logger.info(f"Bulk created {total_saved} new NIFTY option chain records across {len(expiry_list)} expiries")
+    else:
+        logger.warning("No new records to save, keeping existing data intact")
+
+    if total_saved == 0:
+        raise RuntimeError(
+            f"No option chain data could be fetched for any of the {len(expiry_list)} expiry dates.\n\n"
+            "Possible reasons:\n"
+            "1. Market is closed - Option chain data is only available during trading hours (9:15 AM - 3:30 PM IST)\n"
+            "2. The expiry dates don't have active contracts yet\n"
+            "3. Breeze API session needs refresh\n\n"
+            f"Expiry dates tried: {', '.join(expiry_list[:3])}{'...' if len(expiry_list) > 3 else ''}\n\n"
+            "Solution: Please try again during market hours (Mon-Fri 9:15 AM - 3:30 PM IST) or refresh Breeze session at /brokers/breeze/login/"
+        )
+
+    return total_saved
 
 
 def save_historical_price_record(stock_code, exchange_code, product_type, candle_data,

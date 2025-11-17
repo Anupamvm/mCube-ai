@@ -23,7 +23,8 @@ yfinance>=0.2.31  # Yahoo Finance for market data
 
 # Data Processing
 pandas>=2.2.0
-numpy>=1.26.0
+numpy>=1.26.0,<2.0  # Pin to 1.x for scipy compatibility (NumPy 2.0 breaks scipy)
+openpyxl>=3.1.5  # Excel file support (required for Trendlyne XLSX files)
 ta>=0.11.0  # Technical Analysis library
 # ta-lib==0.4.28  # Commented out - requires manual installation
 

@@ -1,10 +1,11 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>mCube AI - System Test Page</title>
-    <style>
+{% extends "core/master_base.html" %}
+
+{% block title %}System Test - mCube AI{% endblock %}
+
+{% block page_background %}gradient-background{% endblock %}
+
+{% block extra_css %}
+<style>
         * {
             margin: 0;
             padding: 0;
@@ -310,12 +311,15 @@
             color: #2c5282;
             border-left: 4px solid #3182ce;
         }
+
+        /* System Test Specific Styles */
     </style>
-</head>
-<body>
-    <div class="container">
+{% endblock %}
+
+{% block content %}
+<div class="container">
         <div class="header">
-            <h1>mCube AI - System Test Dashboard</h1>
+            <h1>System Test Dashboard</h1>
             <p>Comprehensive system health check for all critical functionalities</p>
         </div>
 
@@ -353,13 +357,10 @@
         </div>
 
         <div class="action-bar">
-            <div class="btn-group">
-                <a href="/admin/" class="btn btn-primary">Django Admin</a>
-                <a href="/brokers/" class="btn btn-primary">Broker Dashboard</a>
-            </div>
+            <div style="flex: 1;"></div>
             <div class="btn-group">
                 <form method="get" style="display: inline;">
-                    <button type="submit" class="refresh-btn">Refresh Tests</button>
+                    <button type="submit" class="refresh-btn">🔄 Refresh Tests</button>
                 </form>
             </div>
         </div>
@@ -401,12 +402,13 @@
             Last updated: {{ timestamp|date:"Y-m-d H:i:s" }}
         </div>
     </div>
+{% endblock %}
 
+{% block extra_js %}
     <script>
         // Auto-refresh every 5 minutes
         setTimeout(function() {
             location.reload();
         }, 300000);
     </script>
-</body>
-</html>
+{% endblock %}

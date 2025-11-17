@@ -33,8 +33,22 @@ app.config_from_object('django.conf:settings', namespace='CELERY')
 app.autodiscover_tasks()
 
 
-# Celery Beat Schedule - Automated Tasks
-app.conf.beat_schedule = {
+# =============================================================================
+# DYNAMIC SCHEDULE LOADING
+# =============================================================================
+# Schedule is loaded dynamically from TradingScheduleConfig model
+# This allows UI-based configuration without code changes
+
+def load_beat_schedule():
+    """
+    Load beat schedule dynamically from database
+
+    Combines static tasks (data tasks) with dynamic strategy tasks
+    """
+    from apps.strategies.services.dynamic_scheduler import get_dynamic_beat_schedule
+
+    # Static schedule (non-configurable tasks like data fetching)
+    static_schedule = {
     # =========================================================================
     # MARKET DATA TASKS
     # =========================================================================
@@ -74,48 +88,9 @@ app.conf.beat_schedule = {
     },
 
     # =========================================================================
-    # KOTAK STRANGLE STRATEGY TASKS
+    # NOTE: Strangle strategy tasks are now configured via TradingScheduleConfig
+    # Use Django admin to configure task timings
     # =========================================================================
-
-    'evaluate-kotak-strangle-entry': {
-        'task': 'apps.strategies.tasks.evaluate_kotak_strangle_entry',
-        'schedule': crontab(
-            hour=10,
-            minute=0,
-            day_of_week='1,2'  # Monday, Tuesday only
-        ),
-        'options': {'queue': 'strategies'},
-    },
-
-    'evaluate-kotak-strangle-exit-thursday': {
-        'task': 'apps.strategies.tasks.evaluate_kotak_strangle_exit',
-        'schedule': crontab(
-            hour=15,
-            minute=15,
-            day_of_week='4'  # Thursday
-        ),
-        'options': {'queue': 'strategies'},
-    },
-
-    'evaluate-kotak-strangle-exit-friday': {
-        'task': 'apps.strategies.tasks.evaluate_kotak_strangle_exit',
-        'schedule': crontab(
-            hour=15,
-            minute=15,
-            day_of_week='5'  # Friday (mandatory exit)
-        ),
-        'options': {'queue': 'strategies', 'kwargs': {'mandatory': True}},
-    },
-
-    'monitor-strangle-delta': {
-        'task': 'apps.strategies.tasks.monitor_all_strangle_deltas',
-        'schedule': crontab(
-            hour='9-15',
-            minute='*/5',
-            day_of_week='1-5'
-        ),  # Every 5 min during market hours
-        'options': {'queue': 'monitoring'},
-    },
 
     # =========================================================================
     # ICICI FUTURES STRATEGY TASKS
@@ -201,6 +176,22 @@ app.conf.beat_schedule = {
         'options': {'queue': 'reports'},
     },
 }
+
+    # Load dynamic schedule from database
+    try:
+        dynamic_schedule = get_dynamic_beat_schedule()
+        # Merge static and dynamic schedules
+        static_schedule.update(dynamic_schedule)
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(f"Failed to load dynamic schedule: {e}")
+        # Continue with static schedule only
+
+    return static_schedule
+
+
+# Load beat schedule
+app.conf.beat_schedule = load_beat_schedule()
 
 
 # Task routing - distribute tasks across queues for better performance

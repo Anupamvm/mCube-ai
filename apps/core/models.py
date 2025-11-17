@@ -59,6 +59,7 @@ class CredentialStore(models.Model):
         ('breeze', 'ICICI Breeze'),
         ('trendlyne', 'Trendlyne'),
         ('kotakneo', 'Kotak Neo'),
+        ('telegram', 'Telegram Bot'),
         ('other', 'Other'),
     ]
 
