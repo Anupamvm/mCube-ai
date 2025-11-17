@@ -404,8 +404,8 @@ def validate_future_trade(request):
         screen_futures_opportunities,
         execute_icici_futures_entry
     )
-    from apps.data.models import TrendlyneData
-    from apps.core.models import BrokerAccount
+    from apps.data.models import ContractData, TLStockData
+    from apps.accounts.models import BrokerAccount
     from decimal import Decimal
     import json
     from datetime import datetime
@@ -424,18 +424,24 @@ def validate_future_trade(request):
             'details': 'Checking Trendlyne database...'
         })
 
-        trendlyne_count = TrendlyneData.objects.count()
-        latest_trendlyne = TrendlyneData.objects.order_by('-updated_at').first()
+        # Check both Contract and Stock data
+        contract_count = ContractData.objects.count()
+        stock_count = TLStockData.objects.count()
+        trendlyne_count = contract_count + stock_count
+
+        latest_contract = ContractData.objects.order_by('-updated_at').first()
+        latest_stock = TLStockData.objects.order_by('-updated_at').first()
+        latest_trendlyne = latest_contract if latest_contract else latest_stock
 
         if latest_trendlyne:
             validation_steps[-1].update({
                 'status': 'success',
-                'details': f'Found {trendlyne_count} Trendlyne records. Latest update: {latest_trendlyne.updated_at.strftime("%Y-%m-%d %H:%M:%S")}'
+                'details': f'Found {trendlyne_count} Trendlyne records ({contract_count} contracts, {stock_count} stocks). Latest update: {latest_trendlyne.updated_at.strftime("%Y-%m-%d %H:%M:%S")}'
             })
         else:
             validation_steps[-1].update({
                 'status': 'warning',
-                'details': 'No Trendlyne data found. Please run: python manage.py populate_trendlyne'
+                'details': 'No Trendlyne data found. Please populate Trendlyne data first.'
             })
 
         # Step 2: Get ICICI Account and Live Data
