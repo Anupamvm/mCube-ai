@@ -90,9 +90,10 @@ def screen_futures_opportunities(
     logger.info("-" * 80)
 
     # Get stocks with F&O data, sorted by volume
+    # Using fno_total_oi > 0 to identify stocks with F&O data
     stocks = ContractStockData.objects.filter(
-        fno_available=True
-    ).order_by('-fno_total_value')[:min_volume_rank]
+        fno_total_oi__gt=0
+    ).order_by('-fno_total_oi')[:min_volume_rank]
 
     logger.info(f"Found {stocks.count()} liquid F&O stocks")
     logger.info("")
@@ -801,3 +802,104 @@ def execute_icici_futures_entry(
             'suggestion': None,
             'details': {'error': str(e)}
         }
+
+
+def analyze_stock_for_futures(stock_symbol: str) -> Optional[Dict]:
+    """
+    Analyze a specific stock for futures trading
+
+    Used for manual verification of trade ideas
+
+    Args:
+        stock_symbol: Stock symbol to analyze
+
+    Returns:
+        dict: Analysis results with all metrics, or None if unable to analyze
+    """
+    try:
+        logger.info(f"Analyzing {stock_symbol} for futures trading")
+
+        # Get stock data - use nse_code field
+        stock = ContractStockData.objects.filter(nse_code=stock_symbol).first()
+        if not stock:
+            # Try with stock_name as fallback
+            stock = ContractStockData.objects.filter(stock_name__icontains=stock_symbol).first()
+
+        if not stock:
+            logger.warning(f"{stock_symbol} not found in database")
+            return None
+
+        # Initialize analyzers
+        oi_analyzer = OpenInterestAnalyzer()
+        trendlyne_analyzer = TrendlyneScoreAnalyzer()
+        volume_analyzer = VolumeAnalyzer()
+        dma_analyzer = DMAAnalyzer()
+        technical_analyzer = TechnicalIndicatorAnalyzer()
+
+        # Run OI analysis
+        oi_score, oi_details = analyze_oi(stock_symbol, oi_analyzer)
+
+        # Sector analysis
+        sector_score, sector_details = analyze_sector_alignment(stock)
+
+        # Technical analysis
+        tech_score, tech_details = analyze_technical(
+            stock_symbol,
+            trendlyne_analyzer,
+            dma_analyzer,
+            technical_analyzer
+        )
+
+        # Volume analysis
+        volume_score = min(50, volume_analyzer.get_volume_rank(stock_symbol))
+
+        # Composite score
+        composite_score = oi_score + sector_score + tech_score
+
+        # Determine direction
+        signal = oi_details.get('signal', 'NEUTRAL')
+        direction = 'LONG' if signal == 'BULLISH' else 'SHORT' if signal == 'BEARISH' else 'NEUTRAL'
+
+        # Calculate entry, SL, target
+        current_price = float(stock.current_price or 0)
+
+        # Support/Resistance calculator
+        sr_calculator = SupportResistanceCalculator()
+        support, resistance = sr_calculator.calculate_levels(
+            stock_symbol,
+            current_price
+        )
+
+        if direction == 'LONG':
+            entry_price = current_price
+            stop_loss = support * 0.98  # 2% below support
+            target = resistance * 1.02  # 2% above resistance
+        elif direction == 'SHORT':
+            entry_price = current_price
+            stop_loss = resistance * 1.02  # 2% above resistance
+            target = support * 0.98  # 2% below support
+        else:
+            entry_price = current_price
+            stop_loss = current_price * 0.95
+            target = current_price * 1.05
+
+        return {
+            'symbol': stock_symbol,
+            'direction': direction,
+            'entry_price': entry_price,
+            'stop_loss': stop_loss,
+            'target': target,
+            'composite_score': composite_score,
+            'oi_score': oi_score,
+            'sector_score': sector_score,
+            'tech_score': tech_score,
+            'volume_rank': volume_score,
+            'oi_analysis': oi_details.get('buildup_type', 'Unknown'),
+            'sector_analysis': sector_details.get('alignment', 'Unknown'),
+            'technical_setup': tech_details.get('summary', 'Unknown'),
+            'reasoning': f"{direction} setup with {composite_score}/100 score"
+        }
+
+    except Exception as e:
+        logger.error(f"Error analyzing {stock_symbol}: {e}", exc_info=True)
+        return None

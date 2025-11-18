@@ -14,6 +14,7 @@ from django.core.paginator import Paginator
 
 from apps.core.models import CredentialStore
 from apps.brokers.models import BrokerLimit, BrokerPosition, OptionChainQuote, HistoricalPrice, NiftyOptionChain
+from apps.data.models import OptionChain
 from apps.brokers.integrations.kotak_neo import (
     fetch_and_save_kotakneo_data,
     is_open_position
@@ -227,14 +228,24 @@ def breeze_option_chain(request):
             total_saved = fetch_and_save_nifty_option_chain_all_expiries()
             messages.success(request, f"Fetched and saved {total_saved} NIFTY option chain records across all expiries")
 
-        # Get all unique expiry dates
-        expiry_dates = NiftyOptionChain.objects.values_list('expiry_date', flat=True).distinct().order_by('expiry_date')
+        # Get all unique expiry dates for NIFTY
+        expiry_dates = OptionChain.objects.filter(
+            underlying='NIFTY'
+        ).values_list('expiry_date', flat=True).distinct().order_by('expiry_date')
 
         # Get selected expiry or use first one
         selected_expiry = request.GET.get('expiry')
         if selected_expiry:
             from datetime import datetime
-            selected_expiry = datetime.strptime(selected_expiry, '%Y-%m-%d').date()
+            # Handle both '%Y-%m-%d' format (from form) and date object (from template)
+            if isinstance(selected_expiry, str):
+                try:
+                    # Try parsing as date string
+                    selected_expiry = datetime.strptime(selected_expiry, '%Y-%m-%d').date()
+                except ValueError:
+                    # If that fails, it might already be a date object passed as string
+                    logger.warning(f"Could not parse expiry date '{selected_expiry}', using first available expiry")
+                    selected_expiry = expiry_dates[0] if expiry_dates else None
         elif expiry_dates:
             selected_expiry = expiry_dates[0]
         else:
@@ -244,19 +255,81 @@ def breeze_option_chain(request):
         option_chain = []
         spot_price = None
         if selected_expiry:
-            option_chain = NiftyOptionChain.objects.filter(
-                expiry_date=selected_expiry
-            ).order_by('strike_price')[:100]
+            # Get all option chain records for this expiry (CE and PE separately)
+            all_ce_options = OptionChain.objects.filter(
+                underlying='NIFTY',
+                expiry_date=selected_expiry,
+                option_type='CE'
+            ).order_by('strike')
 
-            if option_chain:
-                spot_price = option_chain[0].spot_price
+            all_pe_options = OptionChain.objects.filter(
+                underlying='NIFTY',
+                expiry_date=selected_expiry,
+                option_type='PE'
+            ).order_by('strike')
+
+            if all_ce_options or all_pe_options:
+                # Get spot price from first record (could be CE or PE)
+                spot_price = (all_ce_options[0].spot_price if all_ce_options else
+                             all_pe_options[0].spot_price if all_pe_options else None)
+
+                # Get all unique strikes
+                ce_strikes = {opt.strike for opt in all_ce_options}
+                pe_strikes = {opt.strike for opt in all_pe_options}
+                all_strikes = sorted(ce_strikes | pe_strikes)
+
+                if spot_price and all_strikes:
+                    # Find the strike closest to spot price
+                    from decimal import Decimal
+                    min_diff = None
+                    closest_index = 0
+
+                    for idx, strike in enumerate(all_strikes):
+                        diff = abs(strike - spot_price)
+                        if min_diff is None or diff < min_diff:
+                            min_diff = diff
+                            closest_index = idx
+
+                    # Get 50 strikes above and 50 below the closest strike
+                    start_index = max(0, closest_index - 50)
+                    end_index = min(len(all_strikes), closest_index + 51)  # +51 to include 50 above
+
+                    selected_strikes = all_strikes[start_index:end_index]
+
+                    # Create option chain data organized by strike with both CE and PE
+                    ce_dict = {opt.strike: opt for opt in all_ce_options if opt.strike in selected_strikes}
+                    pe_dict = {opt.strike: opt for opt in all_pe_options if opt.strike in selected_strikes}
+
+                    # Build combined records
+                    for strike in selected_strikes:
+                        ce_opt = ce_dict.get(strike)
+                        pe_opt = pe_dict.get(strike)
+
+                        # Create a combined object for template
+                        combined = type('obj', (object,), {
+                            'strike_price': strike,
+                            'spot_price': spot_price,
+                            # Call data
+                            'call_ltp': ce_opt.ltp if ce_opt else Decimal('0.00'),
+                            'call_bid': ce_opt.bid if ce_opt else Decimal('0.00'),
+                            'call_ask': ce_opt.ask if ce_opt else Decimal('0.00'),
+                            'call_oi': ce_opt.oi if ce_opt else 0,
+                            'call_volume': ce_opt.volume if ce_opt else 0,
+                            # Put data
+                            'put_ltp': pe_opt.ltp if pe_opt else Decimal('0.00'),
+                            'put_bid': pe_opt.bid if pe_opt else Decimal('0.00'),
+                            'put_ask': pe_opt.ask if pe_opt else Decimal('0.00'),
+                            'put_oi': pe_opt.oi if pe_opt else 0,
+                            'put_volume': pe_opt.volume if pe_opt else 0,
+                        })()
+                        option_chain.append(combined)
 
         context = {
             'option_chain': option_chain,
             'expiry_dates': expiry_dates,
             'selected_expiry': selected_expiry,
             'spot_price': spot_price,
-            'total_records': NiftyOptionChain.objects.count(),
+            'total_records': OptionChain.objects.filter(underlying='NIFTY').count(),
         }
         return render(request, 'brokers/option_chain.html', context)
 

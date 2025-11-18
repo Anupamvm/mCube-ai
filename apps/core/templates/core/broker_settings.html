@@ -1,0 +1,534 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Broker Settings - mCube Trading</title>
+    <link rel="stylesheet" href="{% static 'core/css/main.css' %}">
+    <style>
+        :root {
+            --primary: #3B82F6;
+            --primary-hover: #2563EB;
+            --success: #10B981;
+            --warning: #F59E0B;
+            --danger: #EF4444;
+            --dark: #1F2937;
+            --darker: #111827;
+            --light: #F3F4F6;
+            --lighter: #F9FAFB;
+            --white: #FFFFFF;
+            --gray: #6B7280;
+            --gray-light: #9CA3AF;
+            --border: #E5E7EB;
+            --radius-sm: 0.375rem;
+            --radius-md: 0.5rem;
+            --radius-lg: 0.75rem;
+            --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+            --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+            --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+            --gradient-dark: linear-gradient(135deg, #1F2937 0%, #111827 100%);
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            background: var(--lighter);
+            color: var(--dark);
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 0 1.5rem;
+        }
+
+        .page-header {
+            background: var(--white);
+            padding: 2rem 0;
+            margin-bottom: 0;
+            box-shadow: var(--shadow-sm);
+        }
+
+        .page-title {
+            font-size: 2rem;
+            font-weight: 700;
+            color: var(--dark);
+            margin: 0 0 0.5rem 0;
+        }
+
+        .page-subtitle {
+            color: var(--gray);
+            margin: 0;
+        }
+
+        .back-link {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            color: var(--primary);
+            text-decoration: none;
+            font-weight: 500;
+            margin-bottom: 1.5rem;
+        }
+
+        .back-link:hover {
+            color: var(--primary-hover);
+        }
+
+        .messages {
+            padding: 1rem 1.5rem;
+            background: var(--white);
+        }
+
+        .alert {
+            padding: 1rem 1.25rem;
+            border-radius: var(--radius-md);
+            margin-bottom: 1rem;
+            border-left: 4px solid;
+        }
+
+        .alert-success {
+            background: #D1FAE5;
+            color: #065F46;
+            border-color: var(--success);
+        }
+
+        .alert-error {
+            background: #FEE2E2;
+            color: #991B1B;
+            border-color: var(--danger);
+        }
+
+        .settings-container {
+            background: var(--white);
+            border-radius: var(--radius-lg);
+            box-shadow: var(--shadow-md);
+            margin: 2rem 0;
+        }
+
+        .settings-section {
+            padding: 2rem;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .settings-section:last-child {
+            border-bottom: none;
+        }
+
+        .section-header {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .section-icon {
+            font-size: 1.5rem;
+        }
+
+        .section-title {
+            font-size: 1.25rem;
+            font-weight: 600;
+            color: var(--dark);
+            margin: 0;
+        }
+
+        .section-description {
+            color: var(--gray);
+            font-size: 0.875rem;
+            margin-top: 0.25rem;
+        }
+
+        .form-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 1.5rem;
+        }
+
+        .form-group {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+
+        .form-group.full-width {
+            grid-column: 1 / -1;
+        }
+
+        .form-label {
+            font-weight: 500;
+            color: var(--dark);
+            font-size: 0.875rem;
+        }
+
+        .form-input {
+            padding: 0.625rem 0.875rem;
+            border: 1px solid var(--border);
+            border-radius: var(--radius-md);
+            font-size: 0.875rem;
+            transition: all 0.2s ease;
+        }
+
+        .form-input:focus {
+            outline: none;
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+        }
+
+        .form-input[type="password"] {
+            font-family: monospace;
+        }
+
+        .help-text {
+            font-size: 0.75rem;
+            color: var(--gray);
+            margin-top: 0.25rem;
+        }
+
+        .form-actions {
+            display: flex;
+            justify-content: flex-end;
+            gap: 1rem;
+            padding: 2rem;
+            background: var(--lighter);
+            border-top: 1px solid var(--border);
+            position: sticky;
+            bottom: 0;
+        }
+
+        .btn {
+            padding: 0.75rem 1.5rem;
+            border: none;
+            border-radius: var(--radius-md);
+            font-weight: 600;
+            font-size: 0.875rem;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .btn-primary {
+            background: var(--primary);
+            color: var(--white);
+        }
+
+        .btn-primary:hover {
+            background: var(--primary-hover);
+            transform: translateY(-1px);
+            box-shadow: var(--shadow-md);
+        }
+
+        .btn-secondary {
+            background: var(--white);
+            color: var(--gray);
+            border: 1px solid var(--border);
+        }
+
+        .btn-secondary:hover {
+            background: var(--light);
+        }
+
+        .credential-info {
+            background: var(--lighter);
+            padding: 1rem;
+            border-radius: var(--radius-md);
+            margin-top: 1rem;
+            font-size: 0.875rem;
+        }
+
+        .credential-info strong {
+            color: var(--dark);
+        }
+
+        .security-notice {
+            background: #FEF3C7;
+            border: 1px solid #F59E0B;
+            color: #92400E;
+            padding: 1rem;
+            border-radius: var(--radius-md);
+            margin-bottom: 1.5rem;
+            font-size: 0.875rem;
+            display: flex;
+            gap: 0.75rem;
+        }
+
+        .security-notice-icon {
+            font-size: 1.25rem;
+            flex-shrink: 0;
+        }
+
+        @media (max-width: 768px) {
+            .form-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .page-title {
+                font-size: 1.5rem;
+            }
+
+            .settings-section {
+                padding: 1.5rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Include Navbar -->
+    {% include 'core/components/navbar.html' %}
+
+    <!-- Messages -->
+    {% if messages %}
+    <div class="messages">
+        <div class="container">
+            {% for message in messages %}
+            <div class="alert alert-{{ message.tags }}">
+                {{ message }}
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Page Header -->
+    <div class="page-header">
+        <div class="container">
+            <a href="/" class="back-link">
+                <span>←</span> Back to Dashboard
+            </a>
+            <h1 class="page-title">🔌 Broker Settings</h1>
+            <p class="page-subtitle">Configure broker API credentials and connection settings</p>
+        </div>
+    </div>
+
+    <!-- Settings Form -->
+    <div class="container">
+        <form method="POST" action="{% url 'core:broker_settings' %}">
+            {% csrf_token %}
+
+            <div class="settings-container">
+                <!-- Security Notice -->
+                <div style="padding: 2rem 2rem 0 2rem;">
+                    <div class="security-notice">
+                        <div class="security-notice-icon">🔒</div>
+                        <div>
+                            <strong>Security Notice:</strong> Your credentials are stored securely in the database. Never share your API keys or passwords with anyone. For production, consider using environment variables or a secrets management system.
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Kotak Neo Section -->
+                <div class="settings-section">
+                    <div class="section-header">
+                        <span class="section-icon">🏦</span>
+                        <div>
+                            <h2 class="section-title">Kotak Neo API</h2>
+                            <p class="section-description">Configure Kotak Securities Neo Trade API credentials for options trading</p>
+                        </div>
+                    </div>
+
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label class="form-label" for="kotak_api_key">Consumer Key</label>
+                            <input type="text" id="kotak_api_key" name="kotak_api_key" class="form-input"
+                                   value="{{ kotak_creds.api_key|default:'' }}" placeholder="Enter Kotak Consumer Key">
+                            <span class="help-text">From Kotak Neo API portal</span>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label" for="kotak_api_secret">Consumer Secret</label>
+                            <input type="password" id="kotak_api_secret" name="kotak_api_secret" class="form-input"
+                                   value="{{ kotak_creds.api_secret|default:'' }}" placeholder="Enter Kotak Consumer Secret">
+                            <span class="help-text">Keep this secret secure</span>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label" for="kotak_username">Mobile Number</label>
+                            <input type="text" id="kotak_username" name="kotak_username" class="form-input"
+                                   value="{{ kotak_creds.username|default:'' }}" placeholder="Enter registered mobile number">
+                            <span class="help-text">Mobile number registered with Kotak</span>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label" for="kotak_password">Login Password</label>
+                            <input type="password" id="kotak_password" name="kotak_password" class="form-input"
+                                   value="{{ kotak_creds.password|default:'' }}" placeholder="Enter login password">
+                            <span class="help-text">Your Kotak login password</span>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label" for="kotak_neo_password">Neo Trade Password (MPIN)</label>
+                            <input type="password" id="kotak_neo_password" name="kotak_neo_password" class="form-input"
+                                   value="{{ kotak_creds.neo_password|default:'' }}" placeholder="Enter Neo Trade MPIN">
+                            <span class="help-text">4-digit MPIN for Neo Trade</span>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label" for="kotak_pan">PAN Number</label>
+                            <input type="text" id="kotak_pan" name="kotak_pan" class="form-input"
+                                   value="{{ kotak_creds.pan|default:'' }}" placeholder="Enter PAN" maxlength="10" style="text-transform: uppercase;">
+                            <span class="help-text">Your PAN card number</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ICICI Breeze Section -->
+                <div class="settings-section">
+                    <div class="section-header">
+                        <span class="section-icon">🏦</span>
+                        <div>
+                            <h2 class="section-title">ICICI Breeze API</h2>
+                            <p class="section-description">Configure ICICI Securities Breeze API credentials for futures trading</p>
+                        </div>
+                    </div>
+
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label class="form-label" for="breeze_api_key">API Key</label>
+                            <input type="text" id="breeze_api_key" name="breeze_api_key" class="form-input"
+                                   value="{{ breeze_creds.api_key|default:'' }}" placeholder="Enter Breeze API Key">
+                            <span class="help-text">From ICICI Breeze API portal</span>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label" for="breeze_api_secret">API Secret</label>
+                            <input type="password" id="breeze_api_secret" name="breeze_api_secret" class="form-input"
+                                   value="{{ breeze_creds.api_secret|default:'' }}" placeholder="Enter Breeze API Secret">
+                            <span class="help-text">Keep this secret secure</span>
+                        </div>
+
+                        <div class="form-group full-width">
+                            <label class="form-label" for="breeze_session_token">Session Token (Optional)</label>
+                            <input type="text" id="breeze_session_token" name="breeze_session_token" class="form-input"
+                                   value="{{ breeze_creds.session_token|default:'' }}" placeholder="Session token will be generated on login">
+                            <span class="help-text">Auto-generated on successful login, you don't need to enter this manually</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Trendlyne Section -->
+                <div class="settings-section">
+                    <div class="section-header">
+                        <span class="section-icon">📊</span>
+                        <div>
+                            <h2 class="section-title">Trendlyne Data Scraper</h2>
+                            <p class="section-description">Configure Trendlyne credentials for web scraping market data and stock screening</p>
+                        </div>
+                    </div>
+
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label class="form-label" for="trendlyne_username">Username / Email</label>
+                            <input type="text" id="trendlyne_username" name="trendlyne_username" class="form-input"
+                                   value="{{ trendlyne_creds.username|default:'' }}" placeholder="Enter Trendlyne username or email">
+                            <span class="help-text">Your Trendlyne login email or username</span>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label" for="trendlyne_password">Password</label>
+                            <input type="password" id="trendlyne_password" name="trendlyne_password" class="form-input"
+                                   value="{{ trendlyne_creds.password|default:'' }}" placeholder="Enter Trendlyne password">
+                            <span class="help-text">Your Trendlyne account password</span>
+                        </div>
+                    </div>
+
+                    <div class="credential-info">
+                        <strong>Note:</strong> Trendlyne data is fetched via web scraping using your Trendlyne Pro credentials. Ensure you have an active subscription for full data access.
+                    </div>
+                </div>
+
+                <!-- Telegram Section -->
+                <div class="settings-section">
+                    <div class="section-header">
+                        <span class="section-icon">💬</span>
+                        <div>
+                            <h2 class="section-title">Telegram Notifications</h2>
+                            <p class="section-description">Configure Telegram bot and client for trade alerts and notifications</p>
+                        </div>
+                    </div>
+
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label class="form-label" for="telegram_bot_token">Bot Token</label>
+                            <input type="password" id="telegram_bot_token" name="telegram_bot_token" class="form-input"
+                                   value="{{ telegram_creds.api_key|default:'' }}" placeholder="Enter Telegram Bot Token">
+                            <span class="help-text">Create a bot via @BotFather on Telegram</span>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label" for="telegram_chat_id">Chat ID</label>
+                            <input type="text" id="telegram_chat_id" name="telegram_chat_id" class="form-input"
+                                   value="{{ telegram_creds.api_secret|default:'' }}" placeholder="Enter your Telegram Chat ID">
+                            <span class="help-text">Your personal chat ID or group chat ID</span>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label" for="telegram_client_id">Client ID (API ID)</label>
+                            <input type="text" id="telegram_client_id" name="telegram_client_id" class="form-input"
+                                   value="{{ telegram_creds.username|default:'' }}" placeholder="Enter Telegram API ID">
+                            <span class="help-text">Get from https://my.telegram.org/apps</span>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label" for="telegram_session_name">Session Name</label>
+                            <input type="text" id="telegram_session_name" name="telegram_session_name" class="form-input"
+                                   value="{{ telegram_creds.session_token|default:'' }}" placeholder="e.g., mcube_trading_session">
+                            <span class="help-text">Name for the Telegram session (for client authentication)</span>
+                        </div>
+                    </div>
+
+                    <div class="credential-info">
+                        <strong>How to set up Telegram notifications:</strong><br>
+                        <br>
+                        <strong>1. Bot Setup (for sending messages):</strong><br>
+                        &nbsp;&nbsp;&nbsp;• Message @BotFather on Telegram<br>
+                        &nbsp;&nbsp;&nbsp;• Create a new bot with /newbot command<br>
+                        &nbsp;&nbsp;&nbsp;• Copy the Bot Token<br>
+                        <br>
+                        <strong>2. Get your Chat ID:</strong><br>
+                        &nbsp;&nbsp;&nbsp;• Start a chat with your bot<br>
+                        &nbsp;&nbsp;&nbsp;• Send any message to the bot<br>
+                        &nbsp;&nbsp;&nbsp;• Visit: https://api.telegram.org/bot[YOUR_BOT_TOKEN]/getUpdates<br>
+                        &nbsp;&nbsp;&nbsp;• Look for "chat":{"id":123456789} in the response<br>
+                        <br>
+                        <strong>3. Client Setup (optional, for advanced features):</strong><br>
+                        &nbsp;&nbsp;&nbsp;• Visit https://my.telegram.org/apps<br>
+                        &nbsp;&nbsp;&nbsp;• Login and create an application<br>
+                        &nbsp;&nbsp;&nbsp;• Copy the API ID (Client ID)<br>
+                        &nbsp;&nbsp;&nbsp;• Choose a session name (e.g., mcube_trading_session)
+                    </div>
+                </div>
+            </div>
+
+            <!-- Form Actions -->
+            <div class="form-actions">
+                <button type="button" class="btn btn-secondary" onclick="window.history.back()">Cancel</button>
+                <button type="submit" class="btn btn-primary">💾 Save Settings</button>
+            </div>
+        </form>
+    </div>
+
+    <script>
+        // Auto-uppercase PAN input
+        document.getElementById('kotak_pan')?.addEventListener('input', function(e) {
+            e.target.value = e.target.value.toUpperCase();
+        });
+
+        // Show success animation
+        {% if messages %}
+        setTimeout(() => {
+            const alerts = document.querySelectorAll('.alert');
+            alerts.forEach(alert => {
+                alert.style.transition = 'opacity 0.5s ease';
+                alert.style.opacity = '0';
+                setTimeout(() => alert.remove(), 500);
+            });
+        }, 5000);
+        {% endif %}
+    </script>
+</body>
+</html>

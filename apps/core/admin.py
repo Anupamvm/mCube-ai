@@ -5,7 +5,8 @@ from .models import (
     NseFlag,
     BkLog,
     DayReport,
-    TodaysPosition
+    TodaysPosition,
+    SystemSettings
 )
 
 
@@ -93,15 +94,160 @@ class NseFlagAdmin(admin.ModelAdmin):
 
 @admin.register(BkLog)
 class BkLogAdmin(admin.ModelAdmin):
-    list_display = ['timestamp', 'level', 'background_task', 'action', 'short_message']
-    list_filter = ['level', 'background_task', 'timestamp']
-    search_fields = ['action', 'message']
-    readonly_fields = ['timestamp']
+    list_display = [
+        'colored_timestamp',
+        'status_icon',
+        'colored_level',
+        'task_category',
+        'background_task',
+        'action',
+        'short_message',
+        'exec_time'
+    ]
+    list_filter = [
+        'level',
+        'task_category',
+        'success',
+        'background_task',
+        ('timestamp', admin.DateFieldListFilter),
+    ]
+    search_fields = ['action', 'message', 'background_task', 'task_id']
+    readonly_fields = [
+        'timestamp',
+        'level',
+        'action',
+        'message',
+        'background_task',
+        'task_category',
+        'task_id',
+        'execution_time_ms',
+        'formatted_context_data',
+        'error_details',
+        'success'
+    ]
     date_hierarchy = 'timestamp'
+    ordering = ['-timestamp']
+
+    fieldsets = (
+        ('Basic Information', {
+            'fields': ('timestamp', 'level', 'success', 'action', 'message')
+        }),
+        ('Task Details', {
+            'fields': ('background_task', 'task_category', 'task_id', 'execution_time_ms')
+        }),
+        ('Context Data', {
+            'fields': ('formatted_context_data',),
+            'classes': ('collapse',)
+        }),
+        ('Error Information', {
+            'fields': ('error_details',),
+            'classes': ('collapse',)
+        }),
+    )
+
+    def colored_timestamp(self, obj):
+        from django.utils.html import format_html
+        return format_html(
+            '<span style="font-family: monospace;">{}</span>',
+            obj.timestamp.strftime('%Y-%m-%d %H:%M:%S')
+        )
+    colored_timestamp.short_description = 'Timestamp'
+    colored_timestamp.admin_order_field = 'timestamp'
+
+    def status_icon(self, obj):
+        from django.utils.html import format_html
+        if obj.success:
+            return format_html('<span style="color: green; font-size: 16px;">✓</span>')
+        else:
+            return format_html('<span style="color: red; font-size: 16px;">✗</span>')
+    status_icon.short_description = 'Status'
+    status_icon.admin_order_field = 'success'
+
+    def colored_level(self, obj):
+        from django.utils.html import format_html
+        colors = {
+            'debug': '#6c757d',
+            'info': '#0dcaf0',
+            'warning': '#ffc107',
+            'error': '#dc3545',
+            'critical': '#8b0000',
+        }
+        return format_html(
+            '<span style="color: {}; font-weight: bold;">{}</span>',
+            colors.get(obj.level, '#000'),
+            obj.level.upper()
+        )
+    colored_level.short_description = 'Level'
+    colored_level.admin_order_field = 'level'
 
     def short_message(self, obj):
         return obj.message[:100] + '...' if len(obj.message) > 100 else obj.message
     short_message.short_description = 'Message'
+
+    def exec_time(self, obj):
+        from django.utils.html import format_html
+        if obj.execution_time_ms:
+            if obj.execution_time_ms > 5000:  # > 5 seconds
+                color = 'red'
+            elif obj.execution_time_ms > 2000:  # > 2 seconds
+                color = 'orange'
+            else:
+                color = 'green'
+
+            return format_html(
+                '<span style="color: {};">{} ms</span>',
+                color,
+                obj.execution_time_ms
+            )
+        return '-'
+    exec_time.short_description = 'Exec Time'
+    exec_time.admin_order_field = 'execution_time_ms'
+
+    def formatted_context_data(self, obj):
+        from django.utils.html import format_html
+        import json
+        if obj.context_data:
+            formatted_json = json.dumps(obj.context_data, indent=2)
+            return format_html('<pre>{}</pre>', formatted_json)
+        return '-'
+    formatted_context_data.short_description = 'Context Data'
+
+    # Add actions for bulk operations
+    actions = ['mark_as_reviewed', 'export_to_csv']
+
+    def mark_as_reviewed(self, request, queryset):
+        # This is a placeholder - you can add a 'reviewed' field to the model if needed
+        self.message_user(request, f'{queryset.count()} logs marked as reviewed.')
+    mark_as_reviewed.short_description = 'Mark selected logs as reviewed'
+
+    def export_to_csv(self, request, queryset):
+        import csv
+        from django.http import HttpResponse
+        from datetime import datetime
+
+        response = HttpResponse(content_type='text/csv')
+        response['Content-Disposition'] = f'attachment; filename="task_logs_{datetime.now().strftime("%Y%m%d_%H%M%S")}.csv"'
+
+        writer = csv.writer(response)
+        writer.writerow([
+            'Timestamp', 'Level', 'Task Category', 'Background Task',
+            'Action', 'Message', 'Success', 'Execution Time (ms)'
+        ])
+
+        for log in queryset:
+            writer.writerow([
+                log.timestamp,
+                log.level,
+                log.task_category,
+                log.background_task,
+                log.action,
+                log.message,
+                'Yes' if log.success else 'No',
+                log.execution_time_ms or ''
+            ])
+
+        return response
+    export_to_csv.short_description = 'Export selected logs to CSV'
 
 
 @admin.register(DayReport)
@@ -176,3 +322,77 @@ class TodaysPositionAdmin(admin.ModelAdmin):
             'classes': ('collapse',)
         }),
     )
+
+
+@admin.register(SystemSettings)
+class SystemSettingsAdmin(admin.ModelAdmin):
+    """
+    Admin interface for SystemSettings model
+    Singleton model - only one instance should exist
+    """
+    list_display = ['__str__', 'updated_at']
+    readonly_fields = ['created_at', 'updated_at', 'singleton_id']
+
+    fieldsets = (
+        ('Market Data Task Timings', {
+            'fields': (
+                ('trendlyne_fetch_hour', 'trendlyne_fetch_minute'),
+                ('trendlyne_import_hour', 'trendlyne_import_minute'),
+                ('premarket_update_hour', 'premarket_update_minute'),
+                ('postmarket_update_hour', 'postmarket_update_minute'),
+                ('live_data_interval_minutes', 'live_data_start_hour', 'live_data_end_hour'),
+            )
+        }),
+        ('Strategy Task Timings', {
+            'fields': (
+                ('futures_screening_interval_minutes', 'futures_screening_start_hour', 'futures_screening_end_hour'),
+                'futures_averaging_interval_minutes',
+            )
+        }),
+        ('Position Monitoring Task Timings', {
+            'fields': (
+                'monitor_positions_interval_seconds',
+                'update_pnl_interval_seconds',
+                'check_exit_interval_seconds',
+            )
+        }),
+        ('Risk Management Task Timings', {
+            'fields': (
+                'risk_check_interval_seconds',
+                'circuit_breaker_interval_seconds',
+            )
+        }),
+        ('Reporting & Analytics Task Timings', {
+            'fields': (
+                ('daily_pnl_report_hour', 'daily_pnl_report_minute'),
+                ('learning_patterns_hour', 'learning_patterns_minute'),
+                ('weekly_summary_hour', 'weekly_summary_minute', 'weekly_summary_day_of_week'),
+            )
+        }),
+        ('Task Enable/Disable Flags', {
+            'fields': (
+                'enable_market_data_tasks',
+                'enable_strategy_tasks',
+                'enable_position_monitoring',
+                'enable_risk_monitoring',
+                'enable_reporting_tasks',
+            ),
+            'classes': ('wide',)
+        }),
+        ('Metadata', {
+            'fields': ('singleton_id', 'created_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )
+
+    def has_add_permission(self, request):
+        """
+        Prevent adding new instances - singleton pattern
+        """
+        return not SystemSettings.objects.exists()
+
+    def has_delete_permission(self, request, obj=None):
+        """
+        Prevent deleting the settings - singleton pattern
+        """
+        return False

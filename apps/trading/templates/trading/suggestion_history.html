@@ -9,37 +9,73 @@
     <div class="row mb-4">
         <div class="col-md-8">
             <h1 class="h3 mb-0">Trade Suggestion History</h1>
+            <p class="text-muted mb-0">Showing {{ suggestions.start_index }}-{{ suggestions.end_index }} of {{ total_count }} suggestions</p>
         </div>
         <div class="col-md-4 text-end">
+            <a href="{% url 'trading:export_csv' %}{% if request.GET %}?{{ request.GET.urlencode }}{% endif %}" class="btn btn-success me-2">
+                <i class="fas fa-download"></i> Export CSV
+            </a>
             <a href="{% url 'trading:pending_suggestions' %}" class="btn btn-outline-secondary">
-                <i class="fas fa-inbox"></i> Pending Suggestions
+                <i class="fas fa-inbox"></i> Pending
             </a>
         </div>
     </div>
 
     <!-- Filter Section -->
     <div class="card mb-4">
+        <div class="card-header">
+            <h6 class="mb-0"><i class="fas fa-filter"></i> Filters</h6>
+        </div>
         <div class="card-body">
-            <form method="GET" class="row g-3">
-                <div class="col-md-6">
-                    <label for="statusFilter" class="form-label">Filter by Status</label>
-                    <select class="form-select" id="statusFilter" name="status" onchange="this.form.submit()">
+            <form method="GET" id="filterForm" class="row g-3">
+                <div class="col-md-3">
+                    <label for="statusFilter" class="form-label">Status</label>
+                    <select class="form-select" id="statusFilter" name="status">
                         <option value="">All Statuses</option>
                         {% for value, label in status_choices %}
-                            <option value="{{ value }}" {% if request.GET.status == value %}selected{% endif %}>
+                            <option value="{{ value }}" {% if status_filter == value %}selected{% endif %}>
                                 {{ label }}
                             </option>
                         {% endfor %}
                     </select>
                 </div>
-                {% if request.GET.status %}
-                    <div class="col-md-6">
-                        <label>&nbsp;</label>
-                        <div>
-                            <a href="{% url 'trading:suggestion_history' %}" class="btn btn-outline-secondary">
-                                Clear Filter
-                            </a>
-                        </div>
+
+                <div class="col-md-3">
+                    <label for="strategyFilter" class="form-label">Strategy</label>
+                    <select class="form-select" id="strategyFilter" name="strategy">
+                        <option value="">All Strategies</option>
+                        {% for value, label in strategy_choices %}
+                            <option value="{{ value }}" {% if strategy_filter == value %}selected{% endif %}>
+                                {{ label }}
+                            </option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="col-md-2">
+                    <label for="dateFrom" class="form-label">From Date</label>
+                    <input type="date" class="form-control" id="dateFrom" name="date_from" value="{{ date_from }}">
+                </div>
+
+                <div class="col-md-2">
+                    <label for="dateTo" class="form-label">To Date</label>
+                    <input type="date" class="form-control" id="dateTo" name="date_to" value="{{ date_to }}">
+                </div>
+
+                <div class="col-md-2">
+                    <label>&nbsp;</label>
+                    <div class="d-grid gap-2">
+                        <button type="submit" class="btn btn-primary">
+                            <i class="fas fa-search"></i> Apply
+                        </button>
+                    </div>
+                </div>
+
+                {% if status_filter or strategy_filter or date_from or date_to %}
+                    <div class="col-12">
+                        <a href="{% url 'trading:suggestion_history' %}" class="btn btn-outline-secondary btn-sm">
+                            <i class="fas fa-times"></i> Clear All Filters
+                        </a>
                     </div>
                 {% endif %}
             </form>
@@ -217,11 +253,79 @@
         {% endif %}
     </div>
 
-    <!-- Pagination Info -->
-    {% if suggestions.count > 0 %}
-        <div class="mt-4 text-center text-muted">
-            <small>Showing {{ suggestions.count }} suggestion{{ suggestions.count|pluralize }}</small>
+    <!-- Pagination -->
+    {% if suggestions.has_other_pages %}
+        <nav aria-label="Suggestions pagination" class="mt-4">
+            <ul class="pagination justify-content-center">
+                {% if suggestions.has_previous %}
+                    <li class="page-item">
+                        <a class="page-link" href="?page=1{% if status_filter %}&status={{ status_filter }}{% endif %}{% if strategy_filter %}&strategy={{ strategy_filter }}{% endif %}{% if date_from %}&date_from={{ date_from }}{% endif %}{% if date_to %}&date_to={{ date_to }}{% endif %}">
+                            <i class="fas fa-angle-double-left"></i>
+                        </a>
+                    </li>
+                    <li class="page-item">
+                        <a class="page-link" href="?page={{ suggestions.previous_page_number }}{% if status_filter %}&status={{ status_filter }}{% endif %}{% if strategy_filter %}&strategy={{ strategy_filter }}{% endif %}{% if date_from %}&date_from={{ date_from }}{% endif %}{% if date_to %}&date_to={{ date_to }}{% endif %}">
+                            <i class="fas fa-angle-left"></i>
+                        </a>
+                    </li>
+                {% else %}
+                    <li class="page-item disabled">
+                        <span class="page-link"><i class="fas fa-angle-double-left"></i></span>
+                    </li>
+                    <li class="page-item disabled">
+                        <span class="page-link"><i class="fas fa-angle-left"></i></span>
+                    </li>
+                {% endif %}
+
+                <!-- Page numbers -->
+                {% for num in suggestions.paginator.page_range %}
+                    {% if suggestions.number == num %}
+                        <li class="page-item active">
+                            <span class="page-link">{{ num }}</span>
+                        </li>
+                    {% elif num > suggestions.number|add:'-3' and num < suggestions.number|add:'3' %}
+                        <li class="page-item">
+                            <a class="page-link" href="?page={{ num }}{% if status_filter %}&status={{ status_filter }}{% endif %}{% if strategy_filter %}&strategy={{ strategy_filter }}{% endif %}{% if date_from %}&date_from={{ date_from }}{% endif %}{% if date_to %}&date_to={{ date_to }}{% endif %}">
+                                {{ num }}
+                            </a>
+                        </li>
+                    {% endif %}
+                {% endfor %}
+
+                {% if suggestions.has_next %}
+                    <li class="page-item">
+                        <a class="page-link" href="?page={{ suggestions.next_page_number }}{% if status_filter %}&status={{ status_filter }}{% endif %}{% if strategy_filter %}&strategy={{ strategy_filter }}{% endif %}{% if date_from %}&date_from={{ date_from }}{% endif %}{% if date_to %}&date_to={{ date_to }}{% endif %}">
+                            <i class="fas fa-angle-right"></i>
+                        </a>
+                    </li>
+                    <li class="page-item">
+                        <a class="page-link" href="?page={{ suggestions.paginator.num_pages }}{% if status_filter %}&status={{ status_filter }}{% endif %}{% if strategy_filter %}&strategy={{ strategy_filter }}{% endif %}{% if date_from %}&date_from={{ date_from }}{% endif %}{% if date_to %}&date_to={{ date_to }}{% endif %}">
+                            <i class="fas fa-angle-double-right"></i>
+                        </a>
+                    </li>
+                {% else %}
+                    <li class="page-item disabled">
+                        <span class="page-link"><i class="fas fa-angle-right"></i></span>
+                    </li>
+                    <li class="page-item disabled">
+                        <span class="page-link"><i class="fas fa-angle-double-right"></i></span>
+                    </li>
+                {% endif %}
+            </ul>
+        </nav>
+
+        <div class="text-center text-muted mt-2">
+            <small>
+                Page {{ suggestions.number }} of {{ suggestions.paginator.num_pages }}
+                ({{ total_count }} total suggestion{{ total_count|plural ize }})
+            </small>
         </div>
+    {% else %}
+        {% if suggestions.count > 0 %}
+            <div class="mt-4 text-center text-muted">
+                <small>Showing all {{ total_count }} suggestion{{ total_count|pluralize }}</small>
+            </div>
+        {% endif %}
     {% endif %}
 </div>
 

@@ -1,0 +1,268 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Execute Manual Trade - mCube AI{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <!-- Header -->
+    <div class="row mb-4">
+        <div class="col-md-8">
+            <h1 class="h3 mb-0">Manual Trade Execution Confirmation</h1>
+            <p class="text-muted">{{ algorithm_display }}</p>
+        </div>
+        <div class="col-md-4 text-end">
+            <a href="{% url 'trading:manual_triggers' %}" class="btn btn-outline-secondary">
+                <i class="fas fa-arrow-left"></i> Back to Triggers
+            </a>
+        </div>
+    </div>
+
+    <!-- Messages -->
+    {% if messages %}
+        {% for message in messages %}
+            <div class="alert alert-{{ message.tags }} alert-dismissible fade show" role="alert">
+                {{ message }}
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            </div>
+        {% endfor %}
+    {% endif %}
+
+    <!-- Warning Alert -->
+    <div class="alert alert-warning alert-dismissible fade show" role="alert">
+        <i class="fas fa-exclamation-triangle me-2"></i>
+        <strong>Final Confirmation Required</strong> - This will create a live trading position and place orders with your broker. Please review all details carefully.
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    </div>
+
+    <div class="row">
+        <!-- Trade Details -->
+        <div class="col-md-6 mb-4">
+            <div class="card border-info">
+                <div class="card-header bg-info text-white">
+                    <h6 class="mb-0">Trade Details</h6>
+                </div>
+                <div class="card-body">
+                    <div class="row mb-3">
+                        <div class="col-6">
+                            <p class="text-muted mb-1">Algorithm</p>
+                            <p class="h6 mb-0">{{ algorithm_display }}</p>
+                        </div>
+                        <div class="col-6">
+                            <p class="text-muted mb-1">Current VIX</p>
+                            <p class="h6 mb-0">
+                                <span class="badge {% if vix > 20 %}bg-danger{% elif vix > 15 %}bg-warning{% else %}bg-success{% endif %}">
+                                    {{ vix|floatformat:2 }}
+                                </span>
+                            </p>
+                        </div>
+                    </div>
+
+                    <div class="row mb-3">
+                        <div class="col-6">
+                            <p class="text-muted mb-1">Instrument</p>
+                            <p class="h5 mb-0">{{ trade_data.instrument }}</p>
+                        </div>
+                        <div class="col-6">
+                            <p class="text-muted mb-1">Direction</p>
+                            <p class="h5 mb-0">
+                                {% if trade_data.direction == 'LONG' %}
+                                    <span class="badge bg-success">{{ trade_data.direction }}</span>
+                                {% elif trade_data.direction == 'SHORT' %}
+                                    <span class="badge bg-danger">{{ trade_data.direction }}</span>
+                                {% else %}
+                                    <span class="badge bg-secondary">{{ trade_data.direction }}</span>
+                                {% endif %}
+                            </p>
+                        </div>
+                    </div>
+
+                    <hr>
+
+                    <h6 class="mb-3">Position Parameters</h6>
+
+                    <div class="row mb-2">
+                        <div class="col-6">
+                            <p class="text-muted mb-1">Quantity</p>
+                            <p class="h6 mb-0">{{ trade_data.quantity }}</p>
+                        </div>
+                        <div class="col-6">
+                            <p class="text-muted mb-1">Entry Price</p>
+                            <p class="h6 mb-0">₹{{ trade_data.entry_price|floatformat:2 }}</p>
+                        </div>
+                    </div>
+
+                    <div class="row mb-2">
+                        <div class="col-6">
+                            <p class="text-muted mb-1">Stop Loss</p>
+                            <p class="h6 mb-0">₹{{ trade_data.stop_loss|floatformat:2 }}</p>
+                        </div>
+                        <div class="col-6">
+                            <p class="text-muted mb-1">Target</p>
+                            <p class="h6 mb-0">₹{{ trade_data.target|floatformat:2 }}</p>
+                        </div>
+                    </div>
+
+                    {% if trade_data.expiry_date %}
+                    <div class="row mb-2">
+                        <div class="col-12">
+                            <p class="text-muted mb-1">Expiry Date</p>
+                            <p class="h6 mb-0">{{ trade_data.expiry_date }}</p>
+                        </div>
+                    </div>
+                    {% endif %}
+
+                    <div class="row">
+                        <div class="col-12">
+                            <p class="text-muted mb-1">Margin Required</p>
+                            <p class="h6 mb-0">₹{{ trade_data.margin_required|floatformat:2 }}</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Risk Summary -->
+        <div class="col-md-6 mb-4">
+            <div class="card border-danger">
+                <div class="card-header bg-danger text-white">
+                    <h6 class="mb-0">Risk Analysis</h6>
+                </div>
+                <div class="card-body">
+                    <div class="row mb-3">
+                        <div class="col-12">
+                            <p class="text-muted mb-1">Max Loss (per contract)</p>
+                            <p class="h5 mb-0 text-danger">
+                                ₹{{ max_loss|floatformat:2 }}
+                            </p>
+                        </div>
+                    </div>
+
+                    <div class="row mb-3">
+                        <div class="col-12">
+                            <p class="text-muted mb-1">Risk:Reward Ratio</p>
+                            <p class="h5 mb-0">{{ risk_reward_ratio|floatformat:2 }}</p>
+                        </div>
+                    </div>
+
+                    <hr>
+
+                    <div class="row mb-3">
+                        <div class="col-12">
+                            <p class="text-muted mb-1">Margin Required</p>
+                            <p class="h5 mb-0">₹{{ trade_data.margin_required|floatformat:2 }}</p>
+                        </div>
+                    </div>
+
+                    <hr>
+
+                    <div class="alert alert-info mb-0">
+                        <small>
+                            <strong>Note:</strong> Ensure you have sufficient margin in your broker account before executing this trade.
+                            The platform will validate your account balance at execution time.
+                        </small>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Analysis Summary -->
+            {% if analysis_summary %}
+            <div class="card mt-3">
+                <div class="card-header bg-light">
+                    <h6 class="mb-0">Analysis Summary</h6>
+                </div>
+                <div class="card-body">
+                    <p class="mb-0"><small>{{ analysis_summary }}</small></p>
+                </div>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Checklist -->
+    <div class="card mb-4">
+        <div class="card-header bg-light">
+            <h6 class="mb-0">Pre-Execution Checklist</h6>
+        </div>
+        <div class="card-body">
+            <form id="confirmationForm">
+                <div class="form-check mb-3">
+                    <input class="form-check-input" type="checkbox" id="check1" required>
+                    <label class="form-check-label" for="check1">
+                        I have reviewed all trade details and position parameters
+                    </label>
+                </div>
+                <div class="form-check mb-3">
+                    <input class="form-check-input" type="checkbox" id="check2" required>
+                    <label class="form-check-label" for="check2">
+                        I have verified that I have sufficient margin in my broker account
+                    </label>
+                </div>
+                <div class="form-check mb-3">
+                    <input class="form-check-input" type="checkbox" id="check3" required>
+                    <label class="form-check-label" for="check3">
+                        I understand the risks involved and accept full responsibility for this trade
+                    </label>
+                </div>
+                <div class="form-check mb-0">
+                    <input class="form-check-input" type="checkbox" id="check4" required>
+                    <label class="form-check-label" for="check4">
+                        I confirm that I want to execute this trade now
+                    </label>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Action Buttons -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="d-flex gap-3 justify-content-end">
+                <a href="{% url 'trading:manual_triggers' %}" class="btn btn-outline-secondary btn-lg">
+                    <i class="fas fa-arrow-left"></i> Cancel
+                </a>
+                <form method="POST" action="{% url 'trading:confirm_manual_execution' %}" style="display: inline;">
+                    {% csrf_token %}
+                    <input type="hidden" name="trade_data" value="{{ trade_data_json }}">
+                    <button type="submit" class="btn btn-success btn-lg" id="executeBtn" disabled>
+                        <i class="fas fa-play"></i> Execute Trade Now
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    // Enable execute button only when all checkboxes are checked
+    const form = document.getElementById('confirmationForm');
+    const executeBtn = document.getElementById('executeBtn');
+    const checkboxes = form.querySelectorAll('input[type="checkbox"]');
+
+    function updateButtonState() {
+        const allChecked = Array.from(checkboxes).every(cb => cb.checked);
+        executeBtn.disabled = !allChecked;
+    }
+
+    checkboxes.forEach(checkbox => {
+        checkbox.addEventListener('change', updateButtonState);
+    });
+
+    // Confirmation before execution
+    document.querySelector('form[action*="confirm_manual_execution"]')?.addEventListener('submit', function(e) {
+        if (!confirm('Are you absolutely sure? This will create a live trading position and place real orders.')) {
+            e.preventDefault();
+        }
+    });
+</script>
+
+<style>
+    .border-info {
+        border-left: 4px solid #17a2b8 !important;
+    }
+
+    .border-danger {
+        border-left: 4px solid #dc3545 !important;
+    }
+</style>
+{% endblock %}

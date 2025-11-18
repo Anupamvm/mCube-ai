@@ -1,0 +1,868 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Background Task Settings - mCube Trading</title>
+    <link rel="stylesheet" href="{% static 'core/css/main.css' %}">
+    <style>
+        :root {
+            --primary: #3B82F6;
+            --primary-hover: #2563EB;
+            --success: #10B981;
+            --warning: #F59E0B;
+            --danger: #EF4444;
+            --dark: #1F2937;
+            --darker: #111827;
+            --light: #F3F4F6;
+            --lighter: #F9FAFB;
+            --white: #FFFFFF;
+            --gray: #6B7280;
+            --gray-light: #9CA3AF;
+            --border: #E5E7EB;
+            --radius-sm: 0.375rem;
+            --radius-md: 0.5rem;
+            --radius-lg: 0.75rem;
+            --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+            --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+            --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+            --gradient-dark: linear-gradient(135deg, #1F2937 0%, #111827 100%);
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            background: var(--lighter);
+            color: var(--dark);
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 0 1.5rem;
+        }
+
+        .page-header {
+            background: var(--white);
+            padding: 2rem 0;
+            margin-bottom: 0;
+            box-shadow: var(--shadow-sm);
+        }
+
+        .page-title {
+            font-size: 2rem;
+            font-weight: 700;
+            color: var(--dark);
+            margin: 0 0 0.5rem 0;
+        }
+
+        .page-subtitle {
+            color: var(--gray);
+            margin: 0;
+        }
+
+        .back-link {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            color: var(--primary);
+            text-decoration: none;
+            font-weight: 500;
+            margin-bottom: 1.5rem;
+        }
+
+        .back-link:hover {
+            color: var(--primary-hover);
+        }
+
+        .messages {
+            padding: 1rem 1.5rem;
+            background: var(--white);
+        }
+
+        .alert {
+            padding: 1rem 1.25rem;
+            border-radius: var(--radius-md);
+            margin-bottom: 1rem;
+            border-left: 4px solid;
+        }
+
+        .alert-success {
+            background: #D1FAE5;
+            color: #065F46;
+            border-color: var(--success);
+        }
+
+        .alert-error {
+            background: #FEE2E2;
+            color: #991B1B;
+            border-color: var(--danger);
+        }
+
+        /* Settings Layout */
+        .settings-layout {
+            display: flex;
+            min-height: calc(100vh - 200px);
+            background: var(--white);
+        }
+
+        /* Sidebar */
+        .settings-sidebar {
+            width: 280px;
+            background: var(--lighter);
+            border-right: 1px solid var(--border);
+            padding: 2rem 0;
+            position: sticky;
+            top: 0;
+            height: 100vh;
+            overflow-y: auto;
+        }
+
+        .sidebar-nav {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }
+
+        .sidebar-nav-item {
+            margin-bottom: 0.25rem;
+        }
+
+        .sidebar-nav-link {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            padding: 0.875rem 1.5rem;
+            color: var(--gray);
+            text-decoration: none;
+            font-weight: 500;
+            font-size: 0.9rem;
+            transition: all 0.2s ease;
+            border-left: 3px solid transparent;
+        }
+
+        .sidebar-nav-link:hover {
+            background: rgba(59, 130, 246, 0.05);
+            color: var(--primary);
+        }
+
+        .sidebar-nav-link.active {
+            background: rgba(59, 130, 246, 0.1);
+            color: var(--primary);
+            border-left-color: var(--primary);
+        }
+
+        .sidebar-icon {
+            font-size: 1.25rem;
+            width: 24px;
+            text-align: center;
+        }
+
+        /* Main Content */
+        .settings-content {
+            flex: 1;
+            padding: 2rem;
+            overflow-y: auto;
+            max-height: 100vh;
+        }
+
+        .settings-section {
+            margin-bottom: 3rem;
+            scroll-margin-top: 2rem;
+        }
+
+        .section-header {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            margin-bottom: 1.5rem;
+            padding-bottom: 1rem;
+            border-bottom: 2px solid var(--border);
+        }
+
+        .section-icon {
+            font-size: 1.5rem;
+        }
+
+        .section-title {
+            font-size: 1.5rem;
+            font-weight: 600;
+            color: var(--dark);
+            margin: 0;
+        }
+
+        .section-description {
+            color: var(--gray);
+            font-size: 0.875rem;
+            margin: 0 0 1.5rem 0;
+        }
+
+        .form-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 1.5rem;
+        }
+
+        .form-group {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .form-label {
+            font-weight: 500;
+            color: var(--dark);
+            margin-bottom: 0.5rem;
+            font-size: 0.875rem;
+        }
+
+        .form-input {
+            padding: 0.625rem 0.875rem;
+            border: 1px solid var(--border);
+            border-radius: var(--radius-md);
+            font-size: 0.875rem;
+            transition: all 0.2s ease;
+        }
+
+        .form-input:focus {
+            outline: none;
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+        }
+
+        .form-help {
+            font-size: 0.75rem;
+            color: var(--gray);
+            margin-top: 0.25rem;
+        }
+
+        .checkbox-group {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.75rem;
+            background: var(--lighter);
+            border-radius: var(--radius-md);
+            margin-top: 1rem;
+        }
+
+        .checkbox-input {
+            width: 18px;
+            height: 18px;
+            cursor: pointer;
+        }
+
+        .checkbox-label {
+            font-weight: 500;
+            color: var(--dark);
+            cursor: pointer;
+            margin: 0;
+        }
+
+        .time-input-group {
+            display: flex;
+            gap: 0.5rem;
+            align-items: center;
+        }
+
+        .time-input {
+            flex: 1;
+        }
+
+        .time-separator {
+            font-weight: 600;
+            color: var(--gray);
+        }
+
+        /* Form Actions */
+        .form-actions {
+            position: sticky;
+            bottom: 0;
+            padding: 1.5rem 2rem;
+            background: var(--white);
+            border-top: 1px solid var(--border);
+            display: flex;
+            gap: 1rem;
+            justify-content: flex-end;
+            box-shadow: 0 -4px 6px -1px rgba(0, 0, 0, 0.1);
+        }
+
+        .btn {
+            padding: 0.75rem 1.5rem;
+            border-radius: var(--radius-md);
+            font-weight: 600;
+            font-size: 0.875rem;
+            cursor: pointer;
+            border: none;
+            transition: all 0.2s ease;
+            text-decoration: none;
+            display: inline-block;
+        }
+
+        .btn-primary {
+            background: var(--primary);
+            color: var(--white);
+        }
+
+        .btn-primary:hover {
+            background: var(--primary-hover);
+            transform: translateY(-1px);
+            box-shadow: var(--shadow-md);
+        }
+
+        .btn-secondary {
+            background: var(--white);
+            color: var(--dark);
+            border: 1px solid var(--border);
+        }
+
+        .btn-secondary:hover {
+            background: var(--lighter);
+        }
+
+        /* Mobile Responsive */
+        @media (max-width: 1024px) {
+            .settings-sidebar {
+                position: fixed;
+                left: -280px;
+                z-index: 1000;
+                transition: left 0.3s ease;
+                box-shadow: var(--shadow-lg);
+            }
+
+            .settings-sidebar.mobile-open {
+                left: 0;
+            }
+
+            .settings-content {
+                margin-left: 0;
+            }
+
+            .mobile-menu-toggle {
+                position: fixed;
+                bottom: 2rem;
+                left: 1rem;
+                z-index: 999;
+                background: var(--primary);
+                color: var(--white);
+                border: none;
+                border-radius: 50%;
+                width: 56px;
+                height: 56px;
+                font-size: 1.5rem;
+                cursor: pointer;
+                box-shadow: var(--shadow-lg);
+                display: flex;
+                align-items: center;
+                justify-content: center;
+            }
+
+            .mobile-overlay {
+                display: none;
+                position: fixed;
+                top: 0;
+                left: 0;
+                right: 0;
+                bottom: 0;
+                background: rgba(0, 0, 0, 0.5);
+                z-index: 999;
+            }
+
+            .mobile-overlay.active {
+                display: block;
+            }
+        }
+
+        @media (max-width: 768px) {
+            .form-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .form-actions {
+                flex-direction: column;
+            }
+
+            .btn {
+                width: 100%;
+            }
+        }
+
+        /* Smooth Scrolling */
+        html {
+            scroll-behavior: smooth;
+        }
+    </style>
+</head>
+<body>
+    {% include 'core/components/navbar.html' %}
+
+    <div class="page-header">
+        <div class="container">
+            <a href="/" class="back-link">← Back to Dashboard</a>
+            <h1 class="page-title">⏰ Background Task Settings</h1>
+            <p class="page-subtitle">Configure Celery background task schedules and timings and system parameters</p>
+        </div>
+    </div>
+
+    {% if messages %}
+    <div class="messages">
+        <div class="container">
+            {% for message in messages %}
+            <div class="alert alert-{{ message.tags }}">
+                {{ message }}
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Mobile Menu Toggle -->
+    <button class="mobile-menu-toggle" id="mobileMenuToggle" aria-label="Toggle sidebar">
+        ☰
+    </button>
+    <div class="mobile-overlay" id="mobileOverlay"></div>
+
+    <form method="post" id="settingsForm">
+        {% csrf_token %}
+
+        <div class="settings-layout">
+            <!-- Left Sidebar Navigation -->
+            <aside class="settings-sidebar" id="settingsSidebar">
+                <nav>
+                    <ul class="sidebar-nav">
+                        <li class="sidebar-nav-item">
+                            <a href="#market-data" class="sidebar-nav-link active">
+                                <span class="sidebar-icon">📊</span>
+                                <span>Market Data</span>
+                            </a>
+                        </li>
+                        <li class="sidebar-nav-item">
+                            <a href="#strategy" class="sidebar-nav-link">
+                                <span class="sidebar-icon">🎯</span>
+                                <span>Strategy Execution</span>
+                            </a>
+                        </li>
+                        <li class="sidebar-nav-item">
+                            <a href="#position-monitoring" class="sidebar-nav-link">
+                                <span class="sidebar-icon">📈</span>
+                                <span>Position Monitoring</span>
+                            </a>
+                        </li>
+                        <li class="sidebar-nav-item">
+                            <a href="#risk-management" class="sidebar-nav-link">
+                                <span class="sidebar-icon">⚠️</span>
+                                <span>Risk Management</span>
+                            </a>
+                        </li>
+                        <li class="sidebar-nav-item">
+                            <a href="#reporting" class="sidebar-nav-link">
+                                <span class="sidebar-icon">📋</span>
+                                <span>Reporting & Analytics</span>
+                            </a>
+                        </li>
+                    </ul>
+                </nav>
+            </aside>
+
+            <!-- Main Content Area -->
+            <div class="settings-content">
+                <!-- Market Data Tasks -->
+                <section class="settings-section" id="market-data">
+                    <div class="section-header">
+                        <span class="section-icon">📊</span>
+                        <h2 class="section-title">Market Data Tasks</h2>
+                    </div>
+                    <p class="section-description">Configure timing for market data fetching and updates</p>
+
+                    <div class="form-grid">
+                        <!-- Trendlyne Fetch -->
+                        <div class="form-group">
+                            <label class="form-label">Trendlyne Data Fetch Time</label>
+                            <div class="time-input-group">
+                                <input type="number" name="trendlyne_fetch_hour" class="form-input time-input"
+                                       value="{{ settings.trendlyne_fetch_hour }}" min="0" max="23" required>
+                                <span class="time-separator">:</span>
+                                <input type="number" name="trendlyne_fetch_minute" class="form-input time-input"
+                                       value="{{ settings.trendlyne_fetch_minute }}" min="0" max="59" required>
+                            </div>
+                            <span class="form-help">Daily fetch time (HH:MM format)</span>
+                        </div>
+
+                        <!-- Trendlyne Import -->
+                        <div class="form-group">
+                            <label class="form-label">Trendlyne Data Import Time</label>
+                            <div class="time-input-group">
+                                <input type="number" name="trendlyne_import_hour" class="form-input time-input"
+                                       value="{{ settings.trendlyne_import_hour }}" min="0" max="23" required>
+                                <span class="time-separator">:</span>
+                                <input type="number" name="trendlyne_import_minute" class="form-input time-input"
+                                       value="{{ settings.trendlyne_import_minute }}" min="0" max="59" required>
+                            </div>
+                            <span class="form-help">Daily import time (HH:MM format)</span>
+                        </div>
+
+                        <!-- Pre-market -->
+                        <div class="form-group">
+                            <label class="form-label">Pre-Market Data Update Time</label>
+                            <div class="time-input-group">
+                                <input type="number" name="premarket_update_hour" class="form-input time-input"
+                                       value="{{ settings.premarket_update_hour }}" min="0" max="23" required>
+                                <span class="time-separator">:</span>
+                                <input type="number" name="premarket_update_minute" class="form-input time-input"
+                                       value="{{ settings.premarket_update_minute }}" min="0" max="59" required>
+                            </div>
+                            <span class="form-help">Weekdays only (Mon-Fri)</span>
+                        </div>
+
+                        <!-- Post-market -->
+                        <div class="form-group">
+                            <label class="form-label">Post-Market Data Update Time</label>
+                            <div class="time-input-group">
+                                <input type="number" name="postmarket_update_hour" class="form-input time-input"
+                                       value="{{ settings.postmarket_update_hour }}" min="0" max="23" required>
+                                <span class="time-separator">:</span>
+                                <input type="number" name="postmarket_update_minute" class="form-input time-input"
+                                       value="{{ settings.postmarket_update_minute }}" min="0" max="59" required>
+                            </div>
+                            <span class="form-help">Weekdays only (Mon-Fri)</span>
+                        </div>
+
+                        <!-- Live Data Interval -->
+                        <div class="form-group">
+                            <label class="form-label">Live Data Update Interval (minutes)</label>
+                            <input type="number" name="live_data_interval_minutes" class="form-input"
+                                   value="{{ settings.live_data_interval_minutes }}" min="1" max="60" required>
+                            <span class="form-help">Interval during market hours (1-60 minutes)</span>
+                        </div>
+
+                        <!-- Live Data Hours -->
+                        <div class="form-group">
+                            <label class="form-label">Live Data Hours (Start)</label>
+                            <input type="number" name="live_data_start_hour" class="form-input"
+                                   value="{{ settings.live_data_start_hour }}" min="0" max="23" required>
+                            <span class="form-help">Start hour for live data (0-23)</span>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label">Live Data Hours (End)</label>
+                            <input type="number" name="live_data_end_hour" class="form-input"
+                                   value="{{ settings.live_data_end_hour }}" min="0" max="23" required>
+                            <span class="form-help">End hour for live data (0-23)</span>
+                        </div>
+                    </div>
+
+                    <!-- Enable/Disable -->
+                    <div class="checkbox-group">
+                        <input type="checkbox" name="enable_market_data_tasks" id="enable_market_data_tasks"
+                               class="checkbox-input" {% if settings.enable_market_data_tasks %}checked{% endif %}>
+                        <label for="enable_market_data_tasks" class="checkbox-label">
+                            Enable Market Data Tasks
+                        </label>
+                    </div>
+                </section>
+
+                <!-- Strategy Tasks -->
+                <section class="settings-section" id="strategy">
+                    <div class="section-header">
+                        <span class="section-icon">🎯</span>
+                        <h2 class="section-title">Strategy Execution Tasks</h2>
+                    </div>
+                    <p class="section-description">Configure timing for strategy screening and execution</p>
+
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label class="form-label">Futures Screening Interval (minutes)</label>
+                            <input type="number" name="futures_screening_interval_minutes" class="form-input"
+                                   value="{{ settings.futures_screening_interval_minutes }}" min="5" max="120" required>
+                            <span class="form-help">How often to screen for opportunities (5-120 min)</span>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label">Futures Screening Start Hour</label>
+                            <input type="number" name="futures_screening_start_hour" class="form-input"
+                                   value="{{ settings.futures_screening_start_hour }}" min="0" max="23" required>
+                            <span class="form-help">Start hour (0-23)</span>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label">Futures Screening End Hour</label>
+                            <input type="number" name="futures_screening_end_hour" class="form-input"
+                                   value="{{ settings.futures_screening_end_hour }}" min="0" max="23" required>
+                            <span class="form-help">End hour (0-23)</span>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label">Futures Averaging Check Interval (minutes)</label>
+                            <input type="number" name="futures_averaging_interval_minutes" class="form-input"
+                                   value="{{ settings.futures_averaging_interval_minutes }}" min="1" max="60" required>
+                            <span class="form-help">During market hours (1-60 min)</span>
+                        </div>
+                    </div>
+
+                    <div class="checkbox-group">
+                        <input type="checkbox" name="enable_strategy_tasks" id="enable_strategy_tasks"
+                               class="checkbox-input" {% if settings.enable_strategy_tasks %}checked{% endif %}>
+                        <label for="enable_strategy_tasks" class="checkbox-label">
+                            Enable Strategy Execution Tasks
+                        </label>
+                    </div>
+                </section>
+
+                <!-- Position Monitoring -->
+                <section class="settings-section" id="position-monitoring">
+                    <div class="section-header">
+                        <span class="section-icon">📈</span>
+                        <h2 class="section-title">Position Monitoring Tasks</h2>
+                    </div>
+                    <p class="section-description">Real-time position monitoring intervals (in seconds)</p>
+
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label class="form-label">Monitor Positions Interval (seconds)</label>
+                            <input type="number" name="monitor_positions_interval_seconds" class="form-input"
+                                   value="{{ settings.monitor_positions_interval_seconds }}" min="5" max="300" required>
+                            <span class="form-help">Real-time monitoring (5-300 seconds)</span>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label">Update P&L Interval (seconds)</label>
+                            <input type="number" name="update_pnl_interval_seconds" class="form-input"
+                                   value="{{ settings.update_pnl_interval_seconds }}" min="5" max="300" required>
+                            <span class="form-help">P&L calculation frequency (5-300 seconds)</span>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label">Check Exit Conditions Interval (seconds)</label>
+                            <input type="number" name="check_exit_interval_seconds" class="form-input"
+                                   value="{{ settings.check_exit_interval_seconds }}" min="10" max="300" required>
+                            <span class="form-help">Exit signal checking (10-300 seconds)</span>
+                        </div>
+                    </div>
+
+                    <div class="checkbox-group">
+                        <input type="checkbox" name="enable_position_monitoring" id="enable_position_monitoring"
+                               class="checkbox-input" {% if settings.enable_position_monitoring %}checked{% endif %}>
+                        <label for="enable_position_monitoring" class="checkbox-label">
+                            Enable Position Monitoring Tasks
+                        </label>
+                    </div>
+                </section>
+
+                <!-- Risk Management -->
+                <section class="settings-section" id="risk-management">
+                    <div class="section-header">
+                        <span class="section-icon">⚠️</span>
+                        <h2 class="section-title">Risk Management Tasks</h2>
+                    </div>
+                    <p class="section-description">Risk monitoring and circuit breaker intervals (in seconds)</p>
+
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label class="form-label">Risk Limit Check Interval (seconds)</label>
+                            <input type="number" name="risk_check_interval_seconds" class="form-input"
+                                   value="{{ settings.risk_check_interval_seconds }}" min="30" max="600" required>
+                            <span class="form-help">Risk validation frequency (30-600 seconds)</span>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label">Circuit Breaker Monitor Interval (seconds)</label>
+                            <input type="number" name="circuit_breaker_interval_seconds" class="form-input"
+                                   value="{{ settings.circuit_breaker_interval_seconds }}" min="10" max="300" required>
+                            <span class="form-help">Circuit breaker checks (10-300 seconds)</span>
+                        </div>
+                    </div>
+
+                    <div class="checkbox-group">
+                        <input type="checkbox" name="enable_risk_monitoring" id="enable_risk_monitoring"
+                               class="checkbox-input" {% if settings.enable_risk_monitoring %}checked{% endif %}>
+                        <label for="enable_risk_monitoring" class="checkbox-label">
+                            Enable Risk Monitoring Tasks
+                        </label>
+                    </div>
+                </section>
+
+                <!-- Reporting & Analytics -->
+                <section class="settings-section" id="reporting">
+                    <div class="section-header">
+                        <span class="section-icon">📋</span>
+                        <h2 class="section-title">Reporting & Analytics Tasks</h2>
+                    </div>
+                    <p class="section-description">Configure timing for daily, weekly reports and learning updates</p>
+
+                    <div class="form-grid">
+                        <!-- Daily P&L Report -->
+                        <div class="form-group">
+                            <label class="form-label">Daily P&L Report Time</label>
+                            <div class="time-input-group">
+                                <input type="number" name="daily_pnl_report_hour" class="form-input time-input"
+                                       value="{{ settings.daily_pnl_report_hour }}" min="0" max="23" required>
+                                <span class="time-separator">:</span>
+                                <input type="number" name="daily_pnl_report_minute" class="form-input time-input"
+                                       value="{{ settings.daily_pnl_report_minute }}" min="0" max="59" required>
+                            </div>
+                            <span class="form-help">Weekdays after market close</span>
+                        </div>
+
+                        <!-- Learning Patterns -->
+                        <div class="form-group">
+                            <label class="form-label">Learning Patterns Update Time</label>
+                            <div class="time-input-group">
+                                <input type="number" name="learning_patterns_hour" class="form-input time-input"
+                                       value="{{ settings.learning_patterns_hour }}" min="0" max="23" required>
+                                <span class="time-separator">:</span>
+                                <input type="number" name="learning_patterns_minute" class="form-input time-input"
+                                       value="{{ settings.learning_patterns_minute }}" min="0" max="59" required>
+                            </div>
+                            <span class="form-help">Daily AI learning update</span>
+                        </div>
+
+                        <!-- Weekly Summary Time -->
+                        <div class="form-group">
+                            <label class="form-label">Weekly Summary Time</label>
+                            <div class="time-input-group">
+                                <input type="number" name="weekly_summary_hour" class="form-input time-input"
+                                       value="{{ settings.weekly_summary_hour }}" min="0" max="23" required>
+                                <span class="time-separator">:</span>
+                                <input type="number" name="weekly_summary_minute" class="form-input time-input"
+                                       value="{{ settings.weekly_summary_minute }}" min="0" max="59" required>
+                            </div>
+                            <span class="form-help">Weekly report generation time</span>
+                        </div>
+
+                        <!-- Weekly Summary Day -->
+                        <div class="form-group">
+                            <label class="form-label">Weekly Summary Day</label>
+                            <select name="weekly_summary_day_of_week" class="form-input">
+                                {% for value, label in days_of_week %}
+                                <option value="{{ value }}" {% if settings.weekly_summary_day_of_week == value %}selected{% endif %}>
+                                    {{ label }}
+                                </option>
+                                {% endfor %}
+                            </select>
+                            <span class="form-help">Day to send weekly summary</span>
+                        </div>
+                    </div>
+
+                    <div class="checkbox-group">
+                        <input type="checkbox" name="enable_reporting_tasks" id="enable_reporting_tasks"
+                               class="checkbox-input" {% if settings.enable_reporting_tasks %}checked{% endif %}>
+                        <label for="enable_reporting_tasks" class="checkbox-label">
+                            Enable Reporting & Analytics Tasks
+                        </label>
+                    </div>
+                </section>
+            </div>
+        </div>
+
+        <!-- Sticky Form Actions -->
+        <div class="form-actions">
+            <a href="/" class="btn btn-secondary">Cancel</a>
+            <button type="submit" class="btn btn-primary">Save Settings</button>
+        </div>
+    </form>
+
+    <script>
+        // Sidebar navigation active state
+        const navLinks = document.querySelectorAll('.sidebar-nav-link');
+        const sections = document.querySelectorAll('.settings-section');
+
+        // Update active link on scroll
+        const observerOptions = {
+            root: null,
+            rootMargin: '-20% 0px -70% 0px',
+            threshold: 0
+        };
+
+        const observer = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    const id = entry.target.getAttribute('id');
+                    navLinks.forEach(link => {
+                        link.classList.remove('active');
+                        if (link.getAttribute('href') === `#${id}`) {
+                            link.classList.add('active');
+                        }
+                    });
+                }
+            });
+        }, observerOptions);
+
+        sections.forEach(section => observer.observe(section));
+
+        // Smooth scroll and close mobile menu on click
+        navLinks.forEach(link => {
+            link.addEventListener('click', (e) => {
+                e.preventDefault();
+                const targetId = link.getAttribute('href');
+                const targetSection = document.querySelector(targetId);
+
+                if (targetSection) {
+                    targetSection.scrollIntoView({
+                        behavior: 'smooth',
+                        block: 'start'
+                    });
+                }
+
+                // Close mobile menu
+                if (window.innerWidth <= 1024) {
+                    closeMobileMenu();
+                }
+            });
+        });
+
+        // Mobile menu toggle
+        const mobileMenuToggle = document.getElementById('mobileMenuToggle');
+        const settingsSidebar = document.getElementById('settingsSidebar');
+        const mobileOverlay = document.getElementById('mobileOverlay');
+
+        function openMobileMenu() {
+            settingsSidebar.classList.add('mobile-open');
+            mobileOverlay.classList.add('active');
+        }
+
+        function closeMobileMenu() {
+            settingsSidebar.classList.remove('mobile-open');
+            mobileOverlay.classList.remove('active');
+        }
+
+        mobileMenuToggle.addEventListener('click', () => {
+            if (settingsSidebar.classList.contains('mobile-open')) {
+                closeMobileMenu();
+            } else {
+                openMobileMenu();
+            }
+        });
+
+        mobileOverlay.addEventListener('click', closeMobileMenu);
+
+        // Form validation
+        document.getElementById('settingsForm').addEventListener('submit', function(e) {
+            const inputs = this.querySelectorAll('input[type="number"]');
+            let hasError = false;
+
+            inputs.forEach(input => {
+                const value = parseInt(input.value);
+                const min = parseInt(input.getAttribute('min'));
+                const max = parseInt(input.getAttribute('max'));
+
+                if (value < min || value > max) {
+                    input.style.borderColor = 'var(--danger)';
+                    hasError = true;
+                } else {
+                    input.style.borderColor = 'var(--border)';
+                }
+            });
+
+            if (hasError) {
+                e.preventDefault();
+                alert('Please check the values. Some fields are out of valid range.');
+            }
+        });
+    </script>
+</body>
+</html>

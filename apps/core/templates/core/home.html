@@ -25,34 +25,63 @@
 {% if user.is_authenticated %}
 <!-- Dashboard Stats -->
 <section class="dashboard-stats">
-    <h2 class="section-title">System Overview</h2>
+    <div class="section-header-with-action">
+        <h2 class="section-title">System Overview</h2>
+        <button class="btn-refresh-all" onclick="refreshAllStats()" title="Refresh all metrics">
+            <span class="refresh-icon">🔄</span> Refresh All
+        </button>
+    </div>
     <div class="stats-grid">
-        <div class="stat-card">
-            <div class="stat-icon">📈</div>
+        <div class="stat-card" id="stat-positions">
+            <div class="stat-header">
+                <div class="stat-icon">📈</div>
+                <button class="btn-refresh-card" onclick="refreshStat('positions')" title="Refresh">
+                    <span class="refresh-icon-small">🔄</span>
+                </button>
+            </div>
             <div class="stat-info">
                 <h3>Active Positions</h3>
-                <p class="stat-value">{{ active_positions|default:0 }}</p>
+                <p class="stat-value" id="value-positions">{{ active_positions|default:0 }}</p>
+                <span class="stat-timestamp" id="time-positions">Just now</span>
             </div>
         </div>
-        <div class="stat-card">
-            <div class="stat-icon">🏦</div>
+        <div class="stat-card" id="stat-accounts">
+            <div class="stat-header">
+                <div class="stat-icon">🏦</div>
+                <button class="btn-refresh-card" onclick="refreshStat('accounts')" title="Refresh">
+                    <span class="refresh-icon-small">🔄</span>
+                </button>
+            </div>
             <div class="stat-info">
                 <h3>Active Accounts</h3>
-                <p class="stat-value">{{ active_accounts|default:0 }}</p>
+                <p class="stat-value" id="value-accounts">{{ active_accounts|default:0 }}</p>
+                <span class="stat-timestamp" id="time-accounts">Just now</span>
             </div>
         </div>
-        <div class="stat-card">
-            <div class="stat-icon">📋</div>
+        <div class="stat-card" id="stat-orders">
+            <div class="stat-header">
+                <div class="stat-icon">📋</div>
+                <button class="btn-refresh-card" onclick="refreshStat('orders')" title="Refresh">
+                    <span class="refresh-icon-small">🔄</span>
+                </button>
+            </div>
             <div class="stat-info">
                 <h3>Today's Orders</h3>
-                <p class="stat-value">{{ today_orders|default:0 }}</p>
+                <p class="stat-value" id="value-orders">{{ today_orders|default:0 }}</p>
+                <span class="stat-timestamp" id="time-orders">Just now</span>
             </div>
         </div>
-        <div class="stat-card">
-            <div class="stat-icon">💰</div>
+        <div class="stat-card" id="stat-pnl">
+            <div class="stat-header">
+                <div class="stat-icon">💰</div>
+                <button class="btn-refresh-card" onclick="refreshStat('pnl')" title="Refresh">
+                    <span class="refresh-icon-small">🔄</span>
+                </button>
+            </div>
             <div class="stat-info">
                 <h3>Total P&L</h3>
-                <p class="stat-value">{{ total_pnl|default:"₹0.00" }}</p>
+                <p class="stat-value" id="value-pnl">{{ total_pnl|default:"₹0.00" }}</p>
+                <span class="stat-timestamp" id="time-pnl">Just now</span>
             </div>
         </div>
     </div>
@@ -186,4 +215,334 @@
 </section>
 {% endif %}
 
+{% endblock %}
+
+{% block extra_css %}
+<style>
+    /* Section header with action button */
+    .section-header-with-action {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 1.5rem;
+    }
+
+    /* Refresh All button */
+    .btn-refresh-all {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.625rem 1.25rem;
+        background: linear-gradient(135deg, #3B82F6, #2563EB);
+        color: white;
+        border: none;
+        border-radius: 0.5rem;
+        font-weight: 600;
+        font-size: 0.875rem;
+        cursor: pointer;
+        transition: all 0.2s ease;
+        box-shadow: 0 2px 4px rgba(59, 130, 246, 0.2);
+    }
+
+    .btn-refresh-all:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 4px 8px rgba(59, 130, 246, 0.3);
+    }
+
+    .btn-refresh-all:active {
+        transform: translateY(0);
+    }
+
+    .btn-refresh-all.loading {
+        opacity: 0.7;
+        cursor: not-allowed;
+    }
+
+    .refresh-icon {
+        display: inline-block;
+        transition: transform 0.3s ease;
+    }
+
+    .btn-refresh-all:hover .refresh-icon:not(.spinning),
+    .btn-refresh-card:hover .refresh-icon-small:not(.spinning) {
+        transform: rotate(90deg);
+    }
+
+    .refresh-icon.spinning,
+    .refresh-icon-small.spinning {
+        animation: spin 1s linear infinite;
+    }
+
+    @keyframes spin {
+        from { transform: rotate(0deg); }
+        to { transform: rotate(360deg); }
+    }
+
+    /* Stat card header */
+    .stat-card {
+        position: relative;
+    }
+
+    .stat-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        margin-bottom: 0.75rem;
+    }
+
+    /* Card refresh button */
+    .btn-refresh-card {
+        background: rgba(59, 130, 246, 0.1);
+        border: 1px solid rgba(59, 130, 246, 0.2);
+        color: #3B82F6;
+        padding: 0.375rem 0.5rem;
+        border-radius: 0.375rem;
+        cursor: pointer;
+        transition: all 0.2s ease;
+        font-size: 0.875rem;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .btn-refresh-card:hover {
+        background: rgba(59, 130, 246, 0.15);
+        border-color: rgba(59, 130, 246, 0.3);
+        transform: scale(1.05);
+    }
+
+    .btn-refresh-card:active {
+        transform: scale(0.95);
+    }
+
+    .btn-refresh-card.loading {
+        opacity: 0.6;
+        cursor: not-allowed;
+    }
+
+    .refresh-icon-small {
+        display: inline-block;
+        font-size: 1rem;
+        transition: transform 0.3s ease;
+    }
+
+    /* Timestamp */
+    .stat-timestamp {
+        display: block;
+        font-size: 0.75rem;
+        color: #9CA3AF;
+        margin-top: 0.25rem;
+        font-style: italic;
+    }
+
+    /* Loading state for stat value */
+    .stat-value.loading {
+        opacity: 0.5;
+        position: relative;
+    }
+
+    .stat-value.loading::after {
+        content: '...';
+        position: absolute;
+        right: -1rem;
+    }
+
+    /* Success flash animation */
+    @keyframes flash-success {
+        0%, 100% { background-color: transparent; }
+        50% { background-color: rgba(16, 185, 129, 0.1); }
+    }
+
+    .stat-card.flash-success {
+        animation: flash-success 0.6s ease;
+    }
+
+    /* Error flash animation */
+    @keyframes flash-error {
+        0%, 100% { background-color: transparent; }
+        50% { background-color: rgba(239, 68, 68, 0.1); }
+    }
+
+    .stat-card.flash-error {
+        animation: flash-error 0.6s ease;
+    }
+
+    /* Mobile responsive */
+    @media (max-width: 768px) {
+        .section-header-with-action {
+            flex-direction: column;
+            align-items: flex-start;
+            gap: 1rem;
+        }
+
+        .btn-refresh-all {
+            width: 100%;
+            justify-content: center;
+        }
+    }
+</style>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    // Cache for storing last refresh times
+    const refreshCache = {
+        positions: null,
+        accounts: null,
+        orders: null,
+        pnl: null
+    };
+
+    // CSRF token for POST requests
+    function getCookie(name) {
+        let cookieValue = null;
+        if (document.cookie && document.cookie !== '') {
+            const cookies = document.cookie.split(';');
+            for (let i = 0; i < cookies.length; i++) {
+                const cookie = cookies[i].trim();
+                if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                    cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                    break;
+                }
+            }
+        }
+        return cookieValue;
+    }
+
+    const csrftoken = getCookie('csrftoken');
+
+    // Format time ago
+    function timeAgo(date) {
+        const seconds = Math.floor((new Date() - date) / 1000);
+
+        if (seconds < 10) return 'Just now';
+        if (seconds < 60) return `${seconds}s ago`;
+
+        const minutes = Math.floor(seconds / 60);
+        if (minutes < 60) return `${minutes}m ago`;
+
+        const hours = Math.floor(minutes / 60);
+        if (hours < 24) return `${hours}h ago`;
+
+        return `${Math.floor(hours / 24)}d ago`;
+    }
+
+    // Update timestamp display
+    function updateTimestamp(statType) {
+        const timestampEl = document.getElementById(`time-${statType}`);
+        if (timestampEl && refreshCache[statType]) {
+            timestampEl.textContent = timeAgo(refreshCache[statType]);
+        }
+    }
+
+    // Update all timestamps every 10 seconds
+    setInterval(() => {
+        ['positions', 'accounts', 'orders', 'pnl'].forEach(updateTimestamp);
+    }, 10000);
+
+    // Refresh a single stat
+    async function refreshStat(statType) {
+        const card = document.getElementById(`stat-${statType}`);
+        const valueEl = document.getElementById(`value-${statType}`);
+        const timestampEl = document.getElementById(`time-${statType}`);
+        const button = card.querySelector('.btn-refresh-card');
+        const icon = button.querySelector('.refresh-icon-small');
+
+        // Prevent multiple simultaneous refreshes
+        if (button.classList.contains('loading')) return;
+
+        // Add loading state
+        button.classList.add('loading');
+        icon.classList.add('spinning');
+        valueEl.classList.add('loading');
+
+        try {
+            const response = await fetch(`/api/dashboard/refresh/${statType}/`, {
+                method: 'POST',
+                headers: {
+                    'X-CSRFToken': csrftoken,
+                    'Content-Type': 'application/json',
+                },
+            });
+
+            if (!response.ok) throw new Error('Network response was not ok');
+
+            const data = await response.json();
+
+            if (data.success) {
+                // Update value
+                valueEl.textContent = data.value;
+
+                // Update cache and timestamp
+                refreshCache[statType] = new Date();
+                timestampEl.textContent = 'Just now';
+
+                // Flash success
+                card.classList.remove('flash-error');
+                card.classList.add('flash-success');
+                setTimeout(() => card.classList.remove('flash-success'), 600);
+
+                // Show freshness indicator if from API
+                if (data.from_api) {
+                    console.log(`✓ ${statType} refreshed from API`);
+                }
+            } else {
+                throw new Error(data.error || 'Unknown error');
+            }
+        } catch (error) {
+            console.error(`Error refreshing ${statType}:`, error);
+
+            // Flash error
+            card.classList.remove('flash-success');
+            card.classList.add('flash-error');
+            setTimeout(() => card.classList.remove('flash-error'), 600);
+
+            // Show error message
+            timestampEl.textContent = 'Update failed';
+            timestampEl.style.color = '#EF4444';
+            setTimeout(() => {
+                timestampEl.style.color = '';
+                if (refreshCache[statType]) {
+                    timestampEl.textContent = timeAgo(refreshCache[statType]);
+                } else {
+                    timestampEl.textContent = 'Never updated';
+                }
+            }, 3000);
+        } finally {
+            // Remove loading state
+            button.classList.remove('loading');
+            icon.classList.remove('spinning');
+            valueEl.classList.remove('loading');
+        }
+    }
+
+    // Refresh all stats
+    async function refreshAllStats() {
+        const button = document.querySelector('.btn-refresh-all');
+        const icon = button.querySelector('.refresh-icon');
+
+        if (button.classList.contains('loading')) return;
+
+        button.classList.add('loading');
+        icon.classList.add('spinning');
+
+        // Refresh all stats in parallel
+        const promises = ['positions', 'accounts', 'orders', 'pnl'].map(stat => refreshStat(stat));
+
+        try {
+            await Promise.all(promises);
+        } finally {
+            button.classList.remove('loading');
+            icon.classList.remove('spinning');
+        }
+    }
+
+    // Initialize timestamps
+    document.addEventListener('DOMContentLoaded', () => {
+        const now = new Date();
+        ['positions', 'accounts', 'orders', 'pnl'].forEach(stat => {
+            refreshCache[stat] = now;
+        });
+    });
+</script>
 {% endblock %}

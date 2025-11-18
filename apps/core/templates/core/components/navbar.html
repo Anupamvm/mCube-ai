@@ -38,23 +38,12 @@
                             </ul>
                         </li>
 
-                        <!-- Brokers Dropdown -->
+                        <!-- Market Data Dropdown -->
                         <li class="dropdown">
-                            <a href="#" class="dropdown-toggle">Brokers ▾</a>
+                            <a href="#" class="dropdown-toggle">Market Data ▾</a>
                             <ul class="dropdown-menu">
-                                <li><a href="{% url 'brokers:dashboard' %}">Broker Dashboard</a></li>
-                                <li class="dropdown-divider"></li>
-                                <li class="dropdown-header">Kotak Neo</li>
-                                <li><a href="{% url 'brokers:kotakneo_login' %}">&nbsp;&nbsp;&nbsp;Login & Configuration</a></li>
-                                <li><a href="{% url 'brokers:kotakneo_data' %}">&nbsp;&nbsp;&nbsp;Data & Positions</a></li>
-                                <li class="dropdown-divider"></li>
-                                <li class="dropdown-header">ICICI Breeze</li>
-                                <li><a href="{% url 'brokers:breeze_login' %}">&nbsp;&nbsp;&nbsp;Login & Configuration</a></li>
-                                <li><a href="{% url 'brokers:breeze_data' %}">&nbsp;&nbsp;&nbsp;Data & Positions</a></li>
-                                <li><a href="{% url 'brokers:option_chain' %}">&nbsp;&nbsp;&nbsp;Option Chain</a></li>
-                                <li><a href="{% url 'brokers:historical' %}">&nbsp;&nbsp;&nbsp;Historical Data</a></li>
-                                <li class="dropdown-divider"></li>
-                                <li><a href="{% url 'brokers:validate_future_trade' %}" class="highlight-link">🎯 Validate Future Trade</a></li>
+                                <li><a href="{% url 'brokers:option_chain' %}">📊 Option Chain (NIFTY)</a></li>
+                                <li><a href="{% url 'brokers:nifty_quote' %}">📈 Nifty Quote</a></li>
                             </ul>
                         </li>
 
@@ -62,6 +51,8 @@
                         <li class="dropdown">
                             <a href="#" class="dropdown-toggle">Trading ▾</a>
                             <ul class="dropdown-menu">
+                                <li><a href="{% url 'trading:manual_triggers' %}" class="highlight-link">🎯 Manual Trade Triggers</a></li>
+                                <li class="dropdown-divider"></li>
                                 <li><a href="/trading/suggestions/">Trade Suggestions</a></li>
                                 <li><a href="/trading/history/">Suggestion History</a></li>
                                 <li><a href="/trading/config/auto-trade/">Auto-Trade Config</a></li>
@@ -123,7 +114,8 @@
                             <li><a href="/test/"><span class="menu-icon">🧪</span> System Test</a></li>
                             <li class="dropdown-divider"></li>
                             {% endif %}
-                            <li><a href="#settings"><span class="menu-icon">⚙️</span> Settings</a></li>
+                            <li><a href="{% url 'core:broker_settings' %}"><span class="menu-icon">🔌</span> Broker Settings</a></li>
+                            <li><a href="{% url 'core:task_settings' %}"><span class="menu-icon">⏰</span> Background Task Settings</a></li>
                             <li class="dropdown-divider"></li>
                             <li><a href="{% url 'brokers:logout' %}" class="logout-link"><span class="menu-icon">🚪</span> Logout</a></li>
                         </ul>

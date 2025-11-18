@@ -139,7 +139,7 @@ class OpenInterestAnalyzer:
             return {"error": "No contracts found"}
 
         # Analyze futures contract
-        futures = contracts.filter(option_type__in=['FUT', 'FUTURES']).first()
+        futures = contracts.filter(option_type__in=['FUT', 'FUTURES', 'FUTURE']).first()
 
         if not futures:
             return {"error": "No futures contract found"}

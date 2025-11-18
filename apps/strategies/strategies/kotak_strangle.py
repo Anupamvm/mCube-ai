@@ -642,3 +642,75 @@ def execute_kotak_strangle_entry(account: BrokerAccount) -> Dict:
             'suggestion': None,
             'details': {'error': str(e)}
         }
+
+
+def get_current_nifty_price() -> Decimal:
+    """
+    Get current Nifty spot price
+
+    Returns:
+        Decimal: Current Nifty price
+    """
+    try:
+        from apps.brokers.models import HistoricalPrice
+        from datetime import datetime, timedelta
+
+        # Try to get latest price from historical data
+        latest_price = HistoricalPrice.objects.filter(
+            symbol='NIFTY 50',
+            timestamp__gte=datetime.now() - timedelta(days=1)
+        ).order_by('-timestamp').first()
+
+        if latest_price:
+            return Decimal(str(latest_price.close))
+
+        # Fallback to hardcoded value
+        logger.warning("Using fallback Nifty price")
+        return Decimal('24000.00')
+
+    except Exception as e:
+        logger.error(f"Error getting Nifty price: {e}")
+        return Decimal('24000.00')
+
+
+def get_option_premiums(call_strike: int, put_strike: int, expiry_date) -> Tuple[Decimal, Decimal]:
+    """
+    Get option premiums for given strikes
+
+    Args:
+        call_strike: Call option strike price
+        put_strike: Put option strike price
+        expiry_date: Expiry date
+
+    Returns:
+        Tuple[Decimal, Decimal]: (call_premium, put_premium)
+    """
+    try:
+        from apps.data.models import OptionChain
+
+        # Get latest option chain data
+        call_option = OptionChain.objects.filter(
+            underlying='NIFTY',
+            strike=call_strike,
+            option_type='CE',
+            expiry_date=expiry_date
+        ).order_by('-created_at').first()
+
+        put_option = OptionChain.objects.filter(
+            underlying='NIFTY',
+            strike=put_strike,
+            option_type='PE',
+            expiry_date=expiry_date
+        ).order_by('-created_at').first()
+
+        call_premium = call_option.ltp if call_option else Decimal('100.0')
+        put_premium = put_option.ltp if put_option else Decimal('100.0')
+
+        logger.info(f"Premiums: {call_strike}CE = ₹{call_premium}, {put_strike}PE = ₹{put_premium}")
+
+        return call_premium, put_premium
+
+    except Exception as e:
+        logger.error(f"Error getting option premiums: {e}")
+        # Return fallback values
+        return Decimal('100.0'), Decimal('100.0')

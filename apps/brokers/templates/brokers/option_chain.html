@@ -5,12 +5,71 @@
 {% block page_title %}Nifty Option Chain{% endblock %}
 
 {% block page_content %}
+<style>
+    .loading-overlay {
+        display: none;
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background-color: rgba(0, 0, 0, 0.7);
+        z-index: 9999;
+        justify-content: center;
+        align-items: center;
+    }
+
+    .loading-overlay.active {
+        display: flex;
+    }
+
+    .loading-content {
+        text-align: center;
+        color: white;
+    }
+
+    .spinner {
+        border: 8px solid #f3f3f3;
+        border-top: 8px solid #4CAF50;
+        border-radius: 50%;
+        width: 60px;
+        height: 60px;
+        animation: spin 1s linear infinite;
+        margin: 0 auto 20px;
+    }
+
+    @keyframes spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+    }
+
+    .loading-text {
+        font-size: 18px;
+        font-weight: bold;
+        margin-bottom: 10px;
+    }
+
+    .loading-subtext {
+        font-size: 14px;
+        color: #ccc;
+    }
+</style>
+
+<!-- Loading Overlay -->
+<div id="loadingOverlay" class="loading-overlay">
+    <div class="loading-content">
+        <div class="spinner"></div>
+        <div class="loading-text">Fetching Nifty Option Chain...</div>
+        <div class="loading-subtext">This may take 30-60 seconds</div>
+    </div>
+</div>
+
 <div class="card">
     <h2>Nifty Option Chain - All Expiries</h2>
 
-    <form method="post">
+    <form method="post" id="fetchOptionChainForm">
         {% csrf_token %}
-        <button type="submit" class="btn btn-success">Fetch Nifty Option Chain</button>
+        <button type="submit" class="btn btn-success" id="fetchButton">Fetch Nifty Option Chain</button>
     </form>
 
     {% if total_records %}
@@ -21,6 +80,18 @@
     {% endif %}
 </div>
 
+<script>
+    document.getElementById('fetchOptionChainForm').addEventListener('submit', function(e) {
+        // Show loading overlay
+        document.getElementById('loadingOverlay').classList.add('active');
+
+        // Disable the button to prevent multiple clicks
+        var button = document.getElementById('fetchButton');
+        button.disabled = true;
+        button.textContent = 'Fetching...';
+    });
+</script>
+
 {% if expiry_dates %}
 <div class="card">
     <h3>Select Expiry</h3>
@@ -29,7 +100,7 @@
             <label>Expiry Date:</label>
             <select name="expiry" onchange="this.form.submit()">
                 {% for expiry in expiry_dates %}
-                <option value="{{ expiry }}" {% if expiry == selected_expiry %}selected{% endif %}>
+                <option value="{{ expiry|date:'Y-m-d' }}" {% if expiry == selected_expiry %}selected{% endif %}>
                     {{ expiry|date:"d-M-Y" }}
                 </option>
                 {% endfor %}

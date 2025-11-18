@@ -17,6 +17,8 @@ from apps.core.constants import (
     MARKET_OPEN_TIME,
     MARKET_CLOSE_TIME,
     TRADING_DAYS,
+    WEEKDAY_TUESDAY,
+    WEEKDAY_WEDNESDAY,
     WEEKDAY_THURSDAY,
     WEEKDAY_FRIDAY,
 )
@@ -31,7 +33,10 @@ def get_current_weekly_expiry(instrument: str = 'NIFTY') -> date:
     """
     Get the current weekly expiry date for the given instrument
 
-    Weekly expiry is on Thursday for NIFTY, BANKNIFTY, FINNIFTY
+    IMPORTANT: As of 2025, NIFTY weekly expiry changed from Thursday to Tuesday
+    - NIFTY: Tuesday (since 2025)
+    - BANKNIFTY: Wednesday
+    - FINNIFTY: Tuesday
 
     Args:
         instrument: The instrument name (NIFTY, BANKNIFTY, FINNIFTY)
@@ -41,12 +46,26 @@ def get_current_weekly_expiry(instrument: str = 'NIFTY') -> date:
 
     Example:
         >>> get_current_weekly_expiry('NIFTY')
-        datetime.date(2024, 11, 21)  # Next Thursday
+        datetime.date(2025, 11, 18)  # Next Tuesday
     """
     today = date.today()
-    days_ahead = WEEKDAY_THURSDAY - today.weekday()
 
-    if days_ahead < 0:  # Thursday already passed this week
+    # Determine expiry weekday based on instrument
+    # NIFTY changed from Thursday to Tuesday in 2025
+    if instrument.upper() == 'NIFTY':
+        expiry_weekday = WEEKDAY_TUESDAY  # Tuesday = 1
+    elif instrument.upper() == 'BANKNIFTY':
+        expiry_weekday = WEEKDAY_WEDNESDAY  # Wednesday = 2 (changed from Thursday)
+    elif instrument.upper() == 'FINNIFTY':
+        expiry_weekday = WEEKDAY_TUESDAY  # Tuesday = 1
+    else:
+        # Default to Thursday for unknown instruments (legacy behavior)
+        expiry_weekday = WEEKDAY_THURSDAY  # Thursday = 3
+        logger.warning(f"Unknown instrument {instrument}, defaulting to Thursday expiry")
+
+    days_ahead = expiry_weekday - today.weekday()
+
+    if days_ahead < 0:  # Expiry day already passed this week
         days_ahead += 7
 
     expiry = today + timedelta(days=days_ahead)
@@ -67,18 +86,28 @@ def get_next_weekly_expiry(instrument: str = 'NIFTY') -> date:
 
     Example:
         >>> get_next_weekly_expiry('NIFTY')
-        datetime.date(2024, 11, 28)  # Next week's Thursday
+        datetime.date(2025, 11, 25)  # Next week's Tuesday
     """
     current_expiry = get_current_weekly_expiry(instrument)
     today = date.today()
+
+    # Determine expiry weekday based on instrument (must match get_current_weekly_expiry)
+    if instrument.upper() == 'NIFTY':
+        expiry_weekday = WEEKDAY_TUESDAY
+    elif instrument.upper() == 'BANKNIFTY':
+        expiry_weekday = WEEKDAY_WEDNESDAY
+    elif instrument.upper() == 'FINNIFTY':
+        expiry_weekday = WEEKDAY_TUESDAY
+    else:
+        expiry_weekday = WEEKDAY_THURSDAY
 
     # If current expiry is today or has passed, get next week
     if current_expiry <= today:
         next_expiry = current_expiry + timedelta(days=7)
     else:
-        # If we're past Thursday 3:30 PM, skip to next week
+        # If we're past expiry day 3:30 PM, skip to next week
         now = datetime.now(IST)
-        if today.weekday() == WEEKDAY_THURSDAY and now.time() > time(15, 30):
+        if today.weekday() == expiry_weekday and now.time() > time(15, 30):
             next_expiry = current_expiry + timedelta(days=7)
         else:
             next_expiry = current_expiry + timedelta(days=7)

@@ -8,6 +8,15 @@ from . import views
 app_name = 'core'
 
 urlpatterns = [
+    # Settings
+    path('broker-settings/', views.broker_settings, name='broker_settings'),
+    path('task-settings/', views.system_settings, name='task_settings'),
+    path('settings/', views.system_settings, name='system_settings'),  # Keep for backward compatibility
+
+    # Dashboard API
+    path('api/dashboard/refresh/<str:stat_type>/', views.refresh_dashboard_stat, name='refresh_dashboard_stat'),
+
+    # Testing
     path('test/', views.system_test_page, name='system_test'),
     path('test/trigger-trendlyne/', views.trigger_trendlyne_download, name='trigger_trendlyne'),
     path('test/trigger-fno-data/', views.trigger_fno_data_download, name='trigger_fno_data'),

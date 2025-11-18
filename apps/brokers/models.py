@@ -475,6 +475,130 @@ class NiftyOptionChain(TimeStampedModel):
         help_text="Put volume"
     )
 
+    # Greeks - Call Option
+    call_delta = models.DecimalField(
+        max_digits=5,
+        decimal_places=4,
+        null=True,
+        blank=True,
+        help_text="Call Delta (0 to 1)"
+    )
+
+    call_gamma = models.DecimalField(
+        max_digits=8,
+        decimal_places=6,
+        null=True,
+        blank=True,
+        help_text="Call Gamma"
+    )
+
+    call_theta = models.DecimalField(
+        max_digits=8,
+        decimal_places=4,
+        null=True,
+        blank=True,
+        help_text="Call Theta"
+    )
+
+    call_vega = models.DecimalField(
+        max_digits=8,
+        decimal_places=4,
+        null=True,
+        blank=True,
+        help_text="Call Vega"
+    )
+
+    call_iv = models.DecimalField(
+        max_digits=6,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Call Implied Volatility %"
+    )
+
+    # Greeks - Put Option
+    put_delta = models.DecimalField(
+        max_digits=5,
+        decimal_places=4,
+        null=True,
+        blank=True,
+        help_text="Put Delta (-1 to 0)"
+    )
+
+    put_gamma = models.DecimalField(
+        max_digits=8,
+        decimal_places=6,
+        null=True,
+        blank=True,
+        help_text="Put Gamma"
+    )
+
+    put_theta = models.DecimalField(
+        max_digits=8,
+        decimal_places=4,
+        null=True,
+        blank=True,
+        help_text="Put Theta"
+    )
+
+    put_vega = models.DecimalField(
+        max_digits=8,
+        decimal_places=4,
+        null=True,
+        blank=True,
+        help_text="Put Vega"
+    )
+
+    put_iv = models.DecimalField(
+        max_digits=6,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Put Implied Volatility %"
+    )
+
+    # OI Change
+    call_oi_change = models.BigIntegerField(
+        default=0,
+        help_text="Call OI change from previous day"
+    )
+
+    put_oi_change = models.BigIntegerField(
+        default=0,
+        help_text="Put OI change from previous day"
+    )
+
+    # PCR (Put-Call Ratio)
+    pcr_oi = models.DecimalField(
+        max_digits=6,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="PCR based on OI (Put OI / Call OI)"
+    )
+
+    pcr_volume = models.DecimalField(
+        max_digits=6,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="PCR based on volume (Put Vol / Call Vol)"
+    )
+
+    # Helper fields for strangle strategy
+    is_atm = models.BooleanField(
+        default=False,
+        help_text="True if this is ATM strike"
+    )
+
+    distance_from_spot = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Distance from spot price (strike - spot)"
+    )
+
     # Common fields
     spot_price = models.DecimalField(
         max_digits=15,

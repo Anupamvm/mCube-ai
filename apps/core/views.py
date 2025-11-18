@@ -2866,3 +2866,316 @@ def trigger_telegram_summary(request):
         logger.error(f"Error in trigger_telegram_summary: {e}", exc_info=True)
 
     return redirect('core:system_test')
+
+
+@login_required
+@user_passes_test(is_admin_user)
+def system_settings(request):
+    """
+    System Settings Page - Configure background task timings
+
+    Allows admins to configure all timing parameters for Celery tasks
+    """
+    from django.contrib import messages
+    from apps.core.models import SystemSettings
+
+    settings_obj = SystemSettings.get_settings()
+
+    if request.method == 'POST':
+        try:
+            # Market Data Task Timings
+            settings_obj.trendlyne_fetch_hour = int(request.POST.get('trendlyne_fetch_hour', 8))
+            settings_obj.trendlyne_fetch_minute = int(request.POST.get('trendlyne_fetch_minute', 30))
+            settings_obj.trendlyne_import_hour = int(request.POST.get('trendlyne_import_hour', 9))
+            settings_obj.trendlyne_import_minute = int(request.POST.get('trendlyne_import_minute', 0))
+
+            settings_obj.premarket_update_hour = int(request.POST.get('premarket_update_hour', 8))
+            settings_obj.premarket_update_minute = int(request.POST.get('premarket_update_minute', 30))
+
+            settings_obj.live_data_interval_minutes = int(request.POST.get('live_data_interval_minutes', 5))
+            settings_obj.live_data_start_hour = int(request.POST.get('live_data_start_hour', 9))
+            settings_obj.live_data_end_hour = int(request.POST.get('live_data_end_hour', 15))
+
+            settings_obj.postmarket_update_hour = int(request.POST.get('postmarket_update_hour', 15))
+            settings_obj.postmarket_update_minute = int(request.POST.get('postmarket_update_minute', 30))
+
+            # Strategy Task Timings
+            settings_obj.futures_screening_interval_minutes = int(request.POST.get('futures_screening_interval_minutes', 30))
+            settings_obj.futures_screening_start_hour = int(request.POST.get('futures_screening_start_hour', 9))
+            settings_obj.futures_screening_end_hour = int(request.POST.get('futures_screening_end_hour', 14))
+            settings_obj.futures_averaging_interval_minutes = int(request.POST.get('futures_averaging_interval_minutes', 10))
+
+            # Position Monitoring Task Timings
+            settings_obj.monitor_positions_interval_seconds = int(request.POST.get('monitor_positions_interval_seconds', 10))
+            settings_obj.update_pnl_interval_seconds = int(request.POST.get('update_pnl_interval_seconds', 15))
+            settings_obj.check_exit_interval_seconds = int(request.POST.get('check_exit_interval_seconds', 30))
+
+            # Risk Management Task Timings
+            settings_obj.risk_check_interval_seconds = int(request.POST.get('risk_check_interval_seconds', 60))
+            settings_obj.circuit_breaker_interval_seconds = int(request.POST.get('circuit_breaker_interval_seconds', 30))
+
+            # Reporting & Analytics Task Timings
+            settings_obj.daily_pnl_report_hour = int(request.POST.get('daily_pnl_report_hour', 16))
+            settings_obj.daily_pnl_report_minute = int(request.POST.get('daily_pnl_report_minute', 0))
+            settings_obj.learning_patterns_hour = int(request.POST.get('learning_patterns_hour', 17))
+            settings_obj.learning_patterns_minute = int(request.POST.get('learning_patterns_minute', 0))
+            settings_obj.weekly_summary_hour = int(request.POST.get('weekly_summary_hour', 18))
+            settings_obj.weekly_summary_minute = int(request.POST.get('weekly_summary_minute', 0))
+            settings_obj.weekly_summary_day_of_week = int(request.POST.get('weekly_summary_day_of_week', 4))
+
+            # Task Enable/Disable Flags
+            settings_obj.enable_market_data_tasks = request.POST.get('enable_market_data_tasks') == 'on'
+            settings_obj.enable_strategy_tasks = request.POST.get('enable_strategy_tasks') == 'on'
+            settings_obj.enable_position_monitoring = request.POST.get('enable_position_monitoring') == 'on'
+            settings_obj.enable_risk_monitoring = request.POST.get('enable_risk_monitoring') == 'on'
+            settings_obj.enable_reporting_tasks = request.POST.get('enable_reporting_tasks') == 'on'
+
+            settings_obj.save()
+
+            messages.success(request, '✅ System settings saved successfully! Celery beat must be restarted for changes to take effect.')
+            logger.info(f"System settings updated by {request.user.username}")
+
+        except Exception as e:
+            messages.error(request, f'❌ Error saving settings: {str(e)}')
+            logger.error(f"Error saving system settings: {e}", exc_info=True)
+
+        return redirect('core:system_settings')
+
+    context = {
+        'settings': settings_obj,
+        'page_title': 'System Settings',
+        'days_of_week': [
+            (0, 'Monday'),
+            (1, 'Tuesday'),
+            (2, 'Wednesday'),
+            (3, 'Thursday'),
+            (4, 'Friday'),
+            (5, 'Saturday'),
+            (6, 'Sunday'),
+        ]
+    }
+
+    return render(request, 'core/system_settings.html', context)
+
+
+@login_required
+@user_passes_test(is_admin_user)
+def broker_settings(request):
+    """
+    Broker Settings Page - Configure broker API credentials and settings
+    
+    Allows admins to configure all broker-related settings and API credentials
+    """
+    from django.contrib import messages
+    from apps.core.models import CredentialStore
+    
+    # Get or create credentials for each broker
+    kotak_creds, _ = CredentialStore.objects.get_or_create(
+        service='kotakneo',
+        name='default',
+        defaults={}
+    )
+    
+    breeze_creds, _ = CredentialStore.objects.get_or_create(
+        service='breeze',
+        name='default',
+        defaults={}
+    )
+    
+    trendlyne_creds, _ = CredentialStore.objects.get_or_create(
+        service='trendlyne',
+        name='default',
+        defaults={}
+    )
+    
+    telegram_creds, _ = CredentialStore.objects.get_or_create(
+        service='telegram',
+        name='default',
+        defaults={}
+    )
+    
+    if request.method == 'POST':
+        try:
+            # Kotak Neo Credentials
+            kotak_creds.api_key = request.POST.get('kotak_api_key', '')
+            kotak_creds.api_secret = request.POST.get('kotak_api_secret', '')
+            kotak_creds.username = request.POST.get('kotak_username', '')
+            kotak_creds.password = request.POST.get('kotak_password', '')
+            kotak_creds.neo_password = request.POST.get('kotak_neo_password', '')
+            kotak_creds.pan = request.POST.get('kotak_pan', '')
+            kotak_creds.save()
+            
+            # ICICI Breeze Credentials
+            breeze_creds.api_key = request.POST.get('breeze_api_key', '')
+            breeze_creds.api_secret = request.POST.get('breeze_api_secret', '')
+            breeze_creds.session_token = request.POST.get('breeze_session_token', '')
+            breeze_creds.save()
+            
+            # Trendlyne Credentials (Web Scraping)
+            trendlyne_creds.username = request.POST.get('trendlyne_username', '')
+            trendlyne_creds.password = request.POST.get('trendlyne_password', '')
+            trendlyne_creds.save()
+
+            # Telegram Credentials
+            telegram_creds.api_key = request.POST.get('telegram_bot_token', '')
+            telegram_creds.api_secret = request.POST.get('telegram_chat_id', '')
+            telegram_creds.username = request.POST.get('telegram_client_id', '')
+            telegram_creds.session_token = request.POST.get('telegram_session_name', '')
+            telegram_creds.save()
+            
+            messages.success(request, '✅ Broker settings saved successfully!')
+            logger.info(f"Broker settings updated by {request.user.username}")
+            
+        except Exception as e:
+            messages.error(request, f'❌ Error saving settings: {str(e)}')
+            logger.error(f"Error saving broker settings: {e}", exc_info=True)
+        
+        return redirect('core:broker_settings')
+    
+    context = {
+        'kotak_creds': kotak_creds,
+        'breeze_creds': breeze_creds,
+        'trendlyne_creds': trendlyne_creds,
+        'telegram_creds': telegram_creds,
+        'page_title': 'Broker Settings',
+    }
+    
+    return render(request, 'core/broker_settings.html', context)
+
+
+# =============================================================================
+# DASHBOARD REFRESH API ENDPOINTS
+# =============================================================================
+
+from django.http import JsonResponse
+from django.views.decorators.http import require_POST
+from datetime import datetime, timedelta
+from django.utils import timezone as django_timezone
+
+@login_required
+@require_POST
+def refresh_dashboard_stat(request, stat_type):
+    """
+    Refresh a single dashboard statistic
+    
+    Smart data fetching:
+    1. Check database cache first
+    2. If data is stale (> 5 minutes), fetch from API
+    3. Update database
+    4. Return fresh data
+    
+    Args:
+        stat_type: One of 'positions', 'accounts', 'orders', 'pnl'
+    """
+    try:
+        from apps.positions.models import Position
+        from apps.accounts.models import BrokerAccount
+        from apps.orders.models import Order
+        from decimal import Decimal
+        
+        STALE_THRESHOLD = timedelta(minutes=5)
+        from_api = False
+        
+        if stat_type == 'positions':
+            # Check if we need to refresh from API
+            last_updated = Position.objects.filter(
+                status='ACTIVE'
+            ).order_by('-updated_at').first()
+            
+            if last_updated and (django_timezone.now() - last_updated.updated_at) > STALE_THRESHOLD:
+                # Data is stale, fetch from API
+                try:
+                    # Trigger position refresh from broker API
+                    from apps.positions.services.position_sync import sync_positions_from_broker
+                    sync_positions_from_broker()
+                    from_api = True
+                except Exception as e:
+                    logger.warning(f"Failed to sync positions from API: {e}")
+            
+            # Get count from database (fresh or existing)
+            count = Position.objects.filter(status='ACTIVE').count()
+            return JsonResponse({
+                'success': True,
+                'value': count,
+                'from_api': from_api,
+                'timestamp': datetime.now().isoformat()
+            })
+        
+        elif stat_type == 'accounts':
+            # Accounts don't change frequently, just return DB count
+            count = BrokerAccount.objects.filter(is_active=True).count()
+            return JsonResponse({
+                'success': True,
+                'value': count,
+                'from_api': False,
+                'timestamp': datetime.now().isoformat()
+            })
+        
+        elif stat_type == 'orders':
+            # Check if we need to refresh today's orders from API
+            today = datetime.now().date()
+            last_order = Order.objects.filter(
+                created_at__date=today
+            ).order_by('-created_at').first()
+            
+            if last_order and (django_timezone.now() - last_order.created_at) > STALE_THRESHOLD:
+                # Data might be stale, fetch from API
+                try:
+                    from apps.orders.services.order_sync import sync_orders_from_broker
+                    sync_orders_from_broker()
+                    from_api = True
+                except Exception as e:
+                    logger.warning(f"Failed to sync orders from API: {e}")
+            
+            count = Order.objects.filter(created_at__date=today).count()
+            return JsonResponse({
+                'success': True,
+                'value': count,
+                'from_api': from_api,
+                'timestamp': datetime.now().isoformat()
+            })
+        
+        elif stat_type == 'pnl':
+            # Check if position P&L needs update
+            positions = Position.objects.filter(status='ACTIVE')
+            
+            if positions.exists():
+                latest_position = positions.order_by('-updated_at').first()
+                
+                if (django_timezone.now() - latest_position.updated_at) > STALE_THRESHOLD:
+                    # Data is stale, fetch fresh prices from API
+                    try:
+                        from apps.positions.services.pnl_updater import update_all_position_pnl
+                        update_all_position_pnl()
+                        from_api = True
+                    except Exception as e:
+                        logger.warning(f"Failed to update P&L from API: {e}")
+            
+            # Calculate total P&L
+            total_pnl = sum([
+                pos.unrealized_pnl or Decimal('0')
+                for pos in Position.objects.filter(status='ACTIVE')
+            ])
+            
+            # Format as currency
+            formatted_pnl = format_currency(total_pnl)
+            
+            return JsonResponse({
+                'success': True,
+                'value': formatted_pnl,
+                'from_api': from_api,
+                'timestamp': datetime.now().isoformat()
+            })
+        
+        else:
+            return JsonResponse({
+                'success': False,
+                'error': f'Invalid stat type: {stat_type}'
+            }, status=400)
+    
+    except Exception as e:
+        logger.error(f"Error refreshing dashboard stat {stat_type}: {e}", exc_info=True)
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=500)

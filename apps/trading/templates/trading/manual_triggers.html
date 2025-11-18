@@ -1,0 +1,2141 @@
+{% extends "core/master_base.html" %}
+{% load static %}
+
+{% block title %}Manual Trade Triggers - mCube Trading{% endblock %}
+
+{% block extra_css %}
+<style>
+    .page-header {
+        background: var(--white);
+        padding: 2rem 0;
+        margin-bottom: 2rem;
+        box-shadow: var(--shadow-sm);
+    }
+
+    .page-title {
+        font-size: 2rem;
+        font-weight: 700;
+        color: var(--dark);
+        margin: 0 0 0.5rem 0;
+    }
+
+    .page-subtitle {
+        color: var(--gray);
+        margin: 0;
+    }
+
+    .triggers-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+        gap: 1.5rem;
+        margin-bottom: 2rem;
+    }
+
+    .trigger-card {
+        background: var(--white);
+        border-radius: var(--radius-lg);
+        padding: 2rem;
+        box-shadow: var(--shadow-md);
+        transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }
+
+    .trigger-card:hover {
+        transform: translateY(-2px);
+        box-shadow: var(--shadow-lg);
+    }
+
+    .trigger-header {
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+        margin-bottom: 1rem;
+    }
+
+    .trigger-icon {
+        font-size: 2.5rem;
+    }
+
+    .trigger-title {
+        font-size: 1.25rem;
+        font-weight: 600;
+        color: var(--dark);
+        margin: 0;
+    }
+
+    .trigger-description {
+        color: var(--gray);
+        margin: 0 0 1.5rem 0;
+        line-height: 1.6;
+    }
+
+    .form-group {
+        margin-bottom: 1rem;
+    }
+
+    .form-label {
+        display: block;
+        font-weight: 500;
+        margin-bottom: 0.5rem;
+        color: var(--dark);
+    }
+
+    .form-select {
+        width: 100%;
+        padding: 0.625rem;
+        border: 1px solid var(--gray-light);
+        border-radius: var(--radius-md);
+        font-size: 0.875rem;
+    }
+
+    .form-select:focus {
+        outline: none;
+        border-color: var(--primary);
+        box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+    }
+
+    .btn {
+        padding: 0.75rem 1.5rem;
+        border-radius: var(--radius-md);
+        font-weight: 600;
+        font-size: 0.875rem;
+        cursor: pointer;
+        border: none;
+        transition: all 0.2s ease;
+        text-decoration: none;
+        display: inline-block;
+        width: 100%;
+    }
+
+    .btn-primary {
+        background: var(--primary);
+        color: var(--white);
+    }
+
+    .btn-primary:hover:not(:disabled) {
+        background: var(--primary-hover);
+        transform: translateY(-1px);
+    }
+
+    .btn-primary:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+    }
+
+    .btn-success {
+        background: var(--success);
+        color: var(--white);
+    }
+
+    .btn-success:hover {
+        background: var(--success-hover);
+    }
+
+    .btn-secondary {
+        background: var(--white);
+        color: var(--dark);
+        border: 1px solid var(--gray-light);
+    }
+
+    .btn-secondary:hover {
+        background: var(--light);
+    }
+
+    .loading-spinner {
+        display: none;
+        margin-top: 1rem;
+        text-align: center;
+        color: var(--primary);
+    }
+
+    .loading-spinner.active {
+        display: block;
+    }
+
+    .result-panel {
+        display: none;
+        margin-top: 2rem;
+        background: var(--white);
+        border-radius: var(--radius-lg);
+        padding: 2rem;
+        box-shadow: var(--shadow-md);
+    }
+
+    .result-panel.active {
+        display: block;
+    }
+
+    .result-header {
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+        padding-bottom: 1rem;
+        border-bottom: 2px solid var(--light);
+        margin-bottom: 1.5rem;
+    }
+
+    .result-title {
+        font-size: 1.5rem;
+        font-weight: 600;
+        margin: 0;
+        flex: 1;
+    }
+
+    .result-badge {
+        padding: 0.5rem 1rem;
+        border-radius: var(--radius-md);
+        font-weight: 600;
+        font-size: 0.875rem;
+    }
+
+    .result-badge.pass {
+        background: #D1FAE5;
+        color: #065F46;
+    }
+
+    .result-badge.fail {
+        background: #FEE2E2;
+        color: #991B1B;
+    }
+
+    .result-section {
+        margin-bottom: 2rem;
+    }
+
+    .result-section h3 {
+        font-size: 1.125rem;
+        font-weight: 600;
+        margin: 0 0 1rem 0;
+        color: var(--dark);
+    }
+
+    .result-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 1rem;
+    }
+
+    .result-item {
+        background: var(--lighter);
+        padding: 1rem;
+        border-radius: var(--radius-md);
+    }
+
+    .result-item-label {
+        font-size: 0.75rem;
+        color: var(--gray);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        margin-bottom: 0.25rem;
+    }
+
+    .result-item-value {
+        font-size: 1.125rem;
+        font-weight: 600;
+        color: var(--dark);
+    }
+
+    .explanation-box {
+        background: #F0F9FF;
+        border-left: 4px solid var(--primary);
+        padding: 1rem;
+        border-radius: var(--radius-md);
+        margin-top: 1rem;
+    }
+
+    .explanation-box h4 {
+        margin: 0 0 0.5rem 0;
+        color: var(--primary);
+        font-size: 1rem;
+    }
+
+    .explanation-box p {
+        margin: 0.5rem 0;
+        line-height: 1.6;
+        color: var(--dark);
+    }
+
+    .action-buttons {
+        display: flex;
+        gap: 1rem;
+        margin-top: 2rem;
+    }
+
+    .error-message {
+        background: #FEE2E2;
+        color: #991B1B;
+        padding: 1rem;
+        border-radius: var(--radius-md);
+        margin-top: 1rem;
+        border-left: 4px solid var(--danger);
+    }
+
+    @media (max-width: 768px) {
+        .triggers-grid {
+            grid-template-columns: 1fr;
+        }
+
+        .result-grid {
+            grid-template-columns: 1fr;
+        }
+
+        .action-buttons {
+            flex-direction: column;
+        }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div class="container">
+        <h1 class="page-title">Manual Trade Triggers</h1>
+        <p class="page-subtitle">Manually run trading algorithms and get detailed analysis</p>
+    </div>
+</div>
+
+<div class="container">
+    <div class="triggers-grid">
+        <!-- 1. Run Futures Algorithm -->
+        <div class="trigger-card">
+            <div class="trigger-header">
+                <span class="trigger-icon">🎯</span>
+                <h2 class="trigger-title">Futures Algorithm</h2>
+            </div>
+            <p class="trigger-description">
+                Runs the complete futures screening algorithm to find the top 3 trading opportunities.
+                Uses multi-factor analysis (OI, sector strength, technical indicators) with volume filtering.
+            </p>
+
+            <!-- Volume Threshold Inputs -->
+            <div class="form-group" style="background: var(--lighter); padding: 1rem; border-radius: var(--radius-md); margin-bottom: 1rem;">
+                <label class="form-label" style="margin-bottom: 0.75rem;">📊 Volume Filters (OR Logic)</label>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem;">
+                    <div>
+                        <label class="form-label" style="font-size: 0.75rem; margin-bottom: 0.25rem; color: var(--gray);">This Month Volume (≥)</label>
+                        <input type="number" class="form-select" id="futuresThisMonthVolume" value="1000" min="0" step="100" style="padding: 0.5rem;" placeholder="e.g., 1000">
+                    </div>
+                    <div>
+                        <label class="form-label" style="font-size: 0.75rem; margin-bottom: 0.25rem; color: var(--gray);">Next Month Volume (≥)</label>
+                        <input type="number" class="form-select" id="futuresNextMonthVolume" value="800" min="0" step="100" style="padding: 0.5rem;" placeholder="e.g., 800">
+                    </div>
+                </div>
+                <p style="font-size: 0.75rem; color: var(--gray); margin: 0.5rem 0 0 0;">
+                    💡 Tip: Algorithm analyzes all contracts meeting volume criteria and returns top 3 opportunities.
+                </p>
+            </div>
+
+            <button class="btn btn-primary" onclick="runFuturesAlgorithm(this)" id="btnFutures">
+                Run Futures Screening
+            </button>
+            <div class="loading-spinner" id="loadingFutures">
+                <div>⏳ Analyzing stocks...</div>
+            </div>
+        </div>
+
+        <!-- 2. Nifty Options Strangle -->
+        <div class="trigger-card">
+            <div class="trigger-header">
+                <span class="trigger-icon">📊</span>
+                <h2 class="trigger-title">Nifty Strangle</h2>
+            </div>
+            <p class="trigger-description">
+                Generates a Nifty weekly strangle position for your Kotak account.
+                Calculates optimal strikes based on current market conditions and VIX.
+            </p>
+            <button class="btn btn-primary" onclick="runNiftyStrangle(this)" id="btnStrangle">
+                Generate Strangle Position
+            </button>
+            <div class="loading-spinner" id="loadingStrangle">
+                <div>⏳ Calculating strikes...</div>
+            </div>
+        </div>
+
+        <!-- 3. Verify Future Trade -->
+        <div class="trigger-card">
+            <div class="trigger-header">
+                <span class="trigger-icon">✅</span>
+                <h2 class="trigger-title">Verify Future Trade</h2>
+            </div>
+            <p class="trigger-description">
+                Verify a specific futures contract for trading. Adjust volume thresholds to filter contracts and get complete analysis with pass/fail verdict.
+            </p>
+
+            <!-- Volume Threshold Inputs -->
+            <div class="form-group" style="background: var(--lighter); padding: 1rem; border-radius: var(--radius-md); margin-bottom: 1rem;">
+                <label class="form-label" style="margin-bottom: 0.75rem;">📊 Volume Filters (OR Logic)</label>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; margin-bottom: 0.75rem;">
+                    <div>
+                        <label class="form-label" style="font-size: 0.75rem; margin-bottom: 0.25rem; color: var(--gray);">This Month Volume (≥)</label>
+                        <input type="number" class="form-select" id="thisMonthVolume" value="1000" min="0" step="100" style="padding: 0.5rem;" placeholder="e.g., 1000">
+                    </div>
+                    <div>
+                        <label class="form-label" style="font-size: 0.75rem; margin-bottom: 0.25rem; color: var(--gray);">Next Month Volume (≥)</label>
+                        <input type="number" class="form-select" id="nextMonthVolume" value="800" min="0" step="100" style="padding: 0.5rem;" placeholder="e.g., 800">
+                    </div>
+                </div>
+                <p style="font-size: 0.75rem; color: var(--gray); margin: 0 0 0.75rem 0;">
+                    💡 Tip: Lower values = more contracts. Try 500/400 for smaller volume stocks.
+                </p>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem;">
+                    <button class="btn btn-secondary" onclick="refreshContractList()" id="btnRefreshContracts" style="margin-bottom: 0; font-size: 0.8rem;" title="Query local database with volume filters (fast)">
+                        🔄 Update List
+                    </button>
+                    <button class="btn btn-primary" onclick="fetchAndUpdateTrendlyne()" id="btnFetchTrendlyne" style="margin-bottom: 0; font-size: 0.8rem;" title="Download fresh data from Trendlyne (2-3 mins)">
+                        📥 Fetch Fresh Data
+                    </button>
+                </div>
+                <p style="font-size: 0.7rem; color: var(--gray); margin: 0.5rem 0 0 0; font-style: italic;">
+                    <strong>Update List</strong>: Filter existing data | <strong>Fetch Fresh Data</strong>: Download from Trendlyne (2-3 min)
+                </p>
+            </div>
+
+            <div class="form-group">
+                <label class="form-label" for="contractSelect">Select Futures Contract (<span id="contractCount">{{ total_contracts|default:"0" }}</span> contracts available)</label>
+                <select class="form-select" id="contractSelect">
+                    <option value="">-- Select a contract --</option>
+                    {% for contract in futures_contracts %}
+                    <option value="{{ contract.value }}"
+                            data-volume="{{ contract.volume }}"
+                            data-price="{{ contract.price }}"
+                            data-lot="{{ contract.lot_size }}">
+                        {{ contract.display }} (Vol: {{ contract.volume }})
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+            <button class="btn btn-primary" onclick="verifyFutureTrade(this)" id="btnVerify">
+                Verify Trade
+            </button>
+            <div class="loading-spinner" id="loadingVerify">
+                <div>⏳ Analyzing <span id="verifyingStock"></span>...</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Results Panel -->
+    <div class="result-panel" id="resultsPanel">
+        <div class="result-header">
+            <h2 class="result-title" id="resultTitle">Analysis Results</h2>
+            <span class="result-badge" id="resultBadge"></span>
+        </div>
+        <div id="resultContent"></div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    // CSRF token for POST requests
+    function getCookie(name) {
+        let cookieValue = null;
+        if (document.cookie && document.cookie !== '') {
+            const cookies = document.cookie.split(';');
+            for (let i = 0; i < cookies.length; i++) {
+                const cookie = cookies[i].trim();
+                if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                    cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                    break;
+                }
+            }
+        }
+        return cookieValue;
+    }
+    const csrftoken = getCookie('csrftoken');
+
+    // Refresh Contract List from Local DB (fast operation)
+    // This just queries the existing database with new volume filters
+    async function refreshContractList() {
+        const thisMonthVol = document.getElementById('thisMonthVolume').value || 1000;
+        const nextMonthVol = document.getElementById('nextMonthVolume').value || 800;
+        const btn = document.getElementById('btnRefreshContracts');
+
+        btn.disabled = true;
+        btn.textContent = '⏳ Updating...';
+
+        try {
+            const response = await fetch('{% url "trading:get_contracts" %}', {
+                method: 'POST',
+                headers: {
+                    'X-CSRFToken': csrftoken,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    this_month_volume: parseInt(thisMonthVol),
+                    next_month_volume: parseInt(nextMonthVol)
+                })
+            });
+
+            const data = await response.json();
+
+            if (data.success) {
+                // Update dropdown with new contract list
+                const select = document.getElementById('contractSelect');
+                select.innerHTML = '<option value="">-- Select a contract --</option>';
+
+                data.contracts.forEach(contract => {
+                    const option = document.createElement('option');
+                    option.value = contract.value;
+                    option.setAttribute('data-volume', contract.volume);
+                    option.setAttribute('data-price', contract.price || 0);
+                    option.setAttribute('data-lot', contract.lot_size || 0);
+                    option.textContent = `${contract.display} (Vol: ${contract.volume})`;
+                    select.appendChild(option);
+                });
+
+                // Update count
+                document.getElementById('contractCount').textContent = data.total_contracts;
+
+                btn.textContent = '✅ Updated';
+                setTimeout(() => {
+                    btn.textContent = '🔄 Update List';
+                }, 2000);
+            } else {
+                alert('Error updating contracts: ' + data.error);
+                btn.textContent = '🔄 Update List';
+            }
+        } catch (error) {
+            alert('Network error: ' + error.message);
+            btn.textContent = '🔄 Update List';
+        } finally {
+            btn.disabled = false;
+        }
+    }
+
+    // Fetch Fresh Data from Trendlyne (slow operation - webscraping)
+    // This downloads latest F&O data from Trendlyne and updates the dropdown
+    async function fetchAndUpdateTrendlyne() {
+        const thisMonthVol = document.getElementById('thisMonthVolume').value || 1000;
+        const nextMonthVol = document.getElementById('nextMonthVolume').value || 800;
+        const btn = document.getElementById('btnFetchTrendlyne');
+        const updateBtn = document.getElementById('btnRefreshContracts');
+        const selectElement = document.getElementById('contractSelect');
+
+        // Disable both buttons during fetch
+        btn.disabled = true;
+        updateBtn.disabled = true;
+        btn.textContent = '⏳ Fetching...';
+
+        // Show wait message in dropdown
+        selectElement.innerHTML = '<option value="">⏳ Downloading Trendlyne data... Please wait 2-3 minutes...</option>';
+
+        try {
+            const response = await fetch('{% url "trading:refresh_trendlyne" %}', {
+                method: 'POST',
+                headers: {
+                    'X-CSRFToken': csrftoken,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    data_type: 'fno'
+                })
+            });
+
+            const data = await response.json();
+
+            if (data.success) {
+                btn.textContent = '✅ Fetched';
+                selectElement.innerHTML = '<option value="">✅ Data downloaded! Updating list...</option>';
+
+                // Now refresh the contract list with current volume filters
+                setTimeout(async () => {
+                    await refreshContractList();
+                    btn.textContent = '📥 Fetch Trendlyne';
+                }, 1000);
+            } else {
+                selectElement.innerHTML = `<option value="">❌ Error: ${data.error}</option>`;
+                btn.textContent = '📥 Fetch Trendlyne';
+                alert('Error fetching Trendlyne data: ' + data.error);
+            }
+        } catch (error) {
+            selectElement.innerHTML = `<option value="">❌ Network error occurred</option>`;
+            btn.textContent = '📥 Fetch Trendlyne';
+            alert('Network error: ' + error.message);
+        } finally {
+            btn.disabled = false;
+            updateBtn.disabled = false;
+        }
+    }
+
+    // 1. Run Futures Algorithm
+    async function runFuturesAlgorithm(btn, confirmed = false) {
+        const thisMonthVol = document.getElementById('futuresThisMonthVolume').value || 1000;
+        const nextMonthVol = document.getElementById('futuresNextMonthVolume').value || 800;
+
+        btn.disabled = true;
+        document.getElementById('loadingFutures').classList.add('active');
+        document.getElementById('resultsPanel').classList.remove('active');
+
+        try {
+            const response = await fetch('{% url "trading:trigger_futures" %}', {
+                method: 'POST',
+                headers: {
+                    'X-CSRFToken': csrftoken,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    this_month_volume: parseInt(thisMonthVol),
+                    next_month_volume: parseInt(nextMonthVol),
+                    confirmed: confirmed
+                })
+            });
+
+            const data = await response.json();
+
+            if (data.success) {
+                displayFuturesTop3Result(data);
+            } else if (data.requires_confirmation) {
+                // Ask user for confirmation
+                const userConfirmed = confirm(
+                    `${data.message}\n\n` +
+                    `Contracts found: ${data.contract_count}\n` +
+                    `This will analyze ALL contracts and may take several minutes.\n\n` +
+                    `Click OK to proceed or Cancel to adjust filters.`
+                );
+
+                if (userConfirmed) {
+                    // Re-run with confirmation
+                    await runFuturesAlgorithm(btn, true);
+                    return;
+                } else {
+                    displayError('Analysis cancelled. Please adjust volume filters to reduce contract count.');
+                }
+            } else {
+                displayError(data.error);
+            }
+        } catch (error) {
+            displayError('Network error: ' + error.message);
+        } finally {
+            btn.disabled = false;
+            document.getElementById('loadingFutures').classList.remove('active');
+        }
+    }
+
+    function displayFuturesTop3Result(data) {
+        const allContracts = data.all_contracts;
+        const totalAnalyzed = data.total_analyzed;
+        const totalPassed = data.total_passed;
+        const totalFailed = data.total_failed;
+        const totalErrors = data.total_errors;
+        const volumeFilters = data.volume_filters;
+
+        document.getElementById('resultTitle').textContent = `Futures Analysis Results`;
+        document.getElementById('resultBadge').textContent = `${totalPassed} PASSED / ${totalFailed} FAILED`;
+        document.getElementById('resultBadge').className = 'result-badge ' + (totalPassed > 0 ? 'pass' : 'fail');
+
+        // Build HTML for all contracts
+        let contractsHTML = '';
+
+        allContracts.forEach((contract, index) => {
+            const rank = index + 1;
+            const isPassed = contract.verdict === 'PASS';
+            const isFailed = contract.verdict === 'FAIL';
+            const isError = contract.verdict === 'ERROR';
+
+            // Determine emoji and color scheme
+            let rankEmoji, bgGradient, buttonColor;
+            if (isPassed) {
+                if (rank === 1) {
+                    rankEmoji = '🥇';
+                    bgGradient = '#10B981 0%, #059669 100%';
+                    buttonColor = '#059669';
+                } else if (rank === 2) {
+                    rankEmoji = '🥈';
+                    bgGradient = '#3B82F6 0%, #2563EB 100%';
+                    buttonColor = '#2563EB';
+                } else if (rank === 3) {
+                    rankEmoji = '🥉';
+                    bgGradient = '#F59E0B 0%, #D97706 100%';
+                    buttonColor = '#D97706';
+                } else {
+                    rankEmoji = '✅';
+                    bgGradient = '#10B981 0%, #059669 100%';
+                    buttonColor = '#059669';
+                }
+            } else if (isError) {
+                rankEmoji = '❌';
+                bgGradient = '#EF4444 0%, #DC2626 100%';
+                buttonColor = '#DC2626';
+            } else {
+                rankEmoji = '⚠️';
+                bgGradient = '#6B7280 0%, #4B5563 100%';
+                buttonColor = '#4B5563';
+            }
+
+            // Build explanation
+            let explanationHTML = '';
+            if (contract.explanation && contract.explanation.length > 0) {
+                explanationHTML = contract.explanation.map(exp => `<p>• ${exp}</p>`).join('');
+            } else if (contract.error) {
+                explanationHTML = `<p style="color: rgba(255,255,255,0.95);">❌ ${contract.error}</p>`;
+            }
+
+            // Build score breakdown
+            const scores = contract.scores || {};
+            const scoreBreakdown = `
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(80px, 1fr)); gap: 0.5rem; margin-top: 0.75rem;">
+                    <div style="background: rgba(255,255,255,0.2); padding: 0.5rem; border-radius: var(--radius-sm); text-align: center;">
+                        <div style="font-size: 0.7rem; opacity: 0.9;">Basis</div>
+                        <div style="font-weight: 600;">${scores.basis || 0}/10</div>
+                    </div>
+                    <div style="background: rgba(255,255,255,0.2); padding: 0.5rem; border-radius: var(--radius-sm); text-align: center;">
+                        <div style="font-size: 0.7rem; opacity: 0.9;">OI</div>
+                        <div style="font-weight: 600;">${scores.oi || 0}/15</div>
+                    </div>
+                    <div style="background: rgba(255,255,255,0.2); padding: 0.5rem; border-radius: var(--radius-sm); text-align: center;">
+                        <div style="font-size: 0.7rem; opacity: 0.9;">DMA</div>
+                        <div style="font-weight: 600;">${scores.dma || 0}/15</div>
+                    </div>
+                    <div style="background: rgba(255,255,255,0.2); padding: 0.5rem; border-radius: var(--radius-sm); text-align: center;">
+                        <div style="font-size: 0.7rem; opacity: 0.9;">Sector</div>
+                        <div style="font-weight: 600;">${scores.sector || 0}/20</div>
+                    </div>
+                    <div style="background: rgba(255,255,255,0.2); padding: 0.5rem; border-radius: var(--radius-sm); text-align: center;">
+                        <div style="font-size: 0.7rem; opacity: 0.9;">Volume</div>
+                        <div style="font-weight: 600;">${scores.volume || 0}/10</div>
+                    </div>
+                    <div style="background: rgba(255,255,255,0.2); padding: 0.5rem; border-radius: var(--radius-sm); text-align: center;">
+                        <div style="font-size: 0.7rem; opacity: 0.9;">Tech</div>
+                        <div style="font-weight: 600;">${scores.technical || 0}/15</div>
+                    </div>
+                    <div style="background: rgba(255,255,255,0.2); padding: 0.5rem; border-radius: var(--radius-sm); text-align: center;">
+                        <div style="font-size: 0.7rem; opacity: 0.9;">S/R</div>
+                        <div style="font-weight: 600;">${scores.sr || 0}/5</div>
+                    </div>
+                </div>
+            `;
+
+            contractsHTML += `
+                <div style="background: linear-gradient(135deg, ${bgGradient}); border-radius: var(--radius-lg); padding: 1.5rem; margin-bottom: 1.5rem; color: white; ${!isPassed ? 'opacity: 0.85;' : ''}">
+                    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem;">
+                        <div style="display: flex; align-items: center; gap: 0.75rem;">
+                            <span style="font-size: 2rem;">${rankEmoji}</span>
+                            <div>
+                                <h3 style="margin: 0; font-size: 1.5rem; font-weight: 700;">${contract.symbol}</h3>
+                                <div style="font-size: 0.875rem; opacity: 0.9;">Expiry: ${contract.expiry}</div>
+                            </div>
+                        </div>
+                        <div style="text-align: right;">
+                            <div style="font-size: 2rem; font-weight: 700;">${contract.composite_score}</div>
+                            <div style="font-size: 0.75rem; opacity: 0.9;">Score</div>
+                            <div style="font-size: 0.875rem; font-weight: 600; margin-top: 0.25rem; padding: 0.25rem 0.5rem; background: rgba(255,255,255,0.2); border-radius: var(--radius-sm);">${contract.verdict}</div>
+                        </div>
+                    </div>
+
+                    <div style="background: rgba(255,255,255,0.15); padding: 1rem; border-radius: var(--radius-md); margin-bottom: 1rem; backdrop-filter: blur(10px);">
+                        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 0.75rem;">
+                            <div>
+                                <div style="font-size: 0.75rem; opacity: 0.9;">Direction</div>
+                                <div style="font-size: 1.1rem; font-weight: 600;">${contract.direction}</div>
+                            </div>
+                            <div>
+                                <div style="font-size: 0.75rem; opacity: 0.9;">Spot Price</div>
+                                <div style="font-size: 1.1rem; font-weight: 600;">₹${contract.spot_price.toFixed(2)}</div>
+                            </div>
+                            <div>
+                                <div style="font-size: 0.75rem; opacity: 0.9;">Futures Price</div>
+                                <div style="font-size: 1.1rem; font-weight: 600;">₹${contract.futures_price.toFixed(2)}</div>
+                            </div>
+                            <div>
+                                <div style="font-size: 0.75rem; opacity: 0.9;">Basis</div>
+                                <div style="font-size: 1.1rem; font-weight: 600;">₹${contract.basis.toFixed(2)} (${contract.basis_pct.toFixed(2)}%)</div>
+                            </div>
+                            <div>
+                                <div style="font-size: 0.75rem; opacity: 0.9;">Volume</div>
+                                <div style="font-size: 1.1rem; font-weight: 600;">${contract.volume.toLocaleString()}</div>
+                            </div>
+                            <div>
+                                <div style="font-size: 0.75rem; opacity: 0.9;">Lot Size</div>
+                                <div style="font-size: 1.1rem; font-weight: 600;">${contract.lot_size}</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div style="background: rgba(255,255,255,0.1); padding: 1rem; border-radius: var(--radius-md); margin-bottom: 1rem; backdrop-filter: blur(10px);">
+                        <h4 style="margin: 0 0 0.75rem 0; font-size: 1rem; opacity: 0.95;">Why This Contract? (Verify Future Trade Logic)</h4>
+                        <div style="font-size: 0.875rem; line-height: 1.6; opacity: 0.95;">
+                            ${explanationHTML || '<p>• Multi-factor analysis completed</p>'}
+                        </div>
+                    </div>
+
+                    <div style="background: rgba(255,255,255,0.1); padding: 1rem; border-radius: var(--radius-md); backdrop-filter: blur(10px);">
+                        <h4 style="margin: 0 0 0.5rem 0; font-size: 0.9rem; opacity: 0.9;">Score Breakdown</h4>
+                        ${scoreBreakdown}
+                    </div>
+
+                    <div style="margin-top: 1rem; display: flex; gap: 0.75rem; justify-content: center;">
+                        <button class="btn btn-success" onclick='openFullAnalysisInNewTab(${JSON.stringify(contract)})' style="background: rgba(255,255,255,0.95); color: ${buttonColor}; border: none; width: auto; padding: 0.75rem 1.5rem; font-weight: 600;">
+                            📊 View Full Details ↗
+                        </button>
+                        ${isPassed ? `
+                        <button class="btn btn-success" onclick="verifyAndTrade('${contract.symbol}', '${contract.expiry_date}')" style="background: rgba(255,255,255,0.95); color: ${buttonColor}; border: none; width: auto; padding: 0.75rem 1.5rem; font-weight: 600;">
+                            ✅ Run & Trade
+                        </button>
+                        ` : ''}
+                    </div>
+                </div>
+            `;
+        });
+
+        const html = `
+            <div class="result-section">
+                <h3>Analysis Summary</h3>
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1rem; margin-bottom: 1.5rem;">
+                    <div class="result-item">
+                        <div class="result-item-label">Contracts Analyzed</div>
+                        <div class="result-item-value">${totalAnalyzed}</div>
+                    </div>
+                    <div class="result-item" style="background: #D1FAE5;">
+                        <div class="result-item-label">✅ Passed</div>
+                        <div class="result-item-value" style="color: #065F46;">${totalPassed}</div>
+                    </div>
+                    <div class="result-item" style="background: #FEE2E2;">
+                        <div class="result-item-label">⚠️ Failed</div>
+                        <div class="result-item-value" style="color: #991B1B;">${totalFailed}</div>
+                    </div>
+                    <div class="result-item" style="background: #FEE2E2;">
+                        <div class="result-item-label">❌ Errors</div>
+                        <div class="result-item-value" style="color: #991B1B;">${totalErrors}</div>
+                    </div>
+                    <div class="result-item">
+                        <div class="result-item-label">This Month Filter</div>
+                        <div class="result-item-value">≥${volumeFilters.this_month}</div>
+                    </div>
+                    <div class="result-item">
+                        <div class="result-item-label">Next Month Filter</div>
+                        <div class="result-item-value">≥${volumeFilters.next_month}</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="result-section">
+                <h3>All Analyzed Contracts (Sorted by Score)</h3>
+                <p style="color: var(--gray); margin-bottom: 1rem;">
+                    Showing all ${totalAnalyzed} contracts analyzed. Click "View Full Analysis" on any contract to see complete step-by-step breakdown.
+                </p>
+                ${contractsHTML}
+            </div>
+
+            <div class="action-buttons">
+                <button class="btn btn-secondary" onclick="hideResults()">
+                    ← Back to Triggers
+                </button>
+            </div>
+        `;
+
+        document.getElementById('resultContent').innerHTML = html;
+        document.getElementById('resultsPanel').classList.add('active');
+        document.getElementById('resultsPanel').scrollIntoView({ behavior: 'smooth' });
+    }
+
+    function openFullAnalysisInNewTab(contract) {
+        // Create a new window/tab with the full analysis
+        const newWindow = window.open('', '_blank', 'width=1200,height=800,scrollbars=yes,resizable=yes');
+
+        if (!newWindow) {
+            alert('Pop-up blocked! Please allow pop-ups for this site to view detailed analysis.');
+            return;
+        }
+
+        // Build the complete HTML for the new tab
+        const executionLog = contract.execution_log || [];
+        const metrics = contract.metrics || {};
+        const scores = contract.scores || {};
+
+        // Build execution log HTML
+        let logHTML = '';
+        if (executionLog.length > 0) {
+            logHTML = executionLog.map((log, index) => {
+                let statusColor = '#2563EB';
+                let statusIcon = '●';
+                let statusBg = '#2563EB';
+
+                if (log.status === 'PASS' || log.status === 'success') {
+                    statusColor = '#10B981';
+                    statusIcon = '✓';
+                    statusBg = '#10B981';
+                } else if (log.status === 'FAIL' || log.status === 'fail') {
+                    statusColor = '#EF4444';
+                    statusIcon = '✗';
+                    statusBg = '#EF4444';
+                } else if (log.status === 'SKIP' || log.status === 'warning') {
+                    statusColor = '#F59E0B';
+                    statusIcon = '⚠';
+                    statusBg = '#F59E0B';
+                }
+
+                let detailsHTML = '';
+                if (log.details && Object.keys(log.details).length > 0) {
+                    detailsHTML = '<div style="font-size: 0.75rem; color: #6B7280; margin-top: 0.5rem; padding: 0.5rem; background: #F9FAFB; border-radius: 0.375rem; font-family: monospace; max-height: 150px; overflow-y: auto;">';
+                    for (const [key, value] of Object.entries(log.details)) {
+                        if (typeof value !== 'object') {
+                            detailsHTML += `<div><strong>${key}:</strong> ${value}</div>`;
+                        }
+                    }
+                    detailsHTML += '</div>';
+                }
+
+                return `
+                    <div style="display: flex; align-items: start; gap: 0.75rem; padding: 0.75rem 0; border-bottom: 1px solid #E5E7EB;">
+                        <span style="flex-shrink: 0; background: ${statusBg}; color: white; width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 0.75rem; font-weight: 600;">${log.step}</span>
+                        <div style="flex: 1;">
+                            <div style="font-weight: 600; color: #1F2937; margin-bottom: 0.25rem;">${log.action}</div>
+                            <div style="font-size: 0.875rem; color: #6B7280;">${log.message}</div>
+                            ${detailsHTML}
+                        </div>
+                        <span style="flex-shrink: 0; color: ${statusColor}; font-size: 1.25rem;">${statusIcon}</span>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        const html = `
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>Full Analysis: ${contract.symbol} - ${contract.expiry}</title>
+                <style>
+                    * { margin: 0; padding: 0; box-sizing: border-box; }
+                    body {
+                        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                        padding: 2rem;
+                        background: #F3F4F6;
+                        line-height: 1.6;
+                    }
+                    .container { max-width: 1200px; margin: 0 auto; }
+                    .header {
+                        background: linear-gradient(135deg, ${contract.verdict === 'PASS' ? '#10B981 0%, #059669 100%' : contract.verdict === 'ERROR' ? '#EF4444 0%, #DC2626 100%' : '#6B7280 0%, #4B5563 100%'});
+                        color: white;
+                        padding: 2rem;
+                        border-radius: 0.75rem;
+                        margin-bottom: 2rem;
+                    }
+                    .header h1 { font-size: 2rem; margin-bottom: 0.5rem; }
+                    .header .verdict {
+                        display: inline-block;
+                        padding: 0.5rem 1rem;
+                        background: rgba(255,255,255,0.2);
+                        border-radius: 0.5rem;
+                        font-weight: 600;
+                        margin-top: 0.5rem;
+                    }
+                    .section {
+                        background: white;
+                        padding: 1.5rem;
+                        border-radius: 0.75rem;
+                        margin-bottom: 1.5rem;
+                        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+                    }
+                    .section h2 {
+                        font-size: 1.25rem;
+                        color: #1F2937;
+                        margin-bottom: 1rem;
+                        padding-bottom: 0.5rem;
+                        border-bottom: 2px solid #E5E7EB;
+                    }
+                    .grid {
+                        display: grid;
+                        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+                        gap: 1rem;
+                    }
+                    .grid-item {
+                        padding: 1rem;
+                        background: #F9FAFB;
+                        border-radius: 0.5rem;
+                    }
+                    .grid-item-label {
+                        font-size: 0.75rem;
+                        color: #6B7280;
+                        text-transform: uppercase;
+                        letter-spacing: 0.5px;
+                        margin-bottom: 0.25rem;
+                    }
+                    .grid-item-value {
+                        font-size: 1.125rem;
+                        font-weight: 600;
+                        color: #1F2937;
+                    }
+                    .print-btn {
+                        background: #2563EB;
+                        color: white;
+                        padding: 0.75rem 1.5rem;
+                        border: none;
+                        border-radius: 0.5rem;
+                        font-weight: 600;
+                        cursor: pointer;
+                        margin-top: 1rem;
+                    }
+                    .print-btn:hover { background: #1D4ED8; }
+                    @media print {
+                        body { background: white; padding: 0; }
+                        .print-btn { display: none; }
+                    }
+                </style>
+            </head>
+            <body>
+                <div class="container">
+                    <div class="header">
+                        <h1>${contract.symbol} - ${contract.expiry}</h1>
+                        <div>Composite Score: ${contract.composite_score}/100 | Direction: ${contract.direction}</div>
+                        <span class="verdict">${contract.verdict}</span>
+                    </div>
+
+                    <div class="section">
+                        <h2>Contract Overview</h2>
+                        <div class="grid">
+                            <div class="grid-item">
+                                <div class="grid-item-label">Symbol</div>
+                                <div class="grid-item-value">${contract.symbol}</div>
+                            </div>
+                            <div class="grid-item">
+                                <div class="grid-item-label">Expiry</div>
+                                <div class="grid-item-value">${contract.expiry}</div>
+                            </div>
+                            <div class="grid-item">
+                                <div class="grid-item-label">Composite Score</div>
+                                <div class="grid-item-value">${contract.composite_score}/100</div>
+                            </div>
+                            <div class="grid-item">
+                                <div class="grid-item-label">Direction</div>
+                                <div class="grid-item-value">${contract.direction}</div>
+                            </div>
+                            <div class="grid-item">
+                                <div class="grid-item-label">Spot Price</div>
+                                <div class="grid-item-value">₹${contract.spot_price.toFixed(2)}</div>
+                            </div>
+                            <div class="grid-item">
+                                <div class="grid-item-label">Futures Price</div>
+                                <div class="grid-item-value">₹${contract.futures_price.toFixed(2)}</div>
+                            </div>
+                            <div class="grid-item">
+                                <div class="grid-item-label">Basis</div>
+                                <div class="grid-item-value">₹${contract.basis.toFixed(2)} (${contract.basis_pct.toFixed(2)}%)</div>
+                            </div>
+                            <div class="grid-item">
+                                <div class="grid-item-label">Volume</div>
+                                <div class="grid-item-value">${contract.volume.toLocaleString()}</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    ${logHTML ? `
+                    <div class="section">
+                        <h2>📋 Step-by-Step Analysis</h2>
+                        <div style="background: #F9FAFB; border-radius: 0.5rem; padding: 1rem;">
+                            ${logHTML}
+                        </div>
+                    </div>
+                    ` : ''}
+
+                    <div class="section">
+                        <h2>Score Breakdown</h2>
+                        <div class="grid">
+                            <div class="grid-item">
+                                <div class="grid-item-label">Basis</div>
+                                <div class="grid-item-value">${scores.basis || 0}/10</div>
+                            </div>
+                            <div class="grid-item">
+                                <div class="grid-item-label">Open Interest</div>
+                                <div class="grid-item-value">${scores.oi || 0}/15</div>
+                            </div>
+                            <div class="grid-item">
+                                <div class="grid-item-label">DMA</div>
+                                <div class="grid-item-value">${scores.dma || 0}/15</div>
+                            </div>
+                            <div class="grid-item">
+                                <div class="grid-item-label">Sector</div>
+                                <div class="grid-item-value">${scores.sector || 0}/20</div>
+                            </div>
+                            <div class="grid-item">
+                                <div class="grid-item-label">Volume</div>
+                                <div class="grid-item-value">${scores.volume || 0}/10</div>
+                            </div>
+                            <div class="grid-item">
+                                <div class="grid-item-label">Technical</div>
+                                <div class="grid-item-value">${scores.technical || 0}/15</div>
+                            </div>
+                            <div class="grid-item">
+                                <div class="grid-item-label">Support/Resistance</div>
+                                <div class="grid-item-value">${scores.sr || 0}/5</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <button class="print-btn" onclick="window.print()">🖨️ Print Analysis</button>
+                </div>
+            </body>
+            </html>
+        `;
+
+        newWindow.document.write(html);
+        newWindow.document.close();
+    }
+
+    function showFullAnalysis(contract) {
+        // Display detailed execution log for this contract
+        const executionLog = contract.execution_log || [];
+        const metrics = contract.metrics || {};
+        const scores = contract.scores || {};
+
+        document.getElementById('resultTitle').textContent = `Full Analysis: ${contract.symbol}`;
+        document.getElementById('resultBadge').textContent = contract.verdict;
+        document.getElementById('resultBadge').className = 'result-badge ' + (contract.verdict === 'PASS' ? 'pass' : 'fail');
+
+        // Build execution log HTML
+        let logHTML = '';
+        if (executionLog.length > 0) {
+            logHTML = `
+                <div class="result-section">
+                    <h3>📋 Step-by-Step Analysis</h3>
+                    <div style="background: var(--lighter); border-radius: var(--radius-md); padding: 1rem;">
+                        ${executionLog.map((log, index) => {
+                            let statusColor = 'var(--primary)';
+                            let statusIcon = '●';
+                            let statusBg = 'var(--primary)';
+
+                            if (log.status === 'PASS' || log.status === 'success') {
+                                statusColor = 'var(--success)';
+                                statusIcon = '✓';
+                                statusBg = 'var(--success)';
+                            } else if (log.status === 'FAIL' || log.status === 'fail') {
+                                statusColor = 'var(--danger)';
+                                statusIcon = '✗';
+                                statusBg = 'var(--danger)';
+                            } else if (log.status === 'SKIP' || log.status === 'warning') {
+                                statusColor = 'var(--warning)';
+                                statusIcon = '⚠';
+                                statusBg = 'var(--warning)';
+                            }
+
+                            return `
+                                <div style="display: flex; align-items: start; gap: 0.75rem; padding: 0.75rem 0; border-bottom: 1px solid var(--gray-light);">
+                                    <span style="flex-shrink: 0; background: ${statusBg}; color: white; width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 0.75rem; font-weight: 600;">${log.step}</span>
+                                    <div style="flex: 1;">
+                                        <div style="font-weight: 600; color: var(--dark); margin-bottom: 0.25rem;">${log.action}</div>
+                                        <div style="font-size: 0.875rem; color: var(--gray);">${log.message}</div>
+                                        ${log.details && Object.keys(log.details).length > 0 ? `
+                                            <div style="font-size: 0.75rem; color: var(--gray); margin-top: 0.5rem; padding: 0.5rem; background: white; border-radius: var(--radius-sm); font-family: monospace; max-height: 150px; overflow-y: auto;">
+                                                ${Object.entries(log.details).map(([key, value]) => {
+                                                    if (typeof value === 'object') return '';
+                                                    return `<div><strong>${key}:</strong> ${value}</div>`;
+                                                }).join('')}
+                                            </div>
+                                        ` : ''}
+                                    </div>
+                                    <span style="flex-shrink: 0; color: ${statusColor}; font-size: 1.25rem;">
+                                        ${statusIcon}
+                                    </span>
+                                </div>
+                            `;
+                        }).join('')}
+                    </div>
+                </div>
+            `;
+        }
+
+        const html = `
+            <div class="result-section">
+                <h3>Contract Overview</h3>
+                <div class="result-grid">
+                    <div class="result-item">
+                        <div class="result-item-label">Symbol</div>
+                        <div class="result-item-value">${contract.symbol}</div>
+                    </div>
+                    <div class="result-item">
+                        <div class="result-item-label">Expiry</div>
+                        <div class="result-item-value">${contract.expiry}</div>
+                    </div>
+                    <div class="result-item">
+                        <div class="result-item-label">Composite Score</div>
+                        <div class="result-item-value">${contract.composite_score}/100</div>
+                    </div>
+                    <div class="result-item">
+                        <div class="result-item-label">Direction</div>
+                        <div class="result-item-value">${contract.direction}</div>
+                    </div>
+                    <div class="result-item">
+                        <div class="result-item-label">Spot Price</div>
+                        <div class="result-item-value">₹${contract.spot_price.toFixed(2)}</div>
+                    </div>
+                    <div class="result-item">
+                        <div class="result-item-label">Futures Price</div>
+                        <div class="result-item-value">₹${contract.futures_price.toFixed(2)}</div>
+                    </div>
+                    <div class="result-item">
+                        <div class="result-item-label">Basis</div>
+                        <div class="result-item-value">₹${contract.basis.toFixed(2)} (${contract.basis_pct.toFixed(2)}%)</div>
+                    </div>
+                    <div class="result-item">
+                        <div class="result-item-label">Volume</div>
+                        <div class="result-item-value">${contract.volume.toLocaleString()}</div>
+                    </div>
+                </div>
+            </div>
+
+            ${logHTML}
+
+            <div class="result-section">
+                <h3>Score Breakdown</h3>
+                <div class="result-grid">
+                    <div class="result-item">
+                        <div class="result-item-label">Basis</div>
+                        <div class="result-item-value">${scores.basis || 0}/10</div>
+                    </div>
+                    <div class="result-item">
+                        <div class="result-item-label">Open Interest</div>
+                        <div class="result-item-value">${scores.oi || 0}/15</div>
+                    </div>
+                    <div class="result-item">
+                        <div class="result-item-label">DMA</div>
+                        <div class="result-item-value">${scores.dma || 0}/15</div>
+                    </div>
+                    <div class="result-item">
+                        <div class="result-item-label">Sector</div>
+                        <div class="result-item-value">${scores.sector || 0}/20</div>
+                    </div>
+                    <div class="result-item">
+                        <div class="result-item-label">Volume</div>
+                        <div class="result-item-value">${scores.volume || 0}/10</div>
+                    </div>
+                    <div class="result-item">
+                        <div class="result-item-label">Technical</div>
+                        <div class="result-item-value">${scores.technical || 0}/15</div>
+                    </div>
+                    <div class="result-item">
+                        <div class="result-item-label">Support/Resistance</div>
+                        <div class="result-item-value">${scores.sr || 0}/5</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="action-buttons">
+                ${contract.verdict === 'PASS' ? `
+                    <button class="btn btn-success" onclick="verifyAndTrade('${contract.symbol}', '${contract.expiry_date}')">
+                        ✅ Run & Trade
+                    </button>
+                ` : ''}
+                <button class="btn btn-secondary" onclick="hideResults()">
+                    ← Back to Results
+                </button>
+            </div>
+        `;
+
+        document.getElementById('resultContent').innerHTML = html;
+        document.getElementById('resultsPanel').classList.add('active');
+        document.getElementById('resultsPanel').scrollIntoView({ behavior: 'smooth' });
+    }
+
+    async function verifyAndTrade(symbol, expiryDate) {
+        // Hide results panel first
+        hideResults();
+
+        // Populate the Verify Future Trade dropdown with this contract
+        const contractValue = symbol + '|' + expiryDate;
+        const contractSelect = document.getElementById('contractSelect');
+
+        // Find and select the option
+        let optionFound = false;
+        for (let i = 0; i < contractSelect.options.length; i++) {
+            if (contractSelect.options[i].value === contractValue) {
+                contractSelect.selectedIndex = i;
+                optionFound = true;
+                break;
+            }
+        }
+
+        if (!optionFound) {
+            alert(`Contract ${symbol} (${expiryDate}) not found in dropdown. It may need to be refreshed.`);
+            return;
+        }
+
+        // Scroll to Verify Future Trade card
+        const verifyCard = document.querySelector('.trigger-card:nth-child(3)');
+        if (verifyCard) {
+            verifyCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+            // Highlight the card briefly
+            verifyCard.style.boxShadow = '0 0 20px rgba(37, 99, 235, 0.5)';
+            verifyCard.style.transition = 'box-shadow 0.3s ease';
+            setTimeout(() => {
+                verifyCard.style.boxShadow = '';
+            }, 2000);
+        }
+
+        // Wait a moment, then automatically trigger verification
+        setTimeout(() => {
+            const verifyBtn = document.getElementById('btnVerify');
+            if (verifyBtn) {
+                // Flash the button to draw attention
+                verifyBtn.style.background = 'var(--success)';
+                setTimeout(() => {
+                    verifyBtn.style.background = '';
+                    // Trigger the verification
+                    verifyFutureTrade(verifyBtn);
+                }, 500);
+            }
+        }, 1000);
+    }
+
+    function displayFuturesResult(data) {
+        const candidate = data.candidate;
+        const llm = data.llm_validation;
+
+        document.getElementById('resultTitle').textContent = `Futures Opportunity: ${candidate.symbol}`;
+        document.getElementById('resultBadge').textContent = candidate.direction.toUpperCase();
+        document.getElementById('resultBadge').className = 'result-badge ' + (candidate.direction === 'BULLISH' ? 'pass' : 'fail');
+
+        const html = `
+            <div class="result-section">
+                <h3>Trade Details</h3>
+                <div class="result-grid">
+                    <div class="result-item">
+                        <div class="result-item-label">Symbol</div>
+                        <div class="result-item-value">${candidate.symbol}</div>
+                    </div>
+                    <div class="result-item">
+                        <div class="result-item-label">Expiry Date</div>
+                        <div class="result-item-value">${candidate.expiry || 'N/A'}</div>
+                    </div>
+                    <div class="result-item">
+                        <div class="result-item-label">Direction</div>
+                        <div class="result-item-value">${candidate.direction}</div>
+                    </div>
+                    <div class="result-item">
+                        <div class="result-item-label">Entry Price</div>
+                        <div class="result-item-value">₹${candidate.entry_price.toFixed(2)}</div>
+                    </div>
+                    <div class="result-item">
+                        <div class="result-item-label">Stop Loss</div>
+                        <div class="result-item-value">₹${candidate.stop_loss.toFixed(2)}</div>
+                    </div>
+                    <div class="result-item">
+                        <div class="result-item-label">Target</div>
+                        <div class="result-item-value">₹${candidate.target.toFixed(2)}</div>
+                    </div>
+                    <div class="result-item">
+                        <div class="result-item-label">Composite Score</div>
+                        <div class="result-item-value">${candidate.composite_score}/100</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="result-section">
+                <h3>Algorithm Explanation</h3>
+                <div class="explanation-box">
+                    <h4>Why This Trade?</h4>
+                    <p><strong>OI Analysis:</strong> ${candidate.oi_analysis?.buildup_type || 'Strong buildup detected'}</p>
+                    <p><strong>Sector Strength:</strong> ${candidate.sector_analysis?.verdict || 'Sector aligned across timeframes'}</p>
+                    <p><strong>Technical Setup:</strong> ${candidate.technical_analysis?.summary || 'Price at key support/resistance'}</p>
+                    <p><strong>LLM Confidence:</strong> ${llm.confidence}% - ${llm.reasoning || 'Trade validated by AI'}</p>
+                </div>
+            </div>
+
+            <div class="action-buttons">
+                <button class="btn btn-success" onclick="takeTrade('${candidate.symbol}', 'FUTURES')">
+                    ✅ Take This Trade
+                </button>
+                <button class="btn btn-secondary" onclick="hideResults()">
+                    ❌ Reject
+                </button>
+            </div>
+        `;
+
+        document.getElementById('resultContent').innerHTML = html;
+        document.getElementById('resultsPanel').classList.add('active');
+        document.getElementById('resultsPanel').scrollIntoView({ behavior: 'smooth' });
+    }
+
+    // 2. Run Nifty Strangle
+    async function runNiftyStrangle(btn) {
+        btn.disabled = true;
+        document.getElementById('loadingStrangle').classList.add('active');
+        document.getElementById('resultsPanel').classList.remove('active');
+
+        try {
+            const response = await fetch('{% url "trading:trigger_strangle" %}', {
+                method: 'POST',
+                headers: {
+                    'X-CSRFToken': csrftoken,
+                    'Content-Type': 'application/json'
+                }
+            });
+
+            const data = await response.json();
+
+            if (data.success) {
+                displayStrangleResult(data);
+            } else {
+                // Check if it's a NO TRADE DAY with validation report
+                if (data.is_no_trade_day && data.validation_report) {
+                    displayNoTradeDay(data);
+                } else {
+                    displayError(data.error);
+                }
+            }
+        } catch (error) {
+            displayError('Network error: ' + error.message);
+        } finally {
+            btn.disabled = false;
+            document.getElementById('loadingStrangle').classList.remove('active');
+        }
+    }
+
+    function displayStrangleResult(data) {
+        const strangle = data.strangle;
+        const reasoning = strangle.reasoning;
+        const executionLog = strangle.execution_log || [];
+
+        document.getElementById('resultTitle').textContent = 'Nifty Strangle Position';
+        document.getElementById('resultBadge').textContent = 'SELL STRANGLE';
+        document.getElementById('resultBadge').className = 'result-badge pass';
+
+        // Build execution log HTML
+        let logHTML = '';
+        if (executionLog.length > 0) {
+            logHTML = `
+                <div class="result-section">
+                    <h3>📋 Execution Log</h3>
+                    <div style="background: var(--lighter); border-radius: var(--radius-md); padding: 1rem;">
+                        ${executionLog.map((log, index) => `
+                            <div style="display: flex; align-items: start; gap: 0.75rem; padding: 0.5rem 0; border-bottom: 1px solid var(--gray-light);">
+                                <span style="flex-shrink: 0; background: var(--primary); color: white; width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 0.75rem; font-weight: 600;">${log.step}</span>
+                                <div style="flex: 1;">
+                                    <div style="font-weight: 600; color: var(--dark); margin-bottom: 0.25rem;">${log.action}</div>
+                                    <div style="font-size: 0.875rem; color: var(--gray);">${log.message}</div>
+                                    ${log.details ? `<div style="font-size: 0.75rem; color: var(--gray); margin-top: 0.25rem; font-family: monospace;">${JSON.stringify(log.details, null, 2).substring(0, 200)}${JSON.stringify(log.details).length > 200 ? '...' : ''}</div>` : ''}
+                                </div>
+                                <span style="flex-shrink: 0; color: var(--success); font-size: 1.25rem;">✓</span>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            `;
+        }
+
+        // Build market validation report section
+        let validationHTML = '';
+        if (strangle.validation_report && strangle.validation_report.validation_results) {
+            const validation = strangle.validation_report;
+            const results = validation.validation_results || [];
+
+            // Determine overall color based on verdict
+            let verdictColor = '#10B981'; // Green (success)
+            let verdictBg = '#D1FAE5';
+            if (validation.overall_verdict.includes('NO TRADE')) {
+                verdictColor = '#EF4444'; // Red (fail)
+                verdictBg = '#FEE2E2';
+            } else if (validation.overall_verdict.includes('CAUTION')) {
+                verdictColor = '#F59E0B'; // Orange (warning)
+                verdictBg = '#FEF3C7';
+            }
+
+            validationHTML = `
+                <div class="result-section" style="background: linear-gradient(135deg, #10B981 0%, #059669 100%); color: white; padding: 1.5rem; border-radius: var(--radius-lg); margin-bottom: 1.5rem;">
+                    <h3 style="color: white; margin-bottom: 1rem;">🛡️ Market Condition Validation</h3>
+
+                    <div style="background: rgba(255,255,255,0.15); padding: 1.5rem; border-radius: var(--radius-md); margin-bottom: 1.5rem; backdrop-filter: blur(10px);">
+                        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem;">
+                            <div>
+                                <div style="font-size: 0.875rem; opacity: 0.9; margin-bottom: 0.5rem;">Overall Verdict</div>
+                                <div style="font-size: 1.5rem; font-weight: 700;">${validation.overall_verdict}</div>
+                            </div>
+                            <div style="text-align: right;">
+                                <div style="font-size: 0.875rem; opacity: 0.9; margin-bottom: 0.5rem;">Status</div>
+                                <div style="display: inline-block; background: ${verdictBg}; color: ${verdictColor}; padding: 0.5rem 1rem; border-radius: var(--radius-md); font-weight: 600; font-size: 0.875rem;">
+                                    ${validation.trade_allowed ? '✓ ALLOWED' : '✗ BLOCKED'}
+                                </div>
+                            </div>
+                        </div>
+                        <div style="font-size: 0.875rem; opacity: 0.95; line-height: 1.6;">
+                            ${validation.verdict_reason}
+                        </div>
+                    </div>
+
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); gap: 1rem; margin-bottom: 1.5rem;">
+                        <div style="background: rgba(255,255,255,0.15); padding: 1rem; border-radius: var(--radius-md); backdrop-filter: blur(10px); text-align: center;">
+                            <div style="font-size: 2rem; font-weight: 700; color: #D1FAE5;">${validation.status_summary.PASS || 0}</div>
+                            <div style="font-size: 0.75rem; opacity: 0.9;">PASSED</div>
+                        </div>
+                        <div style="background: rgba(255,255,255,0.15); padding: 1rem; border-radius: var(--radius-md); backdrop-filter: blur(10px); text-align: center;">
+                            <div style="font-size: 2rem; font-weight: 700; color: #FEF3C7;">${validation.status_summary.WARNING || 0}</div>
+                            <div style="font-size: 0.75rem; opacity: 0.9;">WARNINGS</div>
+                        </div>
+                        <div style="background: rgba(255,255,255,0.15); padding: 1rem; border-radius: var(--radius-md); backdrop-filter: blur(10px); text-align: center;">
+                            <div style="font-size: 2rem; font-weight: 700; color: #FEE2E2;">${validation.status_summary.FAIL || 0}</div>
+                            <div style="font-size: 0.75rem; opacity: 0.9;">FAILED</div>
+                        </div>
+                        <div style="background: rgba(255,255,255,0.15); padding: 1rem; border-radius: var(--radius-md); backdrop-filter: blur(10px); text-align: center;">
+                            <div style="font-size: 2rem; font-weight: 700; color: #E5E7EB;">${validation.status_summary.SKIP || 0}</div>
+                            <div style="font-size: 0.75rem; opacity: 0.9;">SKIPPED</div>
+                        </div>
+                    </div>
+
+                    <div style="background: rgba(255,255,255,0.1); padding: 1rem; border-radius: var(--radius-md); backdrop-filter: blur(10px);">
+                        <h4 style="color: white; font-size: 0.9rem; margin-bottom: 0.75rem; opacity: 0.9;">Detailed Validation Checks</h4>
+                        <div style="max-height: 400px; overflow-y: auto;">
+                            ${results.map((result, idx) => {
+                                let statusIcon = '✓';
+                                let statusColor = '#D1FAE5';
+                                if (result.status === 'FAIL') {
+                                    statusIcon = '✗';
+                                    statusColor = '#FEE2E2';
+                                } else if (result.status === 'WARNING') {
+                                    statusIcon = '⚠';
+                                    statusColor = '#FEF3C7';
+                                } else if (result.status === 'SKIP') {
+                                    statusIcon = '○';
+                                    statusColor = '#E5E7EB';
+                                }
+
+                                return `
+                                    <div style="padding: 0.75rem; margin-bottom: 0.5rem; background: rgba(255,255,255,0.05); border-radius: var(--radius-sm); border-left: 3px solid ${statusColor};">
+                                        <div style="display: flex; align-items: start; gap: 0.75rem;">
+                                            <span style="font-size: 1.25rem; color: ${statusColor};">${statusIcon}</span>
+                                            <div style="flex: 1;">
+                                                <div style="font-weight: 600; margin-bottom: 0.25rem; font-size: 0.875rem;">${result.check}</div>
+                                                <div style="font-size: 0.8rem; opacity: 0.9; margin-bottom: 0.5rem;">${result.message}</div>
+                                                ${Object.keys(result.details).length > 0 ? `
+                                                    <div style="font-size: 0.7rem; opacity: 0.8; font-family: monospace; background: rgba(0,0,0,0.2); padding: 0.5rem; border-radius: var(--radius-sm); max-height: 100px; overflow-y: auto;">
+                                                        ${Object.entries(result.details).map(([key, value]) => {
+                                                            if (typeof value === 'object') return '';
+                                                            return `<div><strong>${key}:</strong> ${typeof value === 'number' ? value.toFixed(2) : value}</div>`;
+                                                        }).join('')}
+                                                    </div>
+                                                ` : ''}
+                                            </div>
+                                            <span style="font-weight: 600; font-size: 0.75rem; color: ${statusColor};">${result.status}</span>
+                                        </div>
+                                    </div>
+                                `;
+                            }).join('')}
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        // Build delta details section
+        let deltaHTML = '';
+        if (strangle.delta_details) {
+            const delta = strangle.delta_details;
+            const breakdown = delta.delta_breakdown || {};
+            const calcLog = delta.calculation_log || [];
+
+            deltaHTML = `
+                <div class="result-section" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 1.5rem; border-radius: var(--radius-lg); margin-bottom: 1.5rem;">
+                    <h3 style="color: white; margin-bottom: 1rem;">🎯 Smart Delta Calculation</h3>
+
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin-bottom: 1.5rem;">
+                        <div style="background: rgba(255,255,255,0.15); padding: 1rem; border-radius: var(--radius-md); backdrop-filter: blur(10px);">
+                            <div style="font-size: 0.875rem; opacity: 0.9; margin-bottom: 0.5rem;">Base Delta</div>
+                            <div style="font-size: 1.75rem; font-weight: 700;">${delta.base_delta.toFixed(2)}%</div>
+                            <div style="font-size: 0.75rem; opacity: 0.8; margin-top: 0.25rem;">${strangle.days_to_expiry} days expiry</div>
+                        </div>
+                        <div style="background: rgba(255,255,255,0.15); padding: 1rem; border-radius: var(--radius-md); backdrop-filter: blur(10px);">
+                            <div style="font-size: 0.875rem; opacity: 0.9; margin-bottom: 0.5rem;">Adjusted Delta</div>
+                            <div style="font-size: 1.75rem; font-weight: 700;">${delta.adjusted_delta.toFixed(3)}%</div>
+                            <div style="font-size: 0.75rem; opacity: 0.8; margin-top: 0.25rem;">After ${Object.keys(breakdown).length} adjustments</div>
+                        </div>
+                        <div style="background: rgba(255,255,255,0.15); padding: 1rem; border-radius: var(--radius-md); backdrop-filter: blur(10px);">
+                            <div style="font-size: 0.875rem; opacity: 0.9; margin-bottom: 0.5rem;">Strike Distance</div>
+                            <div style="font-size: 1.75rem; font-weight: 700;">${delta.strike_distance.toFixed(0)}</div>
+                            <div style="font-size: 0.75rem; opacity: 0.8; margin-top: 0.25rem;">points from spot</div>
+                        </div>
+                    </div>
+
+                    <div style="background: rgba(255,255,255,0.1); padding: 1rem; border-radius: var(--radius-md); margin-bottom: 1rem; backdrop-filter: blur(10px);">
+                        <h4 style="color: white; font-size: 0.9rem; margin-bottom: 0.75rem; opacity: 0.9;">Delta Adjustment Factors</h4>
+                        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0.75rem;">
+                            ${Object.entries(breakdown).map(([key, value]) => `
+                                <div style="background: rgba(255,255,255,0.1); padding: 0.5rem; border-radius: var(--radius-sm);">
+                                    <div style="font-size: 0.75rem; opacity: 0.8;">${key.replace('_multiplier', '').replace(/_/g, ' ').toUpperCase()}</div>
+                                    <div style="font-size: 1.1rem; font-weight: 600;">${value.toFixed(2)}x</div>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+
+                    ${calcLog.length > 0 ? `
+                        <div style="background: rgba(255,255,255,0.1); padding: 1rem; border-radius: var(--radius-md); backdrop-filter: blur(10px);">
+                            <h4 style="color: white; font-size: 0.9rem; margin-bottom: 0.75rem; opacity: 0.9;">Calculation Steps</h4>
+                            <div style="max-height: 250px; overflow-y: auto; font-size: 0.85rem;">
+                                ${calcLog.map((step, idx) => `
+                                    <div style="padding: 0.5rem 0; border-bottom: 1px solid rgba(255,255,255,0.1);">
+                                        <div style="font-weight: 600; margin-bottom: 0.25rem;">${step.factor}</div>
+                                        <div style="opacity: 0.9;">${step.reason}</div>
+                                        ${step.value !== undefined && step.value !== null ? `<div style="opacity: 0.8; font-size: 0.75rem; margin-top: 0.25rem;">Value: ${typeof step.value === 'number' ? step.value.toFixed(2) : step.value} | Multiplier: ${step.multiplier}x</div>` : ''}
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </div>
+                    ` : ''}
+                </div>
+            `;
+        }
+
+        const html = `
+            ${logHTML}
+            ${validationHTML}
+            ${deltaHTML}
+
+            <div class="result-section">
+                <h3>Position Details</h3>
+                <div class="result-grid">
+                    <div class="result-item">
+                        <div class="result-item-label">Underlying</div>
+                        <div class="result-item-value">${strangle.underlying}</div>
+                    </div>
+                    <div class="result-item">
+                        <div class="result-item-label">Current Price</div>
+                        <div class="result-item-value">₹${strangle.current_price.toFixed(2)}</div>
+                    </div>
+                    <div class="result-item">
+                        <div class="result-item-label">India VIX</div>
+                        <div class="result-item-value">${strangle.vix}</div>
+                    </div>
+                    <div class="result-item">
+                        <div class="result-item-label">Expiry Date</div>
+                        <div class="result-item-value">${strangle.expiry_date}</div>
+                    </div>
+                    <div class="result-item">
+                        <div class="result-item-label">Days to Expiry</div>
+                        <div class="result-item-value">${strangle.days_to_expiry} days</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="result-section">
+                <h3>Strikes & Premiums</h3>
+                <div class="result-grid">
+                    <div class="result-item">
+                        <div class="result-item-label">Call Strike</div>
+                        <div class="result-item-value">${strangle.call_strike} CE</div>
+                    </div>
+                    <div class="result-item">
+                        <div class="result-item-label">Call Premium</div>
+                        <div class="result-item-value">₹${strangle.call_premium.toFixed(2)}</div>
+                    </div>
+                    <div class="result-item">
+                        <div class="result-item-label">Put Strike</div>
+                        <div class="result-item-value">${strangle.put_strike} PE</div>
+                    </div>
+                    <div class="result-item">
+                        <div class="result-item-label">Put Premium</div>
+                        <div class="result-item-value">₹${strangle.put_premium.toFixed(2)}</div>
+                    </div>
+                    <div class="result-item">
+                        <div class="result-item-label">Total Premium</div>
+                        <div class="result-item-value">₹${strangle.total_premium.toFixed(2)}</div>
+                    </div>
+                    <div class="result-item">
+                        <div class="result-item-label">Margin Required</div>
+                        <div class="result-item-value">₹${strangle.margin_required.toFixed(0)}</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="result-section">
+                <h3>Strategy Explanation</h3>
+                <div class="explanation-box">
+                    <h4>Why This Strangle?</h4>
+                    <p><strong>Strike Selection:</strong> ${reasoning.strike_selection}</p>
+                    <p><strong>Risk Profile:</strong> ${reasoning.risk_profile}</p>
+                    <p><strong>Entry Logic:</strong> ${reasoning.entry_logic}</p>
+                    <p><strong>Exit Strategy:</strong> ${reasoning.exit_strategy}</p>
+                </div>
+            </div>
+
+            <div class="action-buttons">
+                <button class="btn btn-success" onclick="takeTrade('NIFTY', 'STRANGLE')">
+                    ✅ Take This Trade
+                </button>
+                <button class="btn btn-secondary" onclick="hideResults()">
+                    ❌ Reject
+                </button>
+            </div>
+        `;
+
+        document.getElementById('resultContent').innerHTML = html;
+        document.getElementById('resultsPanel').classList.add('active');
+        document.getElementById('resultsPanel').scrollIntoView({ behavior: 'smooth' });
+    }
+
+    // Display NO TRADE DAY with validation report
+    function displayNoTradeDay(data) {
+        const validation = data.validation_report;
+        const executionLog = data.execution_log || [];
+
+        document.getElementById('resultTitle').textContent = '⛔ NO TRADE DAY';
+        document.getElementById('resultBadge').textContent = 'BLOCKED';
+        document.getElementById('resultBadge').className = 'result-badge fail';
+
+        // Build execution log
+        let logHTML = '';
+        if (executionLog.length > 0) {
+            logHTML = `
+                <div class="result-section">
+                    <h3>📋 Execution Log</h3>
+                    <div style="background: var(--lighter); border-radius: var(--radius-md); padding: 1rem;">
+                        ${executionLog.map((log, index) => {
+                            const statusIcon = log.status === 'success' ? '✓' : (log.status === 'fail' ? '✗' : '⚠');
+                            const statusColor = log.status === 'success' ? 'var(--success)' : (log.status === 'fail' ? 'var(--error)' : 'var(--warning)');
+                            return `
+                                <div style="display: flex; align-items: start; gap: 0.75rem; padding: 0.5rem 0; border-bottom: 1px solid var(--gray-light);">
+                                    <span style="flex-shrink: 0; background: var(--primary); color: white; width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 0.75rem; font-weight: 600;">${log.step}</span>
+                                    <div style="flex: 1;">
+                                        <div style="font-weight: 600; color: var(--dark); margin-bottom: 0.25rem;">${log.action}</div>
+                                        <div style="font-size: 0.875rem; color: var(--gray);">${log.message}</div>
+                                    </div>
+                                    <span style="flex-shrink: 0; color: ${statusColor}; font-size: 1.25rem;">${statusIcon}</span>
+                                </div>
+                            `;
+                        }).join('')}
+                    </div>
+                </div>
+            `;
+        }
+
+        // Build validation report (reuse same structure)
+        const results = validation.validation_results || [];
+        let verdictColor = '#EF4444'; // Red (fail)
+        let verdictBg = '#FEE2E2';
+
+        const html = `
+            ${logHTML}
+
+            <div class="result-section" style="background: linear-gradient(135deg, #EF4444 0%, #DC2626 100%); color: white; padding: 1.5rem; border-radius: var(--radius-lg); margin-bottom: 1.5rem;">
+                <h3 style="color: white; margin-bottom: 1rem;">🛡️ Market Condition Validation</h3>
+
+                <div style="background: rgba(255,255,255,0.15); padding: 1.5rem; border-radius: var(--radius-md); margin-bottom: 1.5rem; backdrop-filter: blur(10px);">
+                    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem;">
+                        <div>
+                            <div style="font-size: 0.875rem; opacity: 0.9; margin-bottom: 0.5rem;">Overall Verdict</div>
+                            <div style="font-size: 1.5rem; font-weight: 700;">${validation.overall_verdict}</div>
+                        </div>
+                        <div style="text-align: right;">
+                            <div style="font-size: 0.875rem; opacity: 0.9; margin-bottom: 0.5rem;">Status</div>
+                            <div style="display: inline-block; background: ${verdictBg}; color: ${verdictColor}; padding: 0.5rem 1rem; border-radius: var(--radius-md); font-weight: 600; font-size: 0.875rem;">
+                                ✗ BLOCKED
+                            </div>
+                        </div>
+                    </div>
+                    <div style="font-size: 0.875rem; opacity: 0.95; line-height: 1.6;">
+                        ${validation.verdict_reason}
+                    </div>
+                </div>
+
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); gap: 1rem; margin-bottom: 1.5rem;">
+                    <div style="background: rgba(255,255,255,0.15); padding: 1rem; border-radius: var(--radius-md); backdrop-filter: blur(10px); text-align: center;">
+                        <div style="font-size: 2rem; font-weight: 700; color: #D1FAE5;">${validation.status_summary.PASS || 0}</div>
+                        <div style="font-size: 0.75rem; opacity: 0.9;">PASSED</div>
+                    </div>
+                    <div style="background: rgba(255,255,255,0.15); padding: 1rem; border-radius: var(--radius-md); backdrop-filter: blur(10px); text-align: center;">
+                        <div style="font-size: 2rem; font-weight: 700; color: #FEF3C7;">${validation.status_summary.WARNING || 0}</div>
+                        <div style="font-size: 0.75rem; opacity: 0.9;">WARNINGS</div>
+                    </div>
+                    <div style="background: rgba(255,255,255,0.15); padding: 1rem; border-radius: var(--radius-md); backdrop-filter: blur(10px); text-align: center;">
+                        <div style="font-size: 2rem; font-weight: 700; color: #FEE2E2;">${validation.status_summary.FAIL || 0}</div>
+                        <div style="font-size: 0.75rem; opacity: 0.9;">FAILED</div>
+                    </div>
+                    <div style="background: rgba(255,255,255,0.15); padding: 1rem; border-radius: var(--radius-md); backdrop-filter: blur(10px); text-align: center;">
+                        <div style="font-size: 2rem; font-weight: 700; color: #E5E7EB;">${validation.status_summary.SKIP || 0}</div>
+                        <div style="font-size: 0.75rem; opacity: 0.9;">SKIPPED</div>
+                    </div>
+                </div>
+
+                <div style="background: rgba(255,255,255,0.1); padding: 1rem; border-radius: var(--radius-md); backdrop-filter: blur(10px);">
+                    <h4 style="color: white; font-size: 0.9rem; margin-bottom: 0.75rem; opacity: 0.9;">Detailed Validation Checks</h4>
+                    <div style="max-height: 400px; overflow-y: auto;">
+                        ${results.map((result, idx) => {
+                            let statusIcon = '✓';
+                            let statusColor = '#D1FAE5';
+                            if (result.status === 'FAIL') {
+                                statusIcon = '✗';
+                                statusColor = '#FEE2E2';
+                            } else if (result.status === 'WARNING') {
+                                statusIcon = '⚠';
+                                statusColor = '#FEF3C7';
+                            } else if (result.status === 'SKIP') {
+                                statusIcon = '○';
+                                statusColor = '#E5E7EB';
+                            }
+
+                            return `
+                                <div style="padding: 0.75rem; margin-bottom: 0.5rem; background: rgba(255,255,255,0.05); border-radius: var(--radius-sm); border-left: 3px solid ${statusColor};">
+                                    <div style="display: flex; align-items: start; gap: 0.75rem;">
+                                        <span style="font-size: 1.25rem; color: ${statusColor};">${statusIcon}</span>
+                                        <div style="flex: 1;">
+                                            <div style="font-weight: 600; margin-bottom: 0.25rem; font-size: 0.875rem;">${result.check}</div>
+                                            <div style="font-size: 0.8rem; opacity: 0.9; margin-bottom: 0.5rem;">${result.message}</div>
+                                            ${Object.keys(result.details).length > 0 ? `
+                                                <div style="font-size: 0.7rem; opacity: 0.8; font-family: monospace; background: rgba(0,0,0,0.2); padding: 0.5rem; border-radius: var(--radius-sm); max-height: 100px; overflow-y: auto;">
+                                                    ${Object.entries(result.details).map(([key, value]) => {
+                                                        if (typeof value === 'object') return '';
+                                                        return `<div><strong>${key}:</strong> ${typeof value === 'number' ? value.toFixed(2) : value}</div>`;
+                                                    }).join('')}
+                                                </div>
+                                            ` : ''}
+                                        </div>
+                                        <span style="font-weight: 600; font-size: 0.75rem; color: ${statusColor};">${result.status}</span>
+                                    </div>
+                                </div>
+                            `;
+                        }).join('')}
+                    </div>
+                </div>
+            </div>
+
+            <div class="result-section" style="background: var(--lighter); padding: 1.5rem; border-radius: var(--radius-md);">
+                <h3 style="color: var(--error); margin-bottom: 1rem;">⚠️ Trading Blocked</h3>
+                <p style="color: var(--gray); line-height: 1.6; margin-bottom: 1rem;">
+                    The system has detected unfavorable market conditions that do not meet the entry criteria for a Nifty Strangle position.
+                    Trading has been automatically blocked to protect capital.
+                </p>
+                <p style="color: var(--gray); line-height: 1.6;">
+                    <strong>Reason:</strong> ${data.error}
+                </p>
+            </div>
+
+            <div class="action-buttons">
+                <button class="btn btn-secondary" onclick="hideResults()">
+                    ← Back
+                </button>
+            </div>
+        `;
+
+        document.getElementById('resultContent').innerHTML = html;
+        document.getElementById('resultsPanel').classList.add('active');
+        document.getElementById('resultsPanel').scrollIntoView({ behavior: 'smooth' });
+    }
+
+    // 3. Verify Future Trade
+    async function verifyFutureTrade(btn) {
+        const contractValue = document.getElementById('contractSelect').value;
+        if (!contractValue) {
+            alert('Please select a futures contract');
+            return;
+        }
+
+        // Parse contract value to get display name
+        const selectedOption = document.getElementById('contractSelect').selectedOptions[0];
+        const displayText = selectedOption.text;
+
+        btn.disabled = true;
+        document.getElementById('loadingVerify').classList.add('active');
+        document.getElementById('verifyingStock').textContent = displayText;
+        document.getElementById('resultsPanel').classList.remove('active');
+
+        try {
+            const formData = new FormData();
+            formData.append('contract', contractValue);
+
+            const response = await fetch('{% url "trading:verify_trade" %}', {
+                method: 'POST',
+                headers: {
+                    'X-CSRFToken': csrftoken
+                },
+                body: formData
+            });
+
+            const data = await response.json();
+
+            if (data.success) {
+                displayVerificationResult(data);
+            } else {
+                // Show execution log even on error for debugging
+                if (data.execution_log && data.execution_log.length > 0) {
+                    displayVerificationResult({
+                        ...data,
+                        passed: false,
+                        symbol: data.symbol || 'Unknown',
+                        expiry: data.expiry || 'Unknown',
+                        contract_display: data.contract_display || 'Unknown',
+                        analysis: {
+                            direction: 'NEUTRAL',
+                            composite_score: 0,
+                            contract_price: 0,
+                            spot_price: 0,
+                            position_details: {}
+                        },
+                        verdict: 'FAIL',
+                        reason: data.error || 'Analysis failed - see steps for details'
+                    });
+                } else {
+                    displayError(data.error);
+                }
+            }
+        } catch (error) {
+            displayError('Network error: ' + error.message);
+        } finally {
+            btn.disabled = false;
+            document.getElementById('loadingVerify').classList.remove('active');
+        }
+    }
+
+    function displayVerificationResult(data) {
+        const analysis = data.analysis;
+        const llm = data.llm_validation;
+        const posDetails = analysis.position_details || {};
+        const executionLog = data.execution_log || [];
+
+        document.getElementById('resultTitle').textContent = `Verification: ${data.contract_display}`;
+        document.getElementById('resultBadge').textContent = data.verdict;
+        document.getElementById('resultBadge').className = 'result-badge ' + (data.passed ? 'pass' : 'fail');
+
+        // Build execution log HTML (similar to strangle)
+        let logHTML = '';
+        if (executionLog.length > 0) {
+            logHTML = `
+                <div class="result-section">
+                    <h3>📋 Step-by-Step Analysis</h3>
+                    <div style="background: var(--lighter); border-radius: var(--radius-md); padding: 1rem;">
+                        ${executionLog.map((log, index) => `
+                            <div style="display: flex; align-items: start; gap: 0.75rem; padding: 0.75rem 0; border-bottom: 1px solid var(--gray-light);">
+                                <span style="flex-shrink: 0; background: ${log.status === 'PASS' ? 'var(--success)' : log.status === 'FAIL' ? 'var(--danger)' : 'var(--primary)'}; color: white; width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 0.75rem; font-weight: 600;">${log.step}</span>
+                                <div style="flex: 1;">
+                                    <div style="font-weight: 600; color: var(--dark); margin-bottom: 0.25rem;">${log.action}</div>
+                                    <div style="font-size: 0.875rem; color: var(--gray);">${log.message}</div>
+                                    ${log.details && Object.keys(log.details).length > 0 ? `
+                                        <div style="font-size: 0.75rem; color: var(--gray); margin-top: 0.5rem; padding: 0.5rem; background: white; border-radius: var(--radius-sm); font-family: monospace; max-height: 150px; overflow-y: auto;">
+                                            ${Object.entries(log.details).map(([key, value]) => {
+                                                if (typeof value === 'object') return '';
+                                                return `<div><strong>${key}:</strong> ${value}</div>`;
+                                            }).join('')}
+                                        </div>
+                                    ` : ''}
+                                </div>
+                                <span style="flex-shrink: 0; color: ${log.status === 'PASS' ? 'var(--success)' : log.status === 'FAIL' ? 'var(--danger)' : 'var(--warning)'}; font-size: 1.25rem;">
+                                    ${log.status === 'PASS' ? '✓' : log.status === 'FAIL' ? '✗' : '●'}
+                                </span>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            `;
+        }
+
+        const html = `
+            ${logHTML}
+
+            <div class="result-section">
+                <h3>Verdict: ${data.passed ? '✅ PASS' : '❌ FAIL'}</h3>
+                <p>${data.reason}</p>
+            </div>
+
+            <div class="result-section">
+                <h3>Contract Details</h3>
+                <div class="result-grid">
+                    <div class="result-item">
+                        <div class="result-item-label">Symbol</div>
+                        <div class="result-item-value">${data.symbol}</div>
+                    </div>
+                    <div class="result-item">
+                        <div class="result-item-label">Expiry Date</div>
+                        <div class="result-item-value">${data.expiry}</div>
+                    </div>
+                    <div class="result-item">
+                        <div class="result-item-label">Futures Price</div>
+                        <div class="result-item-value">₹${(analysis.contract_price || analysis.entry_price).toFixed(2)}</div>
+                    </div>
+                    <div class="result-item">
+                        <div class="result-item-label">Lot Size</div>
+                        <div class="result-item-value">${analysis.lot_size || 'N/A'}</div>
+                    </div>
+                    <div class="result-item">
+                        <div class="result-item-label">Trading Volume</div>
+                        <div class="result-item-value">${analysis.traded_volume || 'N/A'} contracts</div>
+                    </div>
+                    ${analysis.basis ? `
+                    <div class="result-item">
+                        <div class="result-item-label">Basis</div>
+                        <div class="result-item-value">₹${analysis.basis.toFixed(2)}</div>
+                    </div>
+                    ` : ''}
+                </div>
+            </div>
+
+            <div class="result-section">
+                <h3>Trade Analysis</h3>
+                <div class="result-grid">
+                    <div class="result-item">
+                        <div class="result-item-label">Direction</div>
+                        <div class="result-item-value">${analysis.direction}</div>
+                    </div>
+                    <div class="result-item">
+                        <div class="result-item-label">Entry Price</div>
+                        <div class="result-item-value">₹${(analysis.contract_price || analysis.entry_price).toFixed(2)}</div>
+                    </div>
+                    <div class="result-item">
+                        <div class="result-item-label">Stop Loss</div>
+                        <div class="result-item-value">₹${analysis.stop_loss.toFixed(2)}</div>
+                    </div>
+                    <div class="result-item">
+                        <div class="result-item-label">Target</div>
+                        <div class="result-item-value">₹${analysis.target.toFixed(2)}</div>
+                    </div>
+                    <div class="result-item">
+                        <div class="result-item-label">Composite Score</div>
+                        <div class="result-item-value">${analysis.composite_score}/100</div>
+                    </div>
+                    <div class="result-item">
+                        <div class="result-item-label">LLM Confidence</div>
+                        <div class="result-item-value">${llm.confidence}%</div>
+                    </div>
+                </div>
+            </div>
+
+            ${posDetails.lot_size ? `
+            <div class="result-section">
+                <h3>Position Details (1 Lot)</h3>
+                <div class="result-grid">
+                    <div class="result-item">
+                        <div class="result-item-label">Position Size</div>
+                        <div class="result-item-value">${posDetails.lot_size} shares</div>
+                    </div>
+                    <div class="result-item">
+                        <div class="result-item-label">Entry Value</div>
+                        <div class="result-item-value">₹${posDetails.entry_value.toFixed(0)}</div>
+                    </div>
+                    <div class="result-item">
+                        <div class="result-item-label">Risk Amount</div>
+                        <div class="result-item-value">₹${posDetails.risk_amount.toFixed(0)}</div>
+                    </div>
+                    <div class="result-item">
+                        <div class="result-item-label">Reward Amount</div>
+                        <div class="result-item-value">₹${posDetails.reward_amount.toFixed(0)}</div>
+                    </div>
+                    <div class="result-item">
+                        <div class="result-item-label">Risk:Reward</div>
+                        <div class="result-item-value">1:${posDetails.risk_reward_ratio}</div>
+                    </div>
+                </div>
+            </div>
+            ` : ''}
+
+            <div class="result-section">
+                <h3>Detailed Explanation</h3>
+                <div class="explanation-box">
+                    <h4>Why This Trade?</h4>
+                    <p><strong>OI Analysis:</strong> ${analysis.oi_analysis || 'Buildup analysis complete'}</p>
+                    <p><strong>Sector Analysis:</strong> ${analysis.sector_analysis || 'Sector alignment verified'}</p>
+                    <p><strong>Technical Setup:</strong> ${analysis.technical_setup || 'Technical indicators analyzed'}</p>
+                    <p><strong>LLM Confidence ${llm.confidence}%:</strong> ${llm.reasoning || 'AI validation complete'}</p>
+                </div>
+            </div>
+
+            ${data.passed ? `
+                <div class="action-buttons">
+                    <button class="btn btn-success" onclick="placeOrder('${data.symbol}', '${data.expiry}', '${analysis.direction}', ${analysis.contract_price || analysis.entry_price}, ${analysis.stop_loss}, ${analysis.target}, ${analysis.lot_size || 0})">
+                        📈 Place Order
+                    </button>
+                    <button class="btn btn-secondary" onclick="hideResults()">
+                        ❌ Reject
+                    </button>
+                </div>
+            ` : `
+                <div class="action-buttons">
+                    <button class="btn btn-secondary" onclick="hideResults()">
+                        Close
+                    </button>
+                </div>
+            `}
+        `;
+
+        document.getElementById('resultContent').innerHTML = html;
+        document.getElementById('resultsPanel').classList.add('active');
+        document.getElementById('resultsPanel').scrollIntoView({ behavior: 'smooth' });
+    }
+
+    function displayError(message) {
+        document.getElementById('resultTitle').textContent = 'Error';
+        document.getElementById('resultBadge').textContent = 'ERROR';
+        document.getElementById('resultBadge').className = 'result-badge fail';
+
+        const html = `
+            <div class="error-message">
+                ${message}
+            </div>
+            <div class="action-buttons">
+                <button class="btn btn-secondary" onclick="hideResults()">Close</button>
+            </div>
+        `;
+
+        document.getElementById('resultContent').innerHTML = html;
+        document.getElementById('resultsPanel').classList.add('active');
+        document.getElementById('resultsPanel').scrollIntoView({ behavior: 'smooth' });
+    }
+
+    function hideResults() {
+        document.getElementById('resultsPanel').classList.remove('active');
+    }
+
+    function takeTrade(symbol, type) {
+        // Prepare trade data for manual execution
+        const tradeData = {
+            algorithm_type: type === 'futures' ? 'futures' : 'strangle',
+            instrument: symbol,
+            direction: 'LONG',  // Will be determined by algorithm
+            analysis_summary: `Manual trade trigger for ${symbol} via ${type} algorithm`
+        };
+
+        // Submit to preparation page for 4-checkbox confirmation
+        const form = document.createElement('form');
+        form.method = 'POST';
+        form.action = '{% url "trading:prepare_manual_execution" %}';
+
+        const csrfInput = document.createElement('input');
+        csrfInput.type = 'hidden';
+        csrfInput.name = 'csrfmiddlewaretoken';
+        csrfInput.value = '{{ csrf_token }}';
+        form.appendChild(csrfInput);
+
+        const dataInput = document.createElement('input');
+        dataInput.type = 'hidden';
+        dataInput.name = 'trade_data';
+        dataInput.value = JSON.stringify(tradeData);
+        form.appendChild(dataInput);
+
+        document.body.appendChild(form);
+        form.submit();
+    }
+
+    function placeOrder(symbol, expiry, direction, entryPrice, stopLoss, target, lotSize) {
+        // Calculate margin required (simplified)
+        const positionValue = entryPrice * lotSize;
+        const marginRequired = positionValue * 0.20; // Assume 20% margin
+
+        // Prepare detailed trade data
+        const tradeData = {
+            algorithm_type: 'futures',
+            instrument: symbol,
+            direction: direction,
+            entry_price: entryPrice,
+            stop_loss: stopLoss,
+            target: target,
+            quantity: lotSize,
+            expiry_date: expiry,
+            margin_required: marginRequired,
+            analysis_summary: `Manual futures trade: ${symbol} ${direction} @ ₹${entryPrice.toFixed(2)}`
+        };
+
+        // Submit to confirmation page with 4-checkbox safety protocol
+        const form = document.createElement('form');
+        form.method = 'POST';
+        form.action = '{% url "trading:prepare_manual_execution" %}';
+
+        const csrfInput = document.createElement('input');
+        csrfInput.type = 'hidden';
+        csrfInput.name = 'csrfmiddlewaretoken';
+        csrfInput.value = '{{ csrf_token }}';
+        form.appendChild(csrfInput);
+
+        const dataInput = document.createElement('input');
+        dataInput.type = 'hidden';
+        dataInput.name = 'trade_data';
+        dataInput.value = JSON.stringify(tradeData);
+        form.appendChild(dataInput);
+
+        document.body.appendChild(form);
+        form.submit();
+    }
+</script>
+{% endblock %}

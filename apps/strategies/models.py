@@ -707,3 +707,7 @@ class TradingInsight(TimeStampedModel):
 
     def __str__(self):
         return f"{self.get_insight_type_display()}: {self.title}"
+
+
+# Import Nifty Strangle Strategy models
+from .models_strangle import NiftyMarketData, StrangleAlgorithmState

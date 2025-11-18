@@ -7,6 +7,7 @@ This module provides integration with ICICI Breeze broker API for:
 - Option chain quotes
 - Historical price data (cash, futures, options)
 - NIFTY spot quotes
+- India VIX data
 """
 
 import logging
@@ -16,7 +17,8 @@ import json
 import hashlib
 import calendar
 from datetime import datetime, timezone as dt_timezone, timedelta, date
-from typing import List
+from typing import List, Optional
+from django.core.cache import cache
 
 from breeze_connect import BreezeConnect
 from django.utils import timezone as dj_timezone
@@ -25,6 +27,7 @@ from decimal import Decimal
 from apps.core.models import CredentialStore
 from apps.core.constants import BROKER_ICICI
 from apps.brokers.models import BrokerLimit, BrokerPosition, OptionChainQuote, HistoricalPrice, NiftyOptionChain
+from apps.data.models import OptionChain
 
 logger = logging.getLogger(__name__)
 
@@ -257,6 +260,60 @@ def get_nifty_quote():
     return None
 
 
+def get_india_vix() -> Decimal:
+    """
+    Get India VIX (Volatility Index) from Breeze API.
+
+    Uses cache to avoid excessive API calls (5-minute cache).
+    Falls back to 15.0 if API fails.
+
+    Returns:
+        Decimal: Current India VIX value
+    """
+    # Check cache first (5-minute TTL)
+    cache_key = 'india_vix_value'
+    cached_vix = cache.get(cache_key)
+
+    if cached_vix is not None:
+        logger.debug(f"Using cached VIX value: {cached_vix}")
+        return Decimal(str(cached_vix))
+
+    try:
+        breeze = get_breeze_client()
+
+        # Fetch India VIX quote from NSE
+        resp = breeze.get_quotes(
+            stock_code="INDIA VIX",
+            exchange_code="NSE",
+            product_type="cash",
+            expiry_date="",
+            right="",
+            strike_price=""
+        )
+
+        logger.info(f"India VIX quote response: {resp}")
+
+        if resp and resp.get("Status") == 200 and resp.get("Success"):
+            rows = resp["Success"]
+            if rows:
+                row = rows[0]
+                vix_value = _parse_float(row.get('ltp', 15.0))
+                vix_decimal = Decimal(str(vix_value))
+
+                # Cache for 5 minutes (300 seconds)
+                cache.set(cache_key, float(vix_decimal), 300)
+
+                logger.info(f"Successfully fetched India VIX: {vix_decimal}")
+                return vix_decimal
+
+        logger.warning("Failed to fetch India VIX from Breeze API, using default 15.0")
+        return Decimal('15.0')
+
+    except Exception as e:
+        logger.error(f"Error fetching India VIX: {e}")
+        return Decimal('15.0')
+
+
 def fetch_and_save_breeze_data():
     """
     Fetch funds and positions from Breeze API and save to database.
@@ -467,7 +524,7 @@ def get_and_save_option_chain_quotes(stock_code, expiry_date=None, product_type=
 
 def fetch_and_save_nifty_option_chain_all_expiries():
     """
-    Fetch NIFTY option chain for all available expiries and save to NiftyOptionChain model.
+    Fetch NIFTY option chain for all available expiries and save to OptionChain model.
 
     DATA SOURCES:
     - Expiry dates list: NSE (with fallback to generated Thursdays)
@@ -478,7 +535,7 @@ def fetch_and_save_nifty_option_chain_all_expiries():
     2. For each expiry, fetches LIVE option chain data from Breeze API
     3. Collects all data in memory first
     4. Clears old data and bulk saves new data (prevents data loss on fetch failure)
-    5. Saves option chain data organized by strike price
+    5. Saves option chain data as separate CE and PE records
 
     Returns:
         int: Total number of option chain records saved
@@ -527,19 +584,20 @@ def fetch_and_save_nifty_option_chain_all_expiries():
         logger.info(f"✓ Got {len(expiry_list)} real expiry dates from NSE (handles holidays): {expiry_list[:3]}...")
     except Exception as nse_error:
         logger.warning(f"NSE expiry fetch failed (this is normal if NSE blocks API): {nse_error}")
-        logger.info("Falling back to generating Thursday expiry dates...")
+        logger.info("Falling back to generating Tuesday expiry dates...")
 
-        # Fallback: Generate NIFTY expiry dates (weekly expiries - Thursdays)
+        # Fallback: Generate NIFTY expiry dates (weekly expiries - Tuesdays as of 2025)
+        # Note: NIFTY changed from Thursday to Tuesday expiries in 2025
         from datetime import datetime, timedelta
         today = datetime.now().date()
 
         current_date = today
 
-        # Find next 4 Thursdays
-        for _ in range(30):  # Look ahead 30 days to find Thursdays
-            if current_date.weekday() == 3:  # Thursday = 3
+        # Find next 4 Tuesdays
+        for _ in range(30):  # Look ahead 30 days to find Tuesdays
+            if current_date.weekday() == 1:  # Tuesday = 1
                 if current_date >= today:
-                    expiry_str = current_date.strftime("%d-%b-%Y").upper()
+                    expiry_str = current_date.strftime("%d-%b-%Y")  # Keep original case (not uppercase)
                     expiry_list.append(expiry_str)
                     if len(expiry_list) >= 4:  # Get 4 expiries
                         break
@@ -604,53 +662,50 @@ def fetch_and_save_nifty_option_chain_all_expiries():
             except Exception as e:
                 logger.warning(f"Failed to fetch puts for {expiry_str}: {e}")
 
-            # Organize data by strike price
-            strike_data = {}
-
-            # Process calls
+            # Process call options and create individual records
             for call in calls_data:
                 strike = Decimal(str(call.get('strike_price', 0.0) or 0.0))
-                if strike not in strike_data:
-                    strike_data[strike] = {'call': None, 'put': None}
-                strike_data[strike]['call'] = call
 
-            # Process puts
-            for put in puts_data:
-                strike = Decimal(str(put.get('strike_price', 0.0) or 0.0))
-                if strike not in strike_data:
-                    strike_data[strike] = {'call': None, 'put': None}
-                strike_data[strike]['put'] = put
-
-            # Collect records for bulk creation (don't save to DB yet)
-            for strike, options in strike_data.items():
-                call_data = options['call']
-                put_data = options['put']
-
-                # Create record object without saving to database
-                record = NiftyOptionChain(
+                # Create CE record
+                record = OptionChain(
+                    underlying='NIFTY',
                     expiry_date=expiry_date_obj,
-                    strike_price=strike,
-                    option_type='CE',  # Store as one record with both CE and PE data
-                    # Call data
-                    call_ltp=Decimal(str(call_data.get('ltp', 0.0) or 0.0)) if call_data else Decimal('0.00'),
-                    call_bid=Decimal(str(call_data.get('best_bid_price', 0.0) or 0.0)) if call_data else Decimal('0.00'),
-                    call_ask=Decimal(str(call_data.get('best_offer_price', 0.0) or 0.0)) if call_data else Decimal('0.00'),
-                    call_oi=int(call_data.get('open_interest', 0) or 0) if call_data else 0,
-                    call_volume=int(call_data.get('total_quantity_traded', 0) or 0) if call_data else 0,
-                    # Put data
-                    put_ltp=Decimal(str(put_data.get('ltp', 0.0) or 0.0)) if put_data else Decimal('0.00'),
-                    put_bid=Decimal(str(put_data.get('best_bid_price', 0.0) or 0.0)) if put_data else Decimal('0.00'),
-                    put_ask=Decimal(str(put_data.get('best_offer_price', 0.0) or 0.0)) if put_data else Decimal('0.00'),
-                    put_oi=int(put_data.get('open_interest', 0) or 0) if put_data else 0,
-                    put_volume=int(put_data.get('total_quantity_traded', 0) or 0) if put_data else 0,
-                    # Common
+                    strike=strike,
+                    option_type='CE',
+                    ltp=Decimal(str(call.get('ltp', 0.0) or 0.0)),
+                    bid=Decimal(str(call.get('best_bid_price', 0.0) or 0.0)),
+                    ask=Decimal(str(call.get('best_offer_price', 0.0) or 0.0)),
+                    volume=int(call.get('total_quantity_traded', 0) or 0),
+                    oi=int(call.get('open_interest', 0) or 0),
+                    oi_change=0,  # Not available from Breeze API
                     spot_price=spot_price,
                 )
                 new_records.append(record)
                 total_saved += 1
 
-            if strike_data:
-                logger.info(f"Collected {len(strike_data)} strikes for expiry {expiry_str}")
+            # Process put options and create individual records
+            for put in puts_data:
+                strike = Decimal(str(put.get('strike_price', 0.0) or 0.0))
+
+                # Create PE record
+                record = OptionChain(
+                    underlying='NIFTY',
+                    expiry_date=expiry_date_obj,
+                    strike=strike,
+                    option_type='PE',
+                    ltp=Decimal(str(put.get('ltp', 0.0) or 0.0)),
+                    bid=Decimal(str(put.get('best_bid_price', 0.0) or 0.0)),
+                    ask=Decimal(str(put.get('best_offer_price', 0.0) or 0.0)),
+                    volume=int(put.get('total_quantity_traded', 0) or 0),
+                    oi=int(put.get('open_interest', 0) or 0),
+                    oi_change=0,  # Not available from Breeze API
+                    spot_price=spot_price,
+                )
+                new_records.append(record)
+                total_saved += 1
+
+            if calls_data or puts_data:
+                logger.info(f"Collected {len(calls_data)} CE and {len(puts_data)} PE options for expiry {expiry_str}")
             else:
                 logger.warning(f"No option chain data available for expiry {expiry_str}")
 
@@ -662,12 +717,12 @@ def fetch_and_save_nifty_option_chain_all_expiries():
     if new_records:
         logger.info(f"Successfully fetched {total_saved} records. Clearing old data and saving new records...")
 
-        # Delete all old option chain data
-        deleted_count = NiftyOptionChain.objects.all().delete()[0]
-        logger.info(f"Deleted {deleted_count} old NiftyOptionChain records")
+        # Delete all old NIFTY option chain data from OptionChain model
+        deleted_count = OptionChain.objects.filter(underlying='NIFTY').delete()[0]
+        logger.info(f"Deleted {deleted_count} old OptionChain records for NIFTY")
 
         # Bulk create all new records
-        NiftyOptionChain.objects.bulk_create(new_records, batch_size=500)
+        OptionChain.objects.bulk_create(new_records, batch_size=500)
         logger.info(f"Bulk created {total_saved} new NIFTY option chain records across {len(expiry_list)} expiries")
     else:
         logger.warning("No new records to save, keeping existing data intact")

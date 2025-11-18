@@ -8,6 +8,18 @@ from . import views
 app_name = 'trading'
 
 urlpatterns = [
+    # Manual Trade Triggers
+    path('triggers/', views.manual_triggers, name='manual_triggers'),
+    path('trigger/futures/', views.trigger_futures_algorithm, name='trigger_futures'),
+    path('trigger/strangle/', views.trigger_nifty_strangle, name='trigger_strangle'),
+    path('trigger/verify/', views.verify_future_trade, name='verify_trade'),
+    path('trigger/get-contracts/', views.get_contracts, name='get_contracts'),
+    path('trigger/refresh-trendlyne/', views.refresh_trendlyne_data, name='refresh_trendlyne'),
+
+    # Manual Trade Execution (Live Orders)
+    path('manual/prepare/', views.prepare_manual_execution, name='prepare_manual_execution'),
+    path('manual/confirm/', views.confirm_manual_execution, name='confirm_manual_execution'),
+
     # Trade Suggestions
     path('suggestions/', views.pending_suggestions, name='pending_suggestions'),
     path('suggestion/<int:suggestion_id>/', views.suggestion_detail, name='suggestion_detail'),
@@ -19,6 +31,7 @@ urlpatterns = [
     # Auto-Trade Configuration
     path('config/auto-trade/', views.auto_trade_config, name='auto_trade_config'),
 
-    # History
+    # History and Export
     path('history/', views.suggestion_history, name='suggestion_history'),
+    path('history/export/', views.export_suggestions_csv, name='export_csv'),
 ]
