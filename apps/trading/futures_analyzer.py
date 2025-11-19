@@ -992,84 +992,179 @@ def comprehensive_futures_analysis(
             })
 
         # ============================================================================
-        # STEP 8: Advanced Support/Resistance Analysis
+        # STEP 8: Advanced Support/Resistance Analysis with Historical Data
         # ============================================================================
         logger.info("\n" + "=" * 80)
-        logger.info("STEP 8: Advanced Support/Resistance Analysis")
+        logger.info("STEP 8: Advanced Support/Resistance Analysis (1-Year Historical Data)")
         logger.info("=" * 80)
 
         try:
+            from apps.strategies.services.support_resistance_calculator import SupportResistanceCalculator
+
             sr_score = 0
             sr_details = {}
+            sr_data = None
+            breach_risks = None
 
-            # Method 1: Use actual high/low from contract data (most reliable)
-            if contract and contract.high_price > 0 and contract.low_price > 0:
-                day_high = contract.high_price
-                day_low = contract.low_price
+            # Use comprehensive S/R calculator with 1-year historical data
+            try:
+                logger.info("Calculating S/R from 1-year historical data...")
+                sr_calculator = SupportResistanceCalculator(symbol=stock_symbol, lookback_days=365)
 
-                # Use high/low as immediate resistance/support
-                resistance_level = day_high
-                support_level = day_low
+                # Ensure we have 1 year of data
+                if sr_calculator.ensure_and_load_data():
+                    # Calculate comprehensive S/R levels
+                    sr_data = sr_calculator.calculate_comprehensive_sr()
+                    pivot_points = sr_data['pivot_points']
+                    moving_averages = sr_data['moving_averages']
 
-                # Calculate additional levels using price range
-                price_range = day_high - day_low
+                    support_level = pivot_points['s1']
+                    support_2 = pivot_points['s2']
+                    resistance_level = pivot_points['r1']
+                    resistance_2 = pivot_points['r2']
 
-                # Extended resistance (breakout level)
-                resistance_2 = day_high + (price_range * 0.5)
-                # Extended support (breakdown level)
-                support_2 = day_low - (price_range * 0.5)
+                    # Calculate distances and position
+                    support_distance = spot_price - support_level
+                    resistance_distance = resistance_level - spot_price
+                    support_distance_pct = (support_distance / spot_price) * 100 if spot_price > 0 else 0
+                    resistance_distance_pct = (resistance_distance / spot_price) * 100 if spot_price > 0 else 0
 
-                sr_details['method'] = 'Day High/Low'
-                sr_details['day_high'] = round(day_high, 2)
-                sr_details['day_low'] = round(day_low, 2)
-                sr_details['range'] = round(price_range, 2)
+                    # Score based on position and proximity to levels
+                    if support_distance_pct < 0.5:
+                        sr_score = 5  # Very close to support - potential bounce
+                        position_signal = "NEAR_SUPPORT"
+                    elif resistance_distance_pct < 0.5:
+                        sr_score = 4  # Very close to resistance - watch for rejection
+                        position_signal = "NEAR_RESISTANCE"
+                    elif 0.5 <= abs(support_distance_pct) <= 1.5:
+                        sr_score = 3  # Approaching support/resistance
+                        position_signal = "APPROACHING_LEVELS"
+                    else:
+                        sr_score = 2  # In middle zone
+                        position_signal = "MIDDLE_RANGE"
 
-            else:
-                # Fallback: Use percentage-based levels
-                support_level = spot_price * 0.98
-                resistance_level = spot_price * 1.02
-                support_2 = spot_price * 0.96
-                resistance_2 = spot_price * 1.04
+                    sr_details = {
+                        'method': 'Pivot Points from 1-Year Historical Data',
+                        'pivot': float(pivot_points['pivot']),
+                        'support': float(support_level),
+                        'support_2': float(support_2),
+                        'support_3': float(pivot_points['s3']),
+                        'resistance': float(resistance_level),
+                        'resistance_2': float(resistance_2),
+                        'resistance_3': float(pivot_points['r3']),
+                        'support_distance': round(support_distance, 2),
+                        'resistance_distance': round(resistance_distance, 2),
+                        'support_distance_pct': round(support_distance_pct, 2),
+                        'resistance_distance_pct': round(resistance_distance_pct, 2),
+                        'position_signal': position_signal,
+                        'score': sr_score,
+                        'moving_averages': {
+                            'dma_20': float(moving_averages['dma_20']) if moving_averages.get('dma_20') else None,
+                            'dma_50': float(moving_averages['dma_50']) if moving_averages.get('dma_50') else None,
+                            'dma_100': float(moving_averages['dma_100']) if moving_averages.get('dma_100') else None,
+                        }
+                    }
 
-                sr_details['method'] = 'Percentage-based'
+                    logger.info(f"✅ S/R from Historical Data - Pivot Points Method")
+                    logger.info(f"   S3: ₹{pivot_points['s3']:.2f} | S2: ₹{pivot_points['s2']:.2f} | S1: ₹{pivot_points['s1']:.2f}")
+                    logger.info(f"   Pivot: ₹{pivot_points['pivot']:.2f}")
+                    logger.info(f"   R1: ₹{pivot_points['r1']:.2f} | R2: ₹{pivot_points['r2']:.2f} | R3: ₹{pivot_points['r3']:.2f}")
+                    logger.info(f"   Current: ₹{spot_price:.2f} ({position_signal})")
 
-            # Calculate distances and position
-            support_distance = spot_price - support_level
-            resistance_distance = resistance_level - spot_price
-            support_distance_pct = (support_distance / spot_price) * 100 if spot_price > 0 else 0
-            resistance_distance_pct = (resistance_distance / spot_price) * 100 if spot_price > 0 else 0
+                    # Calculate risk at breach levels for futures position
+                    try:
+                        # Determine position type based on direction
+                        # We'll calculate risks for both LONG and SHORT positions
+                        lot_size = symbol_resolution.get('lot_size', 1)
 
-            # Score based on position and proximity to levels
-            # Price near support (potential bounce) = higher score
-            # Price near resistance (potential rejection) = moderate score
-            # Price in middle = lower score
+                        # Calculate LONG position risks
+                        long_position_data = {
+                            'position_type': 'long_future',
+                            'spot_price': float(spot_price),
+                            'entry_price': float(spot_price),
+                            'lot_size': lot_size
+                        }
+                        breach_risks_long = sr_calculator.calculate_risk_at_breach(long_position_data, sr_data)
 
-            if support_distance_pct < 0.5:
-                sr_score = 5  # Very close to support - potential bounce
-                position_signal = "NEAR_SUPPORT"
-            elif resistance_distance_pct < 0.5:
-                sr_score = 4  # Very close to resistance - watch for rejection
-                position_signal = "NEAR_RESISTANCE"
-            elif 0.5 <= abs(support_distance_pct) <= 1.5:
-                sr_score = 3  # Approaching support/resistance
-                position_signal = "APPROACHING_LEVELS"
-            else:
-                sr_score = 2  # In middle zone
-                position_signal = "MIDDLE_RANGE"
+                        # Calculate SHORT position risks
+                        short_position_data = {
+                            'position_type': 'short_future',
+                            'spot_price': float(spot_price),
+                            'entry_price': float(spot_price),
+                            'lot_size': lot_size
+                        }
+                        breach_risks_short = sr_calculator.calculate_risk_at_breach(short_position_data, sr_data)
 
-            # Store all S/R data
-            sr_details.update({
-                'support': round(support_level, 2),
-                'resistance': round(resistance_level, 2),
-                'support_2': round(support_2, 2),
-                'resistance_2': round(resistance_2, 2),
-                'support_distance': round(support_distance, 2),
-                'resistance_distance': round(resistance_distance, 2),
-                'support_distance_pct': round(support_distance_pct, 2),
-                'resistance_distance_pct': round(resistance_distance_pct, 2),
-                'position_signal': position_signal,
-                'score': sr_score
-            })
+                        breach_risks = {
+                            'long': breach_risks_long['breach_risks'],
+                            'short': breach_risks_short['breach_risks']
+                        }
+
+                        sr_details['breach_risks'] = breach_risks
+
+                        logger.info(f"   Breach Risks Calculated:")
+                        if breach_risks_long['breach_risks']['s1_breach']:
+                            s1_loss = breach_risks_long['breach_risks']['s1_breach']['potential_loss']
+                            logger.info(f"     LONG @ S1 Breach: ₹{abs(s1_loss):,.0f} loss")
+                        if breach_risks_short['breach_risks']['r1_breach']:
+                            r1_loss = breach_risks_short['breach_risks']['r1_breach']['potential_loss']
+                            logger.info(f"     SHORT @ R1 Breach: ₹{abs(r1_loss):,.0f} loss")
+
+                    except Exception as breach_err:
+                        logger.warning(f"Could not calculate breach risks: {breach_err}")
+                        breach_risks = None
+
+                else:
+                    raise ValueError("Insufficient historical data for S/R calculation")
+
+            except Exception as historical_error:
+                logger.warning(f"Could not use historical S/R, falling back to day high/low: {historical_error}")
+
+                # Fallback: Use day high/low from contract data
+                if contract and contract.high_price > 0 and contract.low_price > 0:
+                    day_high = contract.high_price
+                    day_low = contract.low_price
+                    resistance_level = day_high
+                    support_level = day_low
+                    price_range = day_high - day_low
+                    resistance_2 = day_high + (price_range * 0.5)
+                    support_2 = day_low - (price_range * 0.5)
+                    sr_details['method'] = 'Day High/Low (Fallback)'
+                else:
+                    # Ultimate fallback: percentage-based
+                    support_level = spot_price * 0.98
+                    resistance_level = spot_price * 1.02
+                    support_2 = spot_price * 0.96
+                    resistance_2 = spot_price * 1.04
+                    sr_details['method'] = 'Percentage-based (Fallback)'
+
+                support_distance = spot_price - support_level
+                resistance_distance = resistance_level - spot_price
+                support_distance_pct = (support_distance / spot_price) * 100 if spot_price > 0 else 0
+                resistance_distance_pct = (resistance_distance / spot_price) * 100 if spot_price > 0 else 0
+
+                if support_distance_pct < 0.5:
+                    sr_score = 5
+                    position_signal = "NEAR_SUPPORT"
+                elif resistance_distance_pct < 0.5:
+                    sr_score = 4
+                    position_signal = "NEAR_RESISTANCE"
+                else:
+                    sr_score = 2
+                    position_signal = "MIDDLE_RANGE"
+
+                sr_details.update({
+                    'support': round(support_level, 2),
+                    'resistance': round(resistance_level, 2),
+                    'support_2': round(support_2, 2),
+                    'resistance_2': round(resistance_2, 2),
+                    'support_distance': round(support_distance, 2),
+                    'resistance_distance': round(resistance_distance, 2),
+                    'support_distance_pct': round(support_distance_pct, 2),
+                    'resistance_distance_pct': round(resistance_distance_pct, 2),
+                    'position_signal': position_signal,
+                    'score': sr_score
+                })
 
             metrics['support_level'] = support_level
             metrics['resistance_level'] = resistance_level
@@ -1082,18 +1177,16 @@ def comprehensive_futures_analysis(
                 'step': 8,
                 'action': 'Support/Resistance Analysis',
                 'status': 'PASS',
-                'message': f"S: ₹{support_level:.2f} ({support_distance_pct:+.1f}%), R: ₹{resistance_level:.2f} ({resistance_distance_pct:+.1f}%) → {position_signal}",
+                'message': f"S1: ₹{support_level:.2f} | S2: ₹{support_2:.2f} | R1: ₹{resistance_level:.2f} | R2: ₹{resistance_2:.2f} → {position_signal}",
                 'details': sr_details
             })
 
-            logger.info(f"✅ Support/Resistance Analysis ({sr_details['method']})")
-            logger.info(f"   Support: ₹{support_level:.2f} (Distance: {support_distance_pct:+.2f}%)")
-            logger.info(f"   Resistance: ₹{resistance_level:.2f} (Distance: {resistance_distance_pct:+.2f}%)")
-            logger.info(f"   Position: {position_signal}")
             logger.info(f"   Score: {sr_score}/5")
+
         except Exception as e:
             logger.warning(f"S/R calculation failed: {e}")
             scores['sr'] = 0
+            breach_risks = None
             execution_log.append({
                 'step': 8,
                 'action': 'Support/Resistance',
@@ -1103,10 +1196,10 @@ def comprehensive_futures_analysis(
             })
 
         # ============================================================================
-        # STEP 9: Composite Scoring & Verdict
+        # STEP 9: Composite Scoring & Verdict + Broker Routing
         # ============================================================================
         logger.info("\n" + "=" * 80)
-        logger.info("STEP 9: Composite Scoring & Verdict")
+        logger.info("STEP 9: Composite Scoring, Verdict & Broker Routing")
         logger.info("=" * 80)
 
         # Calculate composite score (out of 100)
@@ -1201,6 +1294,28 @@ def comprehensive_futures_analysis(
         logger.info(f"\nScore Breakdown:")
         for component, score in scores.items():
             logger.info(f"  {component.upper()}: {score}")
+
+        # ============================================================================
+        # BROKER ROUTING LOGIC
+        # ============================================================================
+        # Rule: FUTURES → ICICI Direct (Breeze)
+        #       OPTIONS → NEO (Kotak)
+
+        # This is a FUTURES analysis, so always route to ICICI
+        broker_code = 'ICICI'
+        transaction_code = 'ICICI_FUTURES'
+
+        metrics['broker_code'] = broker_code
+        metrics['transaction_code'] = transaction_code
+        metrics['instrument_type'] = 'FUTURES'
+
+        logger.info(f"\n{'='*80}")
+        logger.info(f"BROKER ROUTING")
+        logger.info(f"{'='*80}")
+        logger.info(f"Instrument Type: FUTURES")
+        logger.info(f"Broker: {broker_code} (ICICI Direct / Breeze API)")
+        logger.info(f"Transaction Code: {transaction_code}")
+        logger.info(f"Note: Options trades would be routed to NEO (Kotak)")
         logger.info(f"{'='*80}\n")
 
         return {
@@ -1210,7 +1325,12 @@ def comprehensive_futures_analysis(
             'scores': scores,
             'verdict': verdict,
             'direction': direction,
-            'composite_score': composite_score
+            'composite_score': composite_score,
+            'breach_risks': breach_risks if 'breach_risks' in locals() else None,
+            'sr_data': sr_data if 'sr_data' in locals() else None,
+            'broker_code': broker_code,
+            'transaction_code': transaction_code,
+            'instrument_type': 'FUTURES'
         }
 
     except Exception as e:

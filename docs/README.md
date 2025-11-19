@@ -1,6 +1,6 @@
 # mCube AI Trading System - Documentation Index
 
-**Last Updated:** November 17, 2025
+**Last Updated:** November 19, 2025
 
 Welcome to the mCube AI Trading System documentation! This guide helps you navigate all available documentation organized by category.
 
@@ -22,6 +22,12 @@ Welcome to the mCube AI Trading System documentation! This guide helps you navig
 | 🔧 **Troubleshooting** | Common issues, fixes | [troubleshooting/](#-troubleshooting) |
 | 📋 **Status Reports** | Implementation status, updates | [status-reports/](#-implementation-status) |
 | 📡 **API** | Authentication, endpoints | [api/](#-api--authentication) |
+| 🧮 **Algorithms** | Trading algorithms, formulas | [algorithms/](#-algorithms--trading-strategies) |
+| ✨ **Features** | Feature implementations | [features/](#-feature-implementations) |
+| 🐛 **Fixes** | Bug fixes and debugging | [fixes/](#-bug-fixes--debugging) |
+| 🔌 **Integrations** | Third-party integrations | [integrations/](#-third-party-integrations) |
+| 🎨 **Design** | System design documents | [design/](#-system-design) |
+| 📄 **Root Docs** | Main project documents | [root/](#-root-documents) |
 
 ---
 
@@ -180,6 +186,81 @@ Located in: `docs/api/`
 
 ---
 
+### 🧮 Algorithms & Trading Strategies
+Located in: `docs/algorithms/`
+
+- **[ALGORITHM_IMPROVEMENTS_REAL_DATA.md](algorithms/ALGORITHM_IMPROVEMENTS_REAL_DATA.md)** - Real data improvements
+- **[FUTURES_ALGORITHM_50PERCENT_RULE.md](algorithms/FUTURES_ALGORITHM_50PERCENT_RULE.md)** - 50% margin rule
+- **[FUTURES_ALGORITHM_POSITION_SIZING.md](algorithms/FUTURES_ALGORITHM_POSITION_SIZING.md)** - Position sizing algorithm
+- **[TRADE_SUGGESTION_SYSTEM.md](algorithms/TRADE_SUGGESTION_SYSTEM.md)** - Trade suggestion system
+
+---
+
+### ✨ Feature Implementations
+Located in: `docs/features/`
+
+- **[BACKGROUND_TASK_LOGGING.md](features/BACKGROUND_TASK_LOGGING.md)** - Background task logging
+- **[FUTURES_50_PERCENT_MARGIN_FIX.md](features/FUTURES_50_PERCENT_MARGIN_FIX.md)** - Futures margin feature
+- **[FUTURES_COMPLETE_IMPLEMENTATION.md](features/FUTURES_COMPLETE_IMPLEMENTATION.md)** - Complete futures implementation
+- **[FUTURES_POSITION_SIZING.md](features/FUTURES_POSITION_SIZING.md)** - Futures position sizing
+- **[FUTURES_SUGGESTION_TRACKING.md](features/FUTURES_SUGGESTION_TRACKING.md)** - Suggestion tracking
+- **[LOT_CALCULATIONS_FEATURE.md](features/LOT_CALCULATIONS_FEATURE.md)** - Lot calculations
+- **[MARGINS_FEATURE_IMPLEMENTATION.md](features/MARGINS_FEATURE_IMPLEMENTATION.md)** - Margins feature
+- **[NIFTY_STRANGLE_ENHANCEMENTS_COMPLETE.md](features/NIFTY_STRANGLE_ENHANCEMENTS_COMPLETE.md)** - Strangle enhancements
+- **[NIFTY_STRANGLE_IMPLEMENTATION.md](features/NIFTY_STRANGLE_IMPLEMENTATION.md)** - Strangle implementation
+- **[NIFTY_STRANGLE_PHASE1_COMPLETE.md](features/NIFTY_STRANGLE_PHASE1_COMPLETE.md)** - Strangle Phase 1
+- **[POSITION_SIZING_COMPLETE.md](features/POSITION_SIZING_COMPLETE.md)** - Position sizing complete
+- **[POSITION_SIZING_IMPLEMENTATION.md](features/POSITION_SIZING_IMPLEMENTATION.md)** - Position sizing
+- **[POSITION_SIZING_REDESIGN.md](features/POSITION_SIZING_REDESIGN.md)** - Position sizing redesign
+- **[POSITION_SUMMARY_REFRESH.md](features/POSITION_SUMMARY_REFRESH.md)** - Position summary
+- **[SUPPORT_RESISTANCE_IMPLEMENTATION.md](features/SUPPORT_RESISTANCE_IMPLEMENTATION.md)** - Support/Resistance
+
+---
+
+### 🐛 Bug Fixes & Debugging
+Located in: `docs/fixes/`
+
+- **[DEBUGGING_STRANGLE_BUTTON.md](fixes/DEBUGGING_STRANGLE_BUTTON.md)** - Strangle button debug
+- **[ERROR_VERIFICATION_REPORT.md](fixes/ERROR_VERIFICATION_REPORT.md)** - Error verification
+- **[IMPORT_FIX_CREDENTIALSTORE.md](fixes/IMPORT_FIX_CREDENTIALSTORE.md)** - Import fix
+- **[MODULE_IMPORT_FIX.md](fixes/MODULE_IMPORT_FIX.md)** - Module import fix
+- **[PSYCHOLOGICAL_LEVELS_FIX.md](fixes/PSYCHOLOGICAL_LEVELS_FIX.md)** - Psychological levels fix
+- **[STRANGLE_UI_FIX_SUMMARY.md](fixes/STRANGLE_UI_FIX_SUMMARY.md)** - Strangle UI fixes
+- **[SYNTAX_ERROR_FIX_FINAL.md](fixes/SYNTAX_ERROR_FIX_FINAL.md)** - Syntax error fix
+- **[TAKE_TRADE_BUTTON_FIX.md](fixes/TAKE_TRADE_BUTTON_FIX.md)** - Take trade button fix
+- **[TAKE_TRADE_DEBUG.md](fixes/TAKE_TRADE_DEBUG.md)** - Take trade debugging
+- **[TEST_JS_FIX.md](fixes/TEST_JS_FIX.md)** - JavaScript fix
+- **[VIEW_DETAILS_FIX.md](fixes/VIEW_DETAILS_FIX.md)** - View details fix
+- **[VIX_FIX.md](fixes/VIX_FIX.md)** - VIX fix
+- **[ZERO_LOTS_FIX.md](fixes/ZERO_LOTS_FIX.md)** - Zero lots fix
+
+---
+
+### 🔌 Third-Party Integrations
+Located in: `docs/integrations/`
+
+- **[BREEZE_MARGIN_FIX.md](integrations/BREEZE_MARGIN_FIX.md)** - Breeze margin integration
+- **[BREEZE_SESSION_TOKEN_RENEWAL.md](integrations/BREEZE_SESSION_TOKEN_RENEWAL.md)** - Breeze session renewal
+- **[HISTORICAL_DATA_AND_VIX_FIX.md](integrations/HISTORICAL_DATA_AND_VIX_FIX.md)** - Historical data & VIX
+
+---
+
+### 🎨 System Design
+Located in: `docs/design/`
+
+- **[mcube-ai.design.md](design/mcube-ai.design.md)** - Complete system design document
+- **[COMPREHENSIVE_DATA_INTEGRATION_STATUS.md](design/COMPREHENSIVE_DATA_INTEGRATION_STATUS.md)** - Data integration status
+
+---
+
+### 📄 Root Documents
+Located in: `docs/root/`
+
+- **[INSTALL.md](root/INSTALL.md)** - Installation guide
+- **[PROJECT_README.md](root/PROJECT_README.md)** - Main project README
+
+---
+
 ## 📊 Documentation by Role
 
 ### For Traders
@@ -229,6 +310,13 @@ Located in: `docs/api/`
 
 ## 📊 Recent Updates
 
+### November 19, 2025
+- ✅ **Major Documentation Reorganization**
+  - Created 7 new categories: algorithms, features, fixes, integrations, design, root
+  - Moved 38 root-level .md files to appropriate folders
+  - Updated documentation index with all new categories
+  - Improved documentation discoverability and organization
+
 ### November 17, 2025
 - ✅ Reorganized documentation structure
 - ✅ Updated Celery task schedules
@@ -237,9 +325,9 @@ Located in: `docs/api/`
 - ✅ Created schedule updates summary
 
 ### Latest Documents
-1. [Celery Tasks Reference](celery/CELERY_TASKS_REFERENCE.md) - Complete task documentation
-2. [Schedule Updates Summary](celery/SCHEDULE_UPDATES_SUMMARY.md) - Recent schedule changes
-3. [NumPy Compatibility Fix](troubleshooting/NUMPY_COMPATIBILITY_FIX.md) - NumPy 2.0 issue resolution
+1. [Complete System Design](design/mcube-ai.design.md) - Comprehensive system design document
+2. [Futures Complete Implementation](features/FUTURES_COMPLETE_IMPLEMENTATION.md) - Full futures trading system
+3. [Algorithm Improvements](algorithms/ALGORITHM_IMPROVEMENTS_REAL_DATA.md) - Real data-based improvements
 
 ---
 
@@ -285,17 +373,25 @@ Located in: `docs/api/`
 When adding new documentation:
 
 1. **Choose the right folder:**
-   - Architecture docs → `architecture/`
-   - Setup guides → `setup/`
-   - Broker-related → `brokers/`
-   - Trading workflows → `trading/`
-   - Celery tasks → `celery/`
-   - Trendlyne data → `trendlyne/`
-   - Telegram bot → `telegram/`
-   - LLM/AI → `llm/`
-   - Testing → `testing/`
-   - Troubleshooting → `troubleshooting/`
-   - Status updates → `status-reports/`
+   - **Algorithms & strategies** → `algorithms/`
+   - **API docs** → `api/`
+   - **Architecture docs** → `architecture/`
+   - **Broker integrations** → `brokers/`
+   - **Background tasks** → `celery/`
+   - **System design** → `design/`
+   - **Feature implementations** → `features/`
+   - **Bug fixes & debugging** → `fixes/`
+   - **Implementation guides** → `implementation/`
+   - **Third-party integrations** → `integrations/`
+   - **LLM/AI** → `llm/`
+   - **Main project docs** → `root/`
+   - **Setup guides** → `setup/`
+   - **Status reports** → `status-reports/`
+   - **Telegram bot** → `telegram/`
+   - **Testing** → `testing/`
+   - **Trading workflows** → `trading/`
+   - **Trendlyne data** → `trendlyne/`
+   - **Troubleshooting** → `troubleshooting/`
 
 2. **Follow naming convention:**
    - Use `UPPERCASE_WITH_UNDERSCORES.md`
@@ -307,7 +403,35 @@ When adding new documentation:
 
 ---
 
-**Documentation Version:** 2.0
-**Last Major Update:** November 17, 2025
-**Total Documents:** 65+
+## 📁 Documentation Folder Structure
+
+```
+docs/
+├── algorithms/          # Trading algorithms and strategies (4 docs)
+├── api/                 # API endpoints and authentication (3 docs)
+├── architecture/        # System architecture and design (11 docs)
+├── brokers/             # Broker integrations (5 docs)
+├── celery/              # Background tasks and schedules (2 docs)
+├── design/              # System design documents (2 docs)
+├── features/            # Feature implementations (15 docs)
+├── fixes/               # Bug fixes and debugging (13 docs)
+├── implementation/      # Implementation guides (6 docs)
+├── integrations/        # Third-party integrations (3 docs)
+├── llm/                 # LLM/AI integration (3 docs)
+├── root/                # Main project documents (2 docs)
+├── setup/               # Setup and configuration (8 docs)
+├── status-reports/      # Status and progress reports (2 docs)
+├── telegram/            # Telegram bot (4 docs)
+├── testing/             # Testing documentation (5 docs)
+├── trading/             # Trading workflows (5 docs)
+├── trendlyne/           # Trendlyne integration (10 docs)
+└── troubleshooting/     # Troubleshooting guides (1 doc)
+```
+
+---
+
+**Documentation Version:** 3.0
+**Last Major Update:** November 19, 2025
+**Total Documents:** 103
+**Total Categories:** 19
 **Status:** ✅ Complete & Organized

@@ -3,7 +3,7 @@ Trading URLs
 """
 
 from django.urls import path
-from . import views
+from . import views, api_views
 
 app_name = 'trading'
 
@@ -15,6 +15,20 @@ urlpatterns = [
     path('trigger/verify/', views.verify_future_trade, name='verify_trade'),
     path('trigger/get-contracts/', views.get_contracts, name='get_contracts'),
     path('trigger/refresh-trendlyne/', views.refresh_trendlyne_data, name='refresh_trendlyne'),
+    path('trigger/update-breeze-session/', views.update_breeze_session, name='update_breeze_session'),
+    path('trigger/calculate-position-sizing/', views.calculate_position_sizing, name='calculate_position_sizing'),
+
+    # Position Sizing API Endpoints
+    path('api/calculate-position/', api_views.calculate_position_sizing, name='api_calculate_position'),
+    path('api/calculate-pnl/', api_views.calculate_pnl_scenarios, name='api_calculate_pnl'),
+    path('api/place-futures-order/', api_views.place_futures_order, name='api_place_futures_order'),
+    path('api/order-status/<str:order_id>/', api_views.check_order_status, name='api_check_order_status'),
+    path('api/get-margins/', api_views.get_margin_data, name='api_get_margins'),
+
+    # Trade Suggestions API Endpoints
+    path('api/suggestions/', api_views.get_trade_suggestions, name='api_get_suggestions'),
+    path('api/suggestions/<int:suggestion_id>/', api_views.get_suggestion_details, name='api_get_suggestion_details'),
+    path('api/suggestions/update/', api_views.update_suggestion_status, name='api_update_suggestion'),
 
     # Manual Trade Execution (Live Orders)
     path('manual/prepare/', views.prepare_manual_execution, name='prepare_manual_execution'),

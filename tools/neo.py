@@ -195,11 +195,12 @@ class NeoAPI(BrokerInterface if isinstance(BrokerInterface, type) else object):
                 collateral_value = _parse_float(response.get('CollateralValue'))
 
                 return {
-                    'available_margin': available,
+                    'available_margin': net,              # Use Net field (actual available funds for new positions)
                     'used_margin': used,
                     'total_margin': net,
-                    'cash': available,
-                    'collateral': collateral_value,
+                    'cash': net,                          # Use Net for cash too
+                    'collateral': available,              # Store Collateral separately for reference
+                    'collateral_value': collateral_value,
                     'raw': response
                 }
 

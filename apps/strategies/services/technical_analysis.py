@@ -42,29 +42,42 @@ class TechnicalAnalyzer:
 
     def analyze_all(self) -> Dict:
         """
-        Run complete technical analysis
+        Run complete technical analysis using REAL calculated data from historical prices
 
         Returns:
             dict: Complete technical analysis with delta adjustments
         """
         logger.info(f"Starting technical analysis for {self.symbol}")
 
-        # Try to get data from Trendlyne first
-        tl_data = self._get_trendlyne_data()
+        # STEP 1: Ensure we have 1 year of historical data
+        from apps.strategies.services.historical_analysis import analyze_nifty_historical
 
-        # Calculate support/resistance
-        support_resistance = self._calculate_support_resistance(tl_data)
+        logger.info(f"Fetching and analyzing 1-year historical data for {self.symbol}")
+        historical_analysis = analyze_nifty_historical(
+            current_price=self.current_price,
+            days_to_fetch=365
+        )
 
-        # Calculate moving averages
-        moving_averages = self._calculate_moving_averages(tl_data)
+        # STEP 2: Extract REAL moving averages (not assumptions!)
+        if historical_analysis.get('status') == 'SUCCESS':
+            moving_averages = historical_analysis['moving_averages']
+            logger.info(f"Using REAL calculated MAs: {moving_averages.get('source')}")
+        else:
+            logger.warning(f"Historical analysis failed: {historical_analysis.get('error')}, falling back to Trendlyne")
+            # Fallback to Trendlyne only if historical analysis completely failed
+            tl_data = self._get_trendlyne_data()
+            moving_averages = self._get_trendlyne_mas(tl_data)
 
-        # Determine trend from MAs
+        # STEP 3: Calculate support/resistance from real pivot points
+        support_resistance = self._calculate_support_resistance_from_history()
+
+        # STEP 4: Determine trend from MAs
         trend_analysis = self._analyze_trend(moving_averages)
 
-        # Calculate position relative to S/R levels
+        # STEP 5: Calculate position relative to S/R levels
         sr_position = self._analyze_sr_position(support_resistance)
 
-        # Calculate delta adjustments
+        # STEP 6: Calculate delta adjustments
         delta_adjustments = self._calculate_delta_adjustments(
             sr_position, trend_analysis, moving_averages
         )
@@ -75,7 +88,12 @@ class TechnicalAnalyzer:
             'trend_analysis': trend_analysis,
             'sr_position': sr_position,
             'delta_adjustments': delta_adjustments,
-            'technical_verdict': self._get_technical_verdict(delta_adjustments)
+            'technical_verdict': self._get_technical_verdict(delta_adjustments),
+            'data_quality': {
+                'historical_data_available': historical_analysis.get('status') == 'SUCCESS',
+                'days_analyzed': historical_analysis.get('data_summary', {}).get('days_available', 0),
+                'ma_source': moving_averages.get('source', 'Unknown')
+            }
         }
 
     def _get_trendlyne_data(self) -> Optional[TLStockData]:
@@ -92,6 +110,72 @@ class TechnicalAnalyzer:
         except Exception as e:
             logger.warning(f"Could not fetch Trendlyne data: {e}")
             return None
+
+    def _get_trendlyne_mas(self, tl_data: Optional[TLStockData]) -> Dict:
+        """Get MAs from Trendlyne data (fallback only)"""
+        if tl_data and tl_data.day30_sma:
+            return {
+                'source': 'Trendlyne (fallback)',
+                'sma_5': float(tl_data.day5_sma) if tl_data.day5_sma else None,
+                'sma_20': float(tl_data.day30_sma) if tl_data.day30_sma else None,
+                'sma_50': float(tl_data.day50_sma) if tl_data.day50_sma else None,
+                'sma_200': float(tl_data.day200_sma) if tl_data.day200_sma else None,
+                'ema_12': float(tl_data.day12_ema) if tl_data.day12_ema else None,
+                'ema_20': float(tl_data.day20_ema) if tl_data.day20_ema else None,
+                'ema_50': float(tl_data.day50_ema) if tl_data.day50_ema else None,
+            }
+        return {'source': 'Not Available'}
+
+    def _calculate_support_resistance_from_history(self) -> Dict:
+        """Calculate S/R from recent historical data using pivot points"""
+        try:
+            # Get last 5 days of data for pivot calculation
+            from datetime import date
+            start_date = date.today() - timedelta(days=10)
+
+            recent = HistoricalPrice.objects.filter(
+                stock_code=self.symbol,
+                datetime__gte=datetime.combine(start_date, datetime.min.time())
+            ).order_by('-datetime').first()
+
+            if recent:
+                high = float(recent.high)
+                low = float(recent.low)
+                close = float(recent.close)
+
+                # Calculate pivot points
+                pivot = (high + low + close) / 3
+                r1 = (2 * pivot) - low
+                r2 = pivot + (high - low)
+                r3 = high + 2 * (pivot - low)
+                s1 = (2 * pivot) - high
+                s2 = pivot - (high - low)
+                s3 = low - 2 * (high - pivot)
+
+                return {
+                    'source': 'Calculated from Recent Historical Data',
+                    'pivot': pivot,
+                    'r1': r1,
+                    'r2': r2,
+                    'r3': r3,
+                    's1': s1,
+                    's2': s2,
+                    's3': s3,
+                    'calculation_date': recent.datetime.date().isoformat()
+                }
+        except Exception as e:
+            logger.warning(f"Could not calculate S/R from history: {e}")
+
+        return {
+            'source': 'Not Available',
+            'pivot': None,
+            'r1': None,
+            'r2': None,
+            'r3': None,
+            's1': None,
+            's2': None,
+            's3': None,
+        }
 
     def _calculate_support_resistance(self, tl_data: Optional[TLStockData]) -> Dict:
         """

@@ -129,66 +129,40 @@ class PsychologicalLevelAnalyzer:
 
     def _check_danger_zone(self, strike: int, levels: Dict) -> Dict:
         """
-        Check if strike is in danger zone of any psychological level
+        Check if strike is EXACTLY at a psychological level (500 or 1000 multiples)
+
+        Changed logic: Only flag if strike is EXACTLY at a round number,
+        not based on proximity/danger zones.
 
         Returns:
             dict: Danger zone analysis
         """
         dangers = []
 
-        # Check major levels (1000s)
-        if levels['major']['distance_below'] <= self.MAJOR_LEVEL_DANGER_ZONE:
+        # Check if EXACTLY at 1000 multiple (25000, 26000, 27000)
+        if strike % 1000 == 0:
             dangers.append({
-                'level': levels['major']['below'],
+                'level': strike,
                 'type': 'MAJOR',
-                'position': 'ABOVE',
-                'distance': levels['major']['distance_below'],
+                'position': 'EXACT',
+                'distance': 0,
                 'severity': 'HIGH'
             })
-        if levels['major']['distance_above'] <= self.MAJOR_LEVEL_DANGER_ZONE:
-            dangers.append({
-                'level': levels['major']['above'],
-                'type': 'MAJOR',
-                'position': 'BELOW',
-                'distance': levels['major']['distance_above'],
-                'severity': 'HIGH'
-            })
+            logger.info(f"Strike {strike} is EXACTLY at 1000 multiple")
 
-        # Check intermediate levels (500s)
-        if levels['intermediate']['distance_below'] <= self.INTERMEDIATE_LEVEL_DANGER_ZONE:
+        # Check if EXACTLY at 500 multiple (but not 1000) - like 25500, 26500
+        elif strike % 500 == 0:
             dangers.append({
-                'level': levels['intermediate']['below'],
+                'level': strike,
                 'type': 'INTERMEDIATE',
-                'position': 'ABOVE',
-                'distance': levels['intermediate']['distance_below'],
+                'position': 'EXACT',
+                'distance': 0,
                 'severity': 'MEDIUM'
             })
-        if levels['intermediate']['distance_above'] <= self.INTERMEDIATE_LEVEL_DANGER_ZONE:
-            dangers.append({
-                'level': levels['intermediate']['above'],
-                'type': 'INTERMEDIATE',
-                'position': 'BELOW',
-                'distance': levels['intermediate']['distance_above'],
-                'severity': 'MEDIUM'
-            })
+            logger.info(f"Strike {strike} is EXACTLY at 500 multiple")
 
-        # Check minor levels (100s)
-        if levels['minor']['distance_below'] <= self.MINOR_LEVEL_DANGER_ZONE:
-            dangers.append({
-                'level': levels['minor']['below'],
-                'type': 'MINOR',
-                'position': 'ABOVE',
-                'distance': levels['minor']['distance_below'],
-                'severity': 'LOW'
-            })
-        if levels['minor']['distance_above'] <= self.MINOR_LEVEL_DANGER_ZONE:
-            dangers.append({
-                'level': levels['minor']['above'],
-                'type': 'MINOR',
-                'position': 'BELOW',
-                'distance': levels['minor']['distance_above'],
-                'severity': 'LOW'
-            })
+        # No need to check 100s - those are too granular for NIFTY options
+        # (NIFTY strikes are in 50-point intervals, so 100s don't matter)
 
         return {
             'in_danger_zone': len(dangers) > 0,

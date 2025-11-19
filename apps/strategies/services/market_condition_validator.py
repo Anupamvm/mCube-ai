@@ -25,6 +25,70 @@ from apps.brokers.models import HistoricalPrice
 logger = logging.getLogger(__name__)
 
 
+def classify_vix(vix: float) -> Dict:
+    """
+    Classify VIX into ranges for option strangle trading
+
+    User-defined ranges:
+    - Very Low: < 10
+    - Low: 10 - 11.5
+    - Normal: 11.5 - 12.5
+    - High: 12.5 - 14
+    - Very High: > 14
+
+    Args:
+        vix: India VIX value
+
+    Returns:
+        dict: VIX classification with trading implications
+    """
+    if vix < 10:
+        return {
+            'level': 'VERY_LOW',
+            'label': 'Very Low',
+            'color': 'blue',
+            'implication': 'Extremely low volatility - premiums very low, not ideal for selling options',
+            'strangle_suitable': False,
+            'reason': 'Premiums too low to justify risk'
+        }
+    elif vix < 11.5:
+        return {
+            'level': 'LOW',
+            'label': 'Low',
+            'color': 'lightblue',
+            'implication': 'Low volatility - premiums below average',
+            'strangle_suitable': True,
+            'reason': 'Can trade but premiums are low'
+        }
+    elif vix <= 12.5:
+        return {
+            'level': 'NORMAL',
+            'label': 'Normal',
+            'color': 'green',
+            'implication': 'Ideal volatility range for strangles - balanced risk/reward',
+            'strangle_suitable': True,
+            'reason': 'Optimal VIX range for strangle strategies'
+        }
+    elif vix <= 14:
+        return {
+            'level': 'HIGH',
+            'label': 'High',
+            'color': 'orange',
+            'implication': 'Elevated volatility - good premiums but higher risk',
+            'strangle_suitable': True,
+            'reason': 'Good premiums but watch for extreme movements'
+        }
+    else:
+        return {
+            'level': 'VERY_HIGH',
+            'label': 'Very High',
+            'color': 'red',
+            'implication': 'Very high volatility - large premiums but extreme risk',
+            'strangle_suitable': False,
+            'reason': 'VIX too high - market too volatile for safe strangle entry'
+        }
+
+
 class MarketConditionValidator:
     """
     Validates market conditions for Nifty Strangle strategy
@@ -189,17 +253,17 @@ class MarketConditionValidator:
 
     def _check_last_3_days_movement(self) -> None:
         """
-        Check last 3-5 days extreme movements using comprehensive historical analysis
+        Check last 3 days extreme movements using comprehensive historical analysis
 
         Fetches historical data from Breeze API if needed.
-        Criteria:
+        Criteria (USER REQUIREMENT: Use 3 days only):
         - 3-day movement > 3% = NO TRADE
-        - 5-day movement > 4.5% = NO TRADE
+        - 3-day movement > 2% = WARNING
         """
         try:
             from apps.strategies.services.historical_analysis import analyze_nifty_historical
 
-            logger.info("Running comprehensive historical movement analysis")
+            logger.info("Running comprehensive 3-day historical movement analysis")
 
             # Run full historical analysis (will fetch from Breeze if needed)
             historical_analysis = analyze_nifty_historical(
@@ -209,7 +273,7 @@ class MarketConditionValidator:
 
             if historical_analysis.get('status') == 'ERROR':
                 self._add_result(
-                    "Extreme Movement Check",
+                    "Extreme Movement Check (3-Day)",
                     "SKIP",
                     f"Historical analysis failed: {historical_analysis.get('error')}",
                     {}
@@ -218,36 +282,33 @@ class MarketConditionValidator:
 
             if historical_analysis.get('status') == 'INSUFFICIENT_DATA':
                 self._add_result(
-                    "Extreme Movement Check",
+                    "Extreme Movement Check (3-Day)",
                     "SKIP",
                     f"Insufficient historical data: {historical_analysis.get('days_available', 0)} days available",
                     {'days_available': historical_analysis.get('days_available', 0)}
                 )
                 return
 
-            # Extract movement analysis
+            # Extract movement analysis (3-day only)
             extreme_movements = historical_analysis.get('extreme_movements', {})
             three_day = extreme_movements.get('3_day_movement', {})
-            five_day = extreme_movements.get('5_day_movement', {})
 
-            # Build details
+            # Build details (3-day only)
             details = {
                 'days_available': historical_analysis.get('data_summary', {}).get('days_available'),
                 '3_day_move_pct': three_day.get('move_pct'),
                 '3_day_abs_pct': three_day.get('move_abs_pct'),
                 '3_day_status': three_day.get('status'),
-                '5_day_move_pct': five_day.get('move_pct'),
-                '5_day_abs_pct': five_day.get('move_abs_pct'),
-                '5_day_status': five_day.get('status'),
                 'overall_status': extreme_movements.get('status'),
+                'reasoning': extreme_movements.get('reasoning')
             }
 
-            # Determine result based on extreme movement analysis
+            # Determine result based on 3-day movement only
             if extreme_movements.get('no_trade_day'):
                 # EXTREME movement detected - NO TRADE
-                message = f"EXTREME MOVEMENT: 3-day: {three_day.get('move_pct'):+.2f}%, 5-day: {five_day.get('move_pct'):+.2f}%"
+                message = f"EXTREME 3-DAY MOVEMENT: {three_day.get('move_pct'):+.2f}% (Threshold: 3%)"
                 self._add_result(
-                    "Extreme Movement Check",
+                    "Extreme Movement Check (3-Day)",
                     "FAIL",
                     message,
                     details
@@ -258,20 +319,20 @@ class MarketConditionValidator:
 
             elif extreme_movements.get('status') == 'WARNING':
                 # WARNING - elevated movement
-                message = f"Elevated movement: 3-day: {three_day.get('move_pct'):+.2f}%, 5-day: {five_day.get('move_pct'):+.2f}%"
+                message = f"Elevated 3-day movement: {three_day.get('move_pct'):+.2f}% (Threshold: 2%)"
                 self._add_result(
-                    "Extreme Movement Check",
+                    "Extreme Movement Check (3-Day)",
                     "WARNING",
                     message,
                     details
                 )
-                self.warnings.append(f"Elevated movement detected")
+                self.warnings.append(f"Elevated 3-day movement: {three_day.get('move_pct'):+.2f}%")
 
             else:
                 # NORMAL movement
-                message = f"Normal movement: 3-day: {three_day.get('move_pct'):+.2f}%, 5-day: {five_day.get('move_pct'):+.2f}%"
+                message = f"Normal 3-day movement: {three_day.get('move_pct'):+.2f}%"
                 self._add_result(
-                    "Extreme Movement Check",
+                    "Extreme Movement Check (3-Day)",
                     "PASS",
                     message,
                     details
@@ -308,38 +369,70 @@ class MarketConditionValidator:
 
     def _check_vix_spike(self) -> None:
         """
-        Check for VIX spike
+        Check VIX level using user-defined ranges for option strangle
 
-        Criteria: VIX > 20 is WARNING, VIX > 25 is NO TRADE
+        User-defined ranges:
+        - Very Low: < 10 → Premiums too low (NOT SUITABLE)
+        - Low: 10 - 11.5 → Can trade but low premiums
+        - Normal: 11.5 - 12.5 → IDEAL for strangle
+        - High: 12.5 - 14 → Good premiums, higher risk
+        - Very High: > 14 → Too volatile (NOT SUITABLE)
         """
+        vix_classification = classify_vix(self.vix)
+
         details = {
             'current_vix': self.vix,
-            'threshold_warning': 20,
-            'threshold_no_trade': 25,
+            'classification': vix_classification['level'],
+            'label': vix_classification['label'],
+            'implication': vix_classification['implication'],
+            'strangle_suitable': vix_classification['strangle_suitable'],
+            'reason': vix_classification['reason']
         }
 
-        if self.vix > 25:
-            self._add_result(
-                "VIX Level",
-                "FAIL",
-                f"VIX too high at {self.vix:.1f} - Extreme volatility",
-                details
-            )
-            self.is_no_trade_day = True
-            self.trade_allowed = False
-        elif self.vix > 20:
-            self._add_result(
-                "VIX Level",
-                "WARNING",
-                f"Elevated VIX at {self.vix:.1f} - Higher risk",
-                details
-            )
-            self.warnings.append(f"Elevated VIX: {self.vix:.1f}")
-        else:
+        # Determine status based on classification
+        if not vix_classification['strangle_suitable']:
+            if self.vix < 10:
+                # Very Low VIX - premiums too low
+                self._add_result(
+                    "VIX Level",
+                    "WARNING",
+                    f"VIX Very Low at {self.vix:.1f} - {vix_classification['reason']}",
+                    details
+                )
+                self.warnings.append(f"VIX too low: {self.vix:.1f}")
+            else:
+                # Very High VIX - too volatile
+                self._add_result(
+                    "VIX Level",
+                    "FAIL",
+                    f"VIX Very High at {self.vix:.1f} - {vix_classification['reason']}",
+                    details
+                )
+                self.is_no_trade_day = True
+                self.trade_allowed = False
+        elif vix_classification['level'] == 'NORMAL':
+            # Ideal VIX range
             self._add_result(
                 "VIX Level",
                 "PASS",
-                f"Normal VIX at {self.vix:.1f}",
+                f"VIX {vix_classification['label']} at {self.vix:.1f} - {vix_classification['reason']}",
+                details
+            )
+        elif vix_classification['level'] == 'HIGH':
+            # High but still tradeable
+            self._add_result(
+                "VIX Level",
+                "WARNING",
+                f"VIX {vix_classification['label']} at {self.vix:.1f} - {vix_classification['reason']}",
+                details
+            )
+            self.warnings.append(f"VIX high: {self.vix:.1f}")
+        else:
+            # Low VIX
+            self._add_result(
+                "VIX Level",
+                "PASS",
+                f"VIX {vix_classification['label']} at {self.vix:.1f} - {vix_classification['reason']}",
                 details
             )
 

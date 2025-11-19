@@ -26,11 +26,9 @@ class HistoricalAnalyzer:
     Analyzes historical NIFTY data for trend and extreme movements
     """
 
-    # Thresholds for extreme movements
+    # Thresholds for extreme movements (USING 3 DAYS ONLY)
     EXTREME_3DAY_THRESHOLD = 3.0  # 3% in 3 days = NO TRADE
-    EXTREME_5DAY_THRESHOLD = 4.5  # 4.5% in 5 days = NO TRADE
     WARNING_3DAY_THRESHOLD = 2.0  # 2% in 3 days = WARNING
-    WARNING_5DAY_THRESHOLD = 3.5  # 3.5% in 5 days = WARNING
 
     def __init__(self, symbol: str = 'NIFTY', days_to_fetch: int = 365):
         """
@@ -44,10 +42,13 @@ class HistoricalAnalyzer:
         self.days_to_fetch = days_to_fetch
         self.historical_data = []
 
-    def ensure_historical_data(self) -> bool:
+    def ensure_historical_data(self, force_refresh: bool = False) -> bool:
         """
-        Ensure we have sufficient historical data
+        Ensure we have sufficient historical data (1 year minimum)
         Fetches from Breeze API if needed
+
+        Args:
+            force_refresh: Force download even if data exists
 
         Returns:
             bool: True if sufficient data available
@@ -63,15 +64,26 @@ class HistoricalAnalyzer:
 
         logger.info(f"Found {existing_count} existing historical records for {self.symbol}")
 
-        # If we have less than 50 records, fetch more
-        if existing_count < 50:
-            logger.info(f"Insufficient historical data ({existing_count} records). Fetching from Breeze API...")
+        # Check if we need fresh data
+        # Need at least 250 records for 1 year (accounting for weekends/holidays)
+        # OR force refresh requested
+        if existing_count < 250 or force_refresh:
+            logger.info(f"{'Forcing refresh' if force_refresh else f'Insufficient data ({existing_count} records)'}. Fetching from Breeze API...")
             try:
                 saved_count = get_nifty50_historical_days(days=self.days_to_fetch, interval="1day")
                 logger.info(f"Fetched and saved {saved_count} new historical records")
-                return saved_count > 0
+
+                if saved_count == 0:
+                    logger.error("No historical data was fetched from Breeze API")
+                    return False
+
+                return True
             except Exception as e:
-                logger.error(f"Failed to fetch historical data: {e}")
+                logger.error(f"Failed to fetch historical data from Breeze API: {e}", exc_info=True)
+                # Check if we have ANY data to work with
+                if existing_count > 0:
+                    logger.warning(f"Using existing {existing_count} records despite fetch failure")
+                    return True
                 return False
 
         return True
@@ -119,52 +131,131 @@ class HistoricalAnalyzer:
             float: MA value or None if insufficient data
         """
         if len(self.historical_data) < period:
+            logger.warning(f"Insufficient data for {period} MA: {len(self.historical_data)} days available")
             return None
 
         recent_closes = [d['close'] for d in self.historical_data[-period:]]
         ma = sum(recent_closes) / period
 
-        logger.info(f"{period} DMA: {ma:.2f}")
+        logger.info(f"{period} SMA: {ma:.2f}")
         return ma
+
+    def calculate_all_moving_averages(self) -> Dict:
+        """
+        Calculate all standard moving averages (5, 10, 20, 50, 100, 200 SMA and 12, 20, 50 EMA)
+
+        Returns:
+            dict: All calculated MAs with metadata
+        """
+        mas = {
+            'source': 'Calculated from HistoricalPrice table',
+            'data_points': len(self.historical_data),
+            'calculation_date': datetime.now().isoformat(),
+        }
+
+        # Calculate SMAs (including 10 and 100 as requested)
+        sma_5 = self.calculate_moving_average(5)
+        if sma_5:
+            mas['sma_5'] = round(sma_5, 2)
+
+        sma_10 = self.calculate_moving_average(10)
+        if sma_10:
+            mas['sma_10'] = round(sma_10, 2)
+
+        sma_20 = self.calculate_moving_average(20)
+        if sma_20:
+            mas['sma_20'] = round(sma_20, 2)
+
+        sma_50 = self.calculate_moving_average(50)
+        if sma_50:
+            mas['sma_50'] = round(sma_50, 2)
+
+        sma_100 = self.calculate_moving_average(100)
+        if sma_100:
+            mas['sma_100'] = round(sma_100, 2)
+
+        sma_200 = self.calculate_moving_average(200)
+        if sma_200:
+            mas['sma_200'] = round(sma_200, 2)
+
+        # Calculate EMAs
+        if len(self.historical_data) >= 12:
+            closes = [d['close'] for d in self.historical_data]
+            ema_12 = self._calculate_ema(closes, 12)
+            if ema_12:
+                mas['ema_12'] = round(ema_12, 2)
+
+        if len(self.historical_data) >= 20:
+            closes = [d['close'] for d in self.historical_data]
+            ema_20 = self._calculate_ema(closes, 20)
+            if ema_20:
+                mas['ema_20'] = round(ema_20, 2)
+
+        if len(self.historical_data) >= 50:
+            closes = [d['close'] for d in self.historical_data]
+            ema_50 = self._calculate_ema(closes, 50)
+            if ema_50:
+                mas['ema_50'] = round(ema_50, 2)
+
+        logger.info(f"Calculated {len([k for k in mas.keys() if 'ma_' in k or 'ema_' in k])} moving averages from {len(self.historical_data)} data points")
+        return mas
+
+    def _calculate_ema(self, closes: List[float], period: int) -> Optional[float]:
+        """
+        Calculate Exponential Moving Average
+
+        Args:
+            closes: List of closing prices
+            period: EMA period
+
+        Returns:
+            float: EMA value or None if insufficient data
+        """
+        if len(closes) < period:
+            return None
+
+        multiplier = 2 / (period + 1)
+        # Start with SMA for first value
+        ema = sum(closes[:period]) / period
+
+        # Calculate EMA for remaining values
+        for price in closes[period:]:
+            ema = (price * multiplier) + (ema * (1 - multiplier))
+
+        return ema
 
     def calculate_extreme_movements(self) -> Dict:
         """
-        Calculate 3-day and 5-day price movements
+        Calculate 3-day price movement (PRIMARY CHECK)
+
+        User requirement: Use only 3 days for extreme movement check
 
         Returns:
             dict: Movement analysis with NO TRADE flags
         """
-        if len(self.historical_data) < 5:
+        if len(self.historical_data) < 4:
             return {
                 'status': 'INSUFFICIENT_DATA',
                 'days_available': len(self.historical_data),
-                'error': 'Need at least 5 days of historical data'
+                'error': 'Need at least 4 days of historical data for 3-day movement'
             }
 
-        # Get most recent closes
-        closes = [d['close'] for d in self.historical_data[-6:]]  # Last 6 days
+        # Get most recent closes (last 4 days to calculate 3-day movement)
+        closes = [d['close'] for d in self.historical_data[-4:]]
 
         # Calculate 3-day movement (3 days ago to today)
-        three_day_start = closes[-4]  # 3 days ago
-        three_day_end = closes[-1]    # Today
+        three_day_start = closes[0]  # 3 days ago
+        three_day_end = closes[-1]   # Today
         three_day_move_pct = ((three_day_end - three_day_start) / three_day_start * 100)
 
-        # Calculate 5-day movement (5 days ago to today)
-        five_day_start = closes[-6]   # 5 days ago
-        five_day_end = closes[-1]     # Today
-        five_day_move_pct = ((five_day_end - five_day_start) / five_day_start * 100)
-
-        # Determine status
+        # Determine status based on 3-day movement only
         three_day_status = self._get_movement_status(abs(three_day_move_pct),
                                                        self.WARNING_3DAY_THRESHOLD,
                                                        self.EXTREME_3DAY_THRESHOLD)
-        five_day_status = self._get_movement_status(abs(five_day_move_pct),
-                                                      self.WARNING_5DAY_THRESHOLD,
-                                                      self.EXTREME_5DAY_THRESHOLD)
 
-        # Overall verdict
-        is_extreme = three_day_status == 'EXTREME' or five_day_status == 'EXTREME'
-        is_warning = three_day_status == 'WARNING' or five_day_status == 'WARNING'
+        # Overall verdict based ONLY on 3-day movement
+        is_extreme = three_day_status == 'EXTREME'
+        is_warning = three_day_status == 'WARNING'
 
         result = {
             'status': 'EXTREME' if is_extreme else ('WARNING' if is_warning else 'NORMAL'),
@@ -178,26 +269,16 @@ class HistoricalAnalyzer:
                 'threshold_warning': self.WARNING_3DAY_THRESHOLD,
                 'threshold_extreme': self.EXTREME_3DAY_THRESHOLD,
             },
-            '5_day_movement': {
-                'start_price': five_day_start,
-                'end_price': five_day_end,
-                'move_pct': round(five_day_move_pct, 2),
-                'move_abs_pct': round(abs(five_day_move_pct), 2),
-                'status': five_day_status,
-                'threshold_warning': self.WARNING_5DAY_THRESHOLD,
-                'threshold_extreme': self.EXTREME_5DAY_THRESHOLD,
-            },
             'no_trade_day': is_extreme,
-            'reasoning': self._get_reasoning(three_day_move_pct, five_day_move_pct,
-                                             three_day_status, five_day_status)
+            'reasoning': self._get_reasoning_3day(three_day_move_pct, three_day_status)
         }
 
         if is_extreme:
-            logger.warning(f"⚠️ EXTREME MOVEMENT DETECTED: 3-day: {three_day_move_pct:+.2f}%, 5-day: {five_day_move_pct:+.2f}%")
+            logger.warning(f"⚠️ EXTREME MOVEMENT DETECTED: 3-day: {three_day_move_pct:+.2f}% (Threshold: {self.EXTREME_3DAY_THRESHOLD}%)")
         elif is_warning:
-            logger.info(f"⚠ Warning: Elevated movements - 3-day: {three_day_move_pct:+.2f}%, 5-day: {five_day_move_pct:+.2f}%")
+            logger.info(f"⚠ Warning: Elevated 3-day movement: {three_day_move_pct:+.2f}%")
         else:
-            logger.info(f"✓ Normal movements - 3-day: {three_day_move_pct:+.2f}%, 5-day: {five_day_move_pct:+.2f}%")
+            logger.info(f"✓ Normal 3-day movement: {three_day_move_pct:+.2f}%")
 
         return result
 
@@ -210,15 +291,25 @@ class HistoricalAnalyzer:
         else:
             return 'NORMAL'
 
-    def _get_reasoning(self, three_day: float, five_day: float,
-                       three_status: str, five_status: str) -> str:
-        """Generate reasoning text"""
-        if three_status == 'EXTREME' or five_status == 'EXTREME':
-            return f"EXTREME MOVEMENT - Strong trending market. Strangle risk too high. NO TRADE."
-        elif three_status == 'WARNING' or five_status == 'WARNING':
-            return f"Elevated movement detected. Monitor closely for breakout/breakdown."
+    def _get_reasoning_3day(self, three_day_move: float, status: str) -> str:
+        """
+        Generate reasoning text based on 3-day movement
+
+        Args:
+            three_day_move: 3-day percentage movement
+            status: Movement status (EXTREME/WARNING/NORMAL)
+
+        Returns:
+            str: Reasoning for strangle decision
+        """
+        if status == 'EXTREME':
+            direction = "UP" if three_day_move > 0 else "DOWN"
+            return f"EXTREME {direction} MOVEMENT ({abs(three_day_move):.2f}% in 3 days) - Strong trending market. Strangle risk too high. NO TRADE."
+        elif status == 'WARNING':
+            direction = "upward" if three_day_move > 0 else "downward"
+            return f"Elevated {direction} movement ({abs(three_day_move):.2f}% in 3 days). Monitor closely - reduce position size if entering."
         else:
-            return f"Normal price movement. Market suitable for strangle."
+            return f"Normal 3-day movement ({abs(three_day_move):.2f}%). Market suitable for strangle."
 
     def calculate_trend_vs_20dma(self, current_price: float) -> Dict:
         """
@@ -311,8 +402,9 @@ class HistoricalAnalyzer:
         # Run all analyses
         extreme_movements = self.calculate_extreme_movements()
         trend_analysis = self.calculate_trend_vs_20dma(current_price)
-        dma_50 = self.calculate_moving_average(period=50)
-        dma_200 = self.calculate_moving_average(period=200)
+
+        # Calculate ALL moving averages from historical data
+        all_mas = self.calculate_all_moving_averages()
 
         return {
             'status': 'SUCCESS',
@@ -323,11 +415,7 @@ class HistoricalAnalyzer:
             },
             'extreme_movements': extreme_movements,
             'trend_vs_20dma': trend_analysis,
-            'moving_averages': {
-                'dma_20': trend_analysis.get('dma_20'),
-                'dma_50': round(dma_50, 2) if dma_50 else None,
-                'dma_200': round(dma_200, 2) if dma_200 else None,
-            },
+            'moving_averages': all_mas,  # Now includes ALL MAs (SMA 5,20,50,200 and EMA 12,20,50)
             'overall_verdict': self._get_overall_verdict(extreme_movements, trend_analysis),
         }
 

@@ -6,7 +6,7 @@ from django.contrib import admin
 from django.utils.html import format_html
 from django.urls import reverse
 from django.db.models import Q
-from apps.trading.models import TradeSuggestion, AutoTradeConfig, TradeSuggestionLog
+from apps.trading.models import TradeSuggestion, AutoTradeConfig, TradeSuggestionLog, PositionSize
 
 
 @admin.register(TradeSuggestion)
@@ -20,8 +20,10 @@ class TradeSuggestionAdmin(admin.ModelAdmin):
         'direction_colored',
         'strategy',
         'status_colored',
+        'recommended_lots',
+        'margin_required',
         'created_at',
-        'approved_by_display',
+        'pnl_display',
     ]
 
     list_filter = [
@@ -29,7 +31,6 @@ class TradeSuggestionAdmin(admin.ModelAdmin):
         'strategy',
         'suggestion_type',
         'created_at',
-        ('approved_by', admin.RelatedOnlyFieldListFilter),
     ]
 
     search_fields = [
@@ -44,31 +45,44 @@ class TradeSuggestionAdmin(admin.ModelAdmin):
         'updated_at',
         'algorithm_reasoning_display',
         'position_details_display',
-        'logs_display',
     ]
 
     fieldsets = (
         ('Basic Information', {
-            'fields': ('user', 'strategy', 'suggestion_type', 'instrument', 'direction')
+            'fields': ('user', 'strategy', 'suggestion_type', 'instrument', 'direction', 'status')
+        }),
+        ('Market Data', {
+            'fields': ('spot_price', 'vix', 'expiry_date', 'days_to_expiry'),
+        }),
+        ('Strike Details (Options)', {
+            'fields': ('call_strike', 'put_strike', 'call_premium', 'put_premium', 'total_premium'),
+            'classes': ('collapse',),
+        }),
+        ('Position Sizing', {
+            'fields': ('recommended_lots', 'margin_required', 'margin_available', 'margin_per_lot', 'margin_utilization'),
+        }),
+        ('Risk Metrics', {
+            'fields': ('max_profit', 'max_loss', 'breakeven_upper', 'breakeven_lower', 'risk_reward_ratio'),
+            'classes': ('collapse',),
+        }),
+        ('P&L Tracking', {
+            'fields': ('entry_value', 'exit_value', 'realized_pnl', 'return_on_margin'),
         }),
         ('Algorithm Data', {
             'fields': ('algorithm_reasoning_display', 'position_details_display'),
             'classes': ('collapse',),
         }),
-        ('Approval Status', {
-            'fields': ('status', 'approved_by', 'approval_timestamp', 'approval_notes', 'is_auto_trade')
-        }),
-        ('Execution', {
-            'fields': ('executed_position',),
+        ('Status Tracking', {
+            'fields': ('taken_timestamp', 'closed_timestamp', 'rejected_timestamp', 'user_notes'),
             'classes': ('collapse',),
         }),
-        ('Timestamps & Audit', {
-            'fields': ('created_at', 'updated_at', 'expires_at', 'logs_display'),
+        ('Timestamps', {
+            'fields': ('created_at', 'updated_at', 'expires_at'),
             'classes': ('collapse',),
         }),
     )
 
-    actions = ['approve_selected', 'reject_selected', 'mark_expired']
+    actions = ['mark_expired']
 
     def user_username(self, obj):
         """Display user username"""
@@ -93,13 +107,16 @@ class TradeSuggestionAdmin(admin.ModelAdmin):
     def status_colored(self, obj):
         """Color-code status"""
         colors = {
-            'PENDING': '#ffc107',
-            'APPROVED': '#17a2b8',
-            'AUTO_APPROVED': '#20c997',
-            'REJECTED': '#dc3545',
-            'EXECUTED': '#28a745',
-            'EXPIRED': '#6c757d',
-            'CANCELLED': '#6c757d',
+            'SUGGESTED': '#3B82F6',
+            'TAKEN': '#8B5CF6',
+            'REJECTED': '#6B7280',
+            'ACTIVE': '#F59E0B',
+            'CLOSED': '#6B7280',
+            'SUCCESSFUL': '#10B981',
+            'LOSS': '#EF4444',
+            'BREAKEVEN': '#FBBF24',
+            'EXPIRED': '#6B7280',
+            'CANCELLED': '#6B7280',
         }
         color = colors.get(obj.status, '#000000')
         return format_html(
@@ -109,12 +126,18 @@ class TradeSuggestionAdmin(admin.ModelAdmin):
         )
     status_colored.short_description = 'Status'
 
-    def approved_by_display(self, obj):
-        """Display who approved"""
-        if obj.approved_by:
-            return obj.approved_by.username
+    def pnl_display(self, obj):
+        """Display P&L if closed"""
+        if obj.realized_pnl:
+            color = '#10B981' if obj.realized_pnl > 0 else '#EF4444'
+            return format_html(
+                '<span style="color: {}; font-weight: bold;">₹{:,.2f}</span> ({:.2f}% ROM)',
+                color,
+                float(obj.realized_pnl),
+                float(obj.return_on_margin or 0)
+            )
         return '-'
-    approved_by_display.short_description = 'Approved By'
+    pnl_display.short_description = 'Realized P&L'
 
     def algorithm_reasoning_display(self, obj):
         """Display algorithm reasoning as formatted JSON"""
@@ -138,57 +161,9 @@ class TradeSuggestionAdmin(admin.ModelAdmin):
         return 'No position details'
     position_details_display.short_description = 'Position Details'
 
-    def logs_display(self, obj):
-        """Display associated logs"""
-        logs = obj.logs.all().order_by('-created_at')
-        if not logs:
-            return 'No logs'
-
-        html = '<ul style="margin: 0; padding-left: 20px;">'
-        for log in logs[:5]:  # Show last 5 logs
-            html += f'<li>{log.created_at.strftime("%Y-%m-%d %H:%M:%S")} - {log.get_action_display()}'
-            if log.user:
-                html += f' by {log.user.username}'
-            if log.notes:
-                html += f': {log.notes}'
-            html += '</li>'
-        html += '</ul>'
-
-        if logs.count() > 5:
-            html += f'<p><em>... and {logs.count() - 5} more logs</em></p>'
-
-        return format_html(html)
-    logs_display.short_description = 'Audit Logs'
-
-    def approve_selected(self, request, queryset):
-        """Admin action to approve selected suggestions"""
-        count = 0
-        for suggestion in queryset.filter(status='PENDING'):
-            suggestion.status = 'APPROVED'
-            suggestion.approved_by = request.user
-            from django.utils import timezone
-            suggestion.approval_timestamp = timezone.now()
-            suggestion.save()
-            count += 1
-
-        self.message_user(request, f'{count} suggestions approved.')
-    approve_selected.short_description = 'Approve selected suggestions'
-
-    def reject_selected(self, request, queryset):
-        """Admin action to reject selected suggestions"""
-        count = 0
-        for suggestion in queryset.filter(status='PENDING'):
-            suggestion.status = 'REJECTED'
-            suggestion.approval_notes = 'Rejected by admin'
-            suggestion.save()
-            count += 1
-
-        self.message_user(request, f'{count} suggestions rejected.')
-    reject_selected.short_description = 'Reject selected suggestions'
-
     def mark_expired(self, request, queryset):
         """Admin action to mark suggestions as expired"""
-        count = queryset.exclude(status__in=['EXECUTED', 'REJECTED', 'CANCELLED']).update(status='EXPIRED')
+        count = queryset.filter(status='SUGGESTED').update(status='EXPIRED')
         self.message_user(request, f'{count} suggestions marked as expired.')
     mark_expired.short_description = 'Mark selected as expired'
 
@@ -362,4 +337,130 @@ class TradeSuggestionLogAdmin(admin.ModelAdmin):
 
     def has_delete_permission(self, request, obj=None):
         """Prevent deletion of logs"""
+        return False
+
+
+@admin.register(PositionSize)
+class PositionSizeAdmin(admin.ModelAdmin):
+    """Admin interface for position sizing calculations"""
+
+    list_display = [
+        'id',
+        'user_username',
+        'symbol',
+        'instrument_type_colored',
+        'recommended_lots',
+        'total_quantity',
+        'margin_required',
+        'max_loss_profit',
+        'status_colored',
+        'created_at',
+    ]
+
+    list_filter = [
+        'instrument_type',
+        'direction',
+        'status',
+        'margin_source',
+        'created_at',
+    ]
+
+    search_fields = [
+        'user__username',
+        'symbol',
+    ]
+
+    readonly_fields = [
+        'user',
+        'created_at',
+        'updated_at',
+        'calculation_details_display',
+        'averaging_data_display',
+    ]
+
+    fieldsets = (
+        ('Trade Information', {
+            'fields': ('user', 'symbol', 'instrument_type', 'direction')
+        }),
+        ('Price Levels', {
+            'fields': ('entry_price', 'stop_loss', 'target')
+        }),
+        ('Contract Details', {
+            'fields': ('lot_size', 'strike', 'option_type')
+        }),
+        ('Margin Information', {
+            'fields': ('available_margin', 'margin_per_lot', 'margin_source')
+        }),
+        ('Position Sizing Results', {
+            'fields': ('recommended_lots', 'total_quantity', 'margin_required', 'max_loss', 'max_profit', 'risk_reward_ratio')
+        }),
+        ('Averaging Down', {
+            'fields': ('averaging_data_display',),
+            'classes': ('collapse',),
+        }),
+        ('Full Calculation', {
+            'fields': ('calculation_details_display',),
+            'classes': ('collapse',),
+        }),
+        ('Status & Timestamps', {
+            'fields': ('status', 'created_at', 'updated_at', 'expires_at')
+        }),
+    )
+
+    def user_username(self, obj):
+        return obj.user.username
+    user_username.short_description = 'User'
+
+    def instrument_type_colored(self, obj):
+        color = '#2563EB' if obj.instrument_type == 'FUTURES' else '#10B981'
+        return format_html(
+            '<span style="background-color: {}; color: white; padding: 3px 8px; border-radius: 3px;">{}</span>',
+            color,
+            obj.instrument_type
+        )
+    instrument_type_colored.short_description = 'Type'
+
+    def max_loss_profit(self, obj):
+        return format_html(
+            'Loss: <span style="color: #dc3545;">₹{:,.2f}</span> | Profit: <span style="color: #28a745;">₹{:,.2f}</span>',
+            float(obj.max_loss),
+            float(obj.max_profit)
+        )
+    max_loss_profit.short_description = 'Max Loss/Profit'
+
+    def status_colored(self, obj):
+        colors = {
+            'ACTIVE': '#17a2b8',
+            'EXECUTED': '#28a745',
+            'EXPIRED': '#6c757d',
+        }
+        color = colors.get(obj.status, '#000000')
+        return format_html(
+            '<span style="background-color: {}; color: white; padding: 3px 8px; border-radius: 3px;">{}</span>',
+            color,
+            obj.get_status_display()
+        )
+    status_colored.short_description = 'Status'
+
+    def calculation_details_display(self, obj):
+        import json
+        if obj.calculation_details:
+            return format_html(
+                '<pre style="background-color: #f5f5f5; padding: 10px; border-radius: 3px; overflow-x: auto;">{}</pre>',
+                json.dumps(obj.calculation_details, indent=2)
+            )
+        return 'No data'
+    calculation_details_display.short_description = 'Full Calculation'
+
+    def averaging_data_display(self, obj):
+        import json
+        if obj.averaging_data:
+            return format_html(
+                '<pre style="background-color: #f5f5f5; padding: 10px; border-radius: 3px; overflow-x: auto;">{}</pre>',
+                json.dumps(obj.averaging_data, indent=2)
+            )
+        return 'N/A (Options only have single position)'
+    averaging_data_display.short_description = 'Averaging Down Data'
+
+    def has_add_permission(self, request):
         return False

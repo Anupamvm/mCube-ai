@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Position Sizing</title>
+</head>
+<body>
+    <div id="output"></div>
+
+    <script>
+        // Simulate the buildPositionSizingSection function
+        function buildPositionSizingSection(positionSizing, strangle) {
+            if (!positionSizing || !strangle) {
+                console.warn('Position sizing data not available');
+                return '';
+            }
+
+            const initial = positionSizing.initial_position;
+            const averaging = positionSizing.averaging_scenarios;
+            const pnl = positionSizing.pnl_analysis;
+            const risk = positionSizing.risk_metrics;
+
+            // Helper function for color coding P&L
+            const getPnlColor = (pnl) => pnl >= 0 ? '#D1FAE5' : '#FEE2E2';
+
+            return `
+                <div class="result-section">
+                    <h3>Position Sizing & Risk Analysis</h3>
+                    <div>Lots: ${initial.lots}</div>
+                    <div>Margin: ${initial.margin_required}</div>
+                    <div>Premium: ${initial.premium_collected}</div>
+                </div>
+            `;
+        }
+
+        // Test data
+        const testData = {
+            initial_position: {
+                lots: 5,
+                margin_required: 100000,
+                premium_collected: 5000,
+                total_quantity: 250
+            },
+            averaging_scenarios: {},
+            pnl_analysis: {},
+            risk_metrics: {}
+        };
+
+        const testStrangle = {
+            call_strike: 24000,
+            put_strike: 23000,
+            total_premium: 100
+        };
+
+        // Test the function
+        try {
+            const html = buildPositionSizingSection(testData, testStrangle);
+            document.getElementById('output').innerHTML = html;
+            console.log('Success!');
+        } catch (error) {
+            document.getElementById('output').innerHTML = 'Error: ' + error.message;
+            console.error('Error:', error);
+        }
+    </script>
+</body>
+</html>

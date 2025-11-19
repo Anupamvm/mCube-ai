@@ -28,6 +28,7 @@ from apps.core.models import CredentialStore
 from apps.core.constants import BROKER_ICICI
 from apps.brokers.models import BrokerLimit, BrokerPosition, OptionChainQuote, HistoricalPrice, NiftyOptionChain
 from apps.data.models import OptionChain
+from apps.brokers.exceptions import BreezeAuthenticationError, BreezeAPIError
 
 logger = logging.getLogger(__name__)
 
@@ -223,17 +224,27 @@ def get_breeze_client():
         BreezeConnect: Authenticated client instance
 
     Raises:
-        Exception: If credentials not found or authentication fails
+        BreezeAuthenticationError: If credentials not found or authentication fails
     """
-    creds = CredentialStore.objects.filter(service='breeze').first()
-    if not creds:
-        raise Exception("No Breeze credentials found in DB")
-    breeze = BreezeConnect(api_key=creds.api_key)
-    breeze.generate_session(
-        api_secret=creds.api_secret,
-        session_token=creds.session_token
-    )
-    return breeze
+    try:
+        creds = CredentialStore.objects.filter(service='breeze').first()
+        if not creds:
+            raise BreezeAuthenticationError("No Breeze credentials found in database")
+
+        breeze = BreezeConnect(api_key=creds.api_key)
+        breeze.generate_session(
+            api_secret=creds.api_secret,
+            session_token=creds.session_token
+        )
+        return breeze
+    except BreezeAuthenticationError:
+        raise
+    except Exception as e:
+        error_msg = str(e).lower()
+        # Detect common authentication error messages
+        if any(keyword in error_msg for keyword in ['session', 'authentication', 'unauthorized', 'invalid token', 'expired', 'login']):
+            raise BreezeAuthenticationError(f"Breeze authentication failed: {str(e)}", original_error=e)
+        raise
 
 
 def get_nifty_quote():
@@ -281,9 +292,9 @@ def get_india_vix() -> Decimal:
     try:
         breeze = get_breeze_client()
 
-        # Fetch India VIX quote from NSE
+        # Fetch India VIX quote from NSE using correct symbol: INDVIX
         resp = breeze.get_quotes(
-            stock_code="INDIA VIX",
+            stock_code="INDVIX",
             exchange_code="NSE",
             product_type="cash",
             expiry_date="",
@@ -291,7 +302,7 @@ def get_india_vix() -> Decimal:
             strike_price=""
         )
 
-        logger.info(f"India VIX quote response: {resp}")
+        logger.info(f"India VIX (INDVIX) quote response: {resp}")
 
         if resp and resp.get("Status") == 200 and resp.get("Success"):
             rows = resp["Success"]
@@ -306,12 +317,12 @@ def get_india_vix() -> Decimal:
                 logger.info(f"Successfully fetched India VIX: {vix_decimal}")
                 return vix_decimal
 
-        logger.warning("Failed to fetch India VIX from Breeze API, using default 15.0")
-        return Decimal('15.0')
+        logger.error("Failed to fetch India VIX from Breeze API - no valid response")
+        raise ValueError("Could not fetch India VIX from Breeze API - invalid response")
 
     except Exception as e:
         logger.error(f"Error fetching India VIX: {e}")
-        return Decimal('15.0')
+        raise ValueError(f"Could not fetch India VIX from Breeze API: {str(e)}")
 
 
 def fetch_and_save_breeze_data():
@@ -759,7 +770,13 @@ def save_historical_price_record(stock_code, exchange_code, product_type, candle
         HistoricalPrice: Created object or None if already exists
     """
     try:
-        dt = datetime.fromisoformat(candle_data['datetime'].replace('Z', '+00:00'))
+        # Parse datetime and make it timezone-aware
+        dt_str = candle_data['datetime'].replace('Z', '+00:00')
+        dt = datetime.fromisoformat(dt_str)
+
+        # Ensure datetime is timezone-aware for Django
+        if dt.tzinfo is None:
+            dt = dj_timezone.make_aware(dt)
 
         # Check if record already exists
         existing = HistoricalPrice.objects.filter(
@@ -775,6 +792,10 @@ def save_historical_price_record(stock_code, exchange_code, product_type, candle
         if existing:
             return None
 
+        # Safely handle None values for volume and open_interest
+        volume = candle_data.get('volume')
+        open_interest = candle_data.get('open_interest')
+
         obj = HistoricalPrice.objects.create(
             datetime=dt,
             stock_code=stock_code,
@@ -787,8 +808,8 @@ def save_historical_price_record(stock_code, exchange_code, product_type, candle
             high=Decimal(str(candle_data.get('high', 0))),
             low=Decimal(str(candle_data.get('low', 0))),
             close=Decimal(str(candle_data.get('close', 0))),
-            volume=int(candle_data.get('volume', 0)),
-            open_interest=int(candle_data.get('open_interest', 0)),
+            volume=int(volume) if volume is not None else 0,
+            open_interest=int(open_interest) if open_interest is not None else 0,
         )
         return obj
     except Exception as e:
