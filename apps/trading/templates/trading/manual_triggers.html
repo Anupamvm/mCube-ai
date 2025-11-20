@@ -2690,18 +2690,151 @@ Are you absolutely sure?
 
             const data = await response.json();
 
-            if (!response.ok) {
-                throw new Error(data.error || 'Failed to place order');
+            // Log full response for debugging
+            console.log('Full API Response:', data);
+
+            if (!response.ok || !data.success) {
+                // Display detailed error information
+                let errorHtml = `<strong>❌ Order Failed!</strong><br>${data.error || 'Unknown error'}<br>`;
+
+                // Add order details if available (even on error)
+                if (data.order_details) {
+                    errorHtml += `<br><strong>Order Details:</strong><br>`;
+                    errorHtml += `Symbol: ${data.order_details.symbol || 'N/A'}<br>`;
+                    if (data.order_details.stock_code) {
+                        errorHtml += `Stock Code: <strong>${data.order_details.stock_code}</strong><br>`;
+                    }
+                }
+
+                // Add SecurityMaster info if available
+                if (data.security_master) {
+                    errorHtml += `<br><strong>📋 SecurityMaster Info:</strong><br>`;
+                    errorHtml += `<div style="background: #fff3cd; padding: 8px; border-radius: 4px; font-size: 12px; text-align: left;">`;
+                    errorHtml += `Token: ${data.security_master.token}<br>`;
+                    errorHtml += `Stock Code: <strong>${data.security_master.stock_code}</strong><br>`;
+                    errorHtml += `Lot Size: ${data.security_master.lot_size}<br>`;
+                    errorHtml += `Company: ${data.security_master.company_name}`;
+                    errorHtml += `</div>`;
+                }
+
+                // Add debug info in collapsible section
+                if (data.debug_info) {
+                    errorHtml += `<br><details style="margin-top: 10px;">`;
+                    errorHtml += `<summary style="cursor: pointer; font-weight: bold;">🔍 Debug Info (click to expand)</summary>`;
+                    errorHtml += `<pre style="text-align: left; font-size: 11px; background: #f5f5f5; padding: 10px; border-radius: 4px; max-height: 200px; overflow: auto; margin-top: 5px;">`;
+                    errorHtml += JSON.stringify(data.debug_info, null, 2);
+                    errorHtml += `</pre>`;
+                    errorHtml += `</details>`;
+                }
+
+                // Add Breeze response in collapsible section
+                if (data.breeze_response) {
+                    errorHtml += `<br><details style="margin-top: 10px;">`;
+                    errorHtml += `<summary style="cursor: pointer; font-weight: bold;">📡 Breeze API Response (click to expand)</summary>`;
+                    errorHtml += `<pre style="text-align: left; font-size: 11px; background: #f5f5f5; padding: 10px; border-radius: 4px; max-height: 200px; overflow: auto; margin-top: 5px;">`;
+                    errorHtml += JSON.stringify(data.breeze_response, null, 2);
+                    errorHtml += `</pre>`;
+                    errorHtml += `</details>`;
+                }
+
+                statusDiv.className = 'order-status error show';
+                statusDiv.innerHTML = errorHtml;
+
+                button.disabled = false;
+                button.innerHTML = '📈 Place Order';
+                return;
             }
 
-            // Show success status
+            // Show success status with batch info
+            let successHtml = `<strong>✅ Orders Placed Successfully!</strong><br>`;
+
+            // Add batch summary if multiple batches
+            if (data.total_batches && data.total_batches > 1) {
+                successHtml += `<br><strong>📦 Batch Execution Summary:</strong><br>`;
+                successHtml += `<div style="background: #e3f2fd; padding: 8px; border-radius: 4px; margin: 5px 0; font-size: 12px; text-align: left;">`;
+                successHtml += `Total Batches: ${data.total_batches}<br>`;
+                successHtml += `Successful: <strong style="color: green;">${data.successful_batches}</strong>`;
+                if (data.failed_batches > 0) {
+                    successHtml += ` | Failed: <strong style="color: red;">${data.failed_batches}</strong>`;
+                }
+                successHtml += `<br>Batch Size: ${data.order_details.batch_size} lots/order<br>`;
+                successHtml += `Delay: ${data.order_details.delay_seconds} seconds between orders`;
+                successHtml += `</div>`;
+
+                // List all successful orders
+                if (data.orders && data.orders.length > 0) {
+                    successHtml += `<br><strong>✅ Successful Orders:</strong><br>`;
+                    successHtml += `<div style="font-size: 11px; text-align: left;">`;
+                    data.orders.forEach(order => {
+                        successHtml += `Batch ${order.batch}: Order <strong>${order.order_id}</strong> - ${order.lots} lots (${order.quantity} qty)<br>`;
+                    });
+                    successHtml += `</div>`;
+                }
+
+                // List failed orders if any
+                if (data.failed_orders && data.failed_orders.length > 0) {
+                    successHtml += `<br><strong>❌ Failed Orders:</strong><br>`;
+                    successHtml += `<div style="font-size: 11px; color: red; text-align: left;">`;
+                    data.failed_orders.forEach(order => {
+                        successHtml += `Batch ${order.batch}: ${order.error}<br>`;
+                    });
+                    successHtml += `</div>`;
+                }
+            } else {
+                // Single order (old format for backward compatibility)
+                if (data.order_id) {
+                    successHtml += `Order ID: <strong>${data.order_id}</strong><br>`;
+                }
+                if (data.status) {
+                    successHtml += `Status: ${data.status}<br>`;
+                }
+            }
+
+            successHtml += `<br>${data.message || ''}`;
+
+            // Add order details
+            if (data.order_details) {
+                successHtml += `<br><br><strong>Order Details:</strong><br>`;
+                successHtml += `Symbol: ${data.order_details.symbol}<br>`;
+                successHtml += `Stock Code: <strong>${data.order_details.stock_code}</strong><br>`;
+                successHtml += `Direction: ${data.order_details.direction}<br>`;
+                successHtml += `Total: ${data.order_details.total_quantity} (${data.order_details.total_lots} lots × ${data.order_details.lot_size})<br>`;
+                successHtml += `Entry Price: ₹${data.order_details.entry_price.toFixed(2)}<br>`;
+                successHtml += `Expiry: ${data.order_details.expiry_date}`;
+            }
+
+            // Add SecurityMaster info if available
+            if (data.security_master) {
+                const source = data.security_master.source || 'security_master';
+                const sourceLabel = source === 'breeze_api' ? '📡 Breeze API' : '📋 SecurityMaster';
+                const sourceBg = source === 'breeze_api' ? '#fff3cd' : '#e8f5e9';  // Yellow for Breeze, green for SecurityMaster
+
+                successHtml += `<br><br><strong>📋 Instrument Info (${sourceLabel}):</strong><br>`;
+                successHtml += `<div style="background: ${sourceBg}; padding: 8px; border-radius: 4px; font-size: 12px; text-align: left;">`;
+
+                if (source === 'breeze_api') {
+                    successHtml += `⚠️ <em>Fetched from Breeze API (SecurityMaster unavailable)</em><br><br>`;
+                }
+
+                successHtml += `Token: ${data.security_master.token}<br>`;
+                successHtml += `Stock Code: <strong>${data.security_master.stock_code}</strong><br>`;
+                successHtml += `Lot Size: ${data.security_master.lot_size}<br>`;
+                successHtml += `Company: ${data.security_master.company_name}`;
+                successHtml += `</div>`;
+            }
+
+            // Add Breeze response details in collapsible section
+            if (data.breeze_response) {
+                successHtml += `<br><details style="margin-top: 10px;">`;
+                successHtml += `<summary style="cursor: pointer; font-weight: bold;">📡 Breeze API Response (click to expand)</summary>`;
+                successHtml += `<pre style="text-align: left; font-size: 11px; background: #f5f5f5; padding: 10px; border-radius: 4px; max-height: 200px; overflow: auto; margin-top: 5px;">`;
+                successHtml += JSON.stringify(data.breeze_response, null, 2);
+                successHtml += `</pre>`;
+                successHtml += `</details>`;
+            }
+
             statusDiv.className = 'order-status success show';
-            statusDiv.innerHTML = `
-                <strong>Order Placed Successfully!</strong><br>
-                Order ID: ${data.order_id}<br>
-                Status: ${data.status}<br>
-                ${data.message || ''}
-            `;
+            statusDiv.innerHTML = successHtml;
 
             // Start polling for order status
             if (data.order_id) {
@@ -5041,11 +5174,139 @@ Are you absolutely sure?
     // Trade Suggestion Management Functions
 
     async function takeTradeSuggestion(suggestionId) {
-        if (!confirm('Are you sure you want to TAKE this trade suggestion?')) {
-            return;
-        }
-
+        // Fetch suggestion details first to determine type
+        console.log('[DEBUG] takeTradeSuggestion called with ID:', suggestionId);
         try {
+            const fetchResponse = await fetch(`/trading/api/suggestions/${suggestionId}/`, {
+                method: 'GET',
+                headers: {
+                    'X-CSRFToken': csrftoken
+                }
+            });
+
+            console.log('[DEBUG] Fetch response status:', fetchResponse.status);
+            const fetchResult = await fetchResponse.json();
+            console.log('[DEBUG] Fetch result:', fetchResult);
+
+            if (!fetchResult.success) {
+                alert('❌ Failed to fetch suggestion details: ' + (fetchResult.error || 'Unknown error'));
+                return;
+            }
+
+            const suggestion = fetchResult.suggestion;
+            console.log('[DEBUG] Suggestion data:', suggestion);
+            console.log('[DEBUG] suggestion_type:', suggestion.suggestion_type);
+            console.log('[DEBUG] instrument:', suggestion.instrument);
+
+            // Check if this is a Nifty Strangle suggestion
+            if (suggestion.suggestion_type === 'OPTIONS' && suggestion.instrument === 'NIFTY') {
+                console.log('[DEBUG] ✅ Nifty Strangle detected - using simple confirmation dialog');
+
+                // Extract data
+                const callStrike = parseFloat(suggestion.call_strike);
+                const putStrike = parseFloat(suggestion.put_strike);
+                const callPremium = parseFloat(suggestion.call_premium);
+                const putPremium = parseFloat(suggestion.put_premium);
+                const totalPremium = parseFloat(suggestion.total_premium);
+                const recommendedLots = parseInt(suggestion.recommended_lots);
+                const marginPerLot = parseFloat(suggestion.margin_per_lot);
+                const marginRequired = parseFloat(suggestion.margin_required);
+                const marginAvailable = parseFloat(suggestion.margin_available);
+                const spotPrice = parseFloat(suggestion.spot_price);
+                const expiryDate = suggestion.expiry_date;
+                const daysToExpiry = suggestion.days_to_expiry;
+                const vix = parseFloat(suggestion.vix);
+
+                // Format expiry date and build call symbol for lot size lookup
+                const expiry = new Date(expiryDate);
+                const day = expiry.getDate().toString().padStart(2, '0');
+                const month = expiry.toLocaleDateString('en-US', {month: 'short'}).toUpperCase();
+                const expiryStr = day + month;
+                const callSymbol = `NIFTY${expiryStr}${callStrike}CE`;
+
+                // Fetch lot size dynamically from Neo API
+                console.log('[DEBUG] Fetching lot size for', callSymbol);
+
+                fetch(`/trading/api/get-lot-size/?trading_symbol=${callSymbol}`)
+                    .then(response => response.json())
+                    .then(lotSizeData => {
+                        if (!lotSizeData.success) {
+                            console.error('[ERROR] Failed to fetch lot size:', lotSizeData.error);
+                            alert('Failed to fetch lot size. Using default (75).');
+                            continueWithConfirmation(75);
+                            return;
+                        }
+
+                        const lotSize = lotSizeData.lot_size;
+                        console.log('[DEBUG] ✅ Lot size fetched:', lotSize);
+                        continueWithConfirmation(lotSize);
+                    })
+                    .catch(error => {
+                        console.error('[ERROR] Error fetching lot size:', error);
+                        alert('Error fetching lot size. Using default (75).');
+                        continueWithConfirmation(75);
+                    });
+
+                // Function to continue with confirmation after lot size is fetched
+                function continueWithConfirmation(lotSize) {
+                    // Calculate order details
+                    const totalQuantity = recommendedLots * lotSize;
+                    const ordersPerLeg = Math.ceil(recommendedLots / 20);
+                    const totalOrders = ordersPerLeg * 2;
+                    const estimatedTime = (ordersPerLeg - 1) * 20;
+                    const totalPremiumCollection = (callPremium + putPremium) * totalQuantity;
+
+                    // Build put symbol (call symbol already built above for API call)
+                    const putSymbol = `NIFTY${expiryStr}${putStrike}PE`;
+
+                    // Show clean confirmation dialog (like Futures)
+                    const confirmMessage = `⚠️ CONFIRM STRANGLE TRADE ⚠️
+
+Suggestion ID: #${suggestionId}
+Strategy: Nifty SHORT Strangle
+Spot Price: ₹${spotPrice.toLocaleString('en-IN', {maximumFractionDigits: 2})}
+
+CALL Strike: ${callStrike} (₹${callPremium.toFixed(2)})
+Symbol: ${callSymbol}
+
+PUT Strike: ${putStrike} (₹${putPremium.toFixed(2)})
+Symbol: ${putSymbol}
+
+Lots: ${recommendedLots} (${totalQuantity} qty)
+Lot Size: ${lotSize}
+Premium Collection: ₹${totalPremiumCollection.toLocaleString('en-IN', {maximumFractionDigits: 0})}
+
+Margin Required: ₹${marginRequired.toLocaleString('en-IN', {maximumFractionDigits: 0})}
+Margin Available: ₹${marginAvailable.toLocaleString('en-IN', {maximumFractionDigits: 0})}
+
+Execution: ${totalOrders} orders (${ordersPerLeg} Call + ${ordersPerLeg} Put)
+Time: ~${estimatedTime} seconds (20s delays)
+
+Do you want to place this order?`;
+
+                    console.log('[DEBUG] Showing confirmation dialog...');
+                    const userConfirmed = confirm(confirmMessage);
+                    console.log('[DEBUG] User confirmed:', userConfirmed);
+
+                    if (!userConfirmed) {
+                        return;
+                    }
+
+                    // User confirmed - execute the orders
+                    console.log('[DEBUG] User confirmed, executing strangle orders...');
+                    executeStrangleOrdersDirect(suggestionId, recommendedLots);
+                }
+
+                return; // Don't proceed with the old confirm dialog
+            } else {
+                console.log('[DEBUG] ❌ Condition NOT matched. suggestion_type:', suggestion.suggestion_type, 'instrument:', suggestion.instrument);
+            }
+
+            // For non-strangle suggestions, use simple confirm dialog
+            if (!confirm('Are you sure you want to TAKE this trade suggestion?')) {
+                return;
+            }
+
             const response = await fetch('/trading/api/suggestions/update/', {
                 method: 'POST',
                 headers: {
@@ -5071,6 +5332,60 @@ Are you absolutely sure?
         } catch (error) {
             console.error('Error taking trade suggestion:', error);
             alert('Network error: ' + error.message);
+        }
+    }
+
+    async function executeStrangleOrdersDirect(suggestionId, totalLots) {
+        console.log('[EXECUTE] Starting strangle order execution...');
+        console.log('[EXECUTE] Suggestion ID:', suggestionId, 'Total Lots:', totalLots);
+
+        try {
+            // Call the execute endpoint
+            const response = await fetch('/trading/trigger/execute-strangle/', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                    'X-CSRFToken': csrftoken
+                },
+                body: new URLSearchParams({
+                    'suggestion_id': suggestionId,
+                    'total_lots': totalLots
+                })
+            });
+
+            console.log('[EXECUTE] Response status:', response.status);
+            const result = await response.json();
+            console.log('[EXECUTE] Response data:', result);
+
+            if (result.success) {
+                const summary = result.batch_result.summary;
+                alert(`✅ STRANGLE ORDERS EXECUTED!
+
+Total Orders Placed: ${summary.total_orders_placed}
+Call Orders Success: ${summary.call_success_count}
+Put Orders Success: ${summary.put_success_count}
+Call Orders Failed: ${summary.call_failed_count}
+Put Orders Failed: ${summary.put_failed_count}
+
+Call Symbol: ${result.call_symbol}
+Put Symbol: ${result.put_symbol}
+Total Lots: ${result.total_lots}
+
+${result.message || ''}`);
+            } else {
+                alert(`❌ STRANGLE ORDER FAILED:
+
+${result.error || 'Unknown error'}
+
+Please check the logs for details.`);
+            }
+        } catch (error) {
+            console.error('[EXECUTE] Error:', error);
+            alert(`❌ ERROR:
+
+${error.message}
+
+Please check your connection and try again.`);
         }
     }
 
@@ -5633,4 +5948,8 @@ Please check your connection and try again.`);
         form.submit();
     }
 </script>
+
+<!-- Include Strangle Confirmation Modal -->
+{% include 'trading/strangle_confirmation_modal.html' %}
+
 {% endblock %}

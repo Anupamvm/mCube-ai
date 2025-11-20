@@ -17,6 +17,7 @@ urlpatterns = [
     path('trigger/refresh-trendlyne/', views.refresh_trendlyne_data, name='refresh_trendlyne'),
     path('trigger/update-breeze-session/', views.update_breeze_session, name='update_breeze_session'),
     path('trigger/calculate-position-sizing/', views.calculate_position_sizing, name='calculate_position_sizing'),
+    path('trigger/execute-strangle/', views.execute_strangle_orders, name='execute_strangle'),
 
     # Position Sizing API Endpoints
     path('api/calculate-position/', api_views.calculate_position_sizing, name='api_calculate_position'),
@@ -29,6 +30,7 @@ urlpatterns = [
     path('api/suggestions/', api_views.get_trade_suggestions, name='api_get_suggestions'),
     path('api/suggestions/<int:suggestion_id>/', api_views.get_suggestion_details, name='api_get_suggestion_details'),
     path('api/suggestions/update/', api_views.update_suggestion_status, name='api_update_suggestion'),
+    path('api/get-lot-size/', api_views.get_lot_size, name='api_get_lot_size'),
 
     # Manual Trade Execution (Live Orders)
     path('manual/prepare/', views.prepare_manual_execution, name='prepare_manual_execution'),

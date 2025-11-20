@@ -2542,25 +2542,51 @@ def confirm_manual_execution(request):
                     }
                 else:
                     # Place order with Kotak Neo
-                    kotak = get_kotak_client()
-                    # Note: Implement actual Kotak order placement
-                    order_result = {
-                        'success': True,
-                        'order_id': f'MANUAL_{position.id}',
-                        'message': 'Order placed successfully (simulated)'
-                    }
+                    from apps.brokers.integrations.kotak_neo import place_option_order
+
+                    # Extract trading symbol from trade data
+                    trading_symbol = trade_data.get('trading_symbol', trade_data.get('instrument'))
+
+                    # Determine transaction type
+                    transaction_type = 'B' if trade_data.get('direction') == 'LONG' else 'S'
+
+                    # Get quantity
+                    quantity = int(trade_data.get('quantity', 1))
+
+                    # Get order parameters
+                    product = trade_data.get('product', 'NRML')  # Default to NRML
+                    order_type = trade_data.get('order_type', 'MKT')  # Default to Market
+                    price = float(trade_data.get('limit_price', 0)) if order_type == 'L' else 0
+
+                    logger.info(f"Placing Kotak Neo order: {trading_symbol} {transaction_type} {quantity}")
+
+                    # Place actual order via Neo API
+                    order_result = place_option_order(
+                        trading_symbol=trading_symbol,
+                        transaction_type=transaction_type,
+                        quantity=quantity,
+                        product=product,
+                        order_type=order_type,
+                        price=price
+                    )
+
+                # Check if order placement was successful
+                if not order_result.get('success'):
+                    error_msg = order_result.get('error', 'Order placement failed')
+                    logger.error(f"Order placement failed: {error_msg}")
+                    raise Exception(f"Broker order failed: {error_msg}")
 
                 # Create Order record
                 order = Order.objects.create(
                     position=position,
-                    order_type='MARKET',
+                    order_type='MARKET' if order_type == 'MKT' else 'LIMIT',
                     action='BUY' if trade_data.get('direction') == 'LONG' else 'SELL',
                     quantity=position.quantity,
                     price=position.entry_price,
-                    status='FILLED',
+                    status='PENDING',  # Will be updated when order is confirmed
                     broker_order_id=order_result.get('order_id'),
-                    filled_quantity=position.quantity,
-                    filled_price=position.entry_price
+                    filled_quantity=0,  # Will be updated after order fills
+                    filled_price=0  # Will be updated after order fills
                 )
 
                 logger.info(f"Created order {order.id} for position {position.id}")
@@ -2587,6 +2613,144 @@ def confirm_manual_execution(request):
         logger.error(f"Error confirming manual execution: {e}", exc_info=True)
         messages.error(request, f"Execution error: {str(e)}")
         return redirect('trading:manual_triggers')
+
+
+@login_required
+@require_POST
+def execute_strangle_orders(request):
+    """
+    Execute Nifty Strangle orders in batches via Kotak Neo API
+
+    This endpoint places strangle orders (Call SELL + Put SELL) in batches of 20 lots
+    with 10-second delays between batches to avoid API rate limits.
+
+    POST params:
+        - suggestion_id: ID of the trade suggestion
+        - total_lots: Total number of lots to trade
+    """
+    import json
+    from decimal import Decimal
+    from django.db import transaction
+    from apps.trading.models import TradeSuggestion
+    from apps.brokers.integrations.kotak_neo import place_strangle_orders_in_batches
+    from apps.positions.models import Position
+    from apps.accounts.models import BrokerAccount
+    from apps.orders.models import Order
+
+    try:
+        # Get parameters
+        suggestion_id = request.POST.get('suggestion_id')
+        total_lots = int(request.POST.get('total_lots', 0))
+
+        if not suggestion_id or total_lots <= 0:
+            return JsonResponse({
+                'success': False,
+                'error': 'suggestion_id and total_lots are required'
+            })
+
+        # Get suggestion
+        suggestion = TradeSuggestion.objects.filter(
+            id=suggestion_id,
+            user=request.user
+        ).first()
+
+        if not suggestion:
+            return JsonResponse({
+                'success': False,
+                'error': 'Trade suggestion not found'
+            })
+
+        # Validate suggestion is for strangle strategy
+        if suggestion.strategy != 'kotak_strangle':
+            return JsonResponse({
+                'success': False,
+                'error': 'This endpoint only handles Kotak Strangle suggestions'
+            })
+
+        # Get position details
+        position_details = suggestion.position_details
+
+        # Get broker account
+        broker_account = BrokerAccount.objects.filter(
+            broker='KOTAK',
+            is_active=True
+        ).first()
+
+        if not broker_account:
+            return JsonResponse({
+                'success': False,
+                'error': 'No active Kotak broker account found'
+            })
+
+        # Build call and put symbols from suggestion
+        # Format: NIFTY<YY><MMM><STRIKE><CE/PE>
+        # Example: NIFTY25NOV24500CE
+        expiry_date = suggestion.expiry_date
+        expiry_str = expiry_date.strftime('%y%b').upper()  # e.g., 25NOV
+
+        call_strike = int(suggestion.call_strike)
+        put_strike = int(suggestion.put_strike)
+
+        call_symbol = f"NIFTY{expiry_str}{call_strike}CE"
+        put_symbol = f"NIFTY{expiry_str}{put_strike}PE"
+
+        logger.info(f"Executing strangle orders: {call_symbol} + {put_symbol}, {total_lots} lots")
+
+        # Place orders in batches (max 20 lots per order, 20 sec delays - Neo API limits)
+        batch_result = place_strangle_orders_in_batches(
+            call_symbol=call_symbol,
+            put_symbol=put_symbol,
+            total_lots=total_lots,
+            batch_size=20,
+            delay_seconds=20,
+            product='NRML'
+        )
+
+        # Create Position and Order records if successful
+        if batch_result['success']:
+            with transaction.atomic():
+                # Create position
+                lot_size = 50  # NIFTY lot size
+                total_quantity = total_lots * lot_size
+
+                position = Position.objects.create(
+                    account=broker_account,
+                    user=request.user,
+                    instrument='NIFTY_STRANGLE',
+                    direction='NEUTRAL',
+                    quantity=total_quantity,
+                    entry_price=suggestion.total_premium,
+                    current_price=suggestion.total_premium,
+                    stop_loss=Decimal('0'),  # Managed separately for strangles
+                    target=suggestion.total_premium * Decimal('0.5'),  # 50% profit target
+                    status='OPEN',
+                    margin_used=suggestion.margin_required * total_lots,
+                    entry_reasoning=f"Strangle: CE {call_strike} + PE {put_strike}",
+                    strategy_name='kotak_strangle'
+                )
+
+                # Update suggestion status
+                suggestion.status = 'TAKEN'
+                suggestion.taken_timestamp = timezone.now()
+                suggestion.save()
+
+                logger.info(f"Created position {position.id} for strangle execution")
+
+        return JsonResponse({
+            'success': batch_result['success'],
+            'message': f"Strangle orders executed: {batch_result['batches_completed']}/{batch_result['total_batches']} batches",
+            'batch_result': batch_result,
+            'call_symbol': call_symbol,
+            'put_symbol': put_symbol,
+            'total_lots': total_lots
+        })
+
+    except Exception as e:
+        logger.error(f"Error executing strangle orders: {e}", exc_info=True)
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        })
 
 
 @login_required

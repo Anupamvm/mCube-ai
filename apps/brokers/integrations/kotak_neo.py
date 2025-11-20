@@ -83,74 +83,40 @@ def _is_token_valid(token):
 
 def _get_authenticated_client():
     """
-    Get authenticated Kotak Neo API client using credentials from database.
+    Get authenticated Kotak Neo API client using tools.neo.NeoAPI wrapper.
 
-    Session Management:
-    - First checks if a valid session token exists in the database
-    - If valid token exists, reuses it to avoid OTP requirement
-    - If no valid token, performs full login with OTP and saves new token
-    - Token is valid until midnight (approximately 9-10 hours)
+    Uses the NeoAPI wrapper from tools.neo which handles authentication properly.
 
     Returns:
-        NeoAPI: Authenticated client instance
+        NeoAPI: Authenticated Neo API client (the .neo attribute from tools.neo.NeoAPI)
 
     Raises:
         ValueError: If credentials not found or authentication fails
     """
-    creds = CredentialStore.objects.filter(service='kotakneo').first()
-    if not creds:
-        raise ValueError("No Kotak Neo credentials found in CredentialStore")
+    try:
+        from tools.neo import NeoAPI as NeoAPIWrapper
 
-    # Check if we have a valid saved session token (stored in creds.session_token field)
-    # Note: session_token field was used for OTP, now repurposed for storing JWT session token
-    # OTP is now stored in creds.neo_password field
-    saved_token = creds.sid  # Using sid field to store the JWT session token
-    otp_code = creds.session_token  # OTP code
+        logger.info("Using NeoAPI wrapper from tools.neo for authentication")
 
-    if saved_token and _is_token_valid(saved_token):
-        logger.info("Reusing saved Kotak Neo session token (no OTP required)")
-        try:
-            # Create client with existing token
-            client = NeoAPI(
-                access_token=saved_token,
-                environment='prod'
-            )
-            # Test the token by making a simple API call
-            client.limits(segment="ALL", exchange="ALL", product="ALL")
-            return client
-        except Exception as e:
-            logger.warning(f"Saved token failed, will re-authenticate: {e}")
-            # Token is invalid, proceed with fresh login
+        # Create NeoAPI wrapper instance (loads creds from database automatically)
+        neo_wrapper = NeoAPIWrapper()
 
-    # No valid token, perform full login with OTP
-    logger.info("Performing fresh Kotak Neo login with OTP")
-    client = NeoAPI(
-        consumer_key=creds.api_key,
-        consumer_secret=creds.api_secret,
-        environment='prod'
-    )
+        # Perform login (handles 2FA automatically)
+        login_result = neo_wrapper.login()
+        logger.info(f"Neo login result: {login_result}, session_active: {neo_wrapper.session_active}")
 
-    # Perform login
-    client.login(pan=creds.username, password=creds.password)
+        if login_result and neo_wrapper.session_active:
+            logger.info("✅ Neo API authentication successful via tools.neo wrapper")
+            # Return the underlying neo_api_client instance
+            logger.info(f"Returning Neo client: {neo_wrapper.neo}")
+            return neo_wrapper.neo
+        else:
+            logger.error(f"❌ Neo API login failed: result={login_result}, session_active={neo_wrapper.session_active}")
+            raise ValueError("Neo API login failed via tools.neo wrapper")
 
-    # Complete 2FA with OTP
-    session_response = client.session_2fa(OTP=otp_code)
-
-    # Save session token for future use
-    if session_response and 'data' in session_response:
-        jwt_session_token = session_response['data'].get('token')
-        session_sid = session_response['data'].get('sid')
-
-        if jwt_session_token:
-            # Save JWT session token to sid field for reuse
-            # Save session ID to username field (as it's not used for Kotak Neo)
-            creds.sid = jwt_session_token  # Store JWT token in sid field
-            creds.last_session_update = timezone.now()
-            creds.save(update_fields=['sid', 'last_session_update'])
-
-            logger.info(f"Saved new Kotak Neo session token (valid until midnight, SID: {session_sid[:20]}...)")
-
-    return client
+    except Exception as e:
+        logger.error(f"Failed to get authenticated Neo client: {e}")
+        raise
 
 
 def fetch_and_save_kotakneo_data():
@@ -400,3 +366,399 @@ def is_open_position() -> bool:
     except Exception as e:
         logger.exception(f"[is_open_position] Failed to fetch/parse positions: {e}")
         return False
+
+
+def place_option_order(
+    trading_symbol: str,
+    transaction_type: str,  # 'B' (BUY) or 'S' (SELL)
+    quantity: int,
+    product: str = 'NRML',  # 'NRML', 'MIS', 'CNC'
+    order_type: str = 'MKT',  # 'MKT' (Market) or 'L' (Limit)
+    price: float = 0.0,
+    trigger_price: float = 0.0,
+    disclosed_quantity: int = 0,
+    client=None  # Optional: reuse existing client
+):
+    """
+    Place an options order via Kotak Neo API.
+
+    Args:
+        trading_symbol (str): Trading symbol (e.g., 'NIFTY25NOV24500CE')
+        transaction_type (str): 'B' for BUY, 'S' for SELL
+        quantity (int): Quantity to trade (must be in multiples of lot size)
+        product (str): Product type - 'NRML', 'MIS', 'CNC'
+        order_type (str): 'MKT' for Market, 'L' for Limit
+        price (float): Price for limit orders (0 for market orders)
+        trigger_price (float): Trigger price for SL orders
+        disclosed_quantity (int): Disclosed quantity (0 for no disclosure)
+        client: Optional authenticated client to reuse (avoids multiple logins)
+
+    Returns:
+        dict: Order response with order_id if successful, error details if failed
+            Success: {'success': True, 'order_id': 'NEO123456', 'message': '...'}
+            Failure: {'success': False, 'error': '...'}
+
+    Example:
+        >>> result = place_option_order(
+        ...     trading_symbol='NIFTY25NOV24500CE',
+        ...     transaction_type='B',
+        ...     quantity=50,  # 1 lot for NIFTY
+        ...     product='NRML',
+        ...     order_type='MKT'
+        ... )
+        >>> print(result)
+        {'success': True, 'order_id': 'NEO123456', 'message': 'Order placed successfully'}
+    """
+    try:
+        # Use provided client or get new one
+        if client is None:
+            client = _get_authenticated_client()
+
+        # Log order details before placing
+        logger.info(f"Placing Neo order: symbol={trading_symbol}, type={transaction_type}, qty={quantity}, product={product}, order_type={order_type}")
+
+        # Place order using Neo API
+        response = client.place_order(
+            exchange_segment='nse_fo',  # NSE F&O for options
+            product=product,
+            price=str(price) if price > 0 else '0',
+            order_type=order_type,
+            quantity=str(quantity),
+            validity='DAY',
+            trading_symbol=trading_symbol,
+            transaction_type=transaction_type,
+            amo='NO',  # After Market Order - NO for regular orders
+            disclosed_quantity=str(disclosed_quantity),
+            market_protection='0',
+            pf='N',  # PF (Price Factor) - N for normal
+            trigger_price=str(trigger_price) if trigger_price > 0 else '0',
+            tag=None  # Optional tag for tracking
+        )
+
+        logger.info(f"Kotak Neo order response: {response}")
+
+        # Check response status
+        if response and response.get('stat') == 'Ok':
+            order_id = response.get('nOrdNo', 'UNKNOWN')
+            logger.info(f"✅ Order placed successfully: {order_id} for {trading_symbol}")
+
+            return {
+                'success': True,
+                'order_id': order_id,
+                'message': f'Order placed successfully. Order ID: {order_id}',
+                'response': response
+            }
+        else:
+            # Handle different error response formats
+            if response:
+                error_msg = response.get('errMsg') or response.get('message') or response.get('description', 'Unknown error')
+                error_code = response.get('stCode') or response.get('code', '')
+                full_error = f"[{error_code}] {error_msg}" if error_code else error_msg
+            else:
+                full_error = 'No response from API'
+
+            logger.error(f"❌ Order placement failed: {full_error}")
+
+            return {
+                'success': False,
+                'error': full_error,
+                'response': response
+            }
+
+    except Exception as e:
+        logger.exception(f"Exception in place_option_order: {e}")
+        return {
+            'success': False,
+            'error': str(e)
+        }
+
+
+def get_kotak_neo_client():
+    """
+    Get authenticated Kotak Neo client for placing orders.
+
+    Returns:
+        NeoAPI: Authenticated client instance
+
+    Raises:
+        ValueError: If authentication fails
+    """
+    try:
+        return _get_authenticated_client()
+    except Exception as e:
+        logger.error(f"Failed to get Kotak Neo client: {e}")
+        raise
+
+
+def get_lot_size_from_neo(trading_symbol: str, client=None) -> int:
+    """
+    Get lot size for a trading symbol using Neo API search_scrip.
+
+    Args:
+        trading_symbol (str): Trading symbol (e.g., 'NIFTY25NOV27050CE')
+        client: Optional authenticated client to reuse
+
+    Returns:
+        int: Lot size for the symbol
+
+    Raises:
+        ValueError: If symbol not found or lot size cannot be determined
+
+    Example:
+        >>> lot_size = get_lot_size_from_neo('NIFTY25NOV27050CE')
+        >>> print(lot_size)  # 75
+    """
+    try:
+        # Use provided client or get new one
+        if client is None:
+            client = _get_authenticated_client()
+
+        # Parse symbol to extract components
+        # Format: NIFTY25NOV27050CE
+        # Extract: symbol=NIFTY, expiry=25NOV, strike=27050, option_type=CE
+
+        import re
+
+        # Pattern: (SYMBOL)(DDMMM)(STRIKE)(CE|PE)
+        pattern = r'^([A-Z]+)(\d{2}[A-Z]{3})(\d+)(CE|PE)$'
+        match = re.match(pattern, trading_symbol)
+
+        if not match:
+            logger.warning(f"Unable to parse trading symbol: {trading_symbol}, using default lot size 75")
+            return 75  # Default for NIFTY
+
+        symbol_name = match.group(1)  # NIFTY
+        expiry_date = match.group(2)  # 25NOV
+        strike_price = match.group(3)  # 27050
+        option_type = match.group(4)  # CE or PE
+
+        # Convert expiry to Neo format: 25NOV → 25NOV2025
+        # Assume current year if not specified
+        from datetime import datetime
+        current_year = datetime.now().year
+        expiry_full = f"{expiry_date}{current_year}"  # 25NOV2025
+
+        logger.info(f"Searching scrip: symbol={symbol_name}, expiry={expiry_full}, strike={strike_price}, type={option_type}")
+
+        # Search using Neo API
+        result = client.search_scrip(
+            exchange_segment='nse_fo',
+            symbol=symbol_name,
+            expiry=expiry_full,
+            option_type=option_type,
+            strike_price=strike_price
+        )
+
+        if result and isinstance(result, list) and len(result) > 0:
+            scrip = result[0]
+            lot_size = scrip.get('lLotSize', scrip.get('iLotSize', 75))
+            logger.info(f"✅ Found lot size for {trading_symbol}: {lot_size}")
+            return int(lot_size)
+        else:
+            logger.warning(f"No scrip found for {trading_symbol}, using default lot size 75")
+            return 75  # Default for NIFTY
+
+    except Exception as e:
+        logger.error(f"Error fetching lot size for {trading_symbol}: {e}")
+        logger.warning(f"Using default lot size 75")
+        return 75  # Default fallback
+
+
+def place_strangle_orders_in_batches(
+    call_symbol: str,
+    put_symbol: str,
+    total_lots: int,
+    batch_size: int = 20,
+    delay_seconds: int = 20,
+    product: str = 'NRML'
+):
+    """
+    Place strangle orders (Call SELL + Put SELL) in batches with delays.
+
+    This function places orders in batches to avoid overwhelming the broker API
+    and to provide better execution monitoring.
+
+    Args:
+        call_symbol (str): Call option trading symbol (e.g., 'NIFTY25NOV24500CE')
+        put_symbol (str): Put option trading symbol (e.g., 'NIFTY25NOV24000PE')
+        total_lots (int): Total number of lots to trade
+        batch_size (int): Maximum lots per order (default: 20, Neo API limit)
+        delay_seconds (int): Delay between orders in seconds (default: 20)
+        product (str): Product type - 'NRML', 'MIS' (default: 'NRML')
+
+    Returns:
+        dict: Batch execution results
+            {
+                'success': True/False,
+                'total_lots': int,
+                'batches_completed': int,
+                'call_orders': [list of order results],
+                'put_orders': [list of order results],
+                'summary': {
+                    'call_success_count': int,
+                    'put_success_count': int,
+                    'call_failed_count': int,
+                    'put_failed_count': int
+                },
+                'error': str (if failed)
+            }
+
+    Example:
+        >>> # For 167 lots: Places 9 orders (8×20 lots + 1×7 lots) with 20s delays
+        >>> result = place_strangle_orders_in_batches(
+        ...     call_symbol='NIFTY25NOV24500CE',
+        ...     put_symbol='NIFTY25NOV24000PE',
+        ...     total_lots=167,
+        ...     batch_size=20,
+        ...     delay_seconds=20
+        ... )
+        >>> print(result['summary'])
+        >>> # Result: 9 call orders + 9 put orders = 18 total orders
+        {'call_success_count': 9, 'put_success_count': 9, 'total_orders_placed': 18}
+    """
+    import time
+    import threading
+
+    logger.info(f"Starting batch order placement: {total_lots} lots in batches of {batch_size}")
+
+    # Get single authenticated session for all orders (optimization)
+    try:
+        client = _get_authenticated_client()
+        logger.info("✅ Single Neo API session established for all orders")
+    except Exception as e:
+        logger.error(f"Failed to establish Neo session: {e}")
+        return {
+            'success': False,
+            'error': f'Authentication failed: {str(e)}',
+            'call_orders': [],
+            'put_orders': []
+        }
+
+    # Get lot size dynamically from Neo API (using same client)
+    lot_size = get_lot_size_from_neo(call_symbol, client=client)
+    logger.info(f"Using lot size: {lot_size} for {call_symbol}")
+
+    call_orders = []
+    put_orders = []
+    batches_completed = 0
+
+    # Calculate number of batches
+    num_batches = (total_lots + batch_size - 1) // batch_size  # Ceiling division
+
+    try:
+        for batch_num in range(1, num_batches + 1):
+            # Calculate lots for this batch
+            remaining_lots = total_lots - (batch_num - 1) * batch_size
+            current_batch_lots = min(batch_size, remaining_lots)
+            current_batch_quantity = current_batch_lots * lot_size
+
+            logger.info(f"Batch {batch_num}/{num_batches}: Placing {current_batch_lots} lots ({current_batch_quantity} qty)")
+
+            # Optimization: Place CALL and PUT orders in parallel using threads
+            call_result = {}
+            put_result = {}
+
+            def place_call_order():
+                nonlocal call_result
+                call_result = place_option_order(
+                    trading_symbol=call_symbol,
+                    transaction_type='S',  # SELL
+                    quantity=current_batch_quantity,
+                    product=product,
+                    order_type='MKT',
+                    client=client  # Reuse session
+                )
+
+            def place_put_order():
+                nonlocal put_result
+                put_result = place_option_order(
+                    trading_symbol=put_symbol,
+                    transaction_type='S',  # SELL
+                    quantity=current_batch_quantity,
+                    product=product,
+                    order_type='MKT',
+                    client=client  # Reuse session
+                )
+
+            # Start both orders in parallel
+            call_thread = threading.Thread(target=place_call_order)
+            put_thread = threading.Thread(target=place_put_order)
+
+            logger.info(f"⚡ Placing CALL and PUT orders in parallel...")
+            call_thread.start()
+            put_thread.start()
+
+            # Wait for both to complete
+            call_thread.join()
+            put_thread.join()
+
+            # Record results
+            call_orders.append({
+                'batch': batch_num,
+                'lots': current_batch_lots,
+                'quantity': current_batch_quantity,
+                'result': call_result
+            })
+
+            put_orders.append({
+                'batch': batch_num,
+                'lots': current_batch_lots,
+                'quantity': current_batch_quantity,
+                'result': put_result
+            })
+
+            if call_result.get('success'):
+                logger.info(f"✅ CALL SELL batch {batch_num}: Order ID {call_result['order_id']}")
+            else:
+                logger.error(f"❌ CALL SELL batch {batch_num} failed: {call_result.get('error', 'Unknown error')}")
+
+            if put_result.get('success'):
+                logger.info(f"✅ PUT SELL batch {batch_num}: Order ID {put_result['order_id']}")
+            else:
+                logger.error(f"❌ PUT SELL batch {batch_num} failed: {put_result.get('error', 'Unknown error')}")
+
+            batches_completed += 1
+
+            # Delay before next batch (except for last batch)
+            # We only wait between batches, not between CALL and PUT
+            if batch_num < num_batches:
+                logger.info(f"⏱️  Waiting {delay_seconds} seconds before next batch...")
+                time.sleep(delay_seconds)
+
+        # Calculate summary
+        call_success_count = sum(1 for order in call_orders if order['result']['success'])
+        put_success_count = sum(1 for order in put_orders if order['result']['success'])
+        call_failed_count = len(call_orders) - call_success_count
+        put_failed_count = len(put_orders) - put_success_count
+
+        success = (call_failed_count == 0 and put_failed_count == 0)
+
+        logger.info(f"Batch execution complete: {batches_completed}/{num_batches} batches processed")
+        logger.info(f"Summary: Call {call_success_count}/{len(call_orders)} success, Put {put_success_count}/{len(put_orders)} success")
+
+        return {
+            'success': success,
+            'total_lots': total_lots,
+            'batches_completed': batches_completed,
+            'total_batches': num_batches,
+            'call_orders': call_orders,
+            'put_orders': put_orders,
+            'summary': {
+                'call_success_count': call_success_count,
+                'put_success_count': put_success_count,
+                'call_failed_count': call_failed_count,
+                'put_failed_count': put_failed_count,
+                'total_orders_placed': len(call_orders) + len(put_orders)
+            }
+        }
+
+    except Exception as e:
+        logger.exception(f"Error in batch order placement: {e}")
+        return {
+            'success': False,
+            'error': str(e),
+            'total_lots': total_lots,
+            'batches_completed': batches_completed,
+            'call_orders': call_orders,
+            'put_orders': put_orders
+        }

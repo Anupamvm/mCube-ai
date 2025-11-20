@@ -14,10 +14,11 @@ from django.views.decorators.http import require_POST, require_GET
 from django.http import JsonResponse
 from django.db import transaction
 
-from apps.brokers.integrations.breeze import get_breeze_client
+from apps.brokers.integrations.breeze import get_breeze_client, get_nfo_margin
 from apps.positions.models import Position
 from apps.orders.models import Order
 from apps.accounts.models import BrokerAccount
+from apps.core.constants import POSITION_STATUS_ACTIVE
 # from apps.positions.services.averaging_manager import AveragingManager  # TODO: Fix - class doesn't exist
 from apps.data.models import ContractData
 
@@ -383,10 +384,10 @@ def place_futures_order(request):
         # Parse JSON body if present, otherwise use POST data
         if request.content_type == 'application/json':
             data = json.loads(request.body)
-            symbol = data.get('stock_symbol', '').upper()
+            symbol = data.get('symbol', data.get('stock_symbol', '')).upper()
             direction = data.get('direction', 'buy').lower()
             lots = int(data.get('lots', 1))
-            futures_price = float(data.get('price', 0))
+            futures_price = float(data.get('entry_price', data.get('price', 0)))
             stop_loss = float(data.get('stop_loss', 0))
             target = float(data.get('target', 0))
             enable_averaging = data.get('enable_averaging', False)
@@ -417,112 +418,269 @@ def place_futures_order(request):
                 'error': f'Contract not found for {symbol}'
             })
 
-        lot_size = contract.lot_size
-        quantity = lots * lot_size
         # Use provided price or contract price
-        entry_price = futures_price if futures_price > 0 else float(contract.price)
+        entry_price_float = futures_price if futures_price > 0 else float(contract.price)
+        entry_price = Decimal(str(entry_price_float))
+        stop_loss_decimal = Decimal(str(stop_loss)) if stop_loss > 0 else Decimal('0.00')
+        target_decimal = Decimal(str(target)) if target > 0 else Decimal('0.00')
 
         # Format expiry for Breeze
         expiry_dt = contract.expiry
+        if isinstance(expiry_dt, str):
+            expiry_dt = datetime.strptime(expiry_dt, '%Y-%m-%d').date()
         expiry_breeze = expiry_dt.strftime('%d-%b-%Y').upper()
+
+        # Get instrument details from SecurityMaster
+        from apps.brokers.utils.security_master import get_futures_instrument
+
+        logger.info(f"Looking up {symbol} futures in SecurityMaster for expiry {expiry_breeze}")
+        instrument = get_futures_instrument(symbol, expiry_breeze)
+
+        if not instrument:
+            logger.warning(f"Instrument not found in SecurityMaster, using contract data")
+            # Fallback to contract data if SecurityMaster lookup fails
+            stock_code = symbol
+            lot_size = contract.lot_size
+        else:
+            # Use SecurityMaster data (more accurate)
+            stock_code = instrument['short_name']
+            lot_size = instrument['lot_size']
+            logger.info(f"SecurityMaster lookup successful: stock_code={stock_code}, lot_size={lot_size}, token={instrument['token']}")
+
+        quantity = lots * lot_size
 
         # Initialize Breeze
         breeze = get_breeze_client()
 
-        # Validate margin availability
+        # Validate margin availability using NFO margin API (includes pledged stocks)
         try:
-            funds_response = breeze.get_funds()
-            if funds_response and funds_response.get('Status') == 200:
-                available_margin = float(funds_response.get('Success', {}).get('availablemargin', 0))
+            # Get NFO margin (includes pledged stocks and collateral)
+            margin_data = get_nfo_margin()
+            logger.info(f"NFO Margin response from Breeze: {margin_data}")
 
-                # Estimate margin needed
-                margin_needed = entry_price * lot_size * lots * 0.12
+            if margin_data:
+                # cash_limit is the total available margin including pledged stocks
+                available_margin = float(margin_data.get('cash_limit', 0))
+                # amount_allocated is the margin already used
+                used_margin = float(margin_data.get('amount_allocated', 0))
+                # Calculate actual available margin
+                actual_available = available_margin - used_margin
 
-                if margin_needed > available_margin:
+                # Estimate margin needed (roughly 12% of contract value)
+                margin_needed = entry_price_float * lot_size * lots * 0.12
+
+                logger.info(f"Margin check: Need ₹{margin_needed:,.2f}, Available ₹{actual_available:,.2f} (Total: ₹{available_margin:,.2f}, Used: ₹{used_margin:,.2f})")
+
+                if margin_needed > actual_available:
+                    logger.warning(f"Insufficient margin detected: Need ₹{margin_needed:,.2f}, Available ₹{actual_available:,.2f}")
                     return JsonResponse({
                         'success': False,
-                        'error': f'Insufficient margin. Need: ₹{margin_needed:,.0f}, Available: ₹{available_margin:,.0f}'
+                        'error': f'Insufficient margin. Need: ₹{margin_needed:,.0f}, Available: ₹{actual_available:,.0f}',
+                        'debug_info': {
+                            'margin_needed': margin_needed,
+                            'available_margin': actual_available,
+                            'total_cash_limit': available_margin,
+                            'used_margin': used_margin,
+                            'margin_response': margin_data
+                        }
                     })
+            else:
+                logger.warning("Could not fetch NFO margin data, proceeding without validation")
         except Exception as e:
-            logger.warning(f"Could not validate margin: {e}")
+            logger.warning(f"Could not validate margin: {e}", exc_info=True)
 
-        # Atomic transaction for database operations
-        with transaction.atomic():
-            # Create Position
-            position = Position.objects.create(
-                user=request.user,
-                broker_account=BrokerAccount.objects.filter(user=request.user, broker_name='ICICI').first(),
-                symbol=symbol,
-                instrument_type='FUTURES',
-                option_type=None,
-                strike_price=None,
-                expiry_date=expiry_dt,
-                direction=direction,
-                quantity=quantity,
-                entry_price=entry_price,
-                current_price=entry_price,
-                stop_loss=stop_loss,
-                target=target,
-                status='OPEN',
-                enable_averaging=enable_averaging,
-                averaging_count=0,
-                original_entry_price=entry_price
-            )
+        # Get broker account
+        broker_account = BrokerAccount.objects.filter(broker='ICICI', is_active=True).first()
+        if not broker_account:
+            return JsonResponse({
+                'success': False,
+                'error': 'No active ICICI broker account found'
+            })
 
-            # Place order via Breeze
-            action = 'buy' if direction == 'LONG' else 'sell'
+        # Calculate batches (10 lots per order, 20 second delay between orders)
+        BATCH_SIZE = 10  # lots per order
+        DELAY_SECONDS = 20  # seconds between orders
 
-            order_response = breeze.place_order(
-                stock_code=symbol,
-                exchange_code='NFO',
-                product='futures',
-                action=action,
-                order_type='market',
-                quantity=str(quantity),
-                price='0',
-                validity='day',
-                stoploss='0',
-                disclosed_quantity='0',
-                expiry_date=expiry_breeze,
-                right='others',
-                strike_price='0'
-            )
+        batches = []
+        remaining_lots = lots
+        while remaining_lots > 0:
+            batch_lots = min(BATCH_SIZE, remaining_lots)
+            batches.append(batch_lots)
+            remaining_lots -= batch_lots
 
-            if order_response and order_response.get('Status') == 200:
-                order_data = order_response.get('Success', {})
-                order_id = order_data.get('order_id', 'UNKNOWN')
+        total_batches = len(batches)
+        logger.info(f"Splitting {lots} lots into {total_batches} batches: {batches}")
 
-                # Create Order record
-                order = Order.objects.create(
-                    user=request.user,
-                    position=position,
-                    broker_order_id=order_id,
-                    symbol=symbol,
-                    order_type='ENTRY',
-                    action=action.upper(),
-                    quantity=quantity,
-                    price=entry_price,
-                    status='PENDING',
-                    purpose='ENTRY'
-                )
+        # Track all orders
+        successful_orders = []
+        failed_orders = []
+        position = None
 
-                logger.info(f"Order placed successfully: {order_id} for {symbol}")
+        # Place orders in batches
+        for batch_num, batch_lots in enumerate(batches, 1):
+            batch_quantity = batch_lots * lot_size
 
-                return JsonResponse({
-                    'success': True,
-                    'order_id': order_id,
-                    'position_id': position.id,
-                    'message': f'Order placed successfully! Order ID: {order_id}',
-                    'status': 'PENDING'
+            logger.info(f"{'='*80}")
+            logger.info(f"Batch {batch_num}/{total_batches}: Placing order for {batch_lots} lots ({batch_quantity} quantity)")
+            logger.info(f"{'='*80}")
+
+            try:
+                # Create Position for this batch (or use existing for subsequent batches)
+                with transaction.atomic():
+                    if position is None:
+                        # First batch - create main position
+                        position = Position.objects.create(
+                            account=broker_account,
+                            strategy_type='LLM_VALIDATED_FUTURES',
+                            instrument=symbol,
+                            direction=direction,
+                            quantity=lots,  # Total lots
+                            lot_size=lot_size,
+                            entry_price=entry_price,
+                            current_price=entry_price,
+                            stop_loss=stop_loss_decimal,
+                            target=target_decimal,
+                            expiry_date=expiry_dt,
+                            margin_used=Decimal(str(entry_price_float * lot_size * lots * 0.12)),
+                            entry_value=Decimal(str(entry_price_float * lot_size * lots)),
+                            status=POSITION_STATUS_ACTIVE,
+                            averaging_count=0,
+                            original_entry_price=entry_price
+                        )
+
+                    # Place order via Breeze
+                    action = 'buy' if direction == 'LONG' else 'sell'
+
+                    order_params = {
+                        'stock_code': stock_code,
+                        'exchange_code': 'NFO',
+                        'product': 'futures',
+                        'action': action,
+                        'order_type': 'market',
+                        'quantity': str(batch_quantity),
+                        'price': '0',
+                        'validity': 'day',
+                        'stoploss': '0',
+                        'disclosed_quantity': '0',
+                        'expiry_date': expiry_breeze,
+                        'right': 'others',
+                        'strike_price': '0'
+                    }
+
+                    logger.info(f"Batch {batch_num} order parameters: {order_params}")
+                    if instrument:
+                        logger.info(f"Using SecurityMaster: Symbol={symbol} -> StockCode={stock_code}, Token={instrument['token']}")
+
+                    order_response = breeze.place_order(**order_params)
+                    logger.info(f"Batch {batch_num} Breeze API Response: {order_response}")
+
+                    if order_response and order_response.get('Status') == 200:
+                        order_data = order_response.get('Success', {})
+                        order_id = order_data.get('order_id', 'UNKNOWN')
+
+                        # Create Order record
+                        order = Order.objects.create(
+                            account=broker_account,
+                            position=position,
+                            broker_order_id=order_id,
+                            instrument=symbol,
+                            order_type='MARKET',
+                            direction=direction,
+                            quantity=batch_quantity,
+                            price=entry_price,
+                            exchange='NFO',
+                            status='PENDING'
+                        )
+
+                        successful_orders.append({
+                            'batch': batch_num,
+                            'order_id': order_id,
+                            'lots': batch_lots,
+                            'quantity': batch_quantity,
+                            'order_record_id': order.id
+                        })
+
+                        logger.info(f"✅ Batch {batch_num} SUCCESS: Order ID {order_id}")
+
+                    else:
+                        error_msg = order_response.get('Error', 'Unknown error') if order_response else 'API call failed'
+                        logger.error(f"❌ Batch {batch_num} FAILED: {error_msg}")
+
+                        failed_orders.append({
+                            'batch': batch_num,
+                            'lots': batch_lots,
+                            'error': error_msg,
+                            'response': order_response
+                        })
+
+            except Exception as e:
+                logger.error(f"❌ Batch {batch_num} EXCEPTION: {e}", exc_info=True)
+                failed_orders.append({
+                    'batch': batch_num,
+                    'lots': batch_lots,
+                    'error': str(e),
+                    'response': None
                 })
 
-            else:
-                # Order failed - rollback position creation
-                error_msg = order_response.get('Error', 'Unknown error') if order_response else 'API call failed'
-                logger.error(f"Order placement failed: {error_msg}")
+            # Wait 20 seconds before next batch (except for last batch)
+            if batch_num < total_batches:
+                import time
+                logger.info(f"⏸️  Waiting {DELAY_SECONDS} seconds before next batch...")
+                time.sleep(DELAY_SECONDS)
 
-                # Transaction will auto-rollback due to exception
-                raise Exception(error_msg)
+        # Prepare summary response
+        logger.info(f"{'='*80}")
+        logger.info(f"ORDER PLACEMENT SUMMARY: {len(successful_orders)} successful, {len(failed_orders)} failed")
+        logger.info(f"{'='*80}")
+
+        if len(successful_orders) > 0:
+            # At least some orders succeeded
+            response_data = {
+                'success': True,
+                'total_batches': total_batches,
+                'successful_batches': len(successful_orders),
+                'failed_batches': len(failed_orders),
+                'position_id': position.id if position else None,
+                'message': f'{len(successful_orders)}/{total_batches} batches placed successfully',
+                'orders': successful_orders,
+                'failed_orders': failed_orders if failed_orders else None,
+                'order_details': {
+                    'symbol': symbol,
+                    'stock_code': stock_code,
+                    'direction': direction,
+                    'total_lots': lots,
+                    'lot_size': lot_size,
+                    'total_quantity': quantity,
+                    'entry_price': float(entry_price),
+                    'expiry_date': expiry_breeze,
+                    'batch_size': BATCH_SIZE,
+                    'delay_seconds': DELAY_SECONDS
+                }
+            }
+
+            # Add SecurityMaster info
+            if instrument:
+                response_data['security_master'] = {
+                    'token': instrument['token'],
+                    'stock_code': instrument['short_name'],
+                    'lot_size': instrument['lot_size'],
+                    'company_name': instrument['company_name'],
+                    'source': instrument.get('source', 'security_master')
+                }
+
+            return JsonResponse(response_data)
+        else:
+            # All batches failed
+            return JsonResponse({
+                'success': False,
+                'error': f'All {total_batches} batches failed',
+                'failed_orders': failed_orders,
+                'debug_info': {
+                    'total_batches': total_batches,
+                    'symbol': symbol,
+                    'lots': lots
+                }
+            })
 
     except Exception as e:
         logger.error(f"Error placing order: {e}", exc_info=True)
@@ -718,9 +876,13 @@ def get_suggestion_details(request, suggestion_id):
             'suggestion': {
                 'id': suggestion.id,
                 'stock_symbol': suggestion.instrument,
+                'instrument': suggestion.instrument,  # Add instrument field for modal check
+                'suggestion_type': suggestion.suggestion_type,  # Add suggestion_type for OPTIONS check
+                'strategy': suggestion.strategy,
                 'direction': suggestion.direction,
                 'spot_price': float(suggestion.spot_price) if suggestion.spot_price else 0,
                 'expiry_date': suggestion.expiry_date.strftime('%Y-%m-%d') if suggestion.expiry_date else None,
+                'days_to_expiry': suggestion.days_to_expiry if suggestion.days_to_expiry else 0,
                 'recommended_lots': suggestion.recommended_lots,
                 'margin_required': float(suggestion.margin_required) if suggestion.margin_required else 0,
                 'margin_available': float(suggestion.margin_available) if suggestion.margin_available else 0,
@@ -728,6 +890,13 @@ def get_suggestion_details(request, suggestion_id):
                 'margin_utilization': float(suggestion.margin_utilization) if suggestion.margin_utilization else 0,
                 'max_profit': float(suggestion.max_profit) if suggestion.max_profit else 0,
                 'max_loss': float(suggestion.max_loss) if suggestion.max_loss else 0,
+                # Strangle-specific fields
+                'call_strike': float(suggestion.call_strike) if suggestion.call_strike else None,
+                'put_strike': float(suggestion.put_strike) if suggestion.put_strike else None,
+                'call_premium': float(suggestion.call_premium) if suggestion.call_premium else None,
+                'put_premium': float(suggestion.put_premium) if suggestion.put_premium else None,
+                'total_premium': float(suggestion.total_premium) if suggestion.total_premium else None,
+                'vix': float(suggestion.vix) if suggestion.vix else None,
                 # Position details from JSON
                 'stop_loss': position_details.get('stop_loss', 0),
                 'target': position_details.get('target', 0),
@@ -930,6 +1099,45 @@ def update_suggestion_status(request):
 
     except Exception as e:
         logger.error(f"Error updating suggestion status: {e}", exc_info=True)
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        })
+
+
+@login_required
+@require_GET
+def get_lot_size(request):
+    """
+    Get lot size for a trading symbol using Neo API.
+
+    GET params:
+        - trading_symbol: Trading symbol (e.g., 'NIFTY25NOV27050CE')
+
+    Returns:
+        JSON: {'success': True, 'lot_size': 75, 'symbol': 'NIFTY25NOV27050CE'}
+    """
+    try:
+        trading_symbol = request.GET.get('trading_symbol', '')
+
+        if not trading_symbol:
+            return JsonResponse({
+                'success': False,
+                'error': 'Trading symbol is required'
+            })
+
+        from apps.brokers.integrations.kotak_neo import get_lot_size_from_neo
+
+        lot_size = get_lot_size_from_neo(trading_symbol)
+
+        return JsonResponse({
+            'success': True,
+            'lot_size': lot_size,
+            'symbol': trading_symbol
+        })
+
+    except Exception as e:
+        logger.error(f"Error fetching lot size: {e}", exc_info=True)
         return JsonResponse({
             'success': False,
             'error': str(e)
