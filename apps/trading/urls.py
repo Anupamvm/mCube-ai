@@ -31,6 +31,7 @@ urlpatterns = [
     path('api/suggestions/<int:suggestion_id>/', api_views.get_suggestion_details, name='api_get_suggestion_details'),
     path('api/suggestions/update/', api_views.update_suggestion_status, name='api_update_suggestion'),
     path('api/get-lot-size/', api_views.get_lot_size, name='api_get_lot_size'),
+    path('api/get-contract-details/', api_views.get_contract_details, name='api_get_contract_details'),
 
     # Manual Trade Execution (Live Orders)
     path('manual/prepare/', views.prepare_manual_execution, name='prepare_manual_execution'),

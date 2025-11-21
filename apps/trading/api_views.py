@@ -384,7 +384,9 @@ def place_futures_order(request):
         # Parse JSON body if present, otherwise use POST data
         if request.content_type == 'application/json':
             data = json.loads(request.body)
+            logger.info(f"📥 place_futures_order received JSON data: {data}")
             symbol = data.get('symbol', data.get('stock_symbol', '')).upper()
+            expiry_param = data.get('expiry')  # Get expiry from request
             direction = data.get('direction', 'buy').lower()
             lots = int(data.get('lots', 1))
             futures_price = float(data.get('entry_price', data.get('price', 0)))
@@ -393,6 +395,7 @@ def place_futures_order(request):
             enable_averaging = data.get('enable_averaging', False)
         else:
             symbol = request.POST.get('stock_symbol', request.POST.get('symbol', '')).upper()
+            expiry_param = request.POST.get('expiry')  # Get expiry from request
             direction = request.POST.get('direction', 'buy').lower()
             lots = int(request.POST.get('lots', 1))
             futures_price = float(request.POST.get('price', 0))
@@ -400,22 +403,55 @@ def place_futures_order(request):
             target = float(request.POST.get('target', 0))
             enable_averaging = request.POST.get('enable_averaging', 'false').lower() == 'true'
 
+        logger.info(f"🔍 Extracted params: symbol={symbol}, expiry_param={expiry_param}, direction={direction}, lots={lots}")
+
         # Normalize direction to LONG/SHORT
         if direction in ['buy', 'long']:
             direction = 'LONG'
         elif direction in ['sell', 'short']:
             direction = 'SHORT'
 
-        # Get contract - use latest expiry if not specified
-        contract = ContractData.objects.filter(
+        # Get contract - use expiry from request if provided, otherwise use latest
+        contract_filter = ContractData.objects.filter(
             symbol=symbol,
             option_type='FUTURE'
-        ).order_by('expiry').first()
+        )
+
+        if expiry_param:
+            # Use the specific expiry provided in the request
+            # expiry_param could be in format '2024-12-26' (preferred) or '26-Dec-2024'
+            try:
+                # Try parsing as YYYY-MM-DD format first (database format)
+                if '-' in expiry_param and expiry_param[0].isdigit() and len(expiry_param) == 10:
+                    # Already in YYYY-MM-DD format
+                    expiry_str = expiry_param
+                    logger.info(f"✅ Using expiry from request (YYYY-MM-DD): {expiry_str}")
+                elif '-' in expiry_param:
+                    # DD-MMM-YYYY format (e.g., '26-Dec-2024')
+                    expiry_dt = datetime.strptime(expiry_param, '%d-%b-%Y').date()
+                    expiry_str = expiry_dt.strftime('%Y-%m-%d')
+                    logger.info(f"✅ Using expiry from request (DD-MMM-YYYY): {expiry_param} -> {expiry_str}")
+                else:
+                    raise ValueError(f"Unknown expiry format: {expiry_param}")
+
+                contract = contract_filter.filter(expiry=expiry_str).first()
+
+                if not contract:
+                    logger.error(f"❌ No contract found for {symbol} with expiry {expiry_str}")
+                else:
+                    logger.info(f"📋 Found contract: {symbol} expiry={contract.expiry} lot_size={contract.lot_size} price={contract.price}")
+            except Exception as e:
+                logger.warning(f"⚠️ Could not parse expiry '{expiry_param}': {e}, falling back to latest")
+                contract = contract_filter.order_by('-expiry').first()
+        else:
+            # No expiry specified, use latest available
+            contract = contract_filter.order_by('-expiry').first()
+            logger.warning(f"⚠️ No expiry specified for {symbol}, using latest: {contract.expiry if contract else 'N/A'}")
 
         if not contract:
             return JsonResponse({
                 'success': False,
-                'error': f'Contract not found for {symbol}'
+                'error': f'Contract not found for {symbol}' + (f' with expiry {expiry_param}' if expiry_param else '')
             })
 
         # Use provided price or contract price
@@ -1107,15 +1143,104 @@ def update_suggestion_status(request):
 
 @login_required
 @require_GET
+def get_contract_details(request):
+    """
+    Get complete contract details including instrument token from SecurityMaster.
+
+    GET params:
+        - symbol: Stock symbol (e.g., 'TCS')
+        - expiry: Expiry date in YYYY-MM-DD format (e.g., '2024-12-26')
+
+    Returns:
+        JSON with contract details and instrument token
+    """
+    try:
+        symbol = request.GET.get('symbol', '').upper()
+        expiry_str = request.GET.get('expiry', '')
+
+        if not symbol or not expiry_str:
+            return JsonResponse({
+                'success': False,
+                'error': 'Symbol and expiry are required'
+            })
+
+        # Get contract from database
+        from apps.trading.models import ContractData
+        contract = ContractData.objects.filter(
+            symbol=symbol,
+            option_type='FUTURE',
+            expiry=expiry_str
+        ).first()
+
+        if not contract:
+            return JsonResponse({
+                'success': False,
+                'error': f'Contract not found for {symbol} with expiry {expiry_str}'
+            })
+
+        # Format expiry for SecurityMaster lookup
+        from datetime import datetime
+        expiry_dt = datetime.strptime(expiry_str, '%Y-%m-%d').date()
+        expiry_breeze = expiry_dt.strftime('%d-%b-%Y').upper()
+
+        # Get instrument details from SecurityMaster
+        from apps.brokers.utils.security_master import get_futures_instrument
+        instrument = get_futures_instrument(symbol, expiry_breeze)
+
+        response_data = {
+            'success': True,
+            'symbol': symbol,
+            'expiry': expiry_str,
+            'expiry_formatted': expiry_breeze,
+            'lot_size': contract.lot_size,
+            'price': float(contract.price),
+            'volume': contract.traded_contracts
+        }
+
+        if instrument:
+            response_data['instrument'] = {
+                'token': instrument.get('token', 'N/A'),
+                'stock_code': instrument.get('short_name', symbol),
+                'company_name': instrument.get('company_name', ''),
+                'lot_size': instrument.get('lot_size', contract.lot_size),
+                'source': 'SecurityMaster'
+            }
+        else:
+            response_data['instrument'] = {
+                'token': 'Not found in SecurityMaster',
+                'stock_code': symbol,
+                'company_name': '',
+                'lot_size': contract.lot_size,
+                'source': 'ContractData fallback'
+            }
+
+        return JsonResponse(response_data)
+
+    except Exception as e:
+        logger.error(f"Error fetching contract details: {e}", exc_info=True)
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        })
+
+
+@login_required
+@require_GET
 def get_lot_size(request):
     """
-    Get lot size for a trading symbol using Neo API.
+    Get lot size and instrument token for a trading symbol using Neo API.
 
     GET params:
         - trading_symbol: Trading symbol (e.g., 'NIFTY25NOV27050CE')
 
     Returns:
-        JSON: {'success': True, 'lot_size': 75, 'symbol': 'NIFTY25NOV27050CE'}
+        JSON: {
+            'success': True,
+            'lot_size': 75,
+            'symbol': 'NIFTY25NOV27050CE',
+            'instrument_token': '12345',
+            'expiry': '28-NOV-2024'
+        }
     """
     try:
         trading_symbol = request.GET.get('trading_symbol', '')
@@ -1126,14 +1251,18 @@ def get_lot_size(request):
                 'error': 'Trading symbol is required'
             })
 
-        from apps.brokers.integrations.kotak_neo import get_lot_size_from_neo
+        from apps.brokers.integrations.kotak_neo import get_lot_size_from_neo_with_token
 
-        lot_size = get_lot_size_from_neo(trading_symbol)
+        # Get lot size and instrument details
+        result = get_lot_size_from_neo_with_token(trading_symbol)
 
         return JsonResponse({
             'success': True,
-            'lot_size': lot_size,
-            'symbol': trading_symbol
+            'lot_size': result.get('lot_size', 75),
+            'symbol': trading_symbol,
+            'instrument_token': result.get('token', 'N/A'),
+            'expiry': result.get('expiry', 'N/A'),
+            'exchange_segment': result.get('exchange_segment', 'N/A')
         })
 
     except Exception as e:

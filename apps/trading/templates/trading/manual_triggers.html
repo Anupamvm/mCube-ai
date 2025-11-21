@@ -1992,12 +1992,13 @@
                             </div>
                         </div>
 
-                        <!-- Order Execution Section -->
+                        <!-- Order Execution Section - REMOVED Place Order Button -->
+                        <!-- Users should use "Take This Trade" button from suggestions instead -->
                         <div style="border-top: 2px solid #E5E7EB; padding-top: 1rem;">
-                            <button class="order-btn" id="placeOrderBtn" onclick="placeOrder()">
-                                📈 Place Order
-                            </button>
                             <div class="order-status" id="orderStatus"></div>
+                            <div style="padding: 1rem; background: #FEF3C7; border-left: 4px solid #F59E0B; margin-top: 1rem;">
+                                <strong>Note:</strong> To place an order, use the <strong>"Take This Trade"</strong> button from the suggestion below after verification.
+                            </div>
                         </div>
                     </div>
 
@@ -2034,7 +2035,7 @@
                         try {
                             // Extract symbol and expiry from contract object
                             let symbol = contract.symbol;
-                            let expiry = contract.expiry || contract.expiry_date;
+                            let expiry = contract.expiry_date || contract.expiry;  // Prefer YYYY-MM-DD format
                             let direction = contract.direction || 'LONG';
 
                             // Validate required fields
@@ -2285,6 +2286,7 @@
                         const confirmationMessage = \`⚠️ CONFIRM ORDER PLACEMENT
 
 Symbol: \${contract.symbol}
+Expiry: \${contract.expiry || 'N/A'}
 Direction: \${contract.direction}
 Lots: \${lots}
 Entry Price: ₹\${contract.futures_price.toFixed(2)}
@@ -2318,10 +2320,7 @@ Are you absolutely sure?\`;
     async function fetchPositionSizing(contract) {
         try {
             // Ensure expiry is in YYYY-MM-DD format for API
-            let expiry = contract.expiry;
-            if (contract.expiry_date) {
-                expiry = contract.expiry_date;
-            }
+            let expiry = contract.expiry_date || contract.expiry;  // Prefer YYYY-MM-DD format
 
             const response = await fetch('/trading/api/calculate-position/', {
                 method: 'POST',
@@ -2640,14 +2639,48 @@ Are you absolutely sure?\`;
         // Calculate margin required
         const marginRequired = positionData ? (positionData.margin_per_lot * lots) : 0;
 
-        // CONFIRMATION DIALOG
-        const confirmationMessage = `
-⚠️ CONFIRM ORDER PLACEMENT
+        // FETCH CONTRACT DETAILS (including instrument token) BEFORE CONFIRMATION
+        statusDiv.className = 'order-status pending show';
+        statusDiv.textContent = 'Fetching contract details...';
+
+        try {
+            const expiryToVerify = contract.expiry_date || contract.expiry;
+            const detailsResponse = await fetch(`/trading/api/get-contract-details/?symbol=${contract.symbol}&expiry=${expiryToVerify}`);
+            const contractDetails = await detailsResponse.json();
+
+            console.log('[DEBUG] Contract details from API:', contractDetails);
+
+            if (!contractDetails.success) {
+                alert(`Error: ${contractDetails.error}\n\nCannot verify contract. Order cancelled.`);
+                statusDiv.className = 'order-status error show';
+                statusDiv.textContent = contractDetails.error;
+                button.disabled = false;
+                button.innerHTML = '📈 Place Order';
+                return;
+            }
+
+            const instrument = contractDetails.instrument || {};
+
+            // ENHANCED CONFIRMATION DIALOG WITH INSTRUMENT TOKEN FROM BREEZE
+            const confirmationMessage = `
+⚠️ CONFIRM FUTURES ORDER ⚠️
 
 Symbol: ${contract.symbol}
+Company: ${instrument.company_name || contract.symbol}
 Direction: ${contract.direction}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📋 CONTRACT VERIFICATION (BREEZE)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Instrument Token: ${instrument.token || 'N/A'}
+Stock Code: ${instrument.stock_code || contract.symbol}
+Expiry: ${contractDetails.expiry_formatted || contract.expiry || 'N/A'}
+Lot Size: ${instrument.lot_size || contractDetails.lot_size}
+Source: ${instrument.source || 'Unknown'}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 Lots: ${lots}
-Quantity: ${lots * (positionData ? positionData.lot_size : 1)}
+Quantity: ${lots * (positionData ? positionData.lot_size : contractDetails.lot_size)}
 
 Entry Price: ₹${contract.futures_price.toFixed(2)}
 Margin Required: ₹${marginRequired.toLocaleString()}
@@ -2655,13 +2688,28 @@ Margin Required: ₹${marginRequired.toLocaleString()}
 ${contract.stop_loss ? `Stop Loss: ₹${contract.stop_loss}` : ''}
 ${contract.target ? `Target: ₹${contract.target}` : ''}
 
-This will place a REAL order with your broker.
+⚠️ This will place a REAL order with Breeze/ICICI.
+Verify the Instrument Token matches your terminal.
+
 Are you absolutely sure?
         `.trim();
 
-        if (!confirm(confirmationMessage)) {
-            console.log('Order placement cancelled by user');
-            return;  // User cancelled
+            if (!confirm(confirmationMessage)) {
+                console.log('Order placement cancelled by user');
+                statusDiv.className = '';
+                statusDiv.textContent = '';
+                button.disabled = false;
+                button.innerHTML = '📈 Place Order';
+                return;  // User cancelled
+            }
+        } catch (error) {
+            console.error('[ERROR] Failed to fetch contract details:', error);
+            alert(`Error fetching contract details: ${error.message}\n\nOrder cancelled for safety.`);
+            statusDiv.className = 'order-status error show';
+            statusDiv.textContent = 'Failed to verify contract';
+            button.disabled = false;
+            button.innerHTML = '📈 Place Order';
+            return;
         }
 
         // Disable button
@@ -2673,6 +2721,16 @@ Are you absolutely sure?
         statusDiv.textContent = 'Submitting order to broker...';
 
         try {
+            // Debug logging to verify expiry being sent
+            console.log('[DEBUG] Contract object:', contract);
+            console.log('[DEBUG] Expiry fields:', {
+                expiry_date: contract.expiry_date,
+                expiry: contract.expiry
+            });
+
+            const expiryToSend = contract.expiry_date || contract.expiry;
+            console.log('[DEBUG] Sending expiry:', expiryToSend);
+
             const response = await fetch('/trading/api/place-futures-order/', {
                 method: 'POST',
                 headers: {
@@ -2681,7 +2739,7 @@ Are you absolutely sure?
                 },
                 body: JSON.stringify({
                     symbol: contract.symbol,
-                    expiry: contract.expiry,
+                    expiry: expiryToSend,  // Use YYYY-MM-DD format if available
                     lots: lots,
                     direction: contract.direction,
                     entry_price: contract.futures_price
@@ -5111,11 +5169,11 @@ Are you absolutely sure?
 
             ${data.passed ? `
                 <div class="action-buttons">
-                    <button class="btn btn-success" onclick="placeOrder('${data.symbol}', '${data.expiry}', '${analysis.direction}', ${analysis.contract_price || analysis.entry_price}, ${analysis.stop_loss}, ${analysis.target}, ${analysis.lot_size || 0})">
-                        📈 Place Order
-                    </button>
+                    <div style="padding: 1rem; background: #FEF3C7; border-left: 4px solid #F59E0B; margin-bottom: 1rem;">
+                        <strong>Note:</strong> To place an order, save this as a suggestion using the button above, then use the <strong>"Take This Trade"</strong> button.
+                    </div>
                     <button class="btn btn-secondary" onclick="hideResults()">
-                        ❌ Reject
+                        Close
                     </button>
                 </div>
             ` : `
@@ -5224,31 +5282,40 @@ Are you absolutely sure?
                 const expiryStr = day + month;
                 const callSymbol = `NIFTY${expiryStr}${callStrike}CE`;
 
-                // Fetch lot size dynamically from Neo API
-                console.log('[DEBUG] Fetching lot size for', callSymbol);
+                // Fetch lot size AND instrument tokens dynamically from Neo API
+                console.log('[DEBUG] Fetching lot size and instrument tokens for', callSymbol);
 
-                fetch(`/trading/api/get-lot-size/?trading_symbol=${callSymbol}`)
-                    .then(response => response.json())
-                    .then(lotSizeData => {
-                        if (!lotSizeData.success) {
-                            console.error('[ERROR] Failed to fetch lot size:', lotSizeData.error);
-                            alert('Failed to fetch lot size. Using default (75).');
-                            continueWithConfirmation(75);
+                // Build PUT symbol early for API call
+                const putSymbol = `NIFTY${expiryStr}${putStrike}PE`;
+
+                // Fetch lot size for CALL (also gets instrument token)
+                Promise.all([
+                    fetch(`/trading/api/get-lot-size/?trading_symbol=${callSymbol}`).then(r => r.json()),
+                    fetch(`/trading/api/get-lot-size/?trading_symbol=${putSymbol}`).then(r => r.json())
+                ])
+                    .then(([callData, putData]) => {
+                        if (!callData.success || !putData.success) {
+                            console.error('[ERROR] Failed to fetch contract data');
+                            alert('Failed to fetch contract details. Using defaults.');
+                            continueWithConfirmation(75, {}, {});
                             return;
                         }
 
-                        const lotSize = lotSizeData.lot_size;
+                        const lotSize = callData.lot_size;
                         console.log('[DEBUG] ✅ Lot size fetched:', lotSize);
-                        continueWithConfirmation(lotSize);
+                        console.log('[DEBUG] ✅ CALL token:', callData.instrument_token);
+                        console.log('[DEBUG] ✅ PUT token:', putData.instrument_token);
+
+                        continueWithConfirmation(lotSize, callData, putData);
                     })
                     .catch(error => {
-                        console.error('[ERROR] Error fetching lot size:', error);
-                        alert('Error fetching lot size. Using default (75).');
-                        continueWithConfirmation(75);
+                        console.error('[ERROR] Error fetching contract data:', error);
+                        alert('Error fetching contract details. Using defaults.');
+                        continueWithConfirmation(75, {}, {});
                     });
 
-                // Function to continue with confirmation after lot size is fetched
-                function continueWithConfirmation(lotSize) {
+                // Function to continue with confirmation after contract data is fetched
+                function continueWithConfirmation(lotSize, callContractData, putContractData) {
                     // Calculate order details
                     const totalQuantity = recommendedLots * lotSize;
                     const ordersPerLeg = Math.ceil(recommendedLots / 20);
@@ -5256,45 +5323,164 @@ Are you absolutely sure?
                     const estimatedTime = (ordersPerLeg - 1) * 20;
                     const totalPremiumCollection = (callPremium + putPremium) * totalQuantity;
 
-                    // Build put symbol (call symbol already built above for API call)
-                    const putSymbol = `NIFTY${expiryStr}${putStrike}PE`;
+                    // Extract instrument tokens from contract data
+                    const callToken = callContractData.instrument_token || 'N/A';
+                    const putToken = putContractData.instrument_token || 'N/A';
+                    const callExpiry = callContractData.expiry || expiryDate;
+                    const putExpiry = putContractData.expiry || expiryDate;
 
-                    // Show clean confirmation dialog (like Futures)
-                    const confirmMessage = `⚠️ CONFIRM STRANGLE TRADE ⚠️
+                    // Create enhanced confirmation with checkboxes
+                    const confirmationHTML = `
+                        <div style="max-width: 700px; margin: 0 auto; padding: 20px; font-family: monospace;">
+                            <h2 style="color: #EF4444; text-align: center; margin-bottom: 20px;">
+                                ⚠️ CONFIRM STRANGLE TRADE ⚠️
+                            </h2>
 
-Suggestion ID: #${suggestionId}
-Strategy: Nifty SHORT Strangle
-Spot Price: ₹${spotPrice.toLocaleString('en-IN', {maximumFractionDigits: 2})}
+                            <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
+                                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                                    <div><strong>Suggestion ID:</strong> #${suggestionId}</div>
+                                    <div><strong>Strategy:</strong> Nifty SHORT Strangle</div>
+                                    <div><strong>Spot Price:</strong> ₹${spotPrice.toLocaleString('en-IN', {maximumFractionDigits: 2})}</div>
+                                    <div><strong>Expiry:</strong> ${expiryDate} (${daysToExpiry} days)</div>
+                                    <div><strong>VIX:</strong> ${vix.toFixed(2)}</div>
+                                    <div><strong>Lots:</strong> ${recommendedLots}</div>
+                                </div>
+                            </div>
 
-CALL Strike: ${callStrike} (₹${callPremium.toFixed(2)})
-Symbol: ${callSymbol}
+                            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 20px;">
+                                <div style="background: #E0F2FE; border-left: 4px solid #0284C7; padding: 15px;">
+                                    <h3 style="margin-top: 0; color: #0C4A6E;">📋 CALL CONTRACT</h3>
+                                    <div style="font-size: 0.9em;">
+                                        <div><strong>Strike:</strong> ${callStrike}</div>
+                                        <div><strong>Premium:</strong> ₹${callPremium.toFixed(2)}</div>
+                                        <div><strong>Symbol:</strong> ${callSymbol}</div>
+                                        <div style="background: white; padding: 5px; margin-top: 5px; border-radius: 4px;">
+                                            <strong>Token:</strong> <span style="color: #0284C7;">${callToken}</span>
+                                        </div>
+                                        <div><strong>Expiry:</strong> ${callExpiry}</div>
+                                    </div>
+                                </div>
 
-PUT Strike: ${putStrike} (₹${putPremium.toFixed(2)})
-Symbol: ${putSymbol}
+                                <div style="background: #FEE2E2; border-left: 4px solid #DC2626; padding: 15px;">
+                                    <h3 style="margin-top: 0; color: #991B1B;">📋 PUT CONTRACT</h3>
+                                    <div style="font-size: 0.9em;">
+                                        <div><strong>Strike:</strong> ${putStrike}</div>
+                                        <div><strong>Premium:</strong> ₹${putPremium.toFixed(2)}</div>
+                                        <div><strong>Symbol:</strong> ${putSymbol}</div>
+                                        <div style="background: white; padding: 5px; margin-top: 5px; border-radius: 4px;">
+                                            <strong>Token:</strong> <span style="color: #DC2626;">${putToken}</span>
+                                        </div>
+                                        <div><strong>Expiry:</strong> ${putExpiry}</div>
+                                    </div>
+                                </div>
+                            </div>
 
-Lots: ${recommendedLots} (${totalQuantity} qty)
-Lot Size: ${lotSize}
-Premium Collection: ₹${totalPremiumCollection.toLocaleString('en-IN', {maximumFractionDigits: 0})}
+                            <div style="background: #F0FDF4; border-left: 4px solid #16A34A; padding: 15px; margin-bottom: 20px;">
+                                <h3 style="margin-top: 0; color: #14532D;">💰 TRADE ECONOMICS</h3>
+                                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                                    <div><strong>Total Quantity:</strong> ${totalQuantity} (${recommendedLots} × ${lotSize})</div>
+                                    <div><strong>Premium Collection:</strong> ₹${totalPremiumCollection.toLocaleString('en-IN', {maximumFractionDigits: 0})}</div>
+                                    <div><strong>Margin Required:</strong> ₹${marginRequired.toLocaleString('en-IN', {maximumFractionDigits: 0})}</div>
+                                    <div><strong>Margin Available:</strong> ₹${marginAvailable.toLocaleString('en-IN', {maximumFractionDigits: 0})}</div>
+                                    <div><strong>Margin Utilization:</strong> ${((marginRequired / marginAvailable) * 100).toFixed(1)}%</div>
+                                    <div><strong>Max Loss:</strong> Unlimited (Short Strangle)</div>
+                                </div>
+                            </div>
 
-Margin Required: ₹${marginRequired.toLocaleString('en-IN', {maximumFractionDigits: 0})}
-Margin Available: ₹${marginAvailable.toLocaleString('en-IN', {maximumFractionDigits: 0})}
+                            <div style="background: #FEF3C7; border-left: 4px solid #F59E0B; padding: 15px; margin-bottom: 20px;">
+                                <h3 style="margin-top: 0; color: #92400E;">⏱️ EXECUTION DETAILS</h3>
+                                <div>
+                                    <div><strong>Total Orders:</strong> ${totalOrders} (${ordersPerLeg} CALL + ${ordersPerLeg} PUT)</div>
+                                    <div><strong>Order Spacing:</strong> 20 seconds between orders</div>
+                                    <div><strong>Estimated Time:</strong> ~${estimatedTime} seconds</div>
+                                    <div><strong>Broker:</strong> Kotak Neo</div>
+                                </div>
+                            </div>
 
-Execution: ${totalOrders} orders (${ordersPerLeg} Call + ${ordersPerLeg} Put)
-Time: ~${estimatedTime} seconds (20s delays)
+                            <div style="background: #FEE2E2; border-left: 4px solid #EF4444; padding: 15px; margin-bottom: 20px;">
+                                <h3 style="margin-top: 0; color: #991B1B;">⚠️ RISK DISCLOSURE</h3>
+                                <div style="margin-bottom: 15px;">
+                                    <p style="margin: 5px 0;">Please confirm the following by checking each box:</p>
+                                </div>
+                                <div style="margin-left: 20px;">
+                                    <div style="margin-bottom: 10px;">
+                                        <label style="display: flex; align-items: flex-start; cursor: pointer;">
+                                            <input type="checkbox" id="strangle-verify-strikes" style="margin-right: 8px; margin-top: 2px;">
+                                            <span>I verify the <strong>CALL strike (${callStrike})</strong> and <strong>PUT strike (${putStrike})</strong> are correct</span>
+                                        </label>
+                                    </div>
+                                    <div style="margin-bottom: 10px;">
+                                        <label style="display: flex; align-items: flex-start; cursor: pointer;">
+                                            <input type="checkbox" id="strangle-verify-tokens" style="margin-right: 8px; margin-top: 2px;">
+                                            <span>I confirm the <strong>instrument tokens</strong> and <strong>expiry (${expiryDate})</strong> are as intended</span>
+                                        </label>
+                                    </div>
+                                    <div style="margin-bottom: 10px;">
+                                        <label style="display: flex; align-items: flex-start; cursor: pointer;">
+                                            <input type="checkbox" id="strangle-understand-strategy" style="margin-right: 8px; margin-top: 2px;">
+                                            <span>I understand this is a <strong>SHORT STRANGLE</strong> with <strong>unlimited risk</strong> potential</span>
+                                        </label>
+                                    </div>
+                                    <div style="margin-bottom: 10px;">
+                                        <label style="display: flex; align-items: flex-start; cursor: pointer;">
+                                            <input type="checkbox" id="strangle-accept-risk" style="margin-right: 8px; margin-top: 2px;">
+                                            <span>I understand this will place <strong>${totalOrders} REAL ORDERS</strong> with my broker and I accept the financial risk</span>
+                                        </label>
+                                    </div>
+                                </div>
+                            </div>
 
-Do you want to place this order?`;
+                            <div style="text-align: center; margin-top: 20px;">
+                                <button id="strangle-confirm-btn" disabled
+                                        style="padding: 12px 30px; background: #ccc; color: white; border: none; border-radius: 6px; font-size: 16px; cursor: not-allowed; margin-right: 10px;">
+                                    Confirm Strangle Order
+                                </button>
+                                <button id="strangle-cancel-btn"
+                                        style="padding: 12px 30px; background: #6B7280; color: white; border: none; border-radius: 6px; font-size: 16px; cursor: pointer;">
+                                    Cancel
+                                </button>
+                            </div>
+                        </div>
+                    `;
 
-                    console.log('[DEBUG] Showing confirmation dialog...');
-                    const userConfirmed = confirm(confirmMessage);
-                    console.log('[DEBUG] User confirmed:', userConfirmed);
+                    // Create modal for confirmation
+                    const modal = document.createElement('div');
+                    modal.style.cssText = 'position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7); z-index: 10000; display: flex; align-items: center; justify-content: center; overflow: auto;';
+                    modal.innerHTML = confirmationHTML;
+                    document.body.appendChild(modal);
 
-                    if (!userConfirmed) {
-                        return;
-                    }
+                    // Setup checkbox validation
+                    const checkboxes = modal.querySelectorAll('input[type="checkbox"]');
+                    const confirmBtn = modal.querySelector('#strangle-confirm-btn');
+                    const cancelBtn = modal.querySelector('#strangle-cancel-btn');
 
-                    // User confirmed - execute the orders
-                    console.log('[DEBUG] User confirmed, executing strangle orders...');
-                    executeStrangleOrdersDirect(suggestionId, recommendedLots);
+                    const validateCheckboxes = () => {
+                        const allChecked = Array.from(checkboxes).every(cb => cb.checked);
+                        if (allChecked) {
+                            confirmBtn.disabled = false;
+                            confirmBtn.style.background = '#10B981';
+                            confirmBtn.style.cursor = 'pointer';
+                        } else {
+                            confirmBtn.disabled = true;
+                            confirmBtn.style.background = '#ccc';
+                            confirmBtn.style.cursor = 'not-allowed';
+                        }
+                    };
+
+                    checkboxes.forEach(cb => cb.addEventListener('change', validateCheckboxes));
+
+                    // Handle confirmation
+                    confirmBtn.addEventListener('click', () => {
+                        modal.remove();
+                        console.log('[DEBUG] User confirmed with all checkboxes, executing strangle orders...');
+                        executeStrangleOrdersDirect(suggestionId, recommendedLots);
+                    });
+
+                    // Handle cancellation
+                    cancelBtn.addEventListener('click', () => {
+                        modal.remove();
+                        console.log('[DEBUG] User cancelled the strangle order');
+                    });
                 }
 
                 return; // Don't proceed with the old confirm dialog
@@ -5772,31 +5958,175 @@ Please check your connection and try again.`);
 
             console.log('Trade details:', { stockSymbol, direction, finalLots, futuresPrice, stopLoss, target });
 
-            // Confirmation dialog with trade details
-            const confirmMessage = `⚠️ CONFIRM FUTURES TRADE ⚠️
+            // First fetch contract details including instrument token
+            btn.innerHTML = '⏳ Fetching contract details...';
 
-Suggestion ID: #${suggestionId}
-Stock: ${stockSymbol}
-Direction: ${direction.toUpperCase()}
-Lots: ${finalLots}
-Price: ₹${futuresPrice.toFixed(2)}
-Stop Loss: ₹${stopLoss.toFixed(2)}
-Target: ₹${target.toFixed(2)}
+            // Get expiry from suggestion (it should be in YYYY-MM-DD format)
+            const expiry = suggestion.expiry || suggestion.expiry_date;
+            console.log('[DEBUG] Fetching contract details for:', stockSymbol, 'expiry:', expiry);
 
-Margin Required: ₹${formatIndianNumber(suggestion.margin_per_lot * finalLots)}
-Margin Available: ₹${formatIndianNumber(suggestion.margin_available)}
+            let instrumentToken = 'N/A';
+            let expiryFormatted = expiry;
+            let companyName = '';
+            let lotSize = suggestion.lot_size || 125;
 
-Do you want to place this order?`;
+            try {
+                // Fetch contract details with instrument token from SecurityMaster
+                const detailsResponse = await fetch(`/trading/api/get-contract-details/?symbol=${stockSymbol}&expiry=${expiry}`);
+                const contractDetails = await detailsResponse.json();
 
-            console.log('Showing confirmation dialog...');
-            const userConfirmed = confirm(confirmMessage);
-            console.log('User confirmed:', userConfirmed);
+                if (contractDetails.success) {
+                    instrumentToken = contractDetails.instrument?.token || 'N/A';
+                    expiryFormatted = contractDetails.expiry_formatted || expiry;
+                    companyName = contractDetails.instrument?.company_name || '';
+                    lotSize = contractDetails.instrument?.lot_size || lotSize;
+                    console.log('[DEBUG] ✅ Contract details fetched:', { instrumentToken, expiryFormatted, companyName, lotSize });
+                } else {
+                    console.log('[WARNING] Could not fetch contract details:', contractDetails.error);
+                }
+            } catch (error) {
+                console.error('[ERROR] Failed to fetch contract details:', error);
+            }
 
-            if (!userConfirmed) {
-                // Reset button
+            // Create enhanced confirmation with checkboxes
+            const confirmationHTML = `
+                <div style="max-width: 600px; margin: 0 auto; padding: 20px; font-family: monospace;">
+                    <h2 style="color: #EF4444; text-align: center; margin-bottom: 20px;">
+                        ⚠️ CONFIRM FUTURES TRADE ⚠️
+                    </h2>
+
+                    <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                            <div><strong>Suggestion ID:</strong> #${suggestionId}</div>
+                            <div><strong>Stock:</strong> ${stockSymbol}</div>
+                            <div><strong>Direction:</strong> <span style="color: ${direction === 'long' ? '#10B981' : '#EF4444'}; font-weight: bold;">${direction.toUpperCase()}</span></div>
+                            <div><strong>Expiry:</strong> ${expiryFormatted}</div>
+                            <div><strong>Lots:</strong> ${finalLots}</div>
+                            <div><strong>Lot Size:</strong> ${lotSize}</div>
+                            <div><strong>Total Quantity:</strong> ${finalLots * lotSize}</div>
+                            <div><strong>Entry Price:</strong> ₹${futuresPrice.toFixed(2)}</div>
+                            <div><strong>Stop Loss:</strong> ₹${stopLoss.toFixed(2)}</div>
+                            <div><strong>Target:</strong> ₹${target.toFixed(2)}</div>
+                        </div>
+                    </div>
+
+                    <div style="background: #FEF3C7; border-left: 4px solid #F59E0B; padding: 15px; margin-bottom: 20px;">
+                        <h3 style="margin-top: 0; color: #92400E;">📋 CONTRACT VERIFICATION</h3>
+                        <div style="display: grid; grid-template-columns: auto 1fr; gap: 10px; align-items: center;">
+                            <strong>Instrument Token:</strong>
+                            <span style="font-family: monospace; background: white; padding: 4px 8px; border-radius: 4px;">${instrumentToken}</span>
+                            ${companyName ? `<strong>Company:</strong><span>${companyName}</span>` : ''}
+                            <strong>Source:</strong>
+                            <span>${instrumentToken !== 'N/A' ? 'Breeze SecurityMaster' : 'Not Available'}</span>
+                        </div>
+                    </div>
+
+                    <div style="background: #DBEAFE; border-left: 4px solid #2563EB; padding: 15px; margin-bottom: 20px;">
+                        <h3 style="margin-top: 0; color: #1E40AF;">💰 MARGIN REQUIREMENTS</h3>
+                        <div>
+                            <div><strong>Margin Required:</strong> ₹${formatIndianNumber(suggestion.margin_per_lot * finalLots)}</div>
+                            <div><strong>Margin Available:</strong> ₹${formatIndianNumber(suggestion.margin_available)}</div>
+                            <div><strong>Margin Utilization:</strong> ${((suggestion.margin_per_lot * finalLots / suggestion.margin_available) * 100).toFixed(1)}%</div>
+                        </div>
+                    </div>
+
+                    <div style="background: #FEE2E2; border-left: 4px solid #EF4444; padding: 15px; margin-bottom: 20px;">
+                        <h3 style="margin-top: 0; color: #991B1B;">⚠️ RISK DISCLOSURE</h3>
+                        <div style="margin-bottom: 15px;">
+                            <p style="margin: 5px 0;">Please confirm the following by checking each box:</p>
+                        </div>
+                        <div style="margin-left: 20px;">
+                            <div style="margin-bottom: 10px;">
+                                <label style="display: flex; align-items: flex-start; cursor: pointer;">
+                                    <input type="checkbox" id="futures-verify-symbol" style="margin-right: 8px; margin-top: 2px;">
+                                    <span>I verify the <strong>symbol (${stockSymbol})</strong> and <strong>expiry (${expiryFormatted})</strong> are correct</span>
+                                </label>
+                            </div>
+                            <div style="margin-bottom: 10px;">
+                                <label style="display: flex; align-items: flex-start; cursor: pointer;">
+                                    <input type="checkbox" id="futures-verify-direction" style="margin-right: 8px; margin-top: 2px;">
+                                    <span>I confirm the <strong>direction (${direction.toUpperCase()})</strong> and <strong>lots (${finalLots})</strong> are as intended</span>
+                                </label>
+                            </div>
+                            <div style="margin-bottom: 10px;">
+                                <label style="display: flex; align-items: flex-start; cursor: pointer;">
+                                    <input type="checkbox" id="futures-verify-levels" style="margin-right: 8px; margin-top: 2px;">
+                                    <span>I have reviewed the <strong>entry (₹${futuresPrice.toFixed(2)})</strong>, <strong>SL (₹${stopLoss.toFixed(2)})</strong>, and <strong>target (₹${target.toFixed(2)})</strong></span>
+                                </label>
+                            </div>
+                            <div style="margin-bottom: 10px;">
+                                <label style="display: flex; align-items: flex-start; cursor: pointer;">
+                                    <input type="checkbox" id="futures-understand-risk" style="margin-right: 8px; margin-top: 2px;">
+                                    <span>I understand this will place a <strong>REAL ORDER</strong> with my broker and I accept the financial risk</span>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div style="text-align: center; margin-top: 20px;">
+                        <button id="futures-confirm-btn" disabled
+                                style="padding: 12px 30px; background: #ccc; color: white; border: none; border-radius: 6px; font-size: 16px; cursor: not-allowed; margin-right: 10px;">
+                            Confirm Order
+                        </button>
+                        <button id="futures-cancel-btn"
+                                style="padding: 12px 30px; background: #6B7280; color: white; border: none; border-radius: 6px; font-size: 16px; cursor: pointer;">
+                            Cancel
+                        </button>
+                    </div>
+                </div>
+            `;
+
+            // Create modal for confirmation
+            const modal = document.createElement('div');
+            modal.style.cssText = 'position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7); z-index: 10000; display: flex; align-items: center; justify-content: center; overflow: auto;';
+            modal.innerHTML = confirmationHTML;
+            document.body.appendChild(modal);
+
+            // Setup checkbox validation
+            const checkboxes = modal.querySelectorAll('input[type="checkbox"]');
+            const confirmBtn = modal.querySelector('#futures-confirm-btn');
+            const cancelBtn = modal.querySelector('#futures-cancel-btn');
+
+            const validateCheckboxes = () => {
+                const allChecked = Array.from(checkboxes).every(cb => cb.checked);
+                if (allChecked) {
+                    confirmBtn.disabled = false;
+                    confirmBtn.style.background = '#10B981';
+                    confirmBtn.style.cursor = 'pointer';
+                } else {
+                    confirmBtn.disabled = true;
+                    confirmBtn.style.background = '#ccc';
+                    confirmBtn.style.cursor = 'not-allowed';
+                }
+            };
+
+            checkboxes.forEach(cb => cb.addEventListener('change', validateCheckboxes));
+
+            // Handle confirmation
+            const handleConfirm = async () => {
+                modal.remove();
+                btn.innerHTML = '⏳ Placing Order...';
+                console.log('User confirmed with all checkboxes, placing order...');
+                return true;
+            };
+
+            // Handle cancellation
+            const handleCancel = () => {
+                modal.remove();
                 btn.disabled = false;
                 btn.innerHTML = originalText;
                 btn.style.opacity = '1';
+                console.log('User cancelled the order');
+                return false;
+            };
+
+            // Wait for user response
+            const userConfirmed = await new Promise((resolve) => {
+                confirmBtn.addEventListener('click', () => resolve(handleConfirm()));
+                cancelBtn.addEventListener('click', () => resolve(handleCancel()));
+            });
+
+            if (!userConfirmed) {
                 return;
             }
 
@@ -5804,16 +6134,17 @@ Do you want to place this order?`;
             btn.innerHTML = '⏳ Placing Order...';
             console.log('User confirmed, placing order...');
 
-            // Prepare order data
+            // Prepare order data with expiry
             const orderData = {
                 stock_symbol: stockSymbol,
                 direction: direction,
                 lots: finalLots,
                 price: futuresPrice,
                 stop_loss: stopLoss,
-                target: target
+                target: target,
+                expiry: expiry  // CRITICAL: Include expiry to ensure correct contract selection
             };
-            console.log('Order data:', orderData);
+            console.log('Order data (with expiry):', orderData);
 
             // Place the order
             const response = await fetch('/trading/api/place-futures-order/', {
@@ -5835,6 +6166,8 @@ Do you want to place this order?`;
 Order placed successfully!
 Order ID: ${result.order_id}
 Stock: ${stockSymbol}
+Expiry: ${expiryFormatted}
+Token: ${instrumentToken}
 Direction: ${direction.toUpperCase()}
 Lots: ${finalLots}
 Price: ₹${futuresPrice.toFixed(2)}

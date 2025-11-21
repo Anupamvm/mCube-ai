@@ -564,6 +564,105 @@ def get_lot_size_from_neo(trading_symbol: str, client=None) -> int:
         return 75  # Default fallback
 
 
+def get_lot_size_from_neo_with_token(trading_symbol: str, client=None) -> dict:
+    """
+    Get lot size AND instrument token for a trading symbol using Neo API search_scrip.
+
+    Args:
+        trading_symbol (str): Trading symbol (e.g., 'NIFTY25NOV27050CE')
+        client: Optional authenticated client to reuse
+
+    Returns:
+        dict: {
+            'lot_size': int,
+            'token': str,
+            'expiry': str,
+            'exchange_segment': str,
+            'symbol': str
+        }
+
+    Example:
+        >>> result = get_lot_size_from_neo_with_token('NIFTY25NOV27050CE')
+        >>> print(result)
+        {'lot_size': 75, 'token': '12345', 'expiry': '28-NOV-2024', ...}
+    """
+    try:
+        # Use provided client or get new one
+        if client is None:
+            client = _get_authenticated_client()
+
+        # Parse symbol to extract components
+        import re
+        pattern = r'^([A-Z]+)(\d{2}[A-Z]{3})(\d+)(CE|PE)$'
+        match = re.match(pattern, trading_symbol)
+
+        if not match:
+            logger.warning(f"Unable to parse trading symbol: {trading_symbol}, using defaults")
+            return {
+                'lot_size': 75,
+                'token': 'N/A',
+                'expiry': 'N/A',
+                'exchange_segment': 'nse_fo',
+                'symbol': trading_symbol
+            }
+
+        symbol_name = match.group(1)  # NIFTY
+        expiry_date = match.group(2)  # 25NOV
+        strike_price = match.group(3)  # 27050
+        option_type = match.group(4)  # CE or PE
+
+        # Convert expiry to Neo format
+        from datetime import datetime
+        current_year = datetime.now().year
+        expiry_full = f"{expiry_date}{current_year}"  # 25NOV2025
+
+        logger.info(f"Searching scrip with token: symbol={symbol_name}, expiry={expiry_full}, strike={strike_price}, type={option_type}")
+
+        # Search using Neo API
+        result = client.search_scrip(
+            exchange_segment='nse_fo',
+            symbol=symbol_name,
+            expiry=expiry_full,
+            option_type=option_type,
+            strike_price=strike_price
+        )
+
+        if result and isinstance(result, list) and len(result) > 0:
+            scrip = result[0]
+            lot_size = scrip.get('lLotSize', scrip.get('iLotSize', 75))
+            token = scrip.get('pTrdSymbol', scrip.get('pSymbol', 'N/A'))
+            expiry_display = scrip.get('pExchSeg', expiry_full)
+
+            logger.info(f"✅ Found scrip details for {trading_symbol}: lot_size={lot_size}, token={token}")
+
+            return {
+                'lot_size': int(lot_size),
+                'token': str(token),
+                'expiry': expiry_display,
+                'exchange_segment': 'nse_fo',
+                'symbol': trading_symbol
+            }
+        else:
+            logger.warning(f"No scrip found for {trading_symbol}, using defaults")
+            return {
+                'lot_size': 75,
+                'token': 'N/A',
+                'expiry': expiry_full,
+                'exchange_segment': 'nse_fo',
+                'symbol': trading_symbol
+            }
+
+    except Exception as e:
+        logger.error(f"Error fetching scrip details for {trading_symbol}: {e}")
+        return {
+            'lot_size': 75,
+            'token': 'N/A',
+            'expiry': 'N/A',
+            'exchange_segment': 'nse_fo',
+            'symbol': trading_symbol
+        }
+
+
 def place_strangle_orders_in_batches(
     call_symbol: str,
     put_symbol: str,
