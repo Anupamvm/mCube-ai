@@ -9,13 +9,15 @@ app_name = 'trading'
 
 urlpatterns = [
     # Manual Trade Triggers
-    path('triggers/', views.manual_triggers, name='manual_triggers'),
+    path('triggers/', views.manual_triggers_refactored, name='manual_triggers'),  # New refactored version (replaced old)
+    path('triggers-old/', views.manual_triggers, name='manual_triggers_old'),  # Old version kept as backup
     path('trigger/futures/', views.trigger_futures_algorithm, name='trigger_futures'),
     path('trigger/strangle/', views.trigger_nifty_strangle, name='trigger_strangle'),
     path('trigger/verify/', views.verify_future_trade, name='verify_trade'),
     path('trigger/get-contracts/', views.get_contracts, name='get_contracts'),
     path('trigger/refresh-trendlyne/', views.refresh_trendlyne_data, name='refresh_trendlyne'),
     path('trigger/update-breeze-session/', views.update_breeze_session, name='update_breeze_session'),
+    path('trigger/update-neo-session/', views.update_neo_session, name='update_neo_session'),
     path('trigger/calculate-position-sizing/', views.calculate_position_sizing, name='calculate_position_sizing'),
     path('trigger/execute-strangle/', views.execute_strangle_orders, name='execute_strangle'),
 

@@ -231,16 +231,25 @@ def get_breeze_client():
         if not creds:
             raise BreezeAuthenticationError("No Breeze credentials found in database")
 
+        if not creds.session_token:
+            raise BreezeAuthenticationError("Breeze session token not found. Please login to continue.")
+
+        logger.info(f"Attempting Breeze authentication with token from {creds.last_session_update}")
+
         breeze = BreezeConnect(api_key=creds.api_key)
         breeze.generate_session(
             api_secret=creds.api_secret,
             session_token=creds.session_token
         )
+
+        logger.info("Breeze authentication successful")
         return breeze
     except BreezeAuthenticationError:
         raise
     except Exception as e:
         error_msg = str(e).lower()
+        logger.error(f"Breeze client error: {str(e)}")
+
         # Detect common authentication error messages
         if any(keyword in error_msg for keyword in ['session', 'authentication', 'unauthorized', 'invalid token', 'expired', 'login']):
             raise BreezeAuthenticationError(f"Breeze authentication failed: {str(e)}", original_error=e)

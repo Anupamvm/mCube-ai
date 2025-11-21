@@ -71,32 +71,33 @@ class StrangleDeltaAlgorithm:
         Calculate VIX-based delta adjustment
 
         Logic:
-            - VIX < 12 (very low): 0.9x (tighter strikes - riskier)
-            - VIX 12-15 (normal): 1.0x (standard strikes)
-            - VIX 15-18 (elevated): 1.1x (wider strikes - safer)
-            - VIX 18-25 (high): 1.2x (much wider strikes)
-            - VIX > 25 (extreme): 1.4x (very wide strikes - very safe)
+            - VIX < 10 (very low): 0.9x (tighter strikes - riskier)
+            - VIX 10-11.5 (low): 1.0x (standard strikes)
+            - VIX 11.5-12.5 (normal): 1.0x (standard strikes - optimal range)
+            - VIX 12.5-14 (high): 1.5x (wider strikes for safety - good premiums)
+            - VIX 14-18 (very high): 1.8x (much wider strikes)
+            - VIX > 18 (extreme): 2.0x (very wide strikes - extreme volatility)
 
         Returns:
             Decimal: VIX adjustment multiplier
         """
         vix_val = float(self.vix)
 
-        if vix_val < 12:
+        if vix_val < 10:
             adj = Decimal('0.9')
             reason = f"Very low VIX ({vix_val:.1f}) - tighter strikes for higher premium"
-        elif vix_val < 15:
+        elif vix_val < 12.5:
             adj = Decimal('1.0')
             reason = f"Normal VIX ({vix_val:.1f}) - standard strike distance"
+        elif vix_val < 14:
+            adj = Decimal('1.5')
+            reason = f"High VIX ({vix_val:.1f}) - wider strikes for safety (+50%)"
         elif vix_val < 18:
-            adj = Decimal('1.1')
-            reason = f"Elevated VIX ({vix_val:.1f}) - slightly wider strikes (+10%)"
-        elif vix_val < 25:
-            adj = Decimal('1.2')
-            reason = f"High VIX ({vix_val:.1f}) - wider strikes for safety (+20%)"
+            adj = Decimal('1.8')
+            reason = f"Very high VIX ({vix_val:.1f}) - much wider strikes (+80%)"
         else:
-            adj = Decimal('1.4')
-            reason = f"Extreme VIX ({vix_val:.1f}) - very wide strikes (+40%)"
+            adj = Decimal('2.0')
+            reason = f"Extreme VIX ({vix_val:.1f}) - very wide strikes (+100%)"
 
         self.vix_adjustment = adj
         self.calculation_log.append({

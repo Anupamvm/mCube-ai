@@ -416,6 +416,18 @@ def export_suggestions_csv(request):
 
 
 @login_required
+def manual_triggers_refactored(request):
+    """
+    Refactored Manual Trade Triggers Page with clean sidebar navigation
+
+    Three features in tabbed interface:
+    1. Run Futures Algorithm - Screen and suggest futures opportunities
+    2. Nifty Options Strangle - Generate Kotak strangle position
+    3. Verify Future Trade - Verify a specific futures contract
+    """
+    return render(request, 'trading/manual_triggers_refactored.html')
+
+
 def manual_triggers(request):
     """
     Manual Trade Triggers Page
@@ -1263,7 +1275,7 @@ def trigger_nifty_strangle(request):
                 }
             })
 
-            # If NO TRADE DAY, stop here and return the report
+            # If NO TRADE DAY, stop here and return the report with market data
             if not validation_report['trade_allowed']:
                 logger.warning(f"NO TRADE DAY detected: {validation_report['verdict_reason']}")
                 return JsonResponse({
@@ -1271,7 +1283,14 @@ def trigger_nifty_strangle(request):
                     'error': f'NO TRADE DAY: {validation_report["verdict_reason"]}',
                     'execution_log': execution_log,
                     'validation_report': validation_report,
-                    'is_no_trade_day': True
+                    'is_no_trade_day': True,
+                    'strangle': {
+                        'current_price': float(nifty_price),
+                        'spot_price': float(nifty_price),  # Include both for compatibility
+                        'vix': float(vix),
+                        'expiry_date': expiry_date.strftime('%Y-%m-%d'),
+                        'days_to_expiry': days_to_expiry
+                    }
                 })
 
         except Exception as e:
@@ -2249,6 +2268,22 @@ def verify_future_trade(request):
                     'error': str(e)
                 }
 
+        # Fetch Breeze token from SecurityMaster for order placement verification
+        breeze_token = None
+        breeze_stock_code = None
+        try:
+            from apps.brokers.utils.security_master import get_futures_instrument
+
+            instrument = get_futures_instrument(stock_symbol, expiry_breeze)
+            if instrument:
+                breeze_token = instrument.get('token')
+                breeze_stock_code = instrument.get('short_name')
+                logger.info(f"✅ Breeze token fetched for confirmation: {breeze_token} (stock_code: {breeze_stock_code})")
+            else:
+                logger.warning(f"⚠️ Could not fetch Breeze token for {stock_symbol} {expiry_breeze}")
+        except Exception as e:
+            logger.error(f"Error fetching Breeze token: {e}", exc_info=True)
+
         # Build analysis summary
         analysis_summary = {
             'direction': direction,
@@ -2263,7 +2298,11 @@ def verify_future_trade(request):
             'basis': metrics.get('basis', 0),
             'basis_pct': metrics.get('basis_pct', 0),
             'cost_of_carry': metrics.get('cost_of_carry', 0),
-            'position_details': position_details
+            'position_details': position_details,
+            'expiry_date': expiry_date,  # Add raw expiry date (YYYY-MM-DD format)
+            'breeze_token': breeze_token,  # Add Breeze instrument token
+            'breeze_stock_code': breeze_stock_code,  # Add Breeze stock code
+            'score_breakdown': analysis_result.get('scores', {})  # Add component scores breakdown
         }
 
         response_data = {
@@ -2638,11 +2677,31 @@ def execute_strangle_orders(request):
     from apps.orders.models import Order
 
     try:
-        # Get parameters
-        suggestion_id = request.POST.get('suggestion_id')
-        total_lots = int(request.POST.get('total_lots', 0))
+        # Parse JSON body (frontend sends JSON, not form data)
+        try:
+            data = json.loads(request.body.decode('utf-8'))
+            logger.info(f"Parsed request data: {data}")
+        except Exception as parse_error:
+            logger.error(f"Failed to parse JSON body: {parse_error}")
+            logger.error(f"Request body: {request.body}")
+            return JsonResponse({
+                'success': False,
+                'error': f'Invalid JSON data: {str(parse_error)}'
+            })
+
+        suggestion_id = data.get('suggestion_id')
+        total_lots_raw = data.get('total_lots', 0)
+
+        logger.info(f"Extracted values - suggestion_id: {suggestion_id}, total_lots: {total_lots_raw}")
+
+        try:
+            total_lots = int(total_lots_raw) if total_lots_raw else 0
+        except (ValueError, TypeError) as e:
+            logger.error(f"Invalid total_lots value: {total_lots_raw}, error: {e}")
+            total_lots = 0
 
         if not suggestion_id or total_lots <= 0:
+            logger.warning(f"Validation failed - suggestion_id: {suggestion_id}, total_lots: {total_lots}")
             return JsonResponse({
                 'success': False,
                 'error': 'suggestion_id and total_lots are required'
@@ -2945,6 +3004,61 @@ def update_breeze_session(request):
         })
     except Exception as e:
         logger.error(f"Error updating Breeze session: {e}", exc_info=True)
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        })
+
+
+@login_required
+@require_POST
+def update_neo_session(request):
+    """
+    Update Neo (Kotak) session token after user re-authentication
+    """
+    import json
+    from apps.core.models import CredentialStore
+
+    try:
+        body = json.loads(request.body)
+        session_token = body.get('session_token', '').strip()
+
+        if not session_token:
+            return JsonResponse({
+                'success': False,
+                'error': 'Session token is required'
+            })
+
+        # Update the session token in database
+        creds = CredentialStore.objects.filter(service='kotak_neo').first()
+        if not creds:
+            # Try alternate service name
+            creds = CredentialStore.objects.filter(service='neo').first()
+
+        if not creds:
+            return JsonResponse({
+                'success': False,
+                'error': 'Neo credentials not found in database'
+            })
+
+        creds.session_token = session_token
+        creds.last_session_update = timezone.now()
+        creds.save()
+
+        logger.info(f"Neo session token updated successfully by {request.user}")
+
+        return JsonResponse({
+            'success': True,
+            'message': 'Session token updated successfully'
+        })
+
+    except json.JSONDecodeError:
+        return JsonResponse({
+            'success': False,
+            'error': 'Invalid JSON data'
+        })
+    except Exception as e:
+        logger.error(f"Error updating Neo session: {e}", exc_info=True)
         return JsonResponse({
             'success': False,
             'error': str(e)

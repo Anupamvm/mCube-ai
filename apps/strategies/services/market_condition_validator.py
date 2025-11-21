@@ -74,18 +74,18 @@ def classify_vix(vix: float) -> Dict:
             'level': 'HIGH',
             'label': 'High',
             'color': 'orange',
-            'implication': 'Elevated volatility - good premiums but higher risk',
+            'implication': 'Elevated volatility - good premiums, using wider strikes (1.5x delta)',
             'strangle_suitable': True,
-            'reason': 'Good premiums but watch for extreme movements'
+            'reason': 'Good premiums with wider strikes for safety'
         }
     else:
         return {
             'level': 'VERY_HIGH',
             'label': 'Very High',
             'color': 'red',
-            'implication': 'Very high volatility - large premiums but extreme risk',
-            'strangle_suitable': False,
-            'reason': 'VIX too high - market too volatile for safe strangle entry'
+            'implication': 'Very high volatility - using extra wide strikes (1.8x delta)',
+            'strangle_suitable': True,
+            'reason': 'High VIX - using very wide strikes to manage risk'
         }
 
 
@@ -391,25 +391,14 @@ class MarketConditionValidator:
 
         # Determine status based on classification
         if not vix_classification['strangle_suitable']:
-            if self.vix < 10:
-                # Very Low VIX - premiums too low
-                self._add_result(
-                    "VIX Level",
-                    "WARNING",
-                    f"VIX Very Low at {self.vix:.1f} - {vix_classification['reason']}",
-                    details
-                )
-                self.warnings.append(f"VIX too low: {self.vix:.1f}")
-            else:
-                # Very High VIX - too volatile
-                self._add_result(
-                    "VIX Level",
-                    "FAIL",
-                    f"VIX Very High at {self.vix:.1f} - {vix_classification['reason']}",
-                    details
-                )
-                self.is_no_trade_day = True
-                self.trade_allowed = False
+            # Very Low VIX - premiums too low
+            self._add_result(
+                "VIX Level",
+                "WARNING",
+                f"VIX Very Low at {self.vix:.1f} - {vix_classification['reason']}",
+                details
+            )
+            self.warnings.append(f"VIX too low: {self.vix:.1f}")
         elif vix_classification['level'] == 'NORMAL':
             # Ideal VIX range
             self._add_result(
@@ -419,14 +408,23 @@ class MarketConditionValidator:
                 details
             )
         elif vix_classification['level'] == 'HIGH':
-            # High but still tradeable
+            # High VIX - using wider strikes (1.5x delta)
             self._add_result(
                 "VIX Level",
-                "WARNING",
+                "PASS",
                 f"VIX {vix_classification['label']} at {self.vix:.1f} - {vix_classification['reason']}",
                 details
             )
-            self.warnings.append(f"VIX high: {self.vix:.1f}")
+            self.warnings.append(f"VIX high ({self.vix:.1f}) - using 1.5x wider strikes")
+        elif vix_classification['level'] == 'VERY_HIGH':
+            # Very High VIX - using extra wide strikes (1.8x delta)
+            self._add_result(
+                "VIX Level",
+                "PASS",
+                f"VIX {vix_classification['label']} at {self.vix:.1f} - {vix_classification['reason']}",
+                details
+            )
+            self.warnings.append(f"VIX very high ({self.vix:.1f}) - using 1.8x wider strikes")
         else:
             # Low VIX
             self._add_result(

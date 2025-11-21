@@ -1,0 +1,2851 @@
+{% extends "core/master_base.html" %}
+{% load static %}
+
+{% block title %}Trading Triggers - mCube Trading{% endblock %}
+
+{% block extra_css %}
+<!-- Custom CSS for Trading Triggers -->
+<link rel="stylesheet" href="{% static 'css/trading/triggers.css' %}">
+<style>
+    /* Override body margin since we have navbar */
+    body {
+        margin: 0;
+    }
+    /* Keep gradient header style */
+    .gradient-header {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+    }
+</style>
+{% endblock %}
+
+{% block page_background %}standard-background{% endblock %}
+
+{% block content %}
+<div class="trading-container">
+    <!-- Sidebar Navigation -->
+    <aside class="trading-sidebar">
+        <div class="sidebar-header">
+            <h2>Trading Triggers</h2>
+        </div>
+        <nav class="sidebar-nav">
+            <a href="#futures" class="nav-item active">
+                <span class="icon">🎯</span>
+                <span class="label">Futures Algorithm</span>
+            </a>
+            <a href="#strangle" class="nav-item">
+                <span class="icon">📊</span>
+                <span class="label">Nifty Strangle</span>
+            </a>
+            <a href="#verify" class="nav-item">
+                <span class="icon">✅</span>
+                <span class="label">Verify Trade</span>
+            </a>
+        </nav>
+        <div class="sidebar-toggle">
+            <span>‹</span>
+        </div>
+    </aside>
+
+    <!-- Main Content Area -->
+    <main class="trading-main">
+        <!-- Futures Algorithm Tab -->
+        <div id="futures-content" class="tab-content active">
+            <div class="content-header">
+                <h1>🎯 Futures Algorithm</h1>
+                <p>Advanced screening algorithm to find top 3 futures trading opportunities</p>
+            </div>
+
+            <div class="trigger-card">
+                <div class="trigger-header">
+                    <span class="trigger-icon">🚀</span>
+                    <h2 class="trigger-title">Run Futures Screening</h2>
+                </div>
+                <p class="trigger-description">
+                    Analyzes top 300 stocks by market cap for futures opportunities.
+                    Uses 7-factor scoring: Volume, Price Action, OI Analysis,
+                    Sector Performance, Volatility, and AI Confidence.
+                </p>
+
+                <!-- Volume Filtering Section -->
+                <div class="trigger-content" style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin: 20px 0;">
+                    <h4 style="color: #1f2937; margin-bottom: 15px;">📊 Volume Filtering (OR condition)</h4>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                        <div class="form-group">
+                            <label for="thisMonthVolume" style="display: block; margin-bottom: 5px; font-weight: 500;">
+                                This Month Volume (contracts):
+                            </label>
+                            <input type="number"
+                                   id="thisMonthVolume"
+                                   name="thisMonthVolume"
+                                   class="form-control"
+                                   value="1000"
+                                   min="0"
+                                   style="width: 100%; padding: 10px; border: 1px solid #e5e7eb; border-radius: 6px;">
+                            <small style="color: #6b7280; font-size: 0.875rem;">Min contracts for current month expiry</small>
+                        </div>
+                        <div class="form-group">
+                            <label for="nextMonthVolume" style="display: block; margin-bottom: 5px; font-weight: 500;">
+                                Next Month Volume (contracts):
+                            </label>
+                            <input type="number"
+                                   id="nextMonthVolume"
+                                   name="nextMonthVolume"
+                                   class="form-control"
+                                   value="800"
+                                   min="0"
+                                   style="width: 100%; padding: 10px; border: 1px solid #e5e7eb; border-radius: 6px;">
+                            <small style="color: #6b7280; font-size: 0.875rem;">Min contracts for next month expiry</small>
+                        </div>
+                    </div>
+
+                    <div style="margin-top: 15px; display: flex; align-items: center; gap: 15px;">
+                        <button class="btn btn-secondary" onclick="FuturesAlgorithm.applyFilters()" style="padding: 8px 20px;">
+                            🔍 Apply Filters & Count
+                        </button>
+                        <div id="contractsCount" style="font-weight: 500; color: #2563eb; display: none;">
+                            <!-- Contract count will be displayed here -->
+                        </div>
+                    </div>
+
+                    <div id="filterStatus" style="margin-top: 10px; padding: 10px; background: #fef3c7; border-left: 4px solid #f59e0b; border-radius: 4px; display: none;">
+                        <strong>Filter Applied:</strong> <span id="filterDetails"></span>
+                    </div>
+                </div>
+
+                <button class="btn btn-primary" onclick="FuturesAlgorithm.run()" id="futuresButton">
+                    🎯 Find Top 3 Opportunities
+                </button>
+                <div class="loading-spinner" id="futuresLoading" style="display: none;">
+                    <div>⏳ Analyzing market data...</div>
+                </div>
+                <div class="error-message" id="futuresError" style="display: none;"></div>
+            </div>
+
+            <!-- Results Panel - List of contracts -->
+            <div id="futuresResults" style="display: none;">
+                <!-- Results will be dynamically populated -->
+            </div>
+
+        </div>
+
+        <!-- Nifty Strangle Tab -->
+        <div id="strangle-content" class="tab-content">
+            <div class="content-header">
+                <h1>📊 Nifty Strangle Generator</h1>
+                <p>Generate weekly Nifty strangle positions with optimal strike selection</p>
+            </div>
+
+            <div class="trigger-card">
+                <div class="trigger-header">
+                    <span class="trigger-icon">🎰</span>
+                    <h2 class="trigger-title">Generate Strangle</h2>
+                </div>
+                <p class="trigger-description">
+                    Creates a Nifty weekly strangle position based on current VIX levels.
+                    Automatically calculates optimal strikes and position sizing based on available margin.
+                </p>
+                <button class="btn btn-primary" onclick="NiftyStrangle.generate()" id="strangleButton">
+                    📊 Generate Strangle Position
+                </button>
+                <div class="loading-spinner" id="strangleLoading" style="display: none;">
+                    <div>⏳ Calculating optimal strikes...</div>
+                </div>
+                <div class="error-message" id="strangleError" style="display: none;"></div>
+            </div>
+
+            <!-- Results Panel -->
+            <div id="strangleResults" style="display: none;">
+                <!-- Results will be dynamically populated -->
+            </div>
+        </div>
+
+        <!-- Verify Trade Tab -->
+        <div id="verify-content" class="tab-content">
+            <div class="content-header">
+                <h1>✅ Verify Future Trade</h1>
+                <p>Comprehensive analysis for specific futures contracts with position sizing</p>
+            </div>
+
+            <div class="trigger-card">
+                <div class="trigger-header">
+                    <span class="trigger-icon">🔍</span>
+                    <h2 class="trigger-title">Contract Verification</h2>
+                </div>
+                <p class="trigger-description">
+                    Filter futures contracts by volume and verify any contract for complete analysis including position sizing, risk analysis, and trading signals.
+                </p>
+
+                <div class="trigger-content">
+                    <!-- Volume Filters -->
+                    <div style="background: #f9fafb; padding: 20px; border-radius: 8px; margin-bottom: 20px; border-left: 4px solid #3b82f6;">
+                        <h3 style="color: #1f2937; margin-bottom: 15px; font-size: 1rem; font-weight: 600;">📊 Volume Filters (OR Logic)</h3>
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 15px;">
+                            <div>
+                                <label style="display: block; font-size: 0.875rem; color: #6b7280; margin-bottom: 5px;">This Month Volume (≥ contracts)</label>
+                                <input type="number"
+                                       id="verifyThisMonthVolume"
+                                       value="10000"
+                                       min="0"
+                                       step="100"
+                                       style="width: 100%; padding: 8px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 0.875rem;"
+                                       placeholder="e.g., 10000">
+                            </div>
+                            <div>
+                                <label style="display: block; font-size: 0.875rem; color: #6b7280; margin-bottom: 5px;">Next Month Volume (≥ contracts)</label>
+                                <input type="number"
+                                       id="verifyNextMonthVolume"
+                                       value="5000"
+                                       min="0"
+                                       step="100"
+                                       style="width: 100%; padding: 8px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 0.875rem;"
+                                       placeholder="e.g., 5000">
+                            </div>
+                        </div>
+                        <div style="font-size: 0.75rem; color: #6b7280; margin-bottom: 15px;">
+                            💡 Tip: Lower values = more contracts. Try 500/400 for smaller volume stocks.
+                        </div>
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                            <button onclick="TradeVerification.refreshContracts()"
+                                    id="btnRefreshContracts"
+                                    style="background: #6b7280; color: white; padding: 10px; border: none; border-radius: 6px; font-size: 0.875rem; font-weight: 600; cursor: pointer; transition: background 0.2s;">
+                                🔄 Update List
+                            </button>
+                            <button onclick="TradeVerification.fetchFreshData()"
+                                    id="btnFetchTrendlyne"
+                                    style="background: #3b82f6; color: white; padding: 10px; border: none; border-radius: 6px; font-size: 0.875rem; font-weight: 600; cursor: pointer; transition: background 0.2s;">
+                                📥 Fetch Fresh Data
+                            </button>
+                        </div>
+                        <div style="font-size: 0.7rem; color: #9ca3af; margin-top: 10px; font-style: italic;">
+                            <strong>Update List</strong>: Filter existing data (fast) | <strong>Fetch Fresh Data</strong>: Download from Trendlyne (2-3 min)
+                        </div>
+                    </div>
+
+                    <!-- Contract Selection -->
+                    <div class="form-group">
+                        <label style="display: block; font-weight: 600; margin-bottom: 8px; color: #1f2937;">
+                            Select Futures Contract (<span id="contractCount">{{ total_contracts|default:"0" }}</span> contracts available)
+                        </label>
+                        <select id="contractSelect"
+                                style="width: 100%; padding: 10px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 0.875rem;">
+                            <option value="">-- Select a contract --</option>
+                            {% for contract in futures_contracts %}
+                            <option value="{{ contract.value }}"
+                                    data-this-month="{{ contract.this_month_volume }}"
+                                    data-next-month="{{ contract.next_month_volume }}"
+                                    data-price="{{ contract.price }}"
+                                    data-lot="{{ contract.lot_size }}">
+                                {{ contract.display }} (This: {{ contract.this_month_volume }} | Next: {{ contract.next_month_volume }})
+                            </option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                </div>
+
+                <button class="btn btn-primary" onclick="TradeVerification.verify()" id="verifyButton">
+                    ✅ Verify This Contract
+                </button>
+                <div class="loading-spinner" id="verifyLoading" style="display: none;">
+                    <div>⏳ Analyzing contract...</div>
+                </div>
+                <div class="error-message" id="verifyError" style="display: none;"></div>
+            </div>
+
+            <!-- Results Display -->
+            <div id="verifyResults" style="display: none; margin-top: 20px;"></div>
+        </div>
+
+        <!-- Notification Container -->
+        <div id="notificationContainer" class="notification-container"></div>
+    </main>
+</div>
+
+<!-- Results Panel (shared) -->
+<div id="resultsPanel" class="results-panel" style="display: none;">
+    <div class="results-header">
+        <h2 id="resultsTitle">Analysis Results</h2>
+        <button class="btn btn-secondary" onclick="hideResults()">Close</button>
+    </div>
+    <div id="resultContent">
+        <!-- Dynamic content -->
+    </div>
+</div>
+
+<!-- Broker Authentication Modals will be dynamically created by broker-auth.js -->
+
+<!-- Full-Screen Modal for Futures Contract Details -->
+<div id="futuresDetailModal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7); z-index: 9999; overflow-y: auto;" onclick="if(event.target.id === 'futuresDetailModal') FuturesAlgorithm.closeDetailModal();">
+    <div style="min-height: 100vh; padding: 20px;">
+        <div style="max-width: 1200px; margin: 0 auto; background: white; border-radius: 12px; padding: 30px; position: relative;" onclick="event.stopPropagation();">
+            <!-- Close Button -->
+            <button onclick="FuturesAlgorithm.closeDetailModal()"
+                    style="position: absolute; top: 20px; right: 20px; background: #ef4444; color: white; border: none; width: 40px; height: 40px; border-radius: 50%; font-size: 1.5rem; cursor: pointer; font-weight: 700; line-height: 1; z-index: 10;">
+                ×
+            </button>
+
+            <!-- Back to List Button -->
+            <button onclick="FuturesAlgorithm.closeDetailModal()"
+                    style="margin-bottom: 20px; padding: 12px 24px; background: #6b7280; color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: 600; font-size: 1rem;">
+                ← Back to Futures List
+            </button>
+
+            <!-- Content will be populated here -->
+            <div id="futuresDetailModalContent"></div>
+        </div>
+    </div>
+</div>
+
+<!-- JavaScript Section -->
+<!-- Core Modules -->
+<script src="{% static 'js/trading/core/api-client.js' %}"></script>
+<script src="{% static 'js/trading/core/broker-auth.js' %}"></script>
+<script src="{% static 'js/trading/core/state.js' %}"></script>
+<script src="{% static 'js/trading/core/utils.js' %}"></script>
+
+<!-- Component Modules -->
+<script src="{% static 'js/trading/components/position-sizing.js' %}"></script>
+<script src="{% static 'js/trading/components/ui-builders.js' %}"></script>
+
+<!-- Feature Modules (to be created) -->
+<script>
+// Futures Algorithm Module with Volume Filtering
+const FuturesAlgorithm = {
+    filteredContracts: [],
+    filterApplied: false,
+
+    async applyFilters() {
+        const thisMonthVolume = parseInt(document.getElementById('thisMonthVolume').value) || 0;
+        const nextMonthVolume = parseInt(document.getElementById('nextMonthVolume').value) || 0;
+
+        // Show loading state
+        const countDiv = document.getElementById('contractsCount');
+        countDiv.style.display = 'block';
+        countDiv.innerHTML = '⏳ Fetching contracts...';
+
+        try {
+            // Call the backend to get filtered contracts
+            const response = await ApiClient.post(ApiClient.endpoints.getContracts, {
+                this_month_volume: thisMonthVolume,
+                next_month_volume: nextMonthVolume
+            });
+
+            if (response && response.success) {
+                this.filteredContracts = response.contracts || [];
+                const count = this.filteredContracts.length;
+
+                // Update UI with count
+                countDiv.innerHTML = `✅ <strong>${count} contracts</strong> meet the criteria`;
+                countDiv.style.color = count > 0 ? '#10b981' : '#ef4444';
+
+                // Show filter details
+                const filterStatus = document.getElementById('filterStatus');
+                const filterDetails = document.getElementById('filterDetails');
+                filterStatus.style.display = 'block';
+                filterDetails.textContent = `This Month ≥ ${thisMonthVolume} OR Next Month ≥ ${nextMonthVolume} contracts`;
+
+                // Update button text to show count
+                const runButton = document.getElementById('futuresButton');
+                if (count > 0) {
+                    runButton.innerHTML = `🎯 Find Top 3 from ${count} Contracts`;
+                    runButton.disabled = false;
+                } else {
+                    runButton.innerHTML = '❌ No Contracts Match Filter';
+                    runButton.disabled = true;
+                }
+
+                this.filterApplied = true;
+
+                // Log the filtered contracts for debugging
+                console.log(`[Futures] Filtered ${count} contracts:`, this.filteredContracts);
+
+                return count;
+            } else {
+                throw new Error(response.error || 'Failed to fetch contracts');
+            }
+        } catch (error) {
+            console.error('Error applying filters:', error);
+            countDiv.innerHTML = '❌ Error fetching contracts';
+            countDiv.style.color = '#ef4444';
+
+            UIBuilders.showNotification({
+                type: 'error',
+                message: 'Failed to apply filters: ' + error.message,
+                icon: '❌'
+            });
+            return 0;
+        }
+    },
+
+    async run() {
+        // Check if filters are applied
+        if (!this.filterApplied) {
+            UIBuilders.showNotification({
+                type: 'warning',
+                message: 'Please apply volume filters first',
+                icon: '⚠️'
+            });
+            // Auto-apply filters with defaults
+            await this.applyFilters();
+            if (this.filteredContracts.length === 0) {
+                return;
+            }
+        }
+
+        const thisMonthVolume = parseInt(document.getElementById('thisMonthVolume').value) || 1000;
+        const nextMonthVolume = parseInt(document.getElementById('nextMonthVolume').value) || 800;
+
+        TradingState.setLoading('futures', true);
+
+        try {
+            // Include the filtered contracts in the request
+            const response = await ApiClient.post(ApiClient.endpoints.futures, {
+                this_month_volume: thisMonthVolume,
+                next_month_volume: nextMonthVolume,
+                filtered_symbols: this.filteredContracts.map(c => c.symbol)
+            }, {
+                onAuthError: (data) => ApiClient.handleAuthError(data, 'futures')
+            });
+
+            if (response && response.success) {
+                console.log('[Futures] Algorithm response:', response);
+                this.displayResults(response);
+            } else {
+                const errorMsg = response?.error || 'Failed to run futures algorithm';
+                console.error('[Futures] Error:', response);
+
+                UIBuilders.showNotification({
+                    type: 'error',
+                    message: `❌ Futures Algorithm Failed\n\n${errorMsg}`,
+                    icon: '❌',
+                    timeout: false
+                });
+            }
+        } catch (error) {
+            console.error('[Futures] Exception:', error);
+            UIBuilders.showNotification({
+                type: 'error',
+                message: `❌ Futures Algorithm Failed\n\n${error.message}`,
+                icon: '❌',
+                timeout: false
+            });
+        } finally {
+            TradingState.setLoading('futures', false);
+        }
+    },
+
+    displayResults(response) {
+        console.log('[Futures] Displaying results:', response);
+
+        const resultsDiv = document.getElementById('futuresResults');
+        resultsDiv.style.display = 'block';
+
+        // Get all contracts from response
+        const allContracts = response.all_contracts || [];
+        const totalAnalyzed = response.total_analyzed || 0;
+        const totalPassed = response.total_passed || 0;
+        const totalFailed = response.total_failed || 0;
+
+        console.log('[Futures] Statistics:', {
+            total: totalAnalyzed,
+            passed: totalPassed,
+            failed: totalFailed
+        });
+
+        // Build results HTML
+        let html = '<div style="margin-top: 20px;">';
+
+        // Summary Banner
+        html += `
+            <div style="background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%); border-radius: 12px; padding: 25px; margin-bottom: 25px; border: 2px solid #3b82f6;">
+                <h2 style="color: #1e40af; margin: 0 0 15px 0; display: flex; align-items: center; gap: 10px;">
+                    <span style="font-size: 2rem;">📊</span>
+                    Futures Analysis Complete
+                </h2>
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 15px;">
+                    <div style="text-align: center;">
+                        <div style="font-size: 2rem; font-weight: 700; color: #1f2937;">${totalAnalyzed}</div>
+                        <div style="color: #6b7280; font-size: 0.875rem;">Total Analyzed</div>
+                    </div>
+                    <div style="text-align: center;">
+                        <div style="font-size: 2rem; font-weight: 700; color: #10b981;">${totalPassed}</div>
+                        <div style="color: #6b7280; font-size: 0.875rem;">✅ Passed</div>
+                    </div>
+                    <div style="text-align: center;">
+                        <div style="font-size: 2rem; font-weight: 700; color: #ef4444;">${totalFailed}</div>
+                        <div style="color: #6b7280; font-size: 0.875rem;">❌ Failed</div>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        // Display contracts
+        if (allContracts.length > 0) {
+            allContracts.forEach((contract, index) => {
+                const verdictColor = contract.verdict === 'PASS' ? '#10b981' : '#ef4444';
+                const verdictBg = contract.verdict === 'PASS' ? '#d1fae5' : '#fee2e2';
+                const verdictIcon = contract.verdict === 'PASS' ? '✅' : '❌';
+
+                html += `
+                    <div style="background: white; border: 2px solid ${contract.verdict === 'PASS' ? '#10b981' : '#e5e7eb'}; border-radius: 12px; padding: 20px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                        <!-- Header -->
+                        <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 15px;">
+                            <div>
+                                <h3 style="color: #1f2937; margin: 0 0 5px 0; font-size: 1.5rem; display: flex; align-items: center; gap: 10px;">
+                                    ${contract.symbol}
+                                    <span style="background: ${verdictBg}; color: ${verdictColor}; padding: 4px 12px; border-radius: 20px; font-size: 0.875rem; font-weight: 600;">
+                                        ${verdictIcon} ${contract.verdict}
+                                    </span>
+                                </h3>
+                                <div style="color: #6b7280; font-size: 0.875rem;">Expiry: ${contract.expiry}</div>
+                            </div>
+                            <div style="text-align: right;">
+                                <div style="font-size: 2rem; font-weight: 700; color: ${verdictColor};">${contract.composite_score}</div>
+                                <div style="color: #6b7280; font-size: 0.875rem;">Score</div>
+                            </div>
+                        </div>
+
+                        <!-- Quick Stats -->
+                        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 12px; margin-bottom: 15px;">
+                            <div style="background: #f9fafb; padding: 10px; border-radius: 6px;">
+                                <div style="color: #6b7280; font-size: 0.75rem;">Direction</div>
+                                <div style="font-weight: 700; color: ${contract.direction === 'LONG' ? '#10b981' : '#ef4444'};">${contract.direction}</div>
+                            </div>
+                            <div style="background: #f9fafb; padding: 10px; border-radius: 6px;">
+                                <div style="color: #6b7280; font-size: 0.75rem;">Spot Price</div>
+                                <div style="font-weight: 700;">₹${contract.spot_price.toFixed(2)}</div>
+                            </div>
+                            <div style="background: #f9fafb; padding: 10px; border-radius: 6px;">
+                                <div style="color: #6b7280; font-size: 0.75rem;">Futures Price</div>
+                                <div style="font-weight: 700;">₹${contract.futures_price.toFixed(2)}</div>
+                            </div>
+                            <div style="background: #f9fafb; padding: 10px; border-radius: 6px;">
+                                <div style="color: #6b7280; font-size: 0.75rem;">Lot Size</div>
+                                <div style="font-weight: 700;">${contract.lot_size}</div>
+                            </div>
+                        </div>
+
+                        ${contract.verdict === 'PASS' ? `
+                        <!-- Action Button for PASS contracts -->
+                        <button onclick="FuturesAlgorithm.showContractDetails(${index})"
+                                style="width: 100%; padding: 12px; background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%); color: white; border: none; border-radius: 8px; font-weight: 600; cursor: pointer; font-size: 1rem;">
+                            📊 View Details & Place Order
+                        </button>
+                        ` : ''}
+                    </div>
+                `;
+            });
+        } else {
+            html += `
+                <div style="text-align: center; padding: 40px; background: #f9fafb; border-radius: 12px;">
+                    <div style="font-size: 3rem; margin-bottom: 15px;">📭</div>
+                    <div style="color: #6b7280; font-size: 1.125rem;">No contracts analyzed</div>
+                </div>
+            `;
+        }
+
+        html += '</div>';
+        resultsDiv.innerHTML = html;
+
+        // Store contracts for later reference
+        this.analyzedContracts = allContracts;
+    },
+
+    async showContractDetails(contractIndex) {
+        const contract = this.analyzedContracts[contractIndex];
+        if (!contract) {
+            console.error('[Futures] Contract not found at index:', contractIndex);
+            return;
+        }
+
+        console.log('[Futures] Showing details for contract:', contract);
+
+        // Show loading notification
+        UIBuilders.showNotification({
+            type: 'info',
+            message: 'Loading contract details...',
+            icon: '⏳',
+            timeout: 2000
+        });
+
+        try {
+            // Build contract string: "SYMBOL|EXPIRY" format (pipe separator, not underscore)
+            const contractString = `${contract.symbol}|${contract.expiry_date}`;
+
+            console.log('[Futures] Fetching full details for:', contractString);
+
+            // Call verify endpoint to get FULL data with position sizing
+            const formData = new FormData();
+            formData.append('contract', contractString);
+
+            const response = await fetch(ApiClient.endpoints.verify, {
+                method: 'POST',
+                headers: {
+                    'X-CSRFToken': ApiClient.csrftoken
+                },
+                body: formData
+            });
+
+            const data = await response.json();
+
+            console.log('[Futures] Full contract data received:', data);
+
+            // Check for auth error
+            if ((data.auth_required === true || data.authenticated === false)) {
+                ApiClient.handleAuthError(data, 'verify');
+                return;
+            }
+
+            if (data.success) {
+                console.log('[Futures] ✅ Contract data received successfully');
+
+                // Store the contract exactly as Verify Trade does
+                TradeVerification.currentContract = data;
+
+                console.log('[Futures] Using the real verifyResults div temporarily');
+
+                // Use the REAL verifyResults div from the Verify Trade section
+                const verifyResultsDiv = document.getElementById('verifyResults');
+
+                // Save its current state
+                const originalDisplay = verifyResultsDiv.style.display;
+                const originalHTML = verifyResultsDiv.innerHTML;
+
+                console.log('[Futures] Calling TradeVerification.displayResults()');
+
+                // Call displayResults - it will populate the real verifyResults div
+                TradeVerification.displayResults(data);
+
+                console.log('[Futures] Display results completed, copying content');
+
+                // Copy the generated HTML
+                const html = verifyResultsDiv.innerHTML;
+                console.log('[Futures] Copied HTML length:', html.length);
+
+                // Restore the original state of verifyResults div
+                verifyResultsDiv.innerHTML = originalHTML;
+                verifyResultsDiv.style.display = originalDisplay;
+
+                console.log('[Futures] Opening modal with contract details');
+
+                // Show the modal with the content
+                const modalContent = document.getElementById('futuresDetailModalContent');
+                modalContent.innerHTML = html;
+
+                const modal = document.getElementById('futuresDetailModal');
+                modal.style.display = 'block';
+                document.body.style.overflow = 'hidden'; // Prevent background scrolling
+
+                console.log('[Futures] ✅ Modal opened successfully with', html.length, 'characters');
+            } else {
+                throw new Error(data.error || 'Failed to load contract details');
+            }
+        } catch (error) {
+            console.error('[Futures] Error loading contract details:', error);
+            UIBuilders.showNotification({
+                type: 'error',
+                message: `Failed to load contract details\n\n${error.message}`,
+                icon: '❌',
+                timeout: false
+            });
+        }
+    },
+
+    closeDetailModal() {
+        console.log('[Futures] Closing detail modal');
+        const modal = document.getElementById('futuresDetailModal');
+        modal.style.display = 'none';
+        document.body.style.overflow = ''; // Restore scrolling
+    },
+
+    init() {
+        console.log('Futures Algorithm module initialized');
+        // Auto-apply filters on init with default values
+        setTimeout(() => {
+            this.applyFilters();
+        }, 500);
+    }
+};
+
+const NiftyStrangle = {
+    currentData: null,
+
+    async generate() {
+        TradingState.setLoading('strangle', true);
+        try {
+            const response = await ApiClient.post(ApiClient.endpoints.strangle, {}, {
+                onAuthError: (data) => ApiClient.handleAuthError(data, 'strangle')
+            });
+
+            if (response && response.success) {
+                this.currentData = response;
+                this.displayResults(response);
+            } else if (response && response.is_no_trade_day && response.validation_report) {
+                this.displayNoTradeDay(response);
+            } else {
+                UIBuilders.showNotification({
+                    type: 'error',
+                    message: response?.error || 'Failed to generate strangle',
+                    icon: '❌'
+                });
+            }
+        } catch (error) {
+            UIBuilders.showNotification({
+                type: 'error',
+                message: 'Failed to generate strangle: ' + error.message,
+                icon: '❌'
+            });
+        } finally {
+            TradingState.setLoading('strangle', false);
+        }
+    },
+
+    displayResults(data) {
+        console.log('[Strangle] Full response data:', data);
+        console.log('[Strangle] Response keys:', Object.keys(data));
+
+        try {
+            const resultsDiv = document.getElementById('strangleResults');
+            resultsDiv.style.display = 'block';
+
+            // Validate data structure
+            if (!data || typeof data !== 'object') {
+                throw new Error('Invalid response data structure');
+            }
+
+            // Check if this is a "No Trade Day" scenario
+            if (data.is_no_trade_day && data.validation_report) {
+                console.log('[Strangle] Detected No Trade Day scenario');
+                this.displayNoTradeDay(data);
+                return;
+            }
+
+            // Handle different response structures
+            // Backend might send data directly or wrapped in 'strangle' key
+            let strangle = data.strangle || data;
+
+            console.log('[Strangle] Strangle data:', strangle);
+            console.log('[Strangle] Strangle keys:', Object.keys(strangle));
+
+            // Normalize field names - backend uses 'current_price', frontend expects 'spot_price'
+            if (strangle.current_price !== undefined && strangle.spot_price === undefined) {
+                strangle.spot_price = strangle.current_price;
+            }
+
+            // Validate required fields with more flexible checking
+            const requiredFields = ['spot_price', 'vix', 'expiry_date', 'days_to_expiry', 'call_strike', 'put_strike', 'call_premium', 'put_premium'];
+            const missingFields = requiredFields.filter(field => {
+                const value = strangle[field];
+                return value === undefined || value === null;
+            });
+
+            if (missingFields.length > 0) {
+                console.error('[Strangle] Missing required fields:', missingFields);
+                console.error('[Strangle] Available fields:', Object.keys(strangle));
+                console.error('[Strangle] Full strangle object:', JSON.stringify(strangle, null, 2));
+                throw new Error(`Missing required fields: ${missingFields.join(', ')}. Check console for available fields.`);
+            }
+
+            let html = '<div style="margin-top: 20px;">';
+
+            // Execution Summary Card
+            html += this.buildExecutionSummaryCard(strangle);
+
+            // Market Validation Report
+            if (strangle.validation_report) {
+                html += this.buildValidationReport(strangle.validation_report);
+            }
+
+            // Strike Analysis
+            html += this.buildStrikeAnalysis(strangle);
+
+            // Position Sizing Card with Edit Capability
+            if (strangle.position_sizing) {
+                console.log('[Strangle] Position sizing data:', strangle.position_sizing);
+                html += this.buildPositionSizingCard(strangle.position_sizing);
+            } else {
+                console.warn('[Strangle] No position sizing data available');
+            }
+
+            // Execution Buttons
+            html += this.buildExecutionButtons();
+
+            html += '</div>';
+
+            resultsDiv.innerHTML = html;
+
+            // Setup event listeners for edit functionality
+            this.setupEditListeners();
+
+            console.log('[Strangle] Display complete');
+
+        } catch (error) {
+            console.error('[Strangle] Error in displayResults:', error);
+            console.error('[Strangle] Full error stack:', error.stack);
+
+            UIBuilders.showNotification({
+                type: 'error',
+                message: `Failed to display strangle results: ${error.message}. Check console for details.`,
+                icon: '❌'
+            });
+
+            // Show error in results div
+            const resultsDiv = document.getElementById('strangleResults');
+            resultsDiv.style.display = 'block';
+            resultsDiv.innerHTML = `
+                <div style="background: #fee2e2; border: 1px solid #fecaca; border-radius: 8px; padding: 20px; margin-top: 20px;">
+                    <h3 style="color: #dc2626; margin-bottom: 10px;">❌ Display Error</h3>
+                    <p style="color: #7f1d1d; margin-bottom: 10px;">${error.message}</p>
+                    <details style="margin-top: 15px;">
+                        <summary style="cursor: pointer; color: #991b1b; font-weight: 600;">Technical Details</summary>
+                        <pre style="background: white; padding: 10px; border-radius: 4px; margin-top: 10px; overflow-x: auto; font-size: 0.875rem;">${JSON.stringify(data, null, 2)}</pre>
+                    </details>
+                </div>
+            `;
+        }
+    },
+
+    buildExecutionSummaryCard(strangle) {
+        return `
+            <div style="background: white; border-radius: 8px; padding: 20px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                <h3 style="color: #1f2937; margin-bottom: 15px;">📊 Nifty Strangle Position</h3>
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px;">
+                    <div>
+                        <div style="color: #6b7280; font-size: 0.875rem;">Spot Price</div>
+                        <div style="font-size: 1.25rem; font-weight: 600;">₹${strangle.spot_price.toFixed(2)}</div>
+                    </div>
+                    <div>
+                        <div style="color: #6b7280; font-size: 0.875rem;">VIX</div>
+                        <div style="font-size: 1.25rem; font-weight: 600;">${strangle.vix.toFixed(2)}</div>
+                    </div>
+                    <div>
+                        <div style="color: #6b7280; font-size: 0.875rem;">Expiry</div>
+                        <div style="font-size: 1.25rem; font-weight: 600;">${strangle.expiry_date}</div>
+                        <div style="color: #6b7280; font-size: 0.75rem;">${strangle.days_to_expiry} days</div>
+                    </div>
+                    <div>
+                        <div style="color: #6b7280; font-size: 0.875rem;">Strategy</div>
+                        <div style="font-size: 1.25rem; font-weight: 600; color: #10b981;">SELL STRANGLE</div>
+                    </div>
+                </div>
+            </div>
+        `;
+    },
+
+    buildValidationReport(validation) {
+        const results = validation.validation_results || [];
+        let verdictColor = '#10b981';
+        let verdictBg = '#d1fae5';
+
+        if (validation.overall_verdict.includes('NO TRADE')) {
+            verdictColor = '#ef4444';
+            verdictBg = '#fee2e2';
+        } else if (validation.overall_verdict.includes('CAUTION')) {
+            verdictColor = '#f59e0b';
+            verdictBg = '#fef3c7';
+        }
+
+        return `
+            <div style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
+                <h3 style="color: white; margin-bottom: 15px;">🛡️ Market Condition Validation</h3>
+                <div style="background: rgba(255,255,255,0.15); padding: 15px; border-radius: 6px; margin-bottom: 15px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <div>
+                            <div style="font-size: 0.875rem; opacity: 0.9;">Overall Verdict</div>
+                            <div style="font-size: 1.5rem; font-weight: 700; margin-top: 5px;">${validation.overall_verdict}</div>
+                        </div>
+                        <div style="background: ${verdictBg}; color: ${verdictColor}; padding: 8px 16px; border-radius: 6px; font-weight: 600;">
+                            ${validation.trade_allowed ? '✓ ALLOWED' : '✗ BLOCKED'}
+                        </div>
+                    </div>
+                </div>
+                <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px;">
+                    <div style="background: rgba(255,255,255,0.15); padding: 10px; border-radius: 6px; text-align: center;">
+                        <div style="font-size: 1.5rem; font-weight: 700;">${validation.status_summary.PASS || 0}</div>
+                        <div style="font-size: 0.75rem;">PASSED</div>
+                    </div>
+                    <div style="background: rgba(255,255,255,0.15); padding: 10px; border-radius: 6px; text-align: center;">
+                        <div style="font-size: 1.5rem; font-weight: 700;">${validation.status_summary.WARNING || 0}</div>
+                        <div style="font-size: 0.75rem;">WARNINGS</div>
+                    </div>
+                    <div style="background: rgba(255,255,255,0.15); padding: 10px; border-radius: 6px; text-align: center;">
+                        <div style="font-size: 1.5rem; font-weight: 700;">${validation.status_summary.FAIL || 0}</div>
+                        <div style="font-size: 0.75rem;">FAILED</div>
+                    </div>
+                    <div style="background: rgba(255,255,255,0.15); padding: 10px; border-radius: 6px; text-align: center;">
+                        <div style="font-size: 1.5rem; font-weight: 700;">${validation.status_summary.SKIP || 0}</div>
+                        <div style="font-size: 0.75rem;">SKIPPED</div>
+                    </div>
+                </div>
+            </div>
+        `;
+    },
+
+    buildStrikeAnalysis(strangle) {
+        // Show delta calculation flow
+        const deltaDetails = strangle.delta_details || {};
+        const calculation_log = deltaDetails.calculation_log || [];
+
+        let deltaFlowHTML = '';
+        if (calculation_log.length > 0) {
+            deltaFlowHTML = `
+                <div style="background: #f9fafb; padding: 15px; border-radius: 6px; margin-top: 15px; border: 1px solid #e5e7eb;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                        <h4 style="color: #374151; margin: 0; font-size: 0.9rem;">📊 Delta Evolution Timeline</h4>
+                        <span style="background: #3b82f6; color: white; padding: 2px 8px; border-radius: 12px; font-size: 0.7rem; font-weight: 500;">MULTI-FACTOR</span>
+                    </div>
+                    <div style="display: flex; flex-direction: column; gap: 8px;">
+                        ${calculation_log.map((log, idx) => `
+                            <div style="display: flex; align-items: center; gap: 10px; padding: 8px; background: white; border-radius: 4px; border-left: 3px solid ${log.factor === 'FINAL DELTA' ? '#10b981' : log.factor === 'TECHNICAL ANALYSIS' ? '#f59e0b' : '#6b7280'};">
+                                <span style="font-size: 1.2rem; min-width: 24px;">${idx + 1}</span>
+                                <div style="flex: 1;">
+                                    <div style="font-weight: 600; color: #1f2937; font-size: 0.875rem;">${log.factor}</div>
+                                    <div style="color: #6b7280; font-size: 0.75rem;">${log.reason}</div>
+                                </div>
+                                <div style="font-weight: 700; color: ${log.multiplier > 1 ? '#10b981' : log.multiplier < 1 ? '#ef4444' : '#6b7280'}; min-width: 50px; text-align: right;">
+                                    ${log.multiplier !== 1.0 ? (log.multiplier * 100 - 100 > 0 ? '+' : '') + (log.multiplier * 100 - 100).toFixed(0) + '%' : '—'}
+                                </div>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            `;
+        }
+
+        return `
+            <div style="background: white; border-radius: 8px; padding: 20px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                    <h3 style="color: #1f2937; margin: 0;">🎯 Strike Selection</h3>
+                    <span style="background: #fbbf24; color: #78350f; padding: 4px 12px; border-radius: 20px; font-size: 0.75rem; font-weight: 500;">EDITABLE</span>
+                </div>
+
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+                    <!-- Call Strike Editor -->
+                    <div style="background: #f0fdf4; padding: 15px; border-radius: 6px; border-left: 4px solid #10b981;">
+                        <h4 style="color: #059669; margin-bottom: 10px;">CALL (CE)</h4>
+                        <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 10px;">
+                            <button onclick="NiftyStrangle.adjustStrike('call', -50)"
+                                    style="background: #ef4444; color: white; width: 32px; height: 32px; border: none; border-radius: 6px; font-size: 1.1rem; cursor: pointer;">−</button>
+                            <input type="number" id="callStrikeInput" value="${strangle.call_strike}" step="50" min="0"
+                                   style="flex: 1; padding: 8px; border: 2px solid #10b981; border-radius: 6px; text-align: center; font-size: 1.25rem; font-weight: 700; color: #1f2937;"
+                                   onchange="NiftyStrangle.updateStrikes()">
+                            <button onclick="NiftyStrangle.adjustStrike('call', 50)"
+                                    style="background: #10b981; color: white; width: 32px; height: 32px; border: none; border-radius: 6px; font-size: 1.1rem; cursor: pointer;">+</button>
+                        </div>
+                        <div id="callStrikeDetails">
+                            <div style="color: #6b7280; margin-top: 5px;">Premium: ₹<span id="callPremiumDisplay">${strangle.call_premium.toFixed(2)}</span></div>
+                            <div style="color: #6b7280; font-size: 0.875rem;">Distance: <span id="callDistanceDisplay">${(strangle.call_strike - strangle.spot_price).toFixed(0)}</span> pts</div>
+                        </div>
+                    </div>
+
+                    <!-- Put Strike Editor -->
+                    <div style="background: #fef2f2; padding: 15px; border-radius: 6px; border-left: 4px solid #ef4444;">
+                        <h4 style="color: #dc2626; margin-bottom: 10px;">PUT (PE)</h4>
+                        <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 10px;">
+                            <button onclick="NiftyStrangle.adjustStrike('put', -50)"
+                                    style="background: #ef4444; color: white; width: 32px; height: 32px; border: none; border-radius: 6px; font-size: 1.1rem; cursor: pointer;">−</button>
+                            <input type="number" id="putStrikeInput" value="${strangle.put_strike}" step="50" min="0"
+                                   style="flex: 1; padding: 8px; border: 2px solid #ef4444; border-radius: 6px; text-align: center; font-size: 1.25rem; font-weight: 700; color: #1f2937;"
+                                   onchange="NiftyStrangle.updateStrikes()">
+                            <button onclick="NiftyStrangle.adjustStrike('put', 50)"
+                                    style="background: #10b981; color: white; width: 32px; height: 32px; border: none; border-radius: 6px; font-size: 1.1rem; cursor: pointer;">+</button>
+                        </div>
+                        <div id="putStrikeDetails">
+                            <div style="color: #6b7280; margin-top: 5px;">Premium: ₹<span id="putPremiumDisplay">${strangle.put_premium.toFixed(2)}</span></div>
+                            <div style="color: #6b7280; font-size: 0.875rem;">Distance: <span id="putDistanceDisplay">${(strangle.spot_price - strangle.put_strike).toFixed(0)}</span> pts</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Summary -->
+                <div style="background: #f9fafb; padding: 15px; border-radius: 6px; margin-top: 15px;">
+                    <div style="display: flex; justify-content: space-between;">
+                        <span style="color: #6b7280;">Total Premium per Lot:</span>
+                        <span style="font-weight: 600; color: #1f2937;">₹<span id="totalPremiumDisplay">${(strangle.call_premium + strangle.put_premium).toFixed(2)}</span></span>
+                    </div>
+                    <div style="display: flex; justify-content: space-between; margin-top: 8px; padding-top: 8px; border-top: 1px solid #e5e7eb;">
+                        <span style="color: #6b7280; font-size: 0.875rem;">Strike Width:</span>
+                        <span style="font-weight: 600; color: #1f2937; font-size: 0.875rem;"><span id="strikeWidthDisplay">${strangle.call_strike - strangle.put_strike}</span> pts</span>
+                    </div>
+                </div>
+
+                ${deltaFlowHTML}
+            </div>
+        `;
+    },
+
+    buildPositionSizingCard(positionSizing) {
+        const position = positionSizing.position || {};
+        const marginData = positionSizing.margin_data || {};
+
+        return `
+            <div style="background: linear-gradient(135deg, #f3f4f6 0%, #e5e7eb 100%); border-radius: 12px; padding: 25px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+                <h3 style="color: #1f2937; margin-bottom: 20px; display: flex; align-items: center; gap: 10px;">
+                    💰 Position Sizing
+                    <span style="background: #fbbf24; color: #78350f; padding: 4px 12px; border-radius: 20px; font-size: 0.75rem; font-weight: 500;">EDITABLE</span>
+                </h3>
+
+                <!-- Margin Info Cards -->
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 15px; margin-bottom: 25px;">
+                    <div style="background: white; padding: 15px; border-radius: 8px; border-left: 4px solid #3b82f6;">
+                        <div style="color: #6b7280; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em;">Available Margin</div>
+                        <div style="font-size: 1.5rem; font-weight: 700; color: #1f2937; margin-top: 5px;">₹${this.formatIndianNumber(marginData.available_margin)}</div>
+                    </div>
+                    <div style="background: white; padding: 15px; border-radius: 8px; border-left: 4px solid #8b5cf6;">
+                        <div style="color: #6b7280; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em;">Margin per Lot</div>
+                        <div style="font-size: 1.5rem; font-weight: 700; color: #1f2937; margin-top: 5px;">₹${this.formatIndianNumber(position.margin_per_lot)}</div>
+                    </div>
+                    <div style="background: white; padding: 15px; border-radius: 8px; border-left: 4px solid #10b981;">
+                        <div style="color: #6b7280; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em;">Recommended Lots</div>
+                        <div style="font-size: 1.5rem; font-weight: 700; color: #1f2937; margin-top: 5px;">${position.call_lots}</div>
+                    </div>
+                </div>
+
+                <!-- Lot Size Editors -->
+                <div style="background: white; border-radius: 10px; padding: 20px; margin-bottom: 20px;">
+                    <h4 style="color: #374151; margin-bottom: 15px; font-size: 0.9rem; text-transform: uppercase; letter-spacing: 0.05em;">Adjust Position Size</h4>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 25px;">
+                        <!-- Call Lots Editor -->
+                        <div>
+                            <label style="display: flex; align-items: center; gap: 8px; margin-bottom: 10px; color: #059669; font-weight: 600;">
+                                <span style="background: #10b981; color: white; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem;">CE</span>
+                                Call Lots
+                            </label>
+                            <div style="display: flex; align-items: center; gap: 10px;">
+                                <button onclick="NiftyStrangle.adjustLots('call', -1)"
+                                        style="background: #ef4444; color: white; width: 36px; height: 36px; border: none; border-radius: 6px; font-size: 1.25rem; cursor: pointer;">−</button>
+                                <input type="number" id="callLotsInput" value="${position.call_lots}" min="1" max="100"
+                                       style="flex: 1; padding: 10px; border: 2px solid #e5e7eb; border-radius: 6px; text-align: center; font-size: 1.125rem; font-weight: 600;"
+                                       onchange="NiftyStrangle.updatePositionSize()">
+                                <button onclick="NiftyStrangle.adjustLots('call', 1)"
+                                        style="background: #10b981; color: white; width: 36px; height: 36px; border: none; border-radius: 6px; font-size: 1.25rem; cursor: pointer;">+</button>
+                            </div>
+                            <div style="margin-top: 8px; color: #6b7280; font-size: 0.875rem;">
+                                Quantity: <strong id="callQuantity">${position.call_lots * 50}</strong> |
+                                Premium: <strong>₹${this.formatIndianNumber(position.call_lots * this.currentData.strangle.call_premium * 50)}</strong>
+                            </div>
+                        </div>
+
+                        <!-- Put Lots Editor -->
+                        <div>
+                            <label style="display: flex; align-items: center; gap: 8px; margin-bottom: 10px; color: #dc2626; font-weight: 600;">
+                                <span style="background: #ef4444; color: white; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem;">PE</span>
+                                Put Lots
+                            </label>
+                            <div style="display: flex; align-items: center; gap: 10px;">
+                                <button onclick="NiftyStrangle.adjustLots('put', -1)"
+                                        style="background: #ef4444; color: white; width: 36px; height: 36px; border: none; border-radius: 6px; font-size: 1.25rem; cursor: pointer;">−</button>
+                                <input type="number" id="putLotsInput" value="${position.put_lots}" min="1" max="100"
+                                       style="flex: 1; padding: 10px; border: 2px solid #e5e7eb; border-radius: 6px; text-align: center; font-size: 1.125rem; font-weight: 600;"
+                                       onchange="NiftyStrangle.updatePositionSize()">
+                                <button onclick="NiftyStrangle.adjustLots('put', 1)"
+                                        style="background: #10b981; color: white; width: 36px; height: 36px; border: none; border-radius: 6px; font-size: 1.25rem; cursor: pointer;">+</button>
+                            </div>
+                            <div style="margin-top: 8px; color: #6b7280; font-size: 0.875rem;">
+                                Quantity: <strong id="putQuantity">${position.put_lots * 50}</strong> |
+                                Premium: <strong>₹${this.formatIndianNumber(position.put_lots * this.currentData.strangle.put_premium * 50)}</strong>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Quick Selection Buttons -->
+                    <div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #e5e7eb;">
+                        <div style="color: #6b7280; font-size: 0.875rem; margin-bottom: 10px;">Quick Selection:</div>
+                        <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                            <button onclick="NiftyStrangle.setLots(10, 10)" style="padding: 6px 12px; background: #f3f4f6; border: 1px solid #d1d5db; border-radius: 6px; font-size: 0.875rem; cursor: pointer;">10 Lots</button>
+                            <button onclick="NiftyStrangle.setLots(20, 20)" style="padding: 6px 12px; background: #f3f4f6; border: 1px solid #d1d5db; border-radius: 6px; font-size: 0.875rem; cursor: pointer;">20 Lots</button>
+                            <button onclick="NiftyStrangle.setLots(${position.call_lots}, ${position.put_lots})" style="padding: 6px 12px; background: #dbeafe; border: 1px solid #3b82f6; border-radius: 6px; font-size: 0.875rem; cursor: pointer; color: #1e40af;">Recommended</button>
+                            <button onclick="NiftyStrangle.setLots(50, 50)" style="padding: 6px 12px; background: #f3f4f6; border: 1px solid #d1d5db; border-radius: 6px; font-size: 0.875rem; cursor: pointer;">50 Lots</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Live Position Summary -->
+                <div id="positionSummary" style="background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%); padding: 20px; border-radius: 10px; border: 2px solid #3b82f6;">
+                    ${this.buildPositionSummary(position)}
+                </div>
+            </div>
+        `;
+    },
+
+    buildPositionSummary(position) {
+        // Get margin data from the parent structure
+        const marginData = this.currentData.strangle.position_sizing.margin_data;
+
+        const totalQuantity = (position.call_lots + position.put_lots) * 50;
+        const totalPremium = position.total_premium_collected || 0;
+        const marginRequired = position.total_margin_required || 0;
+        const marginAvailable = marginData.available_margin || 0;
+        const marginUtilization = marginAvailable > 0 ? ((marginRequired / marginAvailable) * 100).toFixed(1) : '0';
+
+        return `
+            <h4 style="color: #1e40af; margin-bottom: 15px; font-size: 1.1rem;">📊 Live Position Summary</h4>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 15px;">
+                <div style="background: white; padding: 12px; border-radius: 6px;">
+                    <div style="color: #6b7280; font-size: 0.75rem;">Total Quantity</div>
+                    <div style="font-size: 1.25rem; font-weight: 700; color: #1f2937;">${totalQuantity}</div>
+                </div>
+                <div style="background: white; padding: 12px; border-radius: 6px;">
+                    <div style="color: #6b7280; font-size: 0.75rem;">Premium Collected</div>
+                    <div style="font-size: 1.25rem; font-weight: 700; color: #10b981;">₹${this.formatIndianNumber(totalPremium)}</div>
+                </div>
+                <div style="background: white; padding: 12px; border-radius: 6px;">
+                    <div style="color: #6b7280; font-size: 0.75rem;">Margin Required</div>
+                    <div style="font-size: 1.25rem; font-weight: 700; color: #dc2626;">₹${this.formatIndianNumber(marginRequired)}</div>
+                </div>
+                <div style="background: white; padding: 12px; border-radius: 6px;">
+                    <div style="color: #6b7280; font-size: 0.75rem;">Margin Available</div>
+                    <div style="font-size: 1.25rem; font-weight: 700; color: #10b981;">₹${this.formatIndianNumber(marginAvailable)}</div>
+                </div>
+            </div>
+            <div style="margin-top: 15px; padding: 15px; background: rgba(59, 130, 246, 0.1); border-radius: 6px; border-left: 4px solid #3b82f6;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                    <span style="color: #1e40af; font-weight: 600;">Margin Utilization</span>
+                    <span style="font-size: 1.5rem; font-weight: 700; color: ${marginUtilization > 80 ? '#dc2626' : marginUtilization > 60 ? '#f59e0b' : '#10b981'};">${marginUtilization}%</span>
+                </div>
+                <div style="background: white; height: 8px; border-radius: 4px; overflow: hidden;">
+                    <div style="height: 100%; background: ${marginUtilization > 80 ? '#ef4444' : marginUtilization > 60 ? '#f59e0b' : '#10b981'}; width: ${Math.min(parseFloat(marginUtilization), 100)}%; transition: width 0.3s;"></div>
+                </div>
+                <div style="margin-top: 8px; font-size: 0.75rem; color: #6b7280; text-align: center;">
+                    💰 Live margin from Kotak Neo • ${marginUtilization > 80 ? '⚠️ High utilization' : marginUtilization > 60 ? '⚡ Moderate utilization' : '✅ Safe utilization'}
+                </div>
+            </div>
+            <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #93c5fd;">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <span style="color: #1e40af; font-weight: 600;">Maximum Profit (if both expire worthless):</span>
+                    <span style="font-size: 1.5rem; font-weight: 700; color: #10b981;">₹${this.formatIndianNumber(totalPremium)}</span>
+                </div>
+            </div>
+        `;
+    },
+
+    buildExecutionButtons() {
+        return `
+            <div style="display: flex; gap: 15px; justify-content: center; margin-top: 30px;">
+                <button onclick="NiftyStrangle.showConfirmation()"
+                        style="background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%); color: white; padding: 14px 40px; border: none; border-radius: 8px; font-size: 1.125rem; font-weight: 600; cursor: pointer; box-shadow: 0 4px 6px rgba(59, 130, 246, 0.3); transition: all 0.3s;">
+                    ✅ Review & Confirm Order
+                </button>
+                <button onclick="NiftyStrangle.reset()"
+                        style="background: #f3f4f6; color: #6b7280; padding: 14px 40px; border: 2px solid #e5e7eb; border-radius: 8px; font-size: 1.125rem; font-weight: 600; cursor: pointer; transition: all 0.3s;">
+                    Cancel
+                </button>
+            </div>
+        `;
+    },
+
+    updatePositionSize() {
+        const callLots = parseInt(document.getElementById('callLotsInput').value) || 0;
+        const putLots = parseInt(document.getElementById('putLotsInput').value) || 0;
+
+        if (this.currentData && this.currentData.strangle && this.currentData.strangle.position_sizing) {
+            const position = this.currentData.strangle.position_sizing.position;
+            const marginData = this.currentData.strangle.position_sizing.margin_data;
+            const callPremium = this.currentData.strangle.call_premium;
+            const putPremium = this.currentData.strangle.put_premium;
+
+            // Update position data
+            position.call_lots = callLots;
+            position.put_lots = putLots;
+            position.total_premium_collected = (callLots * callPremium + putLots * putPremium) * 50;
+
+            // Calculate margin using margin_per_lot from margin_data (NOT position)
+            const marginPerLot = marginData.margin_per_lot;
+            position.total_margin_required = (callLots + putLots) * marginPerLot;
+
+            console.log('[Strangle] Position updated:', {
+                callLots,
+                putLots,
+                marginPerLot,
+                total_margin_required: position.total_margin_required,
+                total_premium_collected: position.total_premium_collected
+            });
+
+            // Update summary display
+            document.getElementById('positionSummary').innerHTML = this.buildPositionSummary(position);
+        }
+    },
+
+    adjustLots(type, delta) {
+        const input = document.getElementById(`${type}LotsInput`);
+        const currentValue = parseInt(input.value) || 0;
+        const newValue = Math.max(1, Math.min(100, currentValue + delta));
+        input.value = newValue;
+        this.updatePositionSize();
+    },
+
+    setLots(callLots, putLots) {
+        document.getElementById('callLotsInput').value = callLots;
+        document.getElementById('putLotsInput').value = putLots;
+        this.updatePositionSize();
+    },
+
+    adjustStrike(type, delta) {
+        const input = document.getElementById(`${type}StrikeInput`);
+        const currentValue = parseInt(input.value) || 0;
+        const newValue = Math.max(0, currentValue + delta);
+        // Round to nearest 50
+        const rounded = Math.round(newValue / 50) * 50;
+        input.value = rounded;
+        this.updateStrikes();
+    },
+
+    async updateStrikes() {
+        const callStrike = parseInt(document.getElementById('callStrikeInput').value) || 0;
+        const putStrike = parseInt(document.getElementById('putStrikeInput').value) || 0;
+
+        if (!this.currentData || !this.currentData.strangle) {
+            console.error('[Strangle] No data available for strike update');
+            return;
+        }
+
+        const strangle = this.currentData.strangle;
+        const spotPrice = strangle.spot_price;
+
+        console.log('[Strangle] Updating strikes:', { callStrike, putStrike, spotPrice });
+
+        // Update the strangle data
+        strangle.call_strike = callStrike;
+        strangle.put_strike = putStrike;
+
+        // Fetch new premiums from option chain (simulated with approximation for now)
+        // In production, you'd call backend API to get real premiums
+        // For now, estimate based on distance: further = cheaper
+        const callDistance = callStrike - spotPrice;
+        const putDistance = spotPrice - putStrike;
+
+        // Simple premium estimation (this is approximate - real pricing needs Black-Scholes)
+        // Premium roughly decreases as you go OTM
+        const basePremium = 10; // Base premium
+        const callPremium = Math.max(0.5, basePremium * Math.exp(-callDistance / 1000));
+        const putPremium = Math.max(0.5, basePremium * Math.exp(-putDistance / 1000));
+
+        // Update premiums (Note: In production, fetch real premiums from backend)
+        strangle.call_premium = callPremium;
+        strangle.put_premium = putPremium;
+
+        // Update UI displays
+        document.getElementById('callPremiumDisplay').textContent = callPremium.toFixed(2);
+        document.getElementById('putPremiumDisplay').textContent = putPremium.toFixed(2);
+        document.getElementById('callDistanceDisplay').textContent = callDistance.toFixed(0);
+        document.getElementById('putDistanceDisplay').textContent = putDistance.toFixed(0);
+        document.getElementById('totalPremiumDisplay').textContent = (callPremium + putPremium).toFixed(2);
+        document.getElementById('strikeWidthDisplay').textContent = (callStrike - putStrike);
+
+        // Update position sizing with new premiums
+        this.updatePositionSize();
+
+        // Show notification
+        UIBuilders.showNotification({
+            type: 'info',
+            message: `Strikes updated: CE ${callStrike}, PE ${putStrike}`,
+            icon: '🎯',
+            timeout: 2000
+        });
+
+        console.log('[Strangle] Strikes updated:', {
+            callStrike,
+            putStrike,
+            callPremium: callPremium.toFixed(2),
+            putPremium: putPremium.toFixed(2),
+            totalPremium: (callPremium + putPremium).toFixed(2),
+            strikeWidth: callStrike - putStrike
+        });
+    },
+
+    showConfirmation() {
+        const callLots = parseInt(document.getElementById('callLotsInput').value) || 0;
+        const putLots = parseInt(document.getElementById('putLotsInput').value) || 0;
+
+        if (callLots === 0 || putLots === 0) {
+            UIBuilders.showNotification({
+                type: 'error',
+                message: 'Please enter valid lot sizes',
+                icon: '❌'
+            });
+            return;
+        }
+
+        const strangle = this.currentData.strangle;
+        const position = strangle.position_sizing.position;
+        const marginData = strangle.position_sizing.margin_data;
+
+        console.log('[Strangle] Full data structure:', {
+            currentData: this.currentData,
+            strangle: strangle,
+            position: position,
+            marginData: marginData
+        });
+
+        const totalPremium = (callLots * strangle.call_premium + putLots * strangle.put_premium) * 50;
+
+        // Calculate margin required
+        // If user hasn't changed lots, use the backend-calculated total_margin_required
+        // Otherwise, recalculate using margin_per_lot
+        let marginRequired;
+        if (callLots === position.call_lots && putLots === position.put_lots) {
+            // Using same lots as backend calculation
+            marginRequired = position.total_margin_required;
+            console.log('[Strangle] Using backend-calculated margin:', marginRequired);
+        } else {
+            // User changed lots, recalculate
+            const marginPerLot = marginData.margin_per_lot;
+            marginRequired = (callLots + putLots) * marginPerLot;
+            console.log('[Strangle] Recalculated margin:', {
+                callLots,
+                putLots,
+                marginPerLot,
+                calculation: `(${callLots} + ${putLots}) * ${marginPerLot} = ${marginRequired}`
+            });
+        }
+
+        const marginAvailable = marginData.available_margin || 0;
+        const marginUtilization = marginAvailable > 0 ? (marginRequired / marginAvailable * 100).toFixed(1) : '0';
+
+        console.log('[Strangle] Final margin values:', {
+            marginRequired,
+            marginAvailable,
+            marginUtilization,
+            marginSource: marginData.source
+        });
+
+        // Format expiry date
+        const expiryDate = new Date(strangle.expiry_date);
+        const formattedExpiry = expiryDate.toLocaleDateString('en-IN', {
+            day: '2-digit',
+            month: 'short',
+            year: 'numeric'
+        });
+
+        // Create confirmation modal
+        const modal = document.createElement('div');
+        modal.id = 'confirmationModal';
+        modal.style.cssText = 'position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 10000;';
+
+        modal.innerHTML = `
+            <div style="background: white; border-radius: 12px; padding: 30px; max-width: 600px; width: 90%; max-height: 90vh; overflow-y: auto; box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1);">
+                <h2 style="color: #1f2937; margin-bottom: 20px; font-size: 1.5rem; display: flex; align-items: center; gap: 10px;">
+                    🎯 Confirm Strangle Order
+                    <span style="background: #fbbf24; color: #78350f; padding: 4px 12px; border-radius: 20px; font-size: 0.75rem; font-weight: 500;">KOTAK NEO</span>
+                </h2>
+
+                <!-- Expiry Information -->
+                <div style="background: #f0fdf4; padding: 12px; border-radius: 6px; margin-bottom: 15px; border-left: 4px solid #10b981;">
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <span style="font-size: 1.2rem;">📅</span>
+                        <div>
+                            <div style="color: #6b7280; font-size: 0.875rem;">Expiry Date</div>
+                            <div style="color: #1f2937; font-weight: 700; font-size: 1.1rem;">${formattedExpiry} <span style="color: #059669; font-size: 0.875rem;">(${strangle.days_to_expiry} days)</span></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Order Details -->
+                <div style="background: #f9fafb; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
+                    <h3 style="color: #374151; margin-bottom: 15px; font-size: 1.1rem;">Order Details</h3>
+
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px;">
+                        <div style="background: white; padding: 15px; border-radius: 6px; border-left: 4px solid #10b981;">
+                            <div style="color: #059669; font-weight: 600; margin-bottom: 8px;">CALL (CE)</div>
+                            <div style="font-size: 1.5rem; font-weight: 700; color: #1f2937;">${strangle.call_strike}</div>
+                            <div style="color: #6b7280; margin-top: 5px;">
+                                Lots: <strong>${callLots}</strong> | Qty: <strong>${callLots * 50}</strong>
+                            </div>
+                            <div style="color: #6b7280;">
+                                Premium: ₹${strangle.call_premium.toFixed(2)} × ${callLots * 50} = <strong>₹${this.formatIndianNumber(callLots * strangle.call_premium * 50)}</strong>
+                            </div>
+                        </div>
+
+                        <div style="background: white; padding: 15px; border-radius: 6px; border-left: 4px solid #ef4444;">
+                            <div style="color: #dc2626; font-weight: 600; margin-bottom: 8px;">PUT (PE)</div>
+                            <div style="font-size: 1.5rem; font-weight: 700; color: #1f2937;">${strangle.put_strike}</div>
+                            <div style="color: #6b7280; margin-top: 5px;">
+                                Lots: <strong>${putLots}</strong> | Qty: <strong>${putLots * 50}</strong>
+                            </div>
+                            <div style="color: #6b7280;">
+                                Premium: ₹${strangle.put_premium.toFixed(2)} × ${putLots * 50} = <strong>₹${this.formatIndianNumber(putLots * strangle.put_premium * 50)}</strong>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Summary -->
+                    <div style="background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%); padding: 15px; border-radius: 6px; border: 1px solid #3b82f6; margin-bottom: 15px;">
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                            <div>
+                                <div style="color: #1e40af; font-size: 0.875rem;">Total Premium Collected</div>
+                                <div style="font-size: 1.25rem; font-weight: 700; color: #10b981;">₹${this.formatIndianNumber(totalPremium)}</div>
+                            </div>
+                            <div>
+                                <div style="color: #1e40af; font-size: 0.875rem;">Max Profit</div>
+                                <div style="font-size: 1.25rem; font-weight: 700; color: #10b981;">₹${this.formatIndianNumber(totalPremium)}</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Margin Details -->
+                    <div style="background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%); padding: 15px; border-radius: 6px; border: 1px solid #f59e0b;">
+                        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
+                            <h4 style="color: #92400e; margin: 0; font-size: 0.9rem; font-weight: 600;">💰 Margin (Kotak Neo)</h4>
+                            <span style="background: #fbbf24; color: #78350f; padding: 2px 8px; border-radius: 12px; font-size: 0.7rem; font-weight: 500;">LIVE</span>
+                        </div>
+                        <div style="margin-bottom: 12px;">
+                            <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
+                                <span style="color: #92400e; font-size: 0.875rem;">Margin Required</span>
+                                <span style="font-size: 1.1rem; font-weight: 700; color: #dc2626;">₹${this.formatIndianNumber(marginRequired)}</span>
+                            </div>
+                            <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
+                                <span style="color: #92400e; font-size: 0.875rem;">Margin Available</span>
+                                <span style="font-size: 1.1rem; font-weight: 700; color: #10b981;">₹${this.formatIndianNumber(marginAvailable)}</span>
+                            </div>
+                            <div style="display: flex; justify-content: space-between;">
+                                <span style="color: #92400e; font-size: 0.875rem;">Utilization</span>
+                                <span style="font-size: 1.1rem; font-weight: 700; color: ${marginUtilization > 80 ? '#dc2626' : '#059669'};">${marginUtilization}%</span>
+                            </div>
+                        </div>
+                        <div style="background: rgba(255,255,255,0.7); height: 8px; border-radius: 4px; overflow: hidden;">
+                            <div style="height: 100%; background: ${marginUtilization > 80 ? '#ef4444' : '#10b981'}; width: ${Math.min(marginUtilization, 100)}%; transition: width 0.3s;"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Risk Disclosure -->
+                <div style="background: #fef2f2; padding: 15px; border-radius: 6px; margin-bottom: 20px; border: 1px solid #fecaca;">
+                    <h4 style="color: #dc2626; margin-bottom: 10px; font-size: 0.9rem;">⚠️ Risk Disclosure</h4>
+                    <ul style="margin: 0; padding-left: 20px; color: #7f1d1d; font-size: 0.875rem; line-height: 1.5;">
+                        <li>This is a SHORT strangle strategy with UNLIMITED risk</li>
+                        <li>Maximum profit: ₹${this.formatIndianNumber(totalPremium)} (if both options expire worthless)</li>
+                        <li>Breakeven: ${strangle.call_strike + (totalPremium/(50*(callLots+putLots)))} (upside) | ${strangle.put_strike - (totalPremium/(50*(callLots+putLots)))} (downside)</li>
+                        <li>Orders will be placed as SELL orders on Kotak Neo platform</li>
+                    </ul>
+                </div>
+
+                <!-- Action Buttons -->
+                <div style="display: flex; gap: 15px; justify-content: center;">
+                    <button onclick="NiftyStrangle.executeStrangle()"
+                            style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; padding: 12px 30px; border: none; border-radius: 6px; font-size: 1rem; font-weight: 600; cursor: pointer;">
+                        ✅ Confirm & Place Orders
+                    </button>
+                    <button onclick="NiftyStrangle.closeConfirmation()"
+                            style="background: #6b7280; color: white; padding: 12px 30px; border: none; border-radius: 6px; font-size: 1rem; font-weight: 600; cursor: pointer;">
+                        Back to Edit
+                    </button>
+                </div>
+            </div>
+        `;
+
+        document.body.appendChild(modal);
+    },
+
+    closeConfirmation() {
+        const modal = document.getElementById('confirmationModal');
+        if (modal) {
+            modal.remove();
+        }
+    },
+
+    async executeStrangle() {
+        const callLots = parseInt(document.getElementById('callLotsInput').value) || 0;
+        const putLots = parseInt(document.getElementById('putLotsInput').value) || 0;
+
+        // Validate lots are equal (strangle requires equal call and put lots)
+        if (callLots !== putLots) {
+            UIBuilders.showNotification({
+                type: 'error',
+                message: 'Call and Put lots must be equal for strangle strategy',
+                icon: '❌'
+            });
+            return;
+        }
+
+        if (callLots === 0 || putLots === 0) {
+            UIBuilders.showNotification({
+                type: 'error',
+                message: 'Please enter valid lot sizes',
+                icon: '❌'
+            });
+            return;
+        }
+
+        this.closeConfirmation();
+
+        try {
+            // Show loading state
+            UIBuilders.showNotification({
+                type: 'info',
+                message: 'Placing strangle orders on Kotak Neo...',
+                icon: '⏳'
+            });
+
+            console.log('[Strangle] Executing strangle orders:', {
+                suggestion_id: this.currentData.strangle.suggestion_id,
+                total_lots: callLots,
+                call_lots: callLots,
+                put_lots: putLots
+            });
+
+            // Backend expects total_lots (same for both call and put in a strangle)
+            const response = await ApiClient.post(ApiClient.endpoints.executeStrangle, {
+                suggestion_id: this.currentData.strangle.suggestion_id,
+                total_lots: callLots  // Use callLots as total (they're equal)
+            });
+
+            console.log('[Strangle] Order response:', response);
+
+            if (response && response.success) {
+                const batchInfo = response.batch_result || {};
+                const successCount = batchInfo.batches_completed || 0;
+                const totalBatches = batchInfo.total_batches || 0;
+
+                UIBuilders.showNotification({
+                    type: 'success',
+                    message: `✅ Strangle orders placed successfully on Kotak Neo! (${successCount}/${totalBatches} batches completed)`,
+                    icon: '✅',
+                    timeout: false  // Persistent notification for success
+                });
+
+                console.log('[Strangle] Orders placed successfully:', {
+                    call_symbol: response.call_symbol,
+                    put_symbol: response.put_symbol,
+                    total_lots: response.total_lots,
+                    batch_result: response.batch_result
+                });
+
+                this.reset();
+            } else {
+                // Build detailed error message from API response
+                let errorDetails = response?.error || 'Failed to execute strangle';
+
+                // Add batch result details if available
+                if (response?.batch_result) {
+                    const batch = response.batch_result;
+                    errorDetails += `\n\n📊 Batch Results:\n`;
+                    errorDetails += `• Total Batches: ${batch.total_batches || 0}\n`;
+                    errorDetails += `• Completed: ${batch.batches_completed || 0}\n`;
+                    errorDetails += `• Failed: ${batch.batches_failed || 0}`;
+
+                    // Show specific failure reasons from batch results
+                    if (batch.failure_reasons && batch.failure_reasons.length > 0) {
+                        errorDetails += `\n\n⚠️ Failure Reasons:\n`;
+                        batch.failure_reasons.forEach((reason, idx) => {
+                            errorDetails += `${idx + 1}. ${reason}\n`;
+                        });
+                    }
+                }
+
+                // Log full response for debugging
+                console.error('[Strangle] Full API response:', response);
+
+                throw new Error(errorDetails);
+            }
+        } catch (error) {
+            console.error('[Strangle] Order placement error:', error);
+
+            // Show detailed error with API response details
+            UIBuilders.showNotification({
+                type: 'error',
+                message: `❌ Strangle Execution Failed\n\n${error.message}`,
+                icon: '❌',
+                timeout: false  // Keep error visible until user dismisses
+            });
+        }
+    },
+
+    displayNoTradeDay(data) {
+        console.log('[Strangle] No Trade Day data:', data);
+
+        const resultsDiv = document.getElementById('strangleResults');
+        resultsDiv.style.display = 'block';
+
+        const validation = data.validation_report;
+        const strangle = data.strangle || {};
+        const results = validation.validation_results || [];
+
+        // Determine overall color based on verdict
+        let verdictColor = '#ef4444'; // Red (fail)
+        let verdictBg = '#fee2e2';
+
+        let html = '<div style="margin-top: 20px;">';
+
+        // No Trade Day Warning Banner
+        html += `
+            <div style="background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); color: white; padding: 25px; border-radius: 12px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(239, 68, 68, 0.3);">
+                <div style="display: flex; align-items: center; gap: 15px; margin-bottom: 15px;">
+                    <span style="font-size: 3rem;">⛔</span>
+                    <div>
+                        <h2 style="color: white; margin: 0; font-size: 1.75rem;">NO TRADE DAY</h2>
+                        <p style="margin: 5px 0 0 0; opacity: 0.95; font-size: 1.125rem;">Market conditions are unfavorable for strangle entry</p>
+                    </div>
+                </div>
+                <div style="background: rgba(255,255,255,0.15); padding: 15px; border-radius: 8px; backdrop-filter: blur(10px);">
+                    <div style="font-size: 1rem; opacity: 0.95; line-height: 1.6;">
+                        ${validation.verdict_reason}
+                    </div>
+                </div>
+            </div>
+        `;
+
+        // Market Condition Details
+        if (strangle.spot_price) {
+            html += `
+                <div style="background: white; border-radius: 12px; padding: 25px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                    <h3 style="color: #1f2937; margin-bottom: 15px;">📊 Current Market Data</h3>
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 15px;">
+                        <div style="background: #f9fafb; padding: 15px; border-radius: 8px;">
+                            <div style="color: #6b7280; font-size: 0.875rem;">NIFTY Spot</div>
+                            <div style="font-size: 1.5rem; font-weight: 700; color: #1f2937;">₹${strangle.spot_price?.toFixed(2) || 'N/A'}</div>
+                        </div>
+                        <div style="background: #f9fafb; padding: 15px; border-radius: 8px;">
+                            <div style="color: #6b7280; font-size: 0.875rem;">VIX</div>
+                            <div style="font-size: 1.5rem; font-weight: 700; color: #1f2937;">${strangle.vix?.toFixed(2) || 'N/A'}</div>
+                        </div>
+                        ${strangle.expiry_date ? `
+                            <div style="background: #f9fafb; padding: 15px; border-radius: 8px;">
+                                <div style="color: #6b7280; font-size: 0.875rem;">Expiry</div>
+                                <div style="font-size: 1.25rem; font-weight: 700; color: #1f2937;">${strangle.expiry_date}</div>
+                                <div style="color: #6b7280; font-size: 0.75rem;">${strangle.days_to_expiry} days</div>
+                            </div>
+                        ` : ''}
+                    </div>
+                </div>
+            `;
+        }
+
+        // Detailed Validation Report
+        html += `
+            <div style="background: white; border-radius: 12px; padding: 25px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                <h3 style="color: #1f2937; margin-bottom: 20px;">🛡️ Market Condition Validation Report</h3>
+
+                <!-- Overall Verdict -->
+                <div style="background: ${verdictBg}; padding: 20px; border-radius: 8px; margin-bottom: 20px; border-left: 4px solid ${verdictColor};">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                        <div>
+                            <div style="color: #6b7280; font-size: 0.875rem; margin-bottom: 5px;">Overall Verdict</div>
+                            <div style="font-size: 1.5rem; font-weight: 700; color: ${verdictColor};">${validation.overall_verdict}</div>
+                        </div>
+                        <div style="background: white; color: ${verdictColor}; padding: 10px 20px; border-radius: 8px; font-weight: 700; font-size: 1.125rem; border: 2px solid ${verdictColor};">
+                            ${validation.trade_allowed ? '✓ ALLOWED' : '✗ BLOCKED'}
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Status Summary -->
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); gap: 15px; margin-bottom: 25px;">
+                    <div style="background: #d1fae5; padding: 15px; border-radius: 8px; text-align: center; border: 2px solid #10b981;">
+                        <div style="font-size: 2rem; font-weight: 700; color: #059669;">${validation.status_summary.PASS || 0}</div>
+                        <div style="font-size: 0.75rem; color: #047857; font-weight: 600;">PASSED</div>
+                    </div>
+                    <div style="background: #fef3c7; padding: 15px; border-radius: 8px; text-align: center; border: 2px solid #f59e0b;">
+                        <div style="font-size: 2rem; font-weight: 700; color: #d97706;">${validation.status_summary.WARNING || 0}</div>
+                        <div style="font-size: 0.75rem; color: #b45309; font-weight: 600;">WARNINGS</div>
+                    </div>
+                    <div style="background: #fee2e2; padding: 15px; border-radius: 8px; text-align: center; border: 2px solid #ef4444;">
+                        <div style="font-size: 2rem; font-weight: 700; color: #dc2626;">${validation.status_summary.FAIL || 0}</div>
+                        <div style="font-size: 0.75rem; color: #991b1b; font-weight: 600;">FAILED</div>
+                    </div>
+                    <div style="background: #f3f4f6; padding: 15px; border-radius: 8px; text-align: center; border: 2px solid #9ca3af;">
+                        <div style="font-size: 2rem; font-weight: 700; color: #6b7280;">${validation.status_summary.SKIP || 0}</div>
+                        <div style="font-size: 0.75rem; color: #4b5563; font-weight: 600;">SKIPPED</div>
+                    </div>
+                </div>
+
+                <!-- Detailed Validation Checks -->
+                <div>
+                    <h4 style="color: #374151; margin-bottom: 15px; font-size: 1rem; font-weight: 600;">Detailed Validation Checks:</h4>
+                    <div style="display: grid; gap: 12px;">
+                        ${results.map((result, idx) => {
+                            let statusIcon = '✓';
+                            let statusColor = '#10b981';
+                            let statusBg = '#d1fae5';
+                            let borderColor = '#10b981';
+
+                            if (result.status === 'FAIL') {
+                                statusIcon = '✗';
+                                statusColor = '#ef4444';
+                                statusBg = '#fee2e2';
+                                borderColor = '#ef4444';
+                            } else if (result.status === 'WARNING') {
+                                statusIcon = '⚠';
+                                statusColor = '#f59e0b';
+                                statusBg = '#fef3c7';
+                                borderColor = '#f59e0b';
+                            } else if (result.status === 'SKIP') {
+                                statusIcon = '○';
+                                statusColor = '#6b7280';
+                                statusBg = '#f3f4f6';
+                                borderColor = '#9ca3af';
+                            }
+
+                            return `
+                                <div style="background: ${statusBg}; padding: 15px; border-radius: 8px; border-left: 4px solid ${borderColor};">
+                                    <div style="display: flex; align-items: start; gap: 12px;">
+                                        <span style="font-size: 1.5rem; color: ${statusColor}; flex-shrink: 0;">${statusIcon}</span>
+                                        <div style="flex: 1;">
+                                            <div style="display: flex; justify-content: between; align-items: start; margin-bottom: 8px;">
+                                                <div style="font-weight: 700; color: #1f2937; font-size: 0.9375rem; flex: 1;">${result.check}</div>
+                                                <span style="font-weight: 700; font-size: 0.8125rem; color: ${statusColor}; padding: 2px 8px; background: white; border-radius: 4px; margin-left: 10px;">${result.status}</span>
+                                            </div>
+                                            <div style="color: #374151; margin-bottom: 10px; line-height: 1.5;">${result.message}</div>
+                                            ${Object.keys(result.details).length > 0 ? `
+                                                <div style="background: rgba(255,255,255,0.8); padding: 12px; border-radius: 6px; font-size: 0.8125rem; font-family: monospace;">
+                                                    <div style="font-weight: 600; color: #6b7280; margin-bottom: 6px;">📊 Details:</div>
+                                                    ${Object.entries(result.details).map(([key, value]) => {
+                                                        if (typeof value === 'object') return '';
+                                                        const formattedValue = typeof value === 'number' ? value.toFixed(2) : value;
+                                                        return `<div style="padding: 4px 0; border-bottom: 1px solid #e5e7eb; display: flex; justify-content: space-between;">
+                                                            <span style="color: #6b7280;">${key.replace(/_/g, ' ')}:</span>
+                                                            <strong style="color: #1f2937;">${formattedValue}</strong>
+                                                        </div>`;
+                                                    }).join('')}
+                                                </div>
+                                            ` : ''}
+                                        </div>
+                                    </div>
+                                </div>
+                            `;
+                        }).join('')}
+                    </div>
+                </div>
+            </div>
+        `;
+
+        // Action Buttons
+        html += `
+            <div style="display: flex; gap: 15px; justify-content: center; margin-top: 30px;">
+                <button onclick="NiftyStrangle.reset()"
+                        style="background: #6b7280; color: white; padding: 14px 40px; border: none; border-radius: 8px; font-size: 1.125rem; font-weight: 600; cursor: pointer;">
+                    ← Back
+                </button>
+            </div>
+        `;
+
+        html += '</div>';
+        resultsDiv.innerHTML = html;
+    },
+
+    reset() {
+        const resultsDiv = document.getElementById('strangleResults');
+        resultsDiv.style.display = 'none';
+        resultsDiv.innerHTML = '';
+        this.currentData = null;
+    },
+
+    setupEditListeners() {
+        // Position size inputs are already set up with onchange
+    },
+
+    displayNoTradeDay(data) {
+        console.log('[Strangle] Displaying No Trade Day', data);
+
+        const resultsDiv = document.getElementById('strangleResults');
+        resultsDiv.style.display = 'block';
+
+        const strangle = data.strangle || {};
+        const validation = data.validation_report || {};
+        const results = validation.validation_results || [];
+        const statusSummary = validation.status_summary || {};
+
+        let html = '<div style="margin-top: 20px;">';
+
+        // Warning Banner
+        html += `
+            <div style="background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); border-radius: 12px; padding: 30px; margin-bottom: 25px; box-shadow: 0 4px 12px rgba(239, 68, 68, 0.3);">
+                <div style="display: flex; align-items: center; gap: 15px; margin-bottom: 15px;">
+                    <span style="font-size: 3rem;">⛔</span>
+                    <h2 style="color: white; margin: 0; font-size: 1.875rem; font-weight: 700;">NO TRADE DAY</h2>
+                </div>
+                <p style="color: rgba(255,255,255,0.95); font-size: 1.125rem; margin: 0; line-height: 1.6;">
+                    ${validation.verdict_reason || 'Market conditions are unfavorable for strangle entry'}
+                </p>
+            </div>
+        `;
+
+        // Market Data Card
+        html += `
+            <div style="background: white; border-radius: 8px; padding: 20px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                <h3 style="color: #1f2937; margin-bottom: 15px;">📊 Market Data</h3>
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px;">
+                    ${strangle.spot_price ? `
+                        <div>
+                            <div style="color: #6b7280; font-size: 0.875rem; margin-bottom: 5px;">NIFTY Spot</div>
+                            <div style="color: #1f2937; font-size: 1.25rem; font-weight: 700;">₹${parseFloat(strangle.spot_price).toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</div>
+                        </div>
+                    ` : ''}
+                    ${strangle.vix ? `
+                        <div>
+                            <div style="color: #6b7280; font-size: 0.875rem; margin-bottom: 5px;">India VIX</div>
+                            <div style="color: #1f2937; font-size: 1.25rem; font-weight: 700;">${parseFloat(strangle.vix).toFixed(2)}</div>
+                        </div>
+                    ` : ''}
+                    ${strangle.expiry_date ? `
+                        <div>
+                            <div style="color: #6b7280; font-size: 0.875rem; margin-bottom: 5px;">Target Expiry</div>
+                            <div style="color: #1f2937; font-size: 1.25rem; font-weight: 700;">${new Date(strangle.expiry_date).toLocaleDateString('en-IN', {day: '2-digit', month: 'short', year: 'numeric'})}</div>
+                        </div>
+                    ` : ''}
+                    ${strangle.days_to_expiry !== undefined ? `
+                        <div>
+                            <div style="color: #6b7280; font-size: 0.875rem; margin-bottom: 5px;">Days to Expiry</div>
+                            <div style="color: #1f2937; font-size: 1.25rem; font-weight: 700;">${strangle.days_to_expiry} days</div>
+                        </div>
+                    ` : ''}
+                </div>
+            </div>
+        `;
+
+        // Validation Summary
+        if (statusSummary.PASS !== undefined || statusSummary.WARNING !== undefined || statusSummary.FAIL !== undefined) {
+            html += `
+                <div style="background: white; border-radius: 8px; padding: 20px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                    <h3 style="color: #1f2937; margin-bottom: 15px;">📋 Validation Summary</h3>
+                    <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px;">
+                        <div style="background: #d1fae5; padding: 15px; border-radius: 8px; text-align: center;">
+                            <div style="font-size: 0.875rem; color: #065f46; margin-bottom: 5px; font-weight: 600;">PASSED</div>
+                            <div style="font-size: 2rem; font-weight: 700; color: #10b981;">${statusSummary.PASS || 0}</div>
+                        </div>
+                        <div style="background: #fef3c7; padding: 15px; border-radius: 8px; text-align: center;">
+                            <div style="font-size: 0.875rem; color: #92400e; margin-bottom: 5px; font-weight: 600;">WARNINGS</div>
+                            <div style="font-size: 2rem; font-weight: 700; color: #f59e0b;">${statusSummary.WARNING || 0}</div>
+                        </div>
+                        <div style="background: #fee2e2; padding: 15px; border-radius: 8px; text-align: center;">
+                            <div style="font-size: 0.875rem; color: #991b1b; margin-bottom: 5px; font-weight: 600;">FAILED</div>
+                            <div style="font-size: 2rem; font-weight: 700; color: #ef4444;">${statusSummary.FAIL || 0}</div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        // Detailed Validation Results
+        if (results.length > 0) {
+            html += `
+                <div style="background: white; border-radius: 8px; padding: 20px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                    <h3 style="color: #1f2937; margin-bottom: 15px;">🔍 Detailed Checks</h3>
+                    <div style="display: flex; flex-direction: column; gap: 15px;">
+                        ${results.map(result => {
+                            let statusIcon, statusColor, statusBg, borderColor;
+
+                            switch(result.status) {
+                                case 'PASS':
+                                    statusIcon = '✅';
+                                    statusColor = '#10b981';
+                                    statusBg = '#d1fae5';
+                                    borderColor = '#10b981';
+                                    break;
+                                case 'WARNING':
+                                    statusIcon = '⚠️';
+                                    statusColor = '#f59e0b';
+                                    statusBg = '#fef3c7';
+                                    borderColor = '#f59e0b';
+                                    break;
+                                case 'FAIL':
+                                    statusIcon = '❌';
+                                    statusColor = '#ef4444';
+                                    statusBg = '#fee2e2';
+                                    borderColor = '#ef4444';
+                                    break;
+                                default:
+                                    statusIcon = 'ℹ️';
+                                    statusColor = '#6b7280';
+                                    statusBg = '#f3f4f6';
+                                    borderColor = '#9ca3af';
+                            }
+
+                            return `
+                                <div style="background: ${statusBg}; padding: 15px; border-radius: 8px; border-left: 4px solid ${borderColor};">
+                                    <div style="display: flex; align-items: start; gap: 12px;">
+                                        <span style="font-size: 1.5rem; color: ${statusColor}; flex-shrink: 0;">${statusIcon}</span>
+                                        <div style="flex: 1;">
+                                            <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 8px;">
+                                                <div style="font-weight: 700; color: #1f2937; font-size: 0.9375rem; flex: 1;">${result.check}</div>
+                                                <span style="font-weight: 700; font-size: 0.8125rem; color: ${statusColor}; padding: 2px 8px; background: white; border-radius: 4px; margin-left: 10px;">${result.status}</span>
+                                            </div>
+                                            <div style="color: #374151; margin-bottom: 10px; line-height: 1.5;">${result.message}</div>
+                                            ${result.details && Object.keys(result.details).length > 0 ? `
+                                                <div style="background: rgba(255,255,255,0.8); padding: 12px; border-radius: 6px; font-size: 0.8125rem; font-family: monospace;">
+                                                    <div style="font-weight: 600; color: #6b7280; margin-bottom: 6px;">📊 Details:</div>
+                                                    ${Object.entries(result.details).map(([key, value]) => {
+                                                        if (typeof value === 'object') return '';
+                                                        const formattedValue = typeof value === 'number' ? value.toFixed(2) : value;
+                                                        return `<div style="padding: 4px 0; border-bottom: 1px solid #e5e7eb; display: flex; justify-content: space-between;">
+                                                            <span style="color: #6b7280;">${key.replace(/_/g, ' ')}:</span>
+                                                            <strong style="color: #1f2937;">${formattedValue}</strong>
+                                                        </div>`;
+                                                    }).join('')}
+                                                </div>
+                                            ` : ''}
+                                        </div>
+                                    </div>
+                                </div>
+                            `;
+                        }).join('')}
+                    </div>
+                </div>
+            `;
+        }
+
+        // Back button
+        html += `
+            <div style="display: flex; gap: 15px; justify-content: center; margin-top: 30px;">
+                <button onclick="NiftyStrangle.reset()"
+                        style="background: #6b7280; color: white; padding: 14px 40px; border: none; border-radius: 8px; font-size: 1.125rem; font-weight: 600; cursor: pointer; transition: background 0.2s;">
+                    ← Back
+                </button>
+            </div>
+        `;
+
+        html += '</div>';
+        resultsDiv.innerHTML = html;
+    },
+
+    formatIndianNumber(num) {
+        if (!num) return '0';
+        const str = Math.floor(num).toString();
+        const lastThree = str.substring(str.length - 3);
+        const otherNumbers = str.substring(0, str.length - 3);
+        if (otherNumbers !== '') {
+            return otherNumbers.replace(/\B(?=(\d{2})+(?!\d))/g, ',') + ',' + lastThree;
+        }
+        return lastThree;
+    },
+
+    init() {
+        console.log('Nifty Strangle module initialized');
+    }
+};
+
+const TradeVerification = {
+    contracts: [],
+    currentContract: null,
+
+    async refreshContracts() {
+        const thisMonthVol = parseInt(document.getElementById('verifyThisMonthVolume').value) || 1000;
+        const nextMonthVol = parseInt(document.getElementById('verifyNextMonthVolume').value) || 800;
+        const btn = document.getElementById('btnRefreshContracts');
+        const select = document.getElementById('contractSelect');
+        const countSpan = document.getElementById('contractCount');
+
+        btn.disabled = true;
+        btn.textContent = '⏳ Updating...';
+        select.disabled = true;
+
+        try {
+            const response = await ApiClient.post(ApiClient.endpoints.getContracts, {
+                this_month_volume: thisMonthVol,
+                next_month_volume: nextMonthVol
+            });
+
+            if (response && response.success) {
+                this.contracts = response.contracts || [];
+
+                // Update dropdown
+                select.innerHTML = '<option value="">-- Select a contract --</option>';
+                this.contracts.forEach(contract => {
+                    const option = document.createElement('option');
+                    option.value = contract.value;
+                    option.setAttribute('data-this-month', contract.this_month_volume || 0);
+                    option.setAttribute('data-next-month', contract.next_month_volume || 0);
+                    option.setAttribute('data-price', contract.price || 0);
+                    option.setAttribute('data-lot', contract.lot_size || 0);
+                    option.textContent = `${contract.display} (This: ${contract.this_month_volume || 0} | Next: ${contract.next_month_volume || 0})`;
+                    select.appendChild(option);
+                });
+
+                // Update count
+                countSpan.textContent = this.contracts.length;
+
+                UIBuilders.showNotification({
+                    type: 'success',
+                    message: `Found ${this.contracts.length} contracts`,
+                    icon: '✅',
+                    timeout: 3000
+                });
+
+                btn.textContent = '✅ Updated';
+                setTimeout(() => {
+                    btn.textContent = '🔄 Update List';
+                }, 2000);
+            } else {
+                throw new Error(response?.error || 'Failed to fetch contracts');
+            }
+        } catch (error) {
+            UIBuilders.showNotification({
+                type: 'error',
+                message: 'Failed to update contracts: ' + error.message,
+                icon: '❌'
+            });
+            btn.textContent = '🔄 Update List';
+        } finally {
+            btn.disabled = false;
+            select.disabled = false;
+        }
+    },
+
+    async fetchFreshData() {
+        const btn = document.getElementById('btnFetchTrendlyne');
+        const select = document.getElementById('contractSelect');
+
+        btn.disabled = true;
+        btn.textContent = '⏳ Downloading...';
+        select.innerHTML = '<option value="">⏳ Downloading Trendlyne data... Please wait 2-3 minutes...</option>';
+        select.disabled = true;
+
+        try {
+            const response = await ApiClient.post(ApiClient.endpoints.refreshTrendlyne, {
+                data_type: 'fno'
+            });
+
+            if (response && response.success) {
+                UIBuilders.showNotification({
+                    type: 'success',
+                    message: 'Trendlyne data downloaded! Updating list...',
+                    icon: '✅',
+                    timeout: 3000
+                });
+
+                btn.textContent = '✅ Downloaded';
+
+                // Refresh the contract list
+                setTimeout(async () => {
+                    await this.refreshContracts();
+                    btn.textContent = '📥 Fetch Fresh Data';
+                }, 1000);
+            } else {
+                throw new Error(response?.error || 'Failed to fetch Trendlyne data');
+            }
+        } catch (error) {
+            UIBuilders.showNotification({
+                type: 'error',
+                message: 'Failed to fetch Trendlyne data: ' + error.message,
+                icon: '❌'
+            });
+            select.innerHTML = '<option value="">❌ Error occurred. Try again.</option>';
+            btn.textContent = '📥 Fetch Fresh Data';
+        } finally {
+            btn.disabled = false;
+            select.disabled = false;
+        }
+    },
+
+    async verify() {
+        const select = document.getElementById('contractSelect');
+        const selectedValue = select.value;
+
+        if (!selectedValue) {
+            UIBuilders.showNotification({
+                type: 'error',
+                message: 'Please select a contract',
+                icon: '❌'
+            });
+            return;
+        }
+
+        TradingState.setLoading('verify', true);
+        try {
+            // Backend expects FormData with 'contract' parameter
+            const formData = new FormData();
+            formData.append('contract', selectedValue);
+
+            const response = await fetch(ApiClient.endpoints.verify, {
+                method: 'POST',
+                headers: {
+                    'X-CSRFToken': ApiClient.csrftoken
+                },
+                body: formData
+            });
+
+            const data = await response.json();
+
+            // Check for auth error
+            if ((data.auth_required === true || data.authenticated === false)) {
+                ApiClient.handleAuthError(data, 'verify');
+                return;
+            }
+
+            if (data.success) {
+                this.currentContract = data;
+                this.displayResults(data);
+            } else {
+                throw new Error(data.error || 'Verification failed');
+            }
+        } catch (error) {
+            UIBuilders.showNotification({
+                type: 'error',
+                message: 'Failed to verify trade: ' + error.message,
+                icon: '❌'
+            });
+        } finally {
+            TradingState.setLoading('verify', false);
+        }
+    },
+
+    displayResults(data) {
+        console.log('[Verify] Full verification result:', data);
+
+        const resultsDiv = document.getElementById('verifyResults');
+        resultsDiv.style.display = 'block';
+
+        const analysis = data.analysis || {};
+        const positionSizing = data.position_sizing || {};
+        const position = positionSizing.position || {};
+        const marginData = positionSizing.margin_data || {};
+
+        let html = '<div style="margin-top: 20px;">';
+
+        // Verdict Banner
+        const verdictColor = data.passed ? '#10b981' : '#ef4444';
+        const verdictBg = data.passed ? 'linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%)' : 'linear-gradient(135deg, #fee2e2 0%, #fecaca 100%)';
+        const verdictIcon = data.passed ? '✅' : '❌';
+
+        html += `
+            <div style="background: ${verdictBg}; border-radius: 12px; padding: 30px; margin-bottom: 25px; box-shadow: 0 4px 12px rgba(0,0,0,0.1);">
+                <div style="display: flex; align-items: center; gap: 15px; margin-bottom: 15px;">
+                    <span style="font-size: 3rem;">${verdictIcon}</span>
+                    <div>
+                        <h2 style="color: ${verdictColor}; margin: 0; font-size: 1.875rem; font-weight: 700;">${data.verdict || (data.passed ? 'PASS' : 'FAIL')}</h2>
+                        <div style="color: #1f2937; font-size: 1.125rem; font-weight: 600; margin-top: 5px;">${data.contract_display || data.symbol}</div>
+                    </div>
+                </div>
+                <p style="color: #374151; font-size: 1rem; margin: 0; line-height: 1.6;">
+                    ${data.reason || 'Analysis complete'}
+                </p>
+            </div>
+        `;
+
+        // Contract Summary
+        html += `
+            <div style="background: white; border-radius: 8px; padding: 20px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                <h3 style="color: #1f2937; margin-bottom: 15px;">📊 Contract Summary</h3>
+                ${UIBuilders.buildResultGrid([
+                    { label: 'Symbol', value: data.symbol || 'N/A' },
+                    { label: 'Expiry', value: data.expiry || 'N/A' },
+                    { label: 'Direction', value: `<span style="color: ${analysis.direction === 'LONG' ? '#10b981' : '#ef4444'}; font-weight: 700;">${analysis.direction || 'N/A'}</span>` },
+                    { label: 'Entry Price', value: `₹${(analysis.contract_price || analysis.entry_price || 0).toFixed(2)}` },
+                    { label: 'Spot Price', value: `₹${(analysis.spot_price || 0).toFixed(2)}` },
+                    { label: 'Composite Score', value: `${(analysis.composite_score || 0).toFixed(1)}/100` },
+                    { label: 'Stop Loss', value: `₹${(analysis.stop_loss || 0).toFixed(2)}` },
+                    { label: 'Target', value: `₹${(analysis.target || 0).toFixed(2)}` },
+                    { label: 'Lot Size', value: `${analysis.position_details?.lot_size || 'N/A'} shares` }
+                ])}
+            </div>
+        `;
+
+        // Technical Indicators
+        if (analysis.sma_20 || analysis.support_1 || analysis.resistance_1) {
+            html += `
+                <div style="background: white; border-radius: 8px; padding: 20px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                    <h3 style="color: #1f2937; margin-bottom: 15px;">📈 Technical Indicators</h3>
+                    ${UIBuilders.buildResultGrid([
+                        analysis.sma_20 ? { label: '20-Day SMA', value: `₹${parseFloat(analysis.sma_20).toFixed(2)}` } : null,
+                        analysis.sma_50 ? { label: '50-Day SMA', value: `₹${parseFloat(analysis.sma_50).toFixed(2)}` } : null,
+                        analysis.support_1 ? { label: 'Support 1', value: `₹${parseFloat(analysis.support_1).toFixed(2)}`, className: 'text-red-600' } : null,
+                        analysis.support_2 ? { label: 'Support 2', value: `₹${parseFloat(analysis.support_2).toFixed(2)}`, className: 'text-red-600' } : null,
+                        analysis.resistance_1 ? { label: 'Resistance 1', value: `₹${parseFloat(analysis.resistance_1).toFixed(2)}`, className: 'text-green-600' } : null,
+                        analysis.resistance_2 ? { label: 'Resistance 2', value: `₹${parseFloat(analysis.resistance_2).toFixed(2)}`, className: 'text-green-600' } : null
+                    ].filter(item => item !== null))}
+
+                    <div style="margin-top: 15px; padding: 15px; background: #f9fafb; border-radius: 6px; border-left: 4px solid #3b82f6;">
+                        <h4 style="color: #1f2937; font-size: 0.875rem; margin-bottom: 10px; font-weight: 600;">📚 How Support & Resistance are Calculated:</h4>
+                        <ul style="margin: 0; padding-left: 20px; color: #6b7280; font-size: 0.875rem; line-height: 1.6;">
+                            <li><strong>Data Source:</strong> 1 year of NIFTY historical data from Breeze API (stored in HistoricalPrice table)</li>
+                            <li><strong>Pivot Points Method:</strong> Uses last 5 days average → Pivot = (High + Low + Close) / 3</li>
+                            <li><strong>Resistance Levels:</strong> R1 = (2 × Pivot) - Low | R2 = Pivot + (High - Low) | R3 = High + 2(Pivot - Low)</li>
+                            <li><strong>Support Levels:</strong> S1 = (2 × Pivot) - High | S2 = Pivot - (High - Low) | S3 = Low - 2(High - Pivot)</li>
+                            <li><strong>Moving Averages:</strong> Simple Moving Average calculated from historical closes (20/50/100/200 days)</li>
+                        </ul>
+                    </div>
+                </div>
+            `;
+        }
+
+        // Score Breakdown Section
+        if (analysis.score_breakdown || analysis.composite_score) {
+            const scoreBreakdown = analysis.score_breakdown || {};
+            const compositeScore = analysis.composite_score || 0;
+
+            console.log('[Verify] Score breakdown data:', {
+                scoreBreakdown: scoreBreakdown,
+                compositeScore: compositeScore,
+                basis: scoreBreakdown.basis,
+                oi: scoreBreakdown.oi,
+                dma: scoreBreakdown.dma,
+                sector: scoreBreakdown.sector,
+                volume: scoreBreakdown.volume,
+                technical: scoreBreakdown.technical,
+                sr: scoreBreakdown.sr
+            });
+
+            html += `
+                <div style="background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%); border-radius: 8px; padding: 20px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); border: 1px solid #3b82f6;">
+                    <h3 style="color: #1f2937; margin-bottom: 15px;">🎯 Composite Score Breakdown</h3>
+
+                    <!-- Overall Score -->
+                    <div style="background: white; padding: 15px; border-radius: 6px; margin-bottom: 15px; text-align: center;">
+                        <div style="font-size: 0.875rem; color: #6b7280; margin-bottom: 5px;">Total Composite Score</div>
+                        <div style="font-size: 2.5rem; font-weight: 700; color: ${compositeScore >= 50 ? '#10b981' : '#ef4444'};">${compositeScore.toFixed(1)}<span style="font-size: 1.5rem;">/100</span></div>
+                        <div style="font-size: 0.875rem; color: #6b7280; margin-top: 5px;">${compositeScore >= 50 ? '✅ PASS (≥50)' : '❌ FAIL (<50)'}</div>
+                    </div>
+
+                    <!-- Component Scores -->
+                    <div style="background: white; padding: 15px; border-radius: 6px;">
+                        <h4 style="color: #1f2937; font-size: 0.875rem; margin-bottom: 12px; font-weight: 600;">Component Scores:</h4>
+                        <div style="display: grid; gap: 10px;">
+                            ${this.buildScoreBar('Basis Analysis', scoreBreakdown.basis || 0, 10, 'Contango/Backwardation check (Futures vs Spot)')}
+                            ${this.buildScoreBar('Open Interest', scoreBreakdown.oi || 0, 15, 'OI buildup pattern (Long/Short/Neutral)')}
+                            ${this.buildScoreBar('Moving Averages', scoreBreakdown.dma || 0, 15, '20/50/100/200 DMA trend analysis')}
+                            ${this.buildScoreBar('Sector Health', scoreBreakdown.sector || 0, 20, 'Sector performance and correlation')}
+                            ${this.buildScoreBar('Volume Analysis', scoreBreakdown.volume || 0, 10, 'Spot & Futures volume liquidity')}
+                            ${this.buildScoreBar('Technical Score', scoreBreakdown.technical || 0, 15, 'RSI, MACD, Bollinger bands')}
+                            ${this.buildScoreBar('S/R Proximity', scoreBreakdown.sr || 0, 5, 'Distance from support/resistance')}
+                        </div>
+                    </div>
+
+                    <!-- Signal Analysis -->
+                    <div style="background: white; padding: 15px; border-radius: 6px; margin-top: 15px;">
+                        <h4 style="color: #1f2937; font-size: 0.875rem; margin-bottom: 12px; font-weight: 600;">Signal Analysis:</h4>
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                            <div>
+                                <div style="font-size: 0.75rem; color: #6b7280; margin-bottom: 5px;">Bullish Signals</div>
+                                <div style="font-size: 1.5rem; font-weight: 700; color: #10b981;">${analysis.bullish_signals || 0}</div>
+                                <div style="font-size: 0.7rem; color: #6b7280; margin-top: 3px;">Contango, DMA Up, Sector↑</div>
+                            </div>
+                            <div>
+                                <div style="font-size: 0.75rem; color: #6b7280; margin-bottom: 5px;">Bearish Signals</div>
+                                <div style="font-size: 1.5rem; font-weight: 700; color: #ef4444;">${analysis.bearish_signals || 0}</div>
+                                <div style="font-size: 0.7rem; color: #6b7280; margin-top: 3px;">Backwardation, DMA Down, Sector↓</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Calculation Logic -->
+                    <div style="margin-top: 15px; padding: 15px; background: rgba(255,255,255,0.7); border-radius: 6px; border-left: 4px solid #3b82f6;">
+                        <h4 style="color: #1f2937; font-size: 0.875rem; margin-bottom: 10px; font-weight: 600;">📚 How Composite Score is Calculated:</h4>
+                        <ul style="margin: 0; padding-left: 20px; color: #6b7280; font-size: 0.875rem; line-height: 1.6;">
+                            <li><strong>9-Step Analysis:</strong> Each step scores the stock on different parameters</li>
+                            <li><strong>Weighted Components:</strong> Sector (20pts) > OI+DMA+Tech (15pts each) > Basis+Volume (10pts each) > S/R (5pts)</li>
+                            <li><strong>Direction Logic:</strong> Bullish signals > Bearish signals (≥2) → LONG | Bearish > Bullish (≥2) → SHORT | Else → NEUTRAL</li>
+                            <li><strong>Pass Criteria:</strong> Score ≥50 AND Direction ≠ NEUTRAL</li>
+                            <li><strong>Data Sources:</strong> All from Breeze API (Live quotes, Historical data, OI, Sector indices)</li>
+                        </ul>
+                    </div>
+                </div>
+            `;
+        }
+
+        // Position Sizing Card - make it editable like strangle
+        if (Object.keys(positionSizing).length > 0) {
+            html += this.buildPositionSizingCard(positionSizing, analysis);
+        }
+
+        // Execution Buttons
+        if (data.passed) {
+            html += this.buildExecutionButtons();
+        } else {
+            html += `
+                <div style="display: flex; gap: 15px; justify-content: center; margin-top: 30px;">
+                    <button onclick="TradeVerification.reset()"
+                            style="background: #6b7280; color: white; padding: 14px 40px; border: none; border-radius: 8px; font-size: 1.125rem; font-weight: 600; cursor: pointer;">
+                        ← Back to Selection
+                    </button>
+                </div>
+            `;
+        }
+
+        html += '</div>';
+        resultsDiv.innerHTML = html;
+    },
+
+    buildScoreBar(label, score, maxScore, description) {
+        const percentage = (score / maxScore) * 100;
+        const color = percentage >= 60 ? '#10b981' : percentage >= 40 ? '#f59e0b' : '#ef4444';
+
+        return `
+            <div style="margin-bottom: 8px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                    <div style="font-size: 0.8rem; color: #374151; font-weight: 500;">${label}</div>
+                    <div style="font-size: 0.8rem; color: #6b7280; font-weight: 600;">${score}/${maxScore}</div>
+                </div>
+                <div style="height: 8px; background: #e5e7eb; border-radius: 4px; overflow: hidden; position: relative;">
+                    <div style="height: 100%; background: ${color}; width: ${percentage}%; transition: width 0.3s;"></div>
+                </div>
+                <div style="font-size: 0.7rem; color: #9ca3af; margin-top: 2px;">${description}</div>
+            </div>
+        `;
+    },
+
+    buildPositionSizingCard(positionSizing, analysis) {
+        const position = positionSizing.position || {};
+        const marginData = positionSizing.margin_data || {};
+
+        const recommendedLots = position.recommended_lots || 1;
+        const lotSize = analysis.position_details?.lot_size || 0;
+        const futuresPrice = analysis.contract_price || analysis.entry_price || 0;
+        const stopLoss = analysis.stop_loss || 0;
+        const target = analysis.target || 0;
+        const direction = analysis.direction || 'LONG';
+
+        const riskPerLot = Math.abs(futuresPrice - stopLoss) * lotSize;
+        const rewardPerLot = Math.abs(target - futuresPrice) * lotSize;
+
+        return `
+            <div style="background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%); border-radius: 12px; padding: 25px; margin-bottom: 20px; color: white;">
+                <h3 style="color: white; margin-bottom: 20px; font-size: 1.3rem;">📊 Position Sizing & Risk Analysis</h3>
+
+                <!-- Lot Size Editor -->
+                <div style="background: rgba(255,255,255,0.15); padding: 20px; border-radius: 8px; margin-bottom: 20px;">
+                    <h4 style="color: white; margin-bottom: 15px; font-size: 1rem;">🎯 Adjust Position Size</h4>
+                    <div style="display: flex; align-items: center; gap: 15px; justify-content: center;">
+                        <button onclick="TradeVerification.adjustLots(-1)"
+                                style="background: #ef4444; color: white; width: 40px; height: 40px; border: none; border-radius: 8px; font-size: 1.5rem; cursor: pointer; font-weight: 700;">−</button>
+                        <div style="text-align: center;">
+                            <input type="number"
+                                   id="verifyLotsInput"
+                                   value="${recommendedLots}"
+                                   min="1"
+                                   max="100"
+                                   onchange="TradeVerification.updatePosition()"
+                                   style="width: 100px; padding: 12px; border: none; border-radius: 8px; text-align: center; font-size: 1.25rem; font-weight: 700;">
+                            <div style="font-size: 0.875rem; margin-top: 5px;">Lots</div>
+                        </div>
+                        <button onclick="TradeVerification.adjustLots(1)"
+                                style="background: #10b981; color: white; width: 40px; height: 40px; border: none; border-radius: 8px; font-size: 1.5rem; cursor: pointer; font-weight: 700;">+</button>
+                    </div>
+                    <div style="display: flex; gap: 10px; justify-content: center; margin-top: 15px;">
+                        <button onclick="TradeVerification.setLots(5)" style="padding: 8px 16px; background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.3); border-radius: 6px; color: white; cursor: pointer; font-size: 0.875rem;">5 Lots</button>
+                        <button onclick="TradeVerification.setLots(10)" style="padding: 8px 16px; background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.3); border-radius: 6px; color: white; cursor: pointer; font-size: 0.875rem;">10 Lots</button>
+                        <button onclick="TradeVerification.setLots(20)" style="padding: 8px 16px; background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.3); border-radius: 6px; color: white; cursor: pointer; font-size: 0.875rem;">20 Lots</button>
+                    </div>
+                </div>
+
+                <!-- Live Position Summary -->
+                <div id="verifyPositionSummary" style="background: rgba(255,255,255,0.15); padding: 20px; border-radius: 8px;">
+                    ${this.buildPositionSummary(position, marginData, analysis, recommendedLots)}
+                </div>
+            </div>
+        `;
+    },
+
+    buildPositionSummary(position, marginData, analysis, lots) {
+        const lotSize = analysis.position_details?.lot_size || 0;
+        const futuresPrice = analysis.contract_price || analysis.entry_price || 0;
+        const stopLoss = analysis.stop_loss || 0;
+        const target = analysis.target || 0;
+
+        const totalQuantity = lots * lotSize;
+        const entryValue = futuresPrice * totalQuantity;
+        const marginPerLot = marginData.margin_per_lot || 0;
+        const marginRequired = lots * marginPerLot;
+        const marginAvailable = marginData.available_margin || 0;
+        const marginUtilization = marginAvailable > 0 ? ((marginRequired / marginAvailable) * 100).toFixed(1) : '0';
+
+        const riskPerLot = Math.abs(futuresPrice - stopLoss) * lotSize;
+        const rewardPerLot = Math.abs(target - futuresPrice) * lotSize;
+        const totalRisk = riskPerLot * lots;
+        const totalReward = rewardPerLot * lots;
+        const riskRewardRatio = totalRisk > 0 ? (totalReward / totalRisk).toFixed(2) : '0';
+
+        return `
+            <h4 style="color: white; margin-bottom: 15px; font-size: 1rem;">📈 Live Position Summary</h4>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 15px; margin-bottom: 15px;">
+                <div style="background: rgba(255,255,255,0.1); padding: 12px; border-radius: 6px;">
+                    <div style="font-size: 0.75rem; opacity: 0.9;">Lots × Quantity</div>
+                    <div style="font-size: 1.25rem; font-weight: 700;">${lots} × ${lotSize}</div>
+                    <div style="font-size: 0.7rem; opacity: 0.8;">${totalQuantity} shares</div>
+                </div>
+                <div style="background: rgba(255,255,255,0.1); padding: 12px; border-radius: 6px;">
+                    <div style="font-size: 0.75rem; opacity: 0.9;">Entry Value</div>
+                    <div style="font-size: 1.25rem; font-weight: 700;">₹${this.formatNumber(entryValue)}</div>
+                    <div style="font-size: 0.7rem; opacity: 0.8;">@ ₹${futuresPrice.toFixed(2)}</div>
+                </div>
+                <div style="background: rgba(255,255,255,0.1); padding: 12px; border-radius: 6px;">
+                    <div style="font-size: 0.75rem; opacity: 0.9;">Margin Required</div>
+                    <div style="font-size: 1.25rem; font-weight: 700;">₹${this.formatNumber(marginRequired)}</div>
+                    <div style="font-size: 0.7rem; opacity: 0.8;">₹${this.formatNumber(marginPerLot)}/lot</div>
+                </div>
+                <div style="background: rgba(255,255,255,0.1); padding: 12px; border-radius: 6px;">
+                    <div style="font-size: 0.75rem; opacity: 0.9;">Margin Available</div>
+                    <div style="font-size: 1.25rem; font-weight: 700; color: #a7f3d0;">₹${this.formatNumber(marginAvailable)}</div>
+                    <div style="font-size: 0.7rem; opacity: 0.8;">${marginUtilization}% used</div>
+                </div>
+                <div style="background: rgba(255,255,255,0.1); padding: 12px; border-radius: 6px;">
+                    <div style="font-size: 0.75rem; opacity: 0.9;">Max Risk</div>
+                    <div style="font-size: 1.25rem; font-weight: 700; color: #fecaca;">₹${this.formatNumber(totalRisk)}</div>
+                    <div style="font-size: 0.7rem; opacity: 0.8;">₹${riskPerLot.toFixed(0)}/lot</div>
+                </div>
+                <div style="background: rgba(255,255,255,0.1); padding: 12px; border-radius: 6px;">
+                    <div style="font-size: 0.75rem; opacity: 0.9;">Target Profit</div>
+                    <div style="font-size: 1.25rem; font-weight: 700; color: #a7f3d0;">₹${this.formatNumber(totalReward)}</div>
+                    <div style="font-size: 0.7rem; opacity: 0.8;">₹${rewardPerLot.toFixed(0)}/lot</div>
+                </div>
+                <div style="background: rgba(255,255,255,0.1); padding: 12px; border-radius: 6px;">
+                    <div style="font-size: 0.75rem; opacity: 0.9;">Risk:Reward</div>
+                    <div style="font-size: 1.25rem; font-weight: 700; color: ${riskRewardRatio >= 2 ? '#a7f3d0' : '#fecaca'};">1:${riskRewardRatio}</div>
+                    <div style="font-size: 0.7rem; opacity: 0.8;">${riskRewardRatio >= 2 ? 'Good' : 'Marginal'}</div>
+                </div>
+            </div>
+            <div style="margin-top: 15px; padding: 15px; background: rgba(59, 130, 246, 0.2); border-radius: 6px; border: 1px solid rgba(59, 130, 246, 0.4);">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div style="font-size: 0.875rem; opacity: 0.9;">
+                        💰 <strong>Margin from ICICI Breeze</strong> • Available: ₹${this.formatNumber(marginAvailable)} • Utilization: ${marginUtilization}%
+                    </div>
+                    <div style="font-size: 0.875rem; font-weight: 700;">
+                        ${marginUtilization > 60 ? '⚠️ High' : '✅ Safe'}
+                    </div>
+                </div>
+            </div>
+        `;
+    },
+
+    buildExecutionButtons() {
+        return `
+            <div style="display: flex; gap: 15px; justify-content: center; margin-top: 30px;">
+                <button onclick="TradeVerification.showConfirmation()"
+                        style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; padding: 14px 40px; border: none; border-radius: 8px; font-size: 1.125rem; font-weight: 600; cursor: pointer; box-shadow: 0 4px 6px rgba(16, 185, 129, 0.3);">
+                    ✅ Review & Confirm Order
+                </button>
+                <button onclick="TradeVerification.reset()"
+                        style="background: #6b7280; color: white; padding: 14px 40px; border: none; border-radius: 8px; font-size: 1.125rem; font-weight: 600; cursor: pointer;">
+                    Cancel
+                </button>
+            </div>
+        `;
+    },
+
+    adjustLots(delta) {
+        const input = document.getElementById('verifyLotsInput');
+        const currentValue = parseInt(input.value) || 1;
+        const newValue = Math.max(1, Math.min(100, currentValue + delta));
+        input.value = newValue;
+        this.updatePosition();
+    },
+
+    setLots(lots) {
+        document.getElementById('verifyLotsInput').value = lots;
+        this.updatePosition();
+    },
+
+    updatePosition() {
+        const lots = parseInt(document.getElementById('verifyLotsInput').value) || 1;
+
+        if (this.currentContract && this.currentContract.analysis && this.currentContract.position_sizing) {
+            const position = this.currentContract.position_sizing.position;
+            const marginData = this.currentContract.position_sizing.margin_data;
+            const analysis = this.currentContract.analysis;
+
+            // Update summary
+            document.getElementById('verifyPositionSummary').innerHTML =
+                this.buildPositionSummary(position, marginData, analysis, lots);
+        }
+    },
+
+    showConfirmation() {
+        const lots = parseInt(document.getElementById('verifyLotsInput').value) || 1;
+
+        if (lots === 0) {
+            UIBuilders.showNotification({
+                type: 'error',
+                message: 'Please enter a valid lot size',
+                icon: '❌'
+            });
+            return;
+        }
+
+        const analysis = this.currentContract.analysis || {};
+        const position = this.currentContract.position_sizing.position || {};
+        const marginData = this.currentContract.position_sizing.margin_data || {};
+
+        console.log('[Verify Trade] Full data structure:', {
+            currentContract: this.currentContract,
+            analysis: analysis,
+            position: position,
+            marginData: marginData
+        });
+
+        // Calculate values
+        const lotSize = analysis.position_details?.lot_size || 0;
+        const futuresPrice = analysis.contract_price || 0;
+        const stopLoss = analysis.stop_loss || 0;
+        const target = analysis.target || 0;
+        const direction = analysis.direction || 'LONG';
+
+        const totalQuantity = lots * lotSize;
+        const entryValue = futuresPrice * totalQuantity;
+
+        // Calculate margin required
+        let marginRequired;
+        if (lots === position.recommended_lots) {
+            // Using same lots as backend calculation
+            marginRequired = position.total_margin_required;
+            console.log('[Verify Trade] Using backend-calculated margin:', marginRequired);
+        } else {
+            // User changed lots, recalculate
+            const marginPerLot = marginData.margin_per_lot;
+            marginRequired = lots * marginPerLot;
+            console.log('[Verify Trade] Recalculated margin:', {
+                lots,
+                marginPerLot,
+                calculation: `${lots} * ${marginPerLot} = ${marginRequired}`
+            });
+        }
+
+        const marginAvailable = marginData.available_margin || 0;
+        const marginUtilization = marginAvailable > 0 ? (marginRequired / marginAvailable * 100).toFixed(1) : '0';
+
+        // Calculate risk/reward
+        const riskPerLot = Math.abs(futuresPrice - stopLoss) * lotSize;
+        const rewardPerLot = Math.abs(target - futuresPrice) * lotSize;
+        const totalRisk = riskPerLot * lots;
+        const totalReward = rewardPerLot * lots;
+        const riskRewardRatio = totalRisk > 0 ? (totalReward / totalRisk).toFixed(2) : '0';
+
+        console.log('[Verify Trade] Final margin values:', {
+            marginRequired,
+            marginAvailable,
+            marginUtilization,
+            marginSource: marginData.source
+        });
+
+        // Format expiry date
+        // Backend sends expiry_date in YYYY-MM-DD format
+        let formattedExpiry = 'N/A';
+        if (analysis.expiry_date) {
+            try {
+                // Parse YYYY-MM-DD format
+                const expiryDate = new Date(analysis.expiry_date + 'T00:00:00');
+                if (!isNaN(expiryDate.getTime())) {
+                    formattedExpiry = expiryDate.toLocaleDateString('en-IN', {
+                        day: '2-digit',
+                        month: 'short',
+                        year: 'numeric'
+                    });
+                } else {
+                    // Fallback: use the raw string
+                    formattedExpiry = analysis.expiry_date;
+                }
+            } catch (e) {
+                console.error('[Verify Trade] Error formatting expiry:', e);
+                formattedExpiry = analysis.expiry_date || 'N/A';
+            }
+        }
+
+        console.log('[Verify Trade] Expiry formatting:', {
+            raw: analysis.expiry_date,
+            formatted: formattedExpiry
+        });
+
+        console.log('[Verify Trade] Breeze token information:', {
+            token: analysis.breeze_token,
+            stock_code: analysis.breeze_stock_code,
+            has_token: !!analysis.breeze_token
+        });
+
+        // Direction color
+        const directionColor = direction === 'LONG' ? '#10b981' : '#ef4444';
+        const directionBg = direction === 'LONG' ? '#d1fae5' : '#fee2e2';
+
+        // Create confirmation modal
+        const modal = document.createElement('div');
+        modal.id = 'verifyConfirmationModal';
+        modal.style.cssText = 'position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 10000;';
+
+        modal.innerHTML = `
+            <div style="background: white; border-radius: 12px; padding: 30px; max-width: 650px; width: 90%; max-height: 90vh; overflow-y: auto; box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1);">
+                <h2 style="color: #1f2937; margin-bottom: 20px; font-size: 1.5rem; display: flex; align-items: center; gap: 10px;">
+                    🎯 Confirm Futures Order
+                    <span style="background: #3b82f6; color: white; padding: 4px 12px; border-radius: 20px; font-size: 0.75rem; font-weight: 500;">ICICI BREEZE</span>
+                </h2>
+
+                <!-- Expiry Information -->
+                <div style="background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%); padding: 15px; border-radius: 8px; margin-bottom: 15px; border: 2px solid #f59e0b;">
+                    <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 8px;">
+                        <span style="font-size: 1.5rem;">📅</span>
+                        <div style="flex: 1;">
+                            <div style="color: #92400e; font-size: 0.875rem; font-weight: 600; margin-bottom: 4px;">⚠️ CRITICAL: Contract Expiry Date</div>
+                            <div style="color: #1f2937; font-weight: 700; font-size: 1.3rem;">${formattedExpiry}</div>
+                            <div style="color: #78350f; font-size: 0.75rem; margin-top: 4px;">Order will be placed for this specific expiry only</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Breeze Token Information -->
+                ${analysis.breeze_token ? `
+                <div style="background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%); padding: 15px; border-radius: 8px; margin-bottom: 15px; border: 2px solid #3b82f6;">
+                    <div style="display: flex; align-items: center; gap: 12px;">
+                        <span style="font-size: 1.5rem;">🔑</span>
+                        <div style="flex: 1;">
+                            <div style="color: #1e40af; font-size: 0.875rem; font-weight: 600; margin-bottom: 4px;">Breeze Instrument Token</div>
+                            <div style="color: #1f2937; font-weight: 700; font-size: 1.1rem; font-family: 'Courier New', monospace;">${analysis.breeze_token}</div>
+                            ${analysis.breeze_stock_code ? `
+                            <div style="color: #1e40af; font-size: 0.75rem; margin-top: 4px;">
+                                Stock Code: <span style="font-weight: 600; font-family: 'Courier New', monospace;">${analysis.breeze_stock_code}</span>
+                            </div>
+                            ` : ''}
+                            <div style="color: #1e3a8a; font-size: 0.75rem; margin-top: 4px;">This token will be used for order placement on ICICI Breeze</div>
+                        </div>
+                    </div>
+                </div>
+                ` : `
+                <div style="background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%); padding: 15px; border-radius: 8px; margin-bottom: 15px; border: 2px solid #f59e0b;">
+                    <div style="display: flex; align-items: center; gap: 12px;">
+                        <span style="font-size: 1.5rem;">⚠️</span>
+                        <div style="flex: 1;">
+                            <div style="color: #92400e; font-size: 0.875rem; font-weight: 600; margin-bottom: 4px;">Breeze Token</div>
+                            <div style="color: #78350f; font-size: 0.875rem;">Token not available - will be fetched during order placement</div>
+                        </div>
+                    </div>
+                </div>
+                `}
+
+                <!-- Order Details -->
+                <div style="background: #f9fafb; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
+                    <h3 style="color: #374151; margin-bottom: 15px; font-size: 1.1rem;">Order Details</h3>
+
+                    <!-- Contract Card -->
+                    <div style="background: white; padding: 15px; border-radius: 6px; border-left: 4px solid ${directionColor}; margin-bottom: 15px;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                            <div>
+                                <div style="font-size: 1.25rem; font-weight: 700; color: #1f2937;">${this.currentContract.symbol || 'N/A'}</div>
+                                <div style="color: #6b7280; font-size: 0.875rem;">${formattedExpiry}</div>
+                            </div>
+                            <div style="background: ${directionBg}; color: ${directionColor}; padding: 6px 16px; border-radius: 20px; font-weight: 600; font-size: 0.9rem;">
+                                ${direction}
+                            </div>
+                        </div>
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px;">
+                            <div>
+                                <div style="color: #6b7280; font-size: 0.875rem;">Entry Price</div>
+                                <div style="font-weight: 700; color: #1f2937;">₹${futuresPrice.toFixed(2)}</div>
+                            </div>
+                            <div>
+                                <div style="color: #6b7280; font-size: 0.875rem;">Quantity</div>
+                                <div style="font-weight: 700; color: #1f2937;">${lots} lots × ${lotSize} = ${totalQuantity}</div>
+                            </div>
+                            <div>
+                                <div style="color: #6b7280; font-size: 0.875rem;">Stop Loss</div>
+                                <div style="font-weight: 700; color: #ef4444;">₹${stopLoss.toFixed(2)}</div>
+                            </div>
+                            <div>
+                                <div style="color: #6b7280; font-size: 0.875rem;">Target</div>
+                                <div style="font-weight: 700; color: #10b981;">₹${target.toFixed(2)}</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Position Summary -->
+                    <div style="background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%); padding: 15px; border-radius: 6px; border: 1px solid #3b82f6; margin-bottom: 15px;">
+                        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 15px;">
+                            <div>
+                                <div style="color: #1e40af; font-size: 0.875rem;">Entry Value</div>
+                                <div style="font-size: 1.25rem; font-weight: 700; color: #1f2937;">₹${this.formatNumber(entryValue)}</div>
+                            </div>
+                            <div>
+                                <div style="color: #1e40af; font-size: 0.875rem;">Max Risk</div>
+                                <div style="font-size: 1.25rem; font-weight: 700; color: #ef4444;">₹${this.formatNumber(totalRisk)}</div>
+                            </div>
+                            <div>
+                                <div style="color: #1e40af; font-size: 0.875rem;">Target Profit</div>
+                                <div style="font-size: 1.25rem; font-weight: 700; color: #10b981;">₹${this.formatNumber(totalReward)}</div>
+                            </div>
+                        </div>
+                        <div style="margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(59, 130, 246, 0.3);">
+                            <div style="display: flex; justify-content: space-between; align-items: center;">
+                                <span style="color: #1e40af; font-size: 0.875rem;">Risk:Reward Ratio</span>
+                                <span style="font-size: 1.1rem; font-weight: 700; color: ${riskRewardRatio >= 2 ? '#10b981' : '#ef4444'};">1:${riskRewardRatio} ${riskRewardRatio >= 2 ? '✅' : '⚠️'}</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Margin Details -->
+                    <div style="background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%); padding: 15px; border-radius: 6px; border: 1px solid #3b82f6;">
+                        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
+                            <h4 style="color: #1e40af; margin: 0; font-size: 0.9rem; font-weight: 600;">💰 Margin (ICICI Breeze)</h4>
+                            <span style="background: #3b82f6; color: white; padding: 2px 8px; border-radius: 12px; font-size: 0.7rem; font-weight: 500;">LIVE</span>
+                        </div>
+                        <div style="margin-bottom: 12px;">
+                            <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
+                                <span style="color: #1e40af; font-size: 0.875rem;">Margin Required</span>
+                                <span style="font-size: 1.1rem; font-weight: 700; color: #dc2626;">₹${this.formatNumber(marginRequired)}</span>
+                            </div>
+                            <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
+                                <span style="color: #1e40af; font-size: 0.875rem;">Margin Available</span>
+                                <span style="font-size: 1.1rem; font-weight: 700; color: #10b981;">₹${this.formatNumber(marginAvailable)}</span>
+                            </div>
+                            <div style="display: flex; justify-content: space-between;">
+                                <span style="color: #1e40af; font-size: 0.875rem;">Utilization</span>
+                                <span style="font-size: 1.1rem; font-weight: 700; color: ${marginUtilization > 80 ? '#dc2626' : '#059669'};">${marginUtilization}%</span>
+                            </div>
+                        </div>
+                        <div style="background: rgba(255,255,255,0.7); height: 8px; border-radius: 4px; overflow: hidden;">
+                            <div style="height: 100%; background: ${marginUtilization > 80 ? '#ef4444' : '#10b981'}; width: ${Math.min(marginUtilization, 100)}%; transition: width 0.3s;"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Risk Disclosure -->
+                <div style="background: #fef2f2; padding: 15px; border-radius: 6px; margin-bottom: 20px; border: 1px solid #fecaca;">
+                    <h4 style="color: #dc2626; margin-bottom: 10px; font-size: 0.9rem;">⚠️ Risk Disclosure</h4>
+                    <ul style="margin: 0; padding-left: 20px; color: #7f1d1d; font-size: 0.875rem; line-height: 1.5;">
+                        <li>This is a ${direction} futures trade with defined risk</li>
+                        <li>Maximum risk: ₹${this.formatNumber(totalRisk)} (if stop loss is hit)</li>
+                        <li>Maximum profit: ₹${this.formatNumber(totalReward)} (if target is reached)</li>
+                        <li>Breakeven: ₹${futuresPrice.toFixed(2)}</li>
+                        <li>Order will be placed as ${direction === 'LONG' ? 'BUY' : 'SELL'} order on ICICI Breeze platform</li>
+                    </ul>
+                </div>
+
+                <!-- Action Buttons -->
+                <div style="display: flex; gap: 15px; justify-content: center;">
+                    <button onclick="TradeVerification.executeTrade()"
+                            style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; padding: 12px 30px; border: none; border-radius: 6px; font-size: 1rem; font-weight: 600; cursor: pointer;">
+                        ✅ Confirm & Place Order
+                    </button>
+                    <button onclick="TradeVerification.closeConfirmation()"
+                            style="background: #6b7280; color: white; padding: 12px 30px; border: none; border-radius: 6px; font-size: 1rem; font-weight: 600; cursor: pointer;">
+                        Back to Edit
+                    </button>
+                </div>
+            </div>
+        `;
+
+        document.body.appendChild(modal);
+    },
+
+    closeConfirmation() {
+        const modal = document.getElementById('verifyConfirmationModal');
+        if (modal) {
+            modal.remove();
+        }
+    },
+
+    async executeTrade() {
+        const lots = parseInt(document.getElementById('verifyLotsInput').value) || 1;
+
+        this.closeConfirmation();
+
+        try {
+            // Show loading state
+            UIBuilders.showNotification({
+                type: 'info',
+                message: 'Placing order on ICICI Breeze...',
+                icon: '⏳'
+            });
+
+            const analysis = this.currentContract.analysis || {};
+
+            // CRITICAL: Validate expiry date exists
+            if (!analysis.expiry_date) {
+                console.error('[Verify Trade] ERROR: No expiry_date in analysis:', analysis);
+                throw new Error('Expiry date is missing from contract data. Cannot place order.');
+            }
+
+            // Prepare order data matching backend API expectations
+            // IMPORTANT: Backend expects 'expiry' in YYYY-MM-DD format
+            const orderData = {
+                stock_symbol: this.currentContract.symbol,
+                expiry: analysis.expiry_date,  // CRITICAL: Backend expects 'expiry' parameter in YYYY-MM-DD format
+                direction: analysis.direction.toLowerCase(),  // 'long' or 'short'
+                lots: lots,
+                price: analysis.contract_price,
+                stop_loss: analysis.stop_loss,
+                target: analysis.target
+            };
+
+            console.log('[Verify Trade] ========================================');
+            console.log('[Verify Trade] Placing order with data:', orderData);
+            console.log('[Verify Trade] CRITICAL: Expiry date being sent:', {
+                raw: analysis.expiry_date,
+                format: 'YYYY-MM-DD',
+                symbol: this.currentContract.symbol,
+                fullAnalysis: analysis
+            });
+            console.log('[Verify Trade] ========================================');
+
+            const response = await ApiClient.post(ApiClient.endpoints.placeFutureOrder, orderData);
+
+            console.log('[Verify Trade] Order response:', response);
+
+            if (response && response.success) {
+                UIBuilders.showNotification({
+                    type: 'success',
+                    message: `✅ Futures order placed successfully on ICICI Breeze! Order ID: ${response.order_id || 'N/A'}`,
+                    icon: '✅',
+                    timeout: false  // Persistent notification for success
+                });
+
+                // Show detailed success in console
+                console.log('[Verify Trade] Order placed successfully:', {
+                    order_id: response.order_id,
+                    symbol: this.currentContract.symbol,
+                    direction: analysis.direction,
+                    lots: lots,
+                    price: analysis.contract_price
+                });
+
+                this.reset();
+            } else {
+                // Build detailed error message from API response
+                let errorDetails = response?.error || 'Failed to place order';
+
+                // Add batch result details if available
+                if (response?.batch_result) {
+                    const batch = response.batch_result;
+                    errorDetails += `\n\n📊 Batch Results:\n`;
+                    errorDetails += `• Total Batches: ${batch.total_batches || 0}\n`;
+                    errorDetails += `• Completed: ${batch.batches_completed || 0}\n`;
+                    errorDetails += `• Failed: ${batch.batches_failed || 0}`;
+
+                    // Show specific failure reasons
+                    if (batch.failure_reasons && batch.failure_reasons.length > 0) {
+                        errorDetails += `\n\n⚠️ Failure Reasons:\n`;
+                        batch.failure_reasons.forEach((reason, idx) => {
+                            errorDetails += `${idx + 1}. ${reason}\n`;
+                        });
+                    }
+                }
+
+                // Log full response for debugging
+                console.error('[Verify Trade] Full API response:', response);
+
+                throw new Error(errorDetails);
+            }
+        } catch (error) {
+            console.error('[Verify Trade] Order placement error:', error);
+
+            // Show detailed error with API response details
+            UIBuilders.showNotification({
+                type: 'error',
+                message: `❌ Order Placement Failed\n\n${error.message}`,
+                icon: '❌',
+                timeout: false  // Keep error visible until user dismisses
+            });
+        }
+    },
+
+    formatNumber(num) {
+        if (!num) return '0';
+        return Math.round(num).toLocaleString('en-IN');
+    },
+
+    reset() {
+        const resultsDiv = document.getElementById('verifyResults');
+        resultsDiv.style.display = 'none';
+        resultsDiv.innerHTML = '';
+        this.currentContract = null;
+    },
+
+    init() {
+        console.log('Trade Verification module initialized');
+        // Load initial contracts
+        this.refreshContracts();
+    }
+};
+
+// Function stub for backward compatibility
+function hideResults() {
+    document.getElementById('resultsPanel').style.display = 'none';
+}
+</script>
+
+<!-- Main Application -->
+<script src="{% static 'js/trading/app.js' %}"></script>
+
+{% endblock %}
