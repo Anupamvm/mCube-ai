@@ -272,8 +272,8 @@ class BrokerFactory:
 def register_brokers():
     """Register all available broker implementations"""
     try:
-        from tools.breeze import BreezeAPI
-        BrokerFactory.register('breeze', BreezeAPI)
+        from apps.brokers.integrations.breeze import BreezeAPIClient
+        BrokerFactory.register('breeze', BreezeAPIClient)
     except ImportError:
         pass
 

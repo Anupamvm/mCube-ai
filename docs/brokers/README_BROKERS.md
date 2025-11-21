@@ -30,7 +30,7 @@ api.logout()
 
 **ICICI Breeze (Ready Now)**
 ```python
-from tools.breeze import BreezeAPI
+from apps.brokers.integrations.breeze import get_breeze_client, BreezeAPIClient
 api = BreezeAPI()
 api.login()
 margin = api.get_available_margin()

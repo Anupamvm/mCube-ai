@@ -37,43 +37,47 @@ if cred:
     cred.save()
 ```
 
-**Option 2: Access Directly**
+**Option 2: Using Integration Module**
 ```python
-from apps.core.models import CredentialStore
-from tools.breeze import BreezeAPI
+from apps.brokers.integrations.breeze import get_breeze_client, BreezeAPIClient
 
-# Get Breeze-Anupam credentials
-cred = CredentialStore.objects.filter(service='breeze', name='Breeze-Anupam').first()
+# Get authenticated client
+breeze = get_breeze_client()
 
-api_key = cred.api_key
-api_secret = cred.api_secret
-session_token = cred.session_token
-
-# Use in your code
-from breeze_connect import BreezeConnect
-breeze = BreezeConnect(api_key=api_key)
-response = breeze.generate_session(
-    api_secret=api_secret,
-    session_token=session_token
-)
-```
-
-**Option 3: Using BreezeAPI Wrapper**
-```python
-from tools.breeze import BreezeAPI
-
-api = BreezeAPI()
-api.login()
-
-# Get margin
-margin = api.get_available_margin()
-print(f"Margin: ₹{margin:,.2f}")
+# Get funds and margins
+funds_resp = breeze.get_funds()
+print(f"Funds: {funds_resp}")
 
 # Get positions
-positions = api.get_positions()
-print(f"Positions: {len(positions)}")
+positions_resp = breeze.get_portfolio_positions()
+print(f"Positions: {positions_resp}")
+```
 
-api.logout()
+**Option 3: Using BreezeAPIClient for Orders**
+```python
+from apps.brokers.integrations.breeze import BreezeAPIClient
+
+# Create client (auto-loads credentials from database)
+client = BreezeAPIClient()
+
+# Place futures order
+result = client.place_futures_order(
+    symbol='NIFTY',
+    direction='buy',
+    quantity=1,
+    order_type='market'
+)
+print(f"Order Status: {result}")
+
+# Place options strangle
+strangle = client.place_strangle_order(
+    symbol='NIFTY',
+    call_strike=24500,
+    put_strike=24000,
+    quantity=1,
+    expiry='27-NOV-2025'
+)
+print(f"Strangle Status: {strangle}")
 ```
 
 ### Important Note About Session Token
@@ -238,12 +242,17 @@ api.logout()
 
 ### 3. Use Breeze (Once Session Token is Refreshed)
 ```python
-from tools.breeze import BreezeAPI
+from apps.brokers.integrations.breeze import get_breeze_client, BreezeAPIClient
 
-api = BreezeAPI()
-api.login()
-margin = api.get_available_margin()
-api.logout()
+# Option A: Quick operations with get_breeze_client
+breeze = get_breeze_client()
+funds = breeze.get_funds()
+print(f"Funds: {funds}")
+
+# Option B: Order placement with BreezeAPIClient
+client = BreezeAPIClient()
+result = client.place_futures_order(symbol='NIFTY', direction='buy', quantity=1)
+print(f"Order: {result}")
 ```
 
 ### 4. Use Factory Pattern (Recommended)

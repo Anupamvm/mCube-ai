@@ -127,7 +127,7 @@ broker.logout()
 
 ### 2. Place Order
 ```python
-from tools.breeze import BreezeAPI
+from apps.brokers.integrations.breeze import get_breeze_client, BreezeAPIClient
 
 api = BreezeAPI()
 api.login()

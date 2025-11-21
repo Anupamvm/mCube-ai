@@ -489,7 +489,7 @@ python manage.py shell
 # tests/test_brokers.py
 
 from apps.brokers.interfaces import BrokerFactory
-from tools.breeze import BreezeAPI
+from apps.brokers.integrations.breeze import get_breeze_client, BreezeAPIClient
 
 def test_breeze_login():
     api = BreezeAPI()

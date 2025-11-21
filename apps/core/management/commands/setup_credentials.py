@@ -270,7 +270,7 @@ class Command(BaseCommand):
             if not cred:
                 raise CommandError('Breeze credentials not found. Run --setup-breeze first')
 
-            from tools.breeze import BreezeAPI
+            from apps.brokers.integrations.breeze import BreezeAPIClient
 
             api = BreezeAPI()
 

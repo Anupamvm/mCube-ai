@@ -294,7 +294,7 @@ def start_day_task():
 
         # ===== ACTUAL ORDER PLACEMENT =====
         try:
-            from tools.breeze import get_breeze_api
+            from apps.brokers.integrations.breeze import get_breeze_api
 
             _log("info", task_name, "Placing order via Breeze API...")
 
@@ -426,7 +426,7 @@ def monitor_task():
 
         # ===== GET CURRENT P&L FROM BROKER =====
         try:
-            from tools.breeze import get_breeze_api
+            from apps.brokers.integrations.breeze import get_breeze_api
 
             api = get_breeze_api()
             current_pnl = api.get_position_pnl()
@@ -471,7 +471,7 @@ def monitor_task():
 
             # ===== EMERGENCY CLOSE ALL POSITIONS =====
             try:
-                from tools.breeze import get_breeze_api
+                from apps.brokers.integrations.breeze import get_breeze_api
 
                 api = get_breeze_api()
                 positions = api.get_positions()
@@ -563,7 +563,7 @@ def closing_day_task():
 
         # ===== GET CURRENT P&L FROM BROKER =====
         try:
-            from tools.breeze import get_breeze_api
+            from apps.brokers.integrations.breeze import get_breeze_api
 
             api = get_breeze_api()
 
@@ -608,7 +608,7 @@ def closing_day_task():
 
             # ===== CLOSE ALL POSITIONS =====
             try:
-                from tools.breeze import get_breeze_api
+                from apps.brokers.integrations.breeze import get_breeze_api
 
                 api = get_breeze_api()
 

@@ -31,7 +31,7 @@ broker.logout()
 
 ### Direct Import
 ```python
-from tools.breeze import BreezeAPI
+from apps.brokers.integrations.breeze import get_breeze_client, BreezeAPIClient
 from tools.neo import NeoAPI
 
 api = BreezeAPI()
@@ -313,7 +313,7 @@ python manage.py setup_credentials --test-kotakneo
 
 # Django shell
 python manage.py shell
->>> from tools.breeze import BreezeAPI
+>>> from apps.brokers.integrations.breeze import get_breeze_client, BreezeAPIClient
 >>> api = BreezeAPI()
 >>> api.login()
 True

@@ -91,7 +91,7 @@ Attempting login...
 
 ### Step 4: Start Using
 ```python
-from tools.breeze import BreezeAPI
+from apps.brokers.integrations.breeze import get_breeze_client, BreezeAPIClient
 
 api = BreezeAPI()
 api.login()
@@ -237,7 +237,7 @@ broker.logout()
 ### Direct Import (Traditional)
 
 ```python
-from tools.breeze import BreezeAPI
+from apps.brokers.integrations.breeze import get_breeze_client, BreezeAPIClient
 # or
 from tools.neo import NeoAPI
 
@@ -465,7 +465,7 @@ cred.session_token = None
 cred.save()
 
 # Re-login
-from tools.breeze import BreezeAPI
+from apps.brokers.integrations.breeze import get_breeze_client, BreezeAPIClient
 api = BreezeAPI()
 api.login()  # Will obtain new token
 ```

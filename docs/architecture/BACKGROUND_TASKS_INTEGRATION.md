@@ -246,7 +246,7 @@ Full-featured broker integration with margin checking.
 **Location:** `tools/breeze.py`
 
 ```python
-from tools.breeze import BreezeAPI
+from apps.brokers.integrations.breeze import get_breeze_client, BreezeAPIClient
 
 # Initialize
 api = BreezeAPI()
@@ -604,7 +604,7 @@ python manage.py enable_trading  # View current config
 
 **Check available margin:**
 ```python
-from tools.breeze import get_breeze_api
+from apps.brokers.integrations.breeze import get_breeze_client
 
 api = get_breeze_api()
 margin = api.get_margin()

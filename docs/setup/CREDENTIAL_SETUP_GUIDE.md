@@ -156,33 +156,45 @@ mpin = neo_creds.neo_password
 
 #### ICICI Breeze
 ```python
-from tools.breeze import BreezeAPI
-
-# Initialize API (loads credentials automatically)
-api = BreezeAPI()
-
-# Login
-api.login()
-
-# Get margin
-margin = api.get_available_margin()  # Returns float
-
-# Check positions
-positions = api.get_positions()  # Returns list of dicts
-
-# Place order
-order_id = api.place_order(
-    symbol='RELIANCE',
-    action='B',          # 'B' for BUY, 'S' for SELL
-    quantity=1,
-    order_type='MKT',    # 'MKT' or 'L' (LIMIT)
-    price=0,
-    exchange='NFO',      # 'NSE' or 'NFO'
-    product='NRML'       # 'NRML', 'MIS', 'CNC'
+from apps.brokers.integrations.breeze import (
+    get_breeze_client,
+    BreezeAPIClient,
+    place_futures_order_with_security_master,
+    place_option_order_with_security_master
 )
 
-# Logout
-api.logout()
+# Option 1: Using helper functions (for quick operations)
+breeze = get_breeze_client()
+
+# Get funds
+funds_resp = breeze.get_funds()
+print(f"Available margin: {funds_resp}")
+
+# Get positions
+positions_resp = breeze.get_portfolio_positions()
+print(f"Positions: {positions_resp}")
+
+# Option 2: Using BreezeAPIClient (for order placement)
+client = BreezeAPIClient()
+
+# Place futures order
+order_result = client.place_futures_order(
+    symbol='NIFTY',
+    direction='buy',
+    quantity=1,  # in lots
+    order_type='market'
+)
+print(f"Futures order: {order_result}")
+
+# Place strangle order
+strangle_result = client.place_strangle_order(
+    symbol='NIFTY',
+    call_strike=24500,
+    put_strike=24000,
+    quantity=1,
+    expiry='27-NOV-2025'
+)
+print(f"Strangle order: {strangle_result}")
 ```
 
 #### Kotak Neo
@@ -363,28 +375,31 @@ python manage.py setup_credentials --setup-kotakneo
 ## Integration with Trading Strategies
 
 ```python
-from apps.core.models import CredentialStore
-from tools.breeze import BreezeAPI
-from tools.neo import NeoAPI
+from apps.brokers.integrations.breeze import get_breeze_client, BreezeAPIClient
 
 class TradingStrategy:
     def __init__(self, broker='breeze'):
         if broker == 'breeze':
-            self.api = BreezeAPI()
+            # For Breeze - use BreezeAPIClient
+            self.client = BreezeAPIClient()
+            self.breeze = get_breeze_client()
         elif broker == 'kotakneo':
-            self.api = NeoAPI()
-
-        # Login automatically
-        self.api.login()
+            # TODO: Implement Kotak integration
+            pass
 
     def check_margin(self, required: float) -> bool:
-        return self.api.check_margin_sufficient(required)
+        """Check if sufficient margin is available"""
+        from apps.brokers.integrations.breeze import get_nfo_margin
+        margin_data = get_nfo_margin()
+        return margin_data and margin_data.get('cash_limit', 0) >= required
 
     def get_positions(self):
-        return self.api.get_positions()
+        """Get current positions"""
+        return self.breeze.get_portfolio_positions()
 
     def place_trade(self, symbol, quantity, action):
-        return self.api.place_order(
+        """Place a trade"""
+        result = self.client.place_futures_order(
             symbol=symbol,
             quantity=quantity,
             action=action,

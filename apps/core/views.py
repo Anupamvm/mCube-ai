@@ -703,7 +703,7 @@ def verify_breeze_login(request):
     from django.shortcuts import render
     from apps.core.models import CredentialStore
     from django.utils import timezone
-    from tools.breeze import BreezeAPI
+    from apps.brokers.integrations.breeze import BreezeAPIClient
 
     # Get credentials
     creds = CredentialStore.objects.filter(service='breeze').first()
