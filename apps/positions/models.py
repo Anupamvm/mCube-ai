@@ -97,13 +97,17 @@ class Position(TimeStampedModel):
     stop_loss = models.DecimalField(
         max_digits=15,
         decimal_places=2,
-        help_text="Stop-loss price"
+        null=True,
+        blank=True,
+        help_text="Stop-loss price (optional)"
     )
 
     target = models.DecimalField(
         max_digits=15,
         decimal_places=2,
-        help_text="Target price"
+        null=True,
+        blank=True,
+        help_text="Target price (optional)"
     )
 
     # Strangle-specific fields

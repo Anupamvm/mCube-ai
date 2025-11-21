@@ -8,24 +8,52 @@ https://docs.djangoproject.com/en/4.2/topics/settings/
 
 For the full list of settings and their values, see
 https://docs.djangoproject.com/en/4.2/ref/settings/
+
+Configuration:
+    - Uses django-environ for environment variable management
+    - Loads settings from .env file in project root
+    - See .env.example for required environment variables
 """
 
 from pathlib import Path
+import environ
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+# Initialize environment variables
+env = environ.Env(
+    # Set default values and casting
+    DEBUG=(bool, False),  # Default to False for production safety
+    ALLOWED_HOSTS=(list, ['localhost', '127.0.0.1']),
+)
 
-# Quick-start development settings - unsuitable for production
-# See https://docs.djangoproject.com/en/4.2/howto/deployment/checklist/
+# Read .env file
+env_file = BASE_DIR / '.env'
+if env_file.exists():
+    environ.Env.read_env(env_file)
+else:
+    # In production, environment variables should be set externally
+    # This warning helps catch configuration issues
+    import warnings
+    warnings.warn(
+        "No .env file found. Using environment variables or defaults. "
+        "For local development, copy .env.example to .env",
+        UserWarning
+    )
+
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-1kl+i4u(*w@#_l5&spm2t$jft9_&fuy&0k)_gs59ueri*(+8u2'
+# In production, this MUST be set via environment variable
+SECRET_KEY = env('SECRET_KEY', default='django-insecure-1kl+i4u(*w@#_l5&spm2t$jft9_&fuy&0k)_gs59ueri*(+8u2')
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+# Set DEBUG=False in production .env file
+DEBUG = env('DEBUG')
 
-ALLOWED_HOSTS = []
+# Allowed hosts - configure in .env file
+# Example in .env: ALLOWED_HOSTS=example.com,www.example.com,api.example.com
+ALLOWED_HOSTS = env('ALLOWED_HOSTS')
 
 
 # Application definition
