@@ -4,7 +4,10 @@ Market data models for mCube Trading System
 
 from decimal import Decimal
 from django.db import models
+from django.contrib.auth import get_user_model
 from apps.core.models import TimeStampedModel
+
+User = get_user_model()
 
 
 class MarketData(TimeStampedModel):
@@ -643,3 +646,83 @@ class KnowledgeBase(TimeStampedModel):
 
     def __str__(self):
         return f"{self.title[:50]}... ({self.source_type})"
+
+
+class DeepDiveAnalysis(TimeStampedModel):
+    """
+    Store Level 2 Deep-Dive Analysis Reports
+
+    Stores comprehensive analysis reports generated for futures trading decisions.
+    Includes tracking of user decisions and trade outcomes for performance analysis.
+    """
+
+    # Basic Info
+    symbol = models.CharField(max_length=50, db_index=True)
+    expiry = models.DateField()
+    level1_score = models.IntegerField(help_text="Level 1 composite score")
+    level1_direction = models.CharField(max_length=20, default='NEUTRAL')
+
+    # Report data (JSON)
+    report = models.JSONField(help_text="Complete deep-dive analysis report")
+
+    # User and decision tracking
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='deep_dive_analyses')
+    decision = models.CharField(
+        max_length=20,
+        choices=[
+            ('EXECUTED', 'Executed Trade'),
+            ('MODIFIED', 'Modified Parameters'),
+            ('REJECTED', 'Rejected'),
+            ('PENDING', 'Pending Decision')
+        ],
+        default='PENDING'
+    )
+    decision_notes = models.TextField(blank=True, help_text="User notes on decision")
+    decision_timestamp = models.DateTimeField(null=True, blank=True)
+
+    # Trade tracking (if executed)
+    trade_executed = models.BooleanField(default=False)
+    entry_price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    exit_price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    lot_size = models.IntegerField(null=True, blank=True)
+    pnl = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True, help_text="P&L in rupees")
+    pnl_pct = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True, help_text="P&L percentage")
+
+    # Performance metadata
+    conviction_score = models.IntegerField(null=True, blank=True, help_text="Conviction score from report")
+    risk_grade = models.CharField(max_length=20, blank=True)
+
+    class Meta:
+        db_table = 'deep_dive_analysis'
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['symbol', 'expiry']),
+            models.Index(fields=['user', '-created_at']),
+            models.Index(fields=['decision']),
+            models.Index(fields=['trade_executed']),
+        ]
+
+    def __str__(self):
+        return f"{self.symbol} {self.expiry} - {self.decision} (Score: {self.level1_score})"
+
+    def calculate_pnl(self):
+        """Calculate P&L if entry and exit prices are set"""
+        if self.entry_price and self.exit_price and self.lot_size:
+            pnl_per_unit = self.exit_price - self.entry_price
+            self.pnl = pnl_per_unit * self.lot_size
+            self.pnl_pct = (pnl_per_unit / self.entry_price) * 100
+            self.save()
+
+    def mark_executed(self, entry_price, lot_size):
+        """Mark trade as executed"""
+        self.trade_executed = True
+        self.decision = 'EXECUTED'
+        self.entry_price = entry_price
+        self.lot_size = lot_size
+        self.save()
+
+    def close_trade(self, exit_price):
+        """Close trade and calculate P&L"""
+        self.exit_price = exit_price
+        self.calculate_pnl()
+        self.save()

@@ -36,6 +36,84 @@ NSE_BASE = "https://www.nseindia.com"
 NSE_OC_URL = "https://www.nseindia.com/api/option-chain-indices?symbol=NIFTY"
 
 
+class BreezeAPI:
+    """
+    Simplified Breeze API wrapper for login and account queries.
+
+    This class provides a simple interface for authentication and fetching
+    account data (margin, positions) from ICICI Breeze.
+
+    For order placement, use BreezeAPIClient instead.
+    """
+
+    def __init__(self):
+        """Initialize Breeze API wrapper"""
+        self.breeze = None
+        self.session_token = None
+        self._load_credentials()
+
+    def _load_credentials(self):
+        """Load Breeze credentials from database"""
+        try:
+            creds = CredentialStore.objects.filter(service='breeze').first()
+            if creds:
+                self.session_token = creds.session_token
+        except Exception as e:
+            logger.error(f"Error loading Breeze credentials: {e}")
+
+    def login(self) -> bool:
+        """
+        Authenticate with Breeze API using stored session token.
+
+        Returns:
+            bool: True if login successful, False otherwise
+        """
+        try:
+            self.breeze = get_breeze_client()
+            logger.info("Breeze login successful")
+            return True
+        except BreezeAuthenticationError as e:
+            logger.error(f"Breeze authentication failed: {e}")
+            return False
+        except Exception as e:
+            logger.error(f"Breeze login error: {e}")
+            return False
+
+    def get_margin(self) -> dict:
+        """
+        Get NFO margin information.
+
+        Returns:
+            dict: Margin data with 'available_margin', 'used_margin', etc.
+        """
+        try:
+            margin_data = get_nfo_margin()
+            if margin_data:
+                return {
+                    'available_margin': _parse_float(margin_data.get('cash_limit', 0)),
+                    'used_margin': _parse_float(margin_data.get('amount_allocated', 0)),
+                    'raw_data': margin_data
+                }
+            return {'available_margin': 0, 'used_margin': 0}
+        except Exception as e:
+            logger.error(f"Error fetching margin: {e}")
+            return {'available_margin': 0, 'used_margin': 0}
+
+    def get_positions(self) -> list:
+        """
+        Get current broker positions.
+
+        Returns:
+            list: List of position dicts or position-like objects
+        """
+        try:
+            _, positions = fetch_and_save_breeze_data()
+            return positions
+        except Exception as e:
+            logger.error(f"Error fetching positions: {e}")
+            return []
+
+
 class BreezeAPIClient:
     """
     Client wrapper for ICICI Breeze API with order placement methods.
@@ -396,6 +474,7 @@ def get_breeze_client():
             raise BreezeAuthenticationError("Breeze session token not found. Please login to continue.")
 
         logger.info(f"Attempting Breeze authentication with token from {creds.last_session_update}")
+        logger.info(f"Using API Key: {creds.api_key[:10]}... Session Token: {creds.session_token[:20]}...")
 
         breeze = BreezeConnect(api_key=creds.api_key)
         breeze.generate_session(
@@ -403,16 +482,32 @@ def get_breeze_client():
             session_token=creds.session_token
         )
 
-        logger.info("Breeze authentication successful")
+        logger.info("✅ Breeze authentication successful")
         return breeze
     except BreezeAuthenticationError:
         raise
     except Exception as e:
         error_msg = str(e).lower()
-        logger.error(f"Breeze client error: {str(e)}")
+        logger.error(f"❌ Breeze client error: {str(e)}")
 
-        # Detect common authentication error messages
-        if any(keyword in error_msg for keyword in ['session', 'authentication', 'unauthorized', 'invalid token', 'expired', 'login']):
+        # Provide specific guidance for common errors
+        if 'resource not available' in error_msg or 'customer details' in error_msg:
+            raise BreezeAuthenticationError(
+                "Breeze session token validation failed - 'Resource not available' error.\n\n"
+                "This usually means:\n"
+                "1. The session token doesn't match your API key\n"
+                "2. The session token has expired (tokens expire daily)\n"
+                "3. You need to get a fresh token from the Breeze portal\n\n"
+                "Steps to fix:\n"
+                "1. Go to: https://api.icicidirect.com/apiuser/login?api_key=YOUR_API_KEY\n"
+                "2. Login with your ICICI Direct credentials\n"
+                "3. Copy the NEW session token\n"
+                "4. Update it in the database\n"
+                "5. Ensure the API key in the URL matches the one in your database\n\n"
+                f"Original error: {str(e)}",
+                original_error=e
+            )
+        elif any(keyword in error_msg for keyword in ['session', 'authentication', 'unauthorized', 'invalid token', 'expired', 'login']):
             raise BreezeAuthenticationError(f"Breeze authentication failed: {str(e)}", original_error=e)
         raise
 
@@ -422,7 +517,11 @@ def get_nifty_quote():
     Get NIFTY50 spot price from Breeze cash quote.
 
     Returns:
-        dict: Quote data with LTP and other metrics, or None if failed
+        dict: Quote data with LTP and other metrics
+
+    Raises:
+        ValueError: If quote data is invalid or missing
+        BreezeAuthenticationError: If session is expired
     """
     breeze = get_breeze_client()
     resp = breeze.get_quotes(
@@ -434,11 +533,32 @@ def get_nifty_quote():
         strike_price=""
     )
     logger.info(f"NIFTY quote response: {resp}")
-    if resp and resp.get("Status") == 200 and resp.get("Success"):
-        rows = resp["Success"]
-        row = next((r for r in rows if (r or {}).get("exchange_code") == "NSE"), rows[0])
-        return row
-    return None
+
+    # Check if response is valid
+    if not resp:
+        raise ValueError("Empty response from Breeze API for NIFTY quote")
+
+    # Check for API errors
+    if resp.get("Status") != 200:
+        error_msg = resp.get("Error", "Unknown error")
+        status = resp.get("Status", "Unknown")
+        raise ValueError(f"Breeze API error (Status {status}): {error_msg}")
+
+    # Check for success data
+    if not resp.get("Success"):
+        raise ValueError("No success data in Breeze API response")
+
+    rows = resp["Success"]
+    if not rows:
+        raise ValueError("Empty success data from Breeze API")
+
+    # Find NSE row or use first row
+    row = next((r for r in rows if (r or {}).get("exchange_code") == "NSE"), rows[0] if rows else None)
+
+    if not row:
+        raise ValueError("No valid quote data found in Breeze API response")
+
+    return row
 
 
 def get_india_vix() -> Decimal:

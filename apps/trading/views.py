@@ -1173,7 +1173,17 @@ def trigger_nifty_strangle(request):
         # STEP 2: Get current Nifty price and VIX from Breeze
         try:
             nifty_quote = get_nifty_quote()
+
+            # Check if quote was fetched successfully
+            if not nifty_quote:
+                raise ValueError("Nifty quote returned None from Breeze API")
+
             nifty_price = Decimal(str(nifty_quote.get('ltp', 0)))
+
+            # Validate that we got a valid price
+            if nifty_price <= 0:
+                raise ValueError(f"Invalid Nifty price received: {nifty_price}")
+
             execution_log.append({
                 'step': 2,
                 'action': 'Nifty Spot Price',

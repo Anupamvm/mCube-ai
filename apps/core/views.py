@@ -14,6 +14,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 from tools.neo import _parse_float
 from apps.core.utils import format_currency
+from apps.brokers.integrations.breeze import BreezeAPI
 
 logger = logging.getLogger(__name__)
 
@@ -703,7 +704,7 @@ def verify_breeze_login(request):
     from django.shortcuts import render
     from apps.core.models import CredentialStore
     from django.utils import timezone
-    from apps.brokers.integrations.breeze import BreezeAPIClient
+    from apps.brokers.integrations.breeze import BreezeAPI
 
     # Get credentials
     creds = CredentialStore.objects.filter(service='breeze').first()
@@ -758,7 +759,7 @@ def verify_breeze_login(request):
             creds.refresh_from_db()
 
         breeze = BreezeAPI()
-        logger.info(f"BreezeAPI loaded session token: {breeze.session_token[:10] if breeze.session_token else 'None'}...")
+        logger.info(f"BreezeAPI initialized successfully")
         success = breeze.login()
 
         if success:
