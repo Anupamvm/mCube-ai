@@ -10,6 +10,39 @@ from typing import Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 
+def ensure_data_freshness():
+    """
+    Ensure Trendlyne data is fresh before running Level 2 analysis
+
+    Returns:
+        dict: Freshness check result
+    """
+    try:
+        from apps.data.utils.data_freshness import ensure_fresh_data
+
+        logger.info("Checking data freshness for Level 2 analysis...")
+        freshness_result = ensure_fresh_data(force=False)
+
+        if freshness_result['update_triggered']:
+            logger.warning(
+                f"⚠️  Stale data detected (age: {freshness_result['freshness_status']['oldest_age_minutes']:.1f} min). "
+                f"Update triggered in background."
+            )
+        else:
+            logger.info(f"✅ Data is fresh (age: {freshness_result['freshness_status']['oldest_age_minutes']:.1f} min)")
+
+        return freshness_result
+
+    except Exception as e:
+        logger.warning(f"Data freshness check failed: {e}")
+        return {
+            'success': False,
+            'was_stale': False,
+            'update_triggered': False,
+            'error': str(e)
+        }
+
+
 class InstitutionalBehaviorAnalyzer:
     """Analyze institutional and smart money behavior"""
 
@@ -24,6 +57,9 @@ class InstitutionalBehaviorAnalyzer:
         Returns:
             dict: Institutional behavior analysis
         """
+        # Check data freshness before analysis
+        freshness_result = ensure_data_freshness()
+
         if not stock_data:
             return self._empty_analysis("No stock data available")
 
@@ -359,6 +395,9 @@ class TechnicalDeepDive:
         Returns:
             dict: Technical analysis
         """
+        # Check data freshness before analysis
+        freshness_result = ensure_data_freshness()
+
         if not stock_data:
             return self._empty_analysis("No stock data available")
 

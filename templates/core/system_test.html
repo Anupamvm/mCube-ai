@@ -161,6 +161,11 @@
             color: #742a2a;
         }
 
+        .test-status.skip {
+            background: #feebc8;
+            color: #744210;
+        }
+
         .test-content {
             flex: 1;
         }
@@ -379,17 +384,22 @@
             {% for test in category.tests %}
             <div class="test-item">
                 <div class="test-status {{ test.status }}">
-                    {% if test.status == 'pass' %}✓{% elif test.status == 'warning' %}⚠{% else %}✗{% endif %}
+                    {% if test.status == 'pass' %}✓{% elif test.status == 'warning' %}⚠{% elif test.status == 'skip' %}⊘{% else %}✗{% endif %}
                 </div>
                 <div class="test-content">
                     <div class="test-name">{{ test.name }}</div>
-                    <div class="test-message">{{ test.message }}</div>
+                    <div class="test-message">{{ test.message|safe }}</div>
+                    {% if test.description %}
+                    <div class="test-description" style="margin-top: 8px; padding: 10px; background: #f7fafc; border-left: 3px solid #4299e1; border-radius: 4px; font-size: 13px; line-height: 1.6;">
+                        {{ test.description|safe }}
+                    </div>
+                    {% endif %}
                 </div>
                 {% if test.trigger_url %}
                 <div class="test-actions">
                     <form method="post" action="{{ test.trigger_url }}" style="display: inline;">
                         {% csrf_token %}
-                        <button type="submit" class="trigger-btn">{{ test.trigger_label }}</button>
+                        <button type="submit" class="trigger-btn">{{ test.trigger_label|default:"🔄 Run Test" }}</button>
                     </form>
                 </div>
                 {% endif %}

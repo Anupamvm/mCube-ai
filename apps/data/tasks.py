@@ -7,7 +7,7 @@ Schedule these tasks with Celery Beat for continuous data updates
 from celery import shared_task
 from django.utils import timezone
 
-from .trendlyne import get_all_trendlyne_data
+from .providers.trendlyne import get_all_trendlyne_data
 from .importers import TrendlyneDataImporter, ContractStockDataImporter
 from .broker_integration import ScheduledDataUpdater, MarketDataUpdater
 from .signals import SignalGenerator
@@ -310,6 +310,57 @@ def scan_for_opportunities_task(self):
 
     except Exception as e:
         logger.failure("Error scanning for opportunities", error=e)
+        return {"status": "error", "error": str(e)}
+
+
+@shared_task(name='fetch_and_import_trendlyne_data', bind=True)
+def fetch_and_import_trendlyne_data(self):
+    """
+    Combined task: Fetch AND import Trendlyne data in one go
+
+    This task is used by the data freshness checker to ensure data
+    is never older than 30 minutes. It runs the full cycle:
+    1. Fetch data from Trendlyne
+    2. Import into database
+    3. Calculate stock-level metrics
+
+    Returns:
+        dict: Status with counts of imported records
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+
+    logger.info("Starting combined Trendlyne fetch and import...")
+
+    try:
+        # Use management command for full cycle
+        from django.core.management import call_command
+        from io import StringIO
+
+        output = StringIO()
+        call_command('trendlyne_data_manager', '--full-cycle', stdout=output)
+
+        logger.info(f"Trendlyne full cycle completed: {output.getvalue()}")
+
+        # Get final statistics
+        from apps.data.models import ContractData, ContractStockData, TLStockData
+
+        stats = {
+            'ContractData': ContractData.objects.count(),
+            'ContractStockData': ContractStockData.objects.count(),
+            'TLStockData': TLStockData.objects.count(),
+        }
+
+        logger.info(f"Trendlyne data updated - Stats: {stats}")
+
+        return {
+            "status": "success",
+            "stats": stats,
+            "timestamp": timezone.now().isoformat()
+        }
+
+    except Exception as e:
+        logger.error(f"Trendlyne fetch and import failed: {e}", exc_info=True)
         return {"status": "error", "error": str(e)}
 
 

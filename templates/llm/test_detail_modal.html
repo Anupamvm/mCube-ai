@@ -1,0 +1,228 @@
+<!-- Modal template for showing detailed test information -->
+<div class="test-detail-modal" id="testDetailModal" style="display: none;">
+    <div class="modal-overlay" onclick="closeTestDetail()"></div>
+    <div class="modal-content">
+        <div class="modal-header">
+            <h2 id="modalTestName">Test Name</h2>
+            <button class="modal-close" onclick="closeTestDetail()">×</button>
+        </div>
+        <div class="modal-body">
+            <div id="modalTestDescription"></div>
+            <div class="modal-actions">
+                <button id="modalTriggerBtn" class="btn-trigger">Run Test</button>
+                <button class="btn-cancel" onclick="closeTestDetail()">Close</button>
+            </div>
+            <div id="modalTestResult" style="display: none;">
+                <h3>Test Result:</h3>
+                <pre id="testResultContent"></pre>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+.test-detail-modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 1000;
+}
+
+.modal-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.7);
+}
+
+.modal-content {
+    position: relative;
+    max-width: 800px;
+    margin: 50px auto;
+    background: white;
+    border-radius: 12px;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+    max-height: calc(100vh - 100px);
+    overflow-y: auto;
+}
+
+.modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 25px 30px;
+    border-bottom: 2px solid #e2e8f0;
+}
+
+.modal-header h2 {
+    margin: 0;
+    color: #2d3748;
+    font-size: 24px;
+}
+
+.modal-close {
+    background: none;
+    border: none;
+    font-size: 32px;
+    color: #a0aec0;
+    cursor: pointer;
+    padding: 0;
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    transition: all 0.2s;
+}
+
+.modal-close:hover {
+    background: #f7fafc;
+    color: #2d3748;
+}
+
+.modal-body {
+    padding: 30px;
+}
+
+.modal-body h3 {
+    color: #2d3748;
+    margin: 20px 0 10px 0;
+}
+
+.modal-body ul {
+    margin-left: 20px;
+    line-height: 1.8;
+}
+
+.modal-body b, .modal-body strong {
+    color: #4299e1;
+}
+
+.modal-actions {
+    margin-top: 30px;
+    display: flex;
+    gap: 15px;
+}
+
+.btn-trigger, .btn-cancel {
+    padding: 12px 24px;
+    border: none;
+    border-radius: 8px;
+    font-size: 16px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.btn-trigger {
+    background: #4299e1;
+    color: white;
+    flex: 1;
+}
+
+.btn-trigger:hover {
+    background: #3182ce;
+}
+
+.btn-trigger:disabled {
+    background: #a0aec0;
+    cursor: not-allowed;
+}
+
+.btn-cancel {
+    background: #e2e8f0;
+    color: #4a5568;
+}
+
+.btn-cancel:hover {
+    background: #cbd5e0;
+}
+
+#modalTestResult {
+    margin-top: 20px;
+    padding: 20px;
+    background: #f7fafc;
+    border-radius: 8px;
+    border-left: 4px solid #4299e1;
+}
+
+#testResultContent {
+    margin: 10px 0 0 0;
+    padding: 15px;
+    background: white;
+    border-radius: 6px;
+    overflow-x: auto;
+    font-family: 'Courier New', monospace;
+    font-size: 14px;
+}
+</style>
+
+<script>
+function showTestDetail(testName, description, triggerUrl) {
+    document.getElementById('modalTestName').textContent = testName;
+    document.getElementById('modalTestDescription').innerHTML = description;
+    document.getElementById('testDetailModal').style.display = 'block';
+    document.getElementById('modalTestResult').style.display = 'none';
+
+    const triggerBtn = document.getElementById('modalTriggerBtn');
+    triggerBtn.onclick = function() {
+        runTest(triggerUrl);
+    };
+}
+
+function closeTestDetail() {
+    document.getElementById('testDetailModal').style.display = 'none';
+}
+
+function runTest(triggerUrl) {
+    const triggerBtn = document.getElementById('modalTriggerBtn');
+    const resultDiv = document.getElementById('modalTestResult');
+    const resultContent = document.getElementById('testResultContent');
+
+    triggerBtn.disabled = true;
+    triggerBtn.textContent = 'Running Test...';
+    resultDiv.style.display = 'block';
+    resultContent.textContent = 'Please wait...';
+
+    // Get CSRF token
+    const csrftoken = document.querySelector('[name=csrfmiddlewaretoken]').value;
+
+    fetch(triggerUrl, {
+        method: 'POST',
+        headers: {
+            'X-CSRFToken': csrftoken,
+            'Content-Type': 'application/json',
+        },
+    })
+    .then(response => response.json())
+    .then(data => {
+        resultContent.textContent = JSON.stringify(data, null, 2);
+        triggerBtn.disabled = false;
+        triggerBtn.textContent = 'Run Test Again';
+
+        // Optionally reload page after 2 seconds to show updated results
+        setTimeout(() => {
+            if (data.success) {
+                window.location.reload();
+            }
+        }, 2000);
+    })
+    .catch(error => {
+        resultContent.textContent = 'Error: ' + error.message;
+        triggerBtn.disabled = false;
+        triggerBtn.textContent = 'Retry Test';
+    });
+}
+
+// Close modal on Escape key
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') {
+        closeTestDetail();
+    }
+});
+</script>

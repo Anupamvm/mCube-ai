@@ -36,30 +36,7 @@ class TLStockDataAdmin(admin.ModelAdmin):
     search_fields = ['stock_name', 'nsecode', 'bsecode', 'isin']
     readonly_fields = ['created_at', 'updated_at']
 
-    fieldsets = (
-        ('Basic Information', {
-            'fields': ('stock_name', 'nsecode', 'bsecode', 'isin', 'industry_name', 'sector_name',
-                      'current_price', 'market_capitalization')
-        }),
-        ('Trendlyne Scores', {
-            'fields': ('trendlyne_durability_score', 'trendlyne_valuation_score', 'trendlyne_momentum_score',
-                      'normalized_momentum_score', 'dvm_classification_text')
-        }),
-        ('Valuation Metrics', {
-            'fields': ('pe_ttm_price_to_earnings', 'peg_ttm_pe_to_growth', 'price_to_book_value',
-                      'roe_annual_pct', 'roa_annual_pct', 'piotroski_score'),
-            'classes': ('collapse',)
-        }),
-        ('Technical Indicators', {
-            'fields': ('day_rsi', 'day_macd', 'day_mfi', 'day_atr', 'day_adx',
-                      'day50_sma', 'day200_sma', 'day20_ema', 'day50_ema'),
-            'classes': ('collapse',)
-        }),
-        ('Timestamps', {
-            'fields': ('created_at', 'updated_at'),
-            'classes': ('collapse',)
-        }),
-    )
+    # No fieldsets - Django will show ALL 172 fields in alphabetical order
 
 
 @admin.register(ContractData)

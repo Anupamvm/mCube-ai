@@ -1997,53 +1997,344 @@ def test_accounts(request=None):
 
 
 def test_llm():
-    """Test LLM integration functionalities"""
+    """Test LLM integration functionalities with comprehensive vLLM tests"""
     tests = []
 
-    # Test 1: Ollama connectivity
+    # Test 1: vLLM Server Connection
     try:
-        ollama_url = settings.OLLAMA_BASE_URL
-        response = requests.get(f"{ollama_url}/api/tags", timeout=5)
+        from apps.llm.services.vllm_client import get_vllm_client
+        from django.urls import reverse
+        client = get_vllm_client()
 
-        if response.status_code == 200:
-            models = response.json().get('models', [])
+        if client.is_enabled():
             tests.append({
-                'name': 'Ollama Connection',
+                'name': '🔌 vLLM Server Connection',
                 'status': 'pass',
-                'message': f'Connected. Found {len(models)} models',
+                'message': f'✓ Connected to {client.base_url} | Model: {client.model[:50]}...',
+                'description': '<b>Tests:</b> Connection to vLLM server. <b>Success means:</b> Your 70B Llama model is accessible and ready.',
+                'trigger_url': reverse('llm:test_connection'),
+                'trigger_label': '🔄 Test Connection',
             })
         else:
             tests.append({
-                'name': 'Ollama Connection',
+                'name': '🔌 vLLM Server Connection',
                 'status': 'fail',
-                'message': f'HTTP {response.status_code}',
+                'message': f'✗ Cannot connect to {client.base_url}',
+                'description': '<b>Tests:</b> Connection to vLLM server. <b>Failure:</b> Check if vLLM server is running.',
+                'trigger_url': reverse('llm:test_connection'),
+                'trigger_label': '🔄 Retry Connection',
             })
     except Exception as e:
         tests.append({
-            'name': 'Ollama Connection',
+            'name': '🔌 vLLM Server Connection',
+            'status': 'fail',
+            'message': f'✗ Error: {str(e)}',
+            'description': '<b>Tests:</b> Connection to vLLM server. <b>Error:</b> Check server configuration.',
+        })
+
+    # Test 2: Text Generation
+    try:
+        from apps.llm.services.vllm_client import get_vllm_client
+        client = get_vllm_client()
+
+        if client.is_enabled():
+            success, response, metadata = client.generate(
+                prompt="What is 2+2? Answer with just the number.",
+                temperature=0.1,
+                max_tokens=10
+            )
+
+            if success and response:
+                tokens = metadata.get('usage', {}).get('total_tokens', 0)
+                time_ms = metadata.get('processing_time_ms', 0)
+                tests.append({
+                    'name': 'Text Generation',
+                    'status': 'pass',
+                    'message': f'Response: "{response[:50]}..." | {tokens} tokens in {time_ms}ms',
+                })
+            else:
+                tests.append({
+                    'name': 'Text Generation',
+                    'status': 'fail',
+                    'message': f'Generation failed: {metadata.get("error", "Unknown error")}',
+                })
+        else:
+            tests.append({
+                'name': 'Text Generation',
+                'status': 'skip',
+                'message': 'Skipped - vLLM not connected',
+            })
+    except Exception as e:
+        tests.append({
+            'name': 'Text Generation',
             'status': 'fail',
             'message': f'Error: {str(e)}',
         })
 
-    # Test 2: LLM validation records
+    # Test 3: Chat Completion
+    try:
+        from apps.llm.services.vllm_client import get_vllm_client
+        client = get_vllm_client()
+
+        if client.is_enabled():
+            messages = [
+                {"role": "system", "content": "You are a helpful assistant."},
+                {"role": "user", "content": "Say 'test passed' in one sentence."}
+            ]
+            success, response, metadata = client.chat(messages, temperature=0.1, max_tokens=20)
+
+            if success and response:
+                tokens = metadata.get('usage', {}).get('total_tokens', 0)
+                tests.append({
+                    'name': 'Chat Completion',
+                    'status': 'pass',
+                    'message': f'Chat working | Response: "{response[:40]}..." | {tokens} tokens',
+                })
+            else:
+                tests.append({
+                    'name': 'Chat Completion',
+                    'status': 'fail',
+                    'message': f'Chat failed: {metadata.get("error", "Unknown error")}',
+                })
+        else:
+            tests.append({
+                'name': 'Chat Completion',
+                'status': 'skip',
+                'message': 'Skipped - vLLM not connected',
+            })
+    except Exception as e:
+        tests.append({
+            'name': 'Chat Completion',
+            'status': 'fail',
+            'message': f'Error: {str(e)}',
+        })
+
+    # Test 4: Sentiment Analysis
+    try:
+        from apps.llm.services.vllm_client import get_vllm_client
+        client = get_vllm_client()
+
+        if client.is_enabled():
+            test_text = "The stock market rallied today with strong gains across all sectors."
+            success, sentiment, metadata = client.analyze_sentiment(test_text)
+
+            if success and sentiment:
+                label = sentiment.get('label', 'N/A')
+                score = sentiment.get('score', 0)
+                confidence = sentiment.get('confidence', 0)
+                tests.append({
+                    'name': 'Sentiment Analysis',
+                    'status': 'pass',
+                    'message': f'Label: {label} | Score: {score:.2f} | Confidence: {confidence:.2f}',
+                })
+            else:
+                tests.append({
+                    'name': 'Sentiment Analysis',
+                    'status': 'fail',
+                    'message': f'Analysis failed: {metadata.get("error", "Unknown error")}',
+                })
+        else:
+            tests.append({
+                'name': 'Sentiment Analysis',
+                'status': 'skip',
+                'message': 'Skipped - vLLM not connected',
+            })
+    except Exception as e:
+        tests.append({
+            'name': 'Sentiment Analysis',
+            'status': 'fail',
+            'message': f'Error: {str(e)}',
+        })
+
+    # Test 5: Text Summarization
+    try:
+        from apps.llm.services.vllm_client import get_vllm_client
+        client = get_vllm_client()
+
+        if client.is_enabled():
+            test_text = """RELIANCE Industries reported strong Q4 results with revenue growth of 15% YoY.
+            The company added multiple new contracts worth over $500M. Management expressed confidence
+            in maintaining growth momentum in the upcoming fiscal year."""
+
+            success, summary, metadata = client.summarize(test_text, max_length=30)
+
+            if success and summary:
+                word_count = len(summary.split())
+                tests.append({
+                    'name': 'Text Summarization',
+                    'status': 'pass',
+                    'message': f'Summary generated ({word_count} words): "{summary[:60]}..."',
+                })
+            else:
+                tests.append({
+                    'name': 'Text Summarization',
+                    'status': 'fail',
+                    'message': f'Summarization failed: {metadata.get("error", "Unknown error")}',
+                })
+        else:
+            tests.append({
+                'name': 'Text Summarization',
+                'status': 'skip',
+                'message': 'Skipped - vLLM not connected',
+            })
+    except Exception as e:
+        tests.append({
+            'name': 'Text Summarization',
+            'status': 'fail',
+            'message': f'Error: {str(e)}',
+        })
+
+    # Test 6: Insight Extraction
+    try:
+        from apps.llm.services.vllm_client import get_vllm_client
+        client = get_vllm_client()
+
+        if client.is_enabled():
+            test_text = """TCS reported revenue growth of 15% YoY. The company added 10 new large deals
+            worth over $100M each. Attrition rate decreased to 12% from 18%. Management guided for
+            double-digit growth in FY25."""
+
+            success, insights, metadata = client.extract_insights(test_text, num_insights=3)
+
+            if success and insights:
+                insight_count = len(insights) if isinstance(insights, list) else 0
+                first_insight = insights[0][:50] if insight_count > 0 else "N/A"
+                tests.append({
+                    'name': 'Insight Extraction',
+                    'status': 'pass',
+                    'message': f'Extracted {insight_count} insights | First: "{first_insight}..."',
+                })
+            else:
+                tests.append({
+                    'name': 'Insight Extraction',
+                    'status': 'fail',
+                    'message': f'Extraction failed: {metadata.get("error", "Unknown error")}',
+                })
+        else:
+            tests.append({
+                'name': 'Insight Extraction',
+                'status': 'skip',
+                'message': 'Skipped - vLLM not connected',
+            })
+    except Exception as e:
+        tests.append({
+            'name': 'Insight Extraction',
+            'status': 'fail',
+            'message': f'Error: {str(e)}',
+        })
+
+    # Test 7: Question Answering (RAG)
+    try:
+        from apps.llm.services.vllm_client import get_vllm_client
+        client = get_vllm_client()
+
+        if client.is_enabled():
+            context = "RELIANCE Industries reported Q4 net profit of Rs 19,299 crore, up 12% YoY. The board recommended a dividend of Rs 9 per share."
+            question = "What was the net profit?"
+
+            success, answer, metadata = client.answer_question(question, context, temperature=0.1)
+
+            if success and answer:
+                tests.append({
+                    'name': 'Question Answering (RAG)',
+                    'status': 'pass',
+                    'message': f'Answer: "{answer[:70]}..."',
+                })
+            else:
+                tests.append({
+                    'name': 'Question Answering (RAG)',
+                    'status': 'fail',
+                    'message': f'QA failed: {metadata.get("error", "Unknown error")}',
+                })
+        else:
+            tests.append({
+                'name': 'Question Answering (RAG)',
+                'status': 'skip',
+                'message': 'Skipped - vLLM not connected',
+            })
+    except Exception as e:
+        tests.append({
+            'name': 'Question Answering (RAG)',
+            'status': 'fail',
+            'message': f'Error: {str(e)}',
+        })
+
+    # Test 8: Document Models (NewsArticle)
+    try:
+        from apps.data.models import NewsArticle
+        total = NewsArticle.objects.count()
+        processed = NewsArticle.objects.filter(processed=True).count()
+        with_sentiment = NewsArticle.objects.filter(sentiment_label__isnull=False).count()
+
+        tests.append({
+            'name': 'News Articles (LLM Ready)',
+            'status': 'pass',
+            'message': f'Total: {total} | Processed: {processed} | With Sentiment: {with_sentiment}',
+        })
+    except Exception as e:
+        tests.append({
+            'name': 'News Articles (LLM Ready)',
+            'status': 'fail',
+            'message': f'Error: {str(e)}',
+        })
+
+    # Test 9: Document Models (InvestorCall)
+    try:
+        from apps.data.models import InvestorCall
+        total = InvestorCall.objects.count()
+        processed = InvestorCall.objects.filter(processed=True).count()
+        with_summary = InvestorCall.objects.exclude(executive_summary='').count()
+
+        tests.append({
+            'name': 'Investor Calls (LLM Ready)',
+            'status': 'pass',
+            'message': f'Total: {total} | Processed: {processed} | With Summary: {with_summary}',
+        })
+    except Exception as e:
+        tests.append({
+            'name': 'Investor Calls (LLM Ready)',
+            'status': 'fail',
+            'message': f'Error: {str(e)}',
+        })
+
+    # Test 10: Knowledge Base (RAG Storage)
+    try:
+        from apps.data.models import KnowledgeBase
+        total = KnowledgeBase.objects.count()
+        news_chunks = KnowledgeBase.objects.filter(source_type='NEWS').count()
+        call_chunks = KnowledgeBase.objects.filter(source_type='CALL').count()
+
+        tests.append({
+            'name': 'Knowledge Base (RAG)',
+            'status': 'pass',
+            'message': f'Total Chunks: {total} | News: {news_chunks} | Calls: {call_chunks}',
+        })
+    except Exception as e:
+        tests.append({
+            'name': 'Knowledge Base (RAG)',
+            'status': 'fail',
+            'message': f'Error: {str(e)}',
+        })
+
+    # Test 11: LLM Validation Records
     try:
         from apps.llm.models import LLMValidation
         count = LLMValidation.objects.count()
         recent = LLMValidation.objects.order_by('-created_at').first()
 
         tests.append({
-            'name': 'LLM Validations',
+            'name': 'LLM Trade Validations',
             'status': 'pass',
-            'message': f'Found {count} validations. Latest: {recent.symbol if recent else "None"}',
+            'message': f'Found {count} validations | Latest: {recent.symbol if recent else "None"}',
         })
     except Exception as e:
         tests.append({
-            'name': 'LLM Validations',
+            'name': 'LLM Trade Validations',
             'status': 'fail',
             'message': f'Error: {str(e)}',
         })
 
-    # Test 3: LLM prompts
+    # Test 12: LLM Prompt Templates
     try:
         from apps.llm.models import LLMPrompt
         count = LLMPrompt.objects.count()
@@ -2052,11 +2343,52 @@ def test_llm():
         tests.append({
             'name': 'LLM Prompt Templates',
             'status': 'pass',
-            'message': f'Total: {count}, Active: {active}',
+            'message': f'Total: {count} | Active: {active}',
         })
     except Exception as e:
         tests.append({
             'name': 'LLM Prompt Templates',
+            'status': 'fail',
+            'message': f'Error: {str(e)}',
+        })
+
+    # Test 13: Performance Test
+    try:
+        from apps.llm.services.vllm_client import get_vllm_client
+        import time
+        client = get_vllm_client()
+
+        if client.is_enabled():
+            start = time.time()
+            success, _, metadata = client.generate(
+                prompt="Say hello",
+                temperature=0.1,
+                max_tokens=10
+            )
+            elapsed_ms = int((time.time() - start) * 1000)
+
+            if success:
+                status = 'pass' if elapsed_ms < 2000 else 'warning'
+                tests.append({
+                    'name': 'LLM Performance',
+                    'status': status,
+                    'message': f'Response time: {elapsed_ms}ms | {"Good" if elapsed_ms < 1000 else "Acceptable" if elapsed_ms < 2000 else "Slow"}',
+                })
+            else:
+                tests.append({
+                    'name': 'LLM Performance',
+                    'status': 'fail',
+                    'message': 'Performance test failed',
+                })
+        else:
+            tests.append({
+                'name': 'LLM Performance',
+                'status': 'skip',
+                'message': 'Skipped - vLLM not connected',
+            })
+    except Exception as e:
+        tests.append({
+            'name': 'LLM Performance',
             'status': 'fail',
             'message': f'Error: {str(e)}',
         })

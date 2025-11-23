@@ -1,0 +1,394 @@
+{% extends 'core/base.html' %}
+
+{% block title %}LLM Dashboard - mCube Trading System{% endblock %}
+
+{% block content %}
+<div class="llm-dashboard">
+    <div class="page-header">
+        <h1>LLM & Document Analysis Dashboard</h1>
+        <p class="subtitle">Powered by AI for intelligent trading insights</p>
+    </div>
+
+    {% if error %}
+    <div class="alert alert-error">
+        <strong>Error:</strong> {{ error }}
+    </div>
+    {% endif %}
+
+    <!-- LLM Status Section -->
+    <div class="status-card">
+        <h2>LLM Status</h2>
+        <div class="status-grid">
+            <div class="status-item">
+                <span class="status-label">Status:</span>
+                <span class="status-value {% if llm_enabled %}text-success{% else %}text-error{% endif %}">
+                    {% if llm_enabled %}
+                        <span class="status-dot success"></span> Connected
+                    {% else %}
+                        <span class="status-dot error"></span> Disconnected
+                    {% endif %}
+                </span>
+            </div>
+            <div class="status-item">
+                <span class="status-label">Model:</span>
+                <span class="status-value">{{ llm_model }}</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Document Stats Section -->
+    <div class="stats-section">
+        <h2>Document Statistics</h2>
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-icon">📰</div>
+                <div class="stat-content">
+                    <h3>{{ news_count }}</h3>
+                    <p>News Articles</p>
+                    <a href="{% url 'llm:news_list' %}" class="stat-link">View All →</a>
+                </div>
+            </div>
+
+            <div class="stat-card">
+                <div class="stat-icon">📞</div>
+                <div class="stat-content">
+                    <h3>{{ calls_count }}</h3>
+                    <p>Investor Calls</p>
+                    <a href="{% url 'llm:investor_calls_list' %}" class="stat-link">View All →</a>
+                </div>
+            </div>
+
+            <div class="stat-card">
+                <div class="stat-icon">📚</div>
+                <div class="stat-content">
+                    <h3>{{ kb_count }}</h3>
+                    <p>Knowledge Chunks</p>
+                    <a href="{% url 'llm:knowledge_search' %}" class="stat-link">Search →</a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Quick Actions Section -->
+    <div class="actions-section">
+        <h2>Quick Actions</h2>
+        <div class="actions-grid">
+            <a href="{% url 'llm:chat' %}" class="action-card">
+                <div class="action-icon">💬</div>
+                <h3>Chat with AI</h3>
+                <p>Ask questions about market trends and documents</p>
+            </a>
+
+            <a href="{% url 'llm:news_list' %}" class="action-card">
+                <div class="action-icon">📊</div>
+                <h3>Analyze News</h3>
+                <p>View and analyze latest news articles</p>
+            </a>
+
+            <a href="{% url 'llm:investor_calls_list' %}" class="action-card">
+                <div class="action-icon">📈</div>
+                <h3>Review Calls</h3>
+                <p>Read investor call transcripts and insights</p>
+            </a>
+
+            <a href="{% url 'llm:knowledge_search' %}" class="action-card">
+                <div class="action-icon">🔍</div>
+                <h3>Search Knowledge</h3>
+                <p>Search through processed documents</p>
+            </a>
+        </div>
+    </div>
+
+    <!-- Recent Documents Section -->
+    {% if recent_news or recent_calls %}
+    <div class="recent-section">
+        <h2>Recently Processed</h2>
+
+        {% if recent_news %}
+        <div class="recent-group">
+            <h3>News Articles</h3>
+            <div class="recent-list">
+                {% for article in recent_news %}
+                <div class="recent-item">
+                    <div class="recent-header">
+                        <a href="{% url 'llm:news_detail' article.id %}" class="recent-title">
+                            {{ article.title|truncatewords:15 }}
+                        </a>
+                        <span class="recent-date">{{ article.processed_at|date:"M d, Y" }}</span>
+                    </div>
+                    <div class="recent-meta">
+                        <span class="badge">{{ article.source }}</span>
+                        {% if article.sentiment_label %}
+                        <span class="badge sentiment-{{ article.sentiment_label|lower }}">
+                            {{ article.sentiment_label }}
+                        </span>
+                        {% endif %}
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+
+        {% if recent_calls %}
+        <div class="recent-group">
+            <h3>Investor Calls</h3>
+            <div class="recent-list">
+                {% for call in recent_calls %}
+                <div class="recent-item">
+                    <div class="recent-header">
+                        <a href="{% url 'llm:investor_call_detail' call.id %}" class="recent-title">
+                            {{ call.company }} - {{ call.call_type }}
+                        </a>
+                        <span class="recent-date">{{ call.processed_at|date:"M d, Y" }}</span>
+                    </div>
+                    <div class="recent-meta">
+                        <span class="badge">{{ call.symbol }}</span>
+                        {% if call.management_tone %}
+                        <span class="badge sentiment-{{ call.management_tone|lower }}">
+                            {{ call.management_tone }}
+                        </span>
+                        {% endif %}
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+    </div>
+    {% endif %}
+</div>
+
+<style>
+.llm-dashboard {
+    padding: 20px;
+    max-width: 1400px;
+    margin: 0 auto;
+}
+
+.page-header {
+    margin-bottom: 30px;
+}
+
+.page-header h1 {
+    font-size: 32px;
+    margin-bottom: 5px;
+    color: #333;
+}
+
+.subtitle {
+    color: #666;
+    font-size: 16px;
+}
+
+.status-card {
+    background: #fff;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    padding: 20px;
+    margin-bottom: 30px;
+}
+
+.status-card h2 {
+    margin-bottom: 15px;
+    font-size: 20px;
+}
+
+.status-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 20px;
+}
+
+.status-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.status-label {
+    font-weight: 600;
+    color: #666;
+}
+
+.status-value {
+    font-size: 16px;
+}
+
+.status-dot {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    margin-right: 5px;
+}
+
+.status-dot.success {
+    background: #10b981;
+}
+
+.status-dot.error {
+    background: #ef4444;
+}
+
+.text-success {
+    color: #10b981;
+}
+
+.text-error {
+    color: #ef4444;
+}
+
+.stats-section, .actions-section, .recent-section {
+    margin-bottom: 40px;
+}
+
+.stats-section h2, .actions-section h2, .recent-section h2 {
+    font-size: 24px;
+    margin-bottom: 20px;
+}
+
+.stats-grid, .actions-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 20px;
+}
+
+.stat-card, .action-card {
+    background: #fff;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    padding: 25px;
+    transition: all 0.3s ease;
+}
+
+.stat-card:hover, .action-card:hover {
+    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    transform: translateY(-2px);
+}
+
+.stat-icon, .action-icon {
+    font-size: 48px;
+    margin-bottom: 15px;
+}
+
+.stat-content h3, .action-card h3 {
+    font-size: 32px;
+    margin-bottom: 5px;
+    color: #333;
+}
+
+.stat-content p, .action-card p {
+    color: #666;
+    margin-bottom: 10px;
+}
+
+.stat-link, .action-card {
+    text-decoration: none;
+    color: #3b82f6;
+    font-weight: 500;
+}
+
+.action-card {
+    display: block;
+    color: inherit;
+}
+
+.action-card:hover {
+    text-decoration: none;
+}
+
+.recent-group {
+    margin-bottom: 30px;
+}
+
+.recent-group h3 {
+    font-size: 18px;
+    margin-bottom: 15px;
+    color: #333;
+}
+
+.recent-list {
+    background: #fff;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    padding: 15px;
+}
+
+.recent-item {
+    padding: 12px 0;
+    border-bottom: 1px solid #eee;
+}
+
+.recent-item:last-child {
+    border-bottom: none;
+}
+
+.recent-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: start;
+    margin-bottom: 8px;
+}
+
+.recent-title {
+    color: #333;
+    text-decoration: none;
+    font-weight: 500;
+    flex: 1;
+}
+
+.recent-title:hover {
+    color: #3b82f6;
+}
+
+.recent-date {
+    color: #999;
+    font-size: 14px;
+    white-space: nowrap;
+    margin-left: 10px;
+}
+
+.recent-meta {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.badge {
+    display: inline-block;
+    padding: 4px 10px;
+    background: #f3f4f6;
+    border-radius: 4px;
+    font-size: 13px;
+    color: #666;
+}
+
+.badge.sentiment-positive {
+    background: #d1fae5;
+    color: #065f46;
+}
+
+.badge.sentiment-negative {
+    background: #fee2e2;
+    color: #991b1b;
+}
+
+.badge.sentiment-neutral {
+    background: #e5e7eb;
+    color: #374151;
+}
+
+.alert {
+    padding: 15px;
+    border-radius: 6px;
+    margin-bottom: 20px;
+}
+
+.alert-error {
+    background: #fee2e2;
+    border: 1px solid #fecaca;
+    color: #991b1b;
+}
+</style>
+{% endblock %}

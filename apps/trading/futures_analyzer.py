@@ -179,6 +179,60 @@ def comprehensive_futures_analysis(
     metrics = {}
     scores = {}
 
+    # ============================================================================
+    # DATA FRESHNESS CHECK: Ensure Trendlyne data is not stale (>30 mins old)
+    # ============================================================================
+    logger.info("\n" + "=" * 80)
+    logger.info("PRE-CHECK: Data Freshness Verification")
+    logger.info("=" * 80)
+
+    try:
+        from apps.data.utils.data_freshness import ensure_fresh_data
+
+        freshness_result = ensure_fresh_data(force=False)
+
+        if freshness_result['update_triggered']:
+            logger.warning("⚠️  Stale data detected! Update triggered in background.")
+            logger.warning(f"    Age: {freshness_result['freshness_status']['oldest_age_minutes']:.1f} minutes")
+            logger.warning("    Analysis will proceed with current data. Retry in 2-3 minutes for updated results.")
+
+            execution_log.append({
+                'step': 0,
+                'action': 'Data Freshness Check',
+                'status': 'WARNING',
+                'message': f"Data is {freshness_result['freshness_status']['oldest_age_minutes']:.1f} min old. Update triggered.",
+                'details': {
+                    'update_triggered': True,
+                    'age_minutes': freshness_result['freshness_status']['oldest_age_minutes'],
+                    'threshold_minutes': 30,
+                    'recommendation': 'Retry analysis in 2-3 minutes for fresh data'
+                }
+            })
+        else:
+            logger.info(f"✅ Data is fresh (age: {freshness_result['freshness_status']['oldest_age_minutes']:.1f} minutes)")
+
+            execution_log.append({
+                'step': 0,
+                'action': 'Data Freshness Check',
+                'status': 'PASS',
+                'message': f"Data is fresh ({freshness_result['freshness_status']['oldest_age_minutes']:.1f} min old)",
+                'details': {
+                    'update_triggered': False,
+                    'age_minutes': freshness_result['freshness_status']['oldest_age_minutes'],
+                    'threshold_minutes': 30
+                }
+            })
+
+    except Exception as freshness_error:
+        logger.warning(f"Data freshness check failed: {freshness_error}")
+        execution_log.append({
+            'step': 0,
+            'action': 'Data Freshness Check',
+            'status': 'SKIP',
+            'message': f'Freshness check unavailable: {str(freshness_error)[:100]}',
+            'details': {'error': str(freshness_error)}
+        })
+
     try:
         # ============================================================================
         # STEP 0: Resolve Breeze Symbol using get_names API

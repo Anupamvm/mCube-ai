@@ -9,11 +9,15 @@ from django.http import HttpResponse, JsonResponse
 from django.contrib.auth.decorators import login_required
 from django.views.decorators.http import require_http_methods
 
-from .trendlyne import (
-    init_driver_with_download,
-    login_to_trendlyne,
-    get_all_trendlyne_data
-)
+try:
+    from .trendlyne import (
+        init_driver_with_download,
+        login_to_trendlyne,
+        get_all_trendlyne_data
+    )
+    TRENDLYNE_AVAILABLE = True
+except ImportError:
+    TRENDLYNE_AVAILABLE = False
 
 
 @login_required
@@ -25,6 +29,12 @@ def trendlyne_login_view(request):
     GET /data/trendlyne/login/
     Returns success or failure message
     """
+    if not TRENDLYNE_AVAILABLE:
+        return JsonResponse({
+            'status': 'error',
+            'message': 'Trendlyne module not available'
+        }, status=503)
+
     try:
         driver = init_driver_with_download("trendlynedata/tmp")
         success = login_to_trendlyne(driver)
@@ -57,6 +67,12 @@ def trendlyne_fetch_data_view(request):
     POST /data/trendlyne/fetch/
     Downloads F&O data, market snapshot, and analyst consensus data
     """
+    if not TRENDLYNE_AVAILABLE:
+        return JsonResponse({
+            'status': 'error',
+            'message': 'Trendlyne module not available'
+        }, status=503)
+
     try:
         success = get_all_trendlyne_data()
 

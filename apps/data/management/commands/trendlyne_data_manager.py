@@ -214,53 +214,111 @@ class Command(BaseCommand):
         except Exception as e:
             raise CommandError(f'Parse failed: {e}')
 
-    def parse_contract_data(self, filepath):
-        """Parse contract data CSV and populate database"""
-        import pandas as pd
+    def _get_contract_csv_column(self, field_name, csv_columns):
+        """
+        Find matching CSV column for ContractData model field.
+        Handles naming variations in contract_data.csv.
+        """
+        # Direct mappings for special cases
+        special_mappings = {
+            'cost_of_carry': 'cost_of_carry_coc',
+            'traded_contracts_change_pct': 'traded_contracts_changepct_',
+        }
 
-        ContractData.objects.all().delete()  # Clear existing data
+        # Check special mappings first
+        if field_name in special_mappings:
+            csv_col = special_mappings[field_name]
+            if csv_col in csv_columns:
+                return csv_col
+
+        # Try standard variations
+        variations = [
+            field_name,
+            field_name + '_',
+            field_name.replace('_change_pct', '_changepct_'),
+        ]
+
+        for variant in variations:
+            if variant in csv_columns:
+                return variant
+
+        return None
+
+    def parse_contract_data(self, filepath):
+        """Parse contract data CSV with dynamic field mapping"""
+        import pandas as pd
+        import numpy as np
+
+        self.stdout.write("Parsing contract data CSV...")
+        ContractData.objects.all().delete()
         df = pd.read_csv(filepath)
 
-        with transaction.atomic():
-            for _, row in df.iterrows():
-                ContractData.objects.create(
-                    symbol=row.get('symbol'),
-                    option_type=row.get('option_type'),
-                    strike_price=row.get('strike_price'),
-                    price=float(row.get('price', 0)),
-                    spot=float(row.get('spot', 0)),
-                    expiry=row.get('expiry'),
-                    last_updated=row.get('last_updated'),
-                    build_up=row.get('build_up', ''),
-                    lot_size=int(row.get('lot_size', 0)),
-                    day_change=float(row.get('day_change', 0)),
-                    pct_day_change=float(row.get('pct_day_change', 0)),
-                    open_price=float(row.get('open_price', 0)),
-                    high_price=float(row.get('high_price', 0)),
-                    low_price=float(row.get('low_price', 0)),
-                    prev_close_price=float(row.get('prev_close_price', 0)),
-                    oi=int(row.get('oi', 0)),
-                    pct_oi_change=float(row.get('pct_oi_change', 0)),
-                    oi_change=int(row.get('oi_change', 0)),
-                    prev_day_oi=int(row.get('prev_day_oi', 0)),
-                    traded_contracts=int(row.get('traded_contracts', 0)),
-                    traded_contracts_change_pct=float(row.get('traded_contracts_change_pct', 0)),
-                    shares_traded=int(row.get('shares_traded', 0)),
-                    pct_volume_shares_change=float(row.get('pct_volume_shares_change', 0)),
-                    prev_day_vol=int(row.get('prev_day_vol', 0)),
-                    basis=row.get('basis'),
-                    cost_of_carry=row.get('cost_of_carry'),
-                    iv=row.get('iv'),
-                    prev_day_iv=row.get('prev_day_iv'),
-                    pct_iv_change=row.get('pct_iv_change'),
-                    delta=row.get('delta'),
-                    vega=row.get('vega'),
-                    gamma=row.get('gamma'),
-                    theta=row.get('theta'),
-                    rho=row.get('rho'),
-                )
+        # Get all model field names and CSV columns
+        model_fields = {f.name: f for f in ContractData._meta.fields}
+        skip_fields = {'id', 'created_at', 'updated_at'}
+        csv_columns = set(df.columns)
 
-        return len(df)
+        self.stdout.write(f"Processing {len(df)} contracts with {len(df.columns)} CSV columns...")
+
+        # Build field mapping once
+        field_mapping = {}
+        unmapped_fields = []
+        for field_name in model_fields:
+            if field_name in skip_fields:
+                continue
+            csv_col = self._get_contract_csv_column(field_name, csv_columns)
+            if csv_col:
+                field_mapping[field_name] = csv_col
+            else:
+                unmapped_fields.append(field_name)
+
+        self.stdout.write(f"  Mapped {len(field_mapping)} fields, {len(unmapped_fields)} fields not in CSV")
+
+        created_count = 0
+        error_count = 0
+
+        with transaction.atomic():
+            for idx, row in df.iterrows():
+                try:
+                    # Build kwargs using pre-built mapping
+                    kwargs = {}
+
+                    for field_name, csv_col in field_mapping.items():
+                        # Get value from CSV
+                        value = row[csv_col]
+
+                        # Handle NaN, None, and empty values
+                        if pd.isna(value):
+                            value = None
+                        elif isinstance(value, str):
+                            value = value.strip()
+                            if value == '' or value.lower() in ['nan', 'null', 'none', '-', 'na', 'n/a']:
+                                value = None
+                        elif isinstance(value, (int, float)):
+                            if np.isinf(value):
+                                value = None
+
+                        kwargs[field_name] = value
+
+                    # Create the record with all mapped fields
+                    ContractData.objects.create(**kwargs)
+                    created_count += 1
+
+                    if (idx + 1) % 1000 == 0:
+                        self.stdout.write(f"  Processed {idx + 1}/{len(df)} contracts...")
+
+                except Exception as e:
+                    error_count += 1
+                    if error_count <= 5:
+                        self.stdout.write(self.style.WARNING(
+                            f"  Error on row {idx + 1}: {str(e)[:100]}"
+                        ))
+
+        self.stdout.write(self.style.SUCCESS(
+            f"✅ Contract data import complete: {created_count} created, {error_count} errors"
+        ))
+
+        return created_count
 
     def parse_contract_stock_data(self, filepath):
         """Parse contract stock data CSV"""
@@ -310,30 +368,166 @@ class Command(BaseCommand):
 
         return len(df)
 
-    def parse_stock_data(self, filepath):
-        """Parse stock data CSV"""
-        import pandas as pd
+    def _get_csv_column_for_field(self, field_name, csv_columns):
+        """
+        Find the matching CSV column for a model field name.
+        Handles various naming conventions used by Trendlyne.
+        """
+        # Direct mappings for special cases
+        special_mappings = {
+            # SMA fields: CSV has day_sma50, model has day50_sma
+            'day5_sma': 'day_sma5',
+            'day30_sma': 'day_sma30',
+            'day50_sma': 'day_sma50',
+            'day100_sma': 'day_sma100',
+            'day200_sma': 'day_sma200',
 
+            # EMA fields: CSV has day_ema20, model has day20_ema
+            'day12_ema': 'day_ema12',
+            'day20_ema': 'day_ema20',
+            'day50_ema': 'day_ema50',
+            'day100_ema': 'day_ema100',
+
+            # Time period fields: CSV uses abbreviations
+            'one_year_low': '1yr_low',
+            'one_year_high': '1yr_high',
+            'one_year_change_pct': '1yr_change_pct_',
+            'three_year_low': '3yr_low',
+            'three_year_high': '3yr_high',
+            'five_year_low': '5yr_low',
+            'five_year_high': '5yr_high',
+            'ten_year_low': '10yr_low',
+            'ten_year_high': '10yr_high',
+
+            # Volume fields: CSV has different naming
+            'three_month_volume_avg': '3month_volume_avg',
+            'six_month_volume_avg': '6month_volume_avg',
+
+            # Consolidated volume fields
+            'consolidated_eod_volume': 'consolidated_end_of_day_volume',
+            'consolidated_prev_eod_volume': 'consolidated_previous_end_of_day_volume',
+            'consolidated_5day_avg_eod_volume': 'consolidated_5day_average_end_of_day_volume',
+            'consolidated_30day_avg_eod_volume': 'consolidated_30day_average_end_of_day_volume',
+
+            # Pivot point fields: CSV uses "standard_" prefix
+            'pivot_point': 'standard_pivot_point',
+            'first_resistance_r1': 'standard_resistance_r1',
+            'first_resistance_r1_to_price_diff_pct': 'standard_r1_to_price_diff_pct_',
+            'second_resistance_r2': 'standard_resistance_r2',
+            'second_resistance_r2_to_price_diff_pct': 'standard_r2_to_price_diff_pct_',
+            'third_resistance_r3': 'standard_resistance_r3',
+            'third_resistance_r3_to_price_diff_pct': 'standard_r3_to_price_diff_pct_',
+            'first_support_s1': 'standard_resistance_s1',
+            'first_support_s1_to_price_diff_pct': 'standard_s1_to_price_diff_pct_',
+            'second_support_s2': 'standard_resistance_s2',
+            'second_support_s2_to_price_diff_pct': 'standard_s2_to_price_diff_pct_',
+            'third_support_s3': 'standard_resistance_s3',
+            'third_support_s3_to_price_diff_pct': 'standard_s3_to_price_diff_pct_',
+
+            # Percentage fields with trailing underscore variations
+            'pctdays_traded_below_current_pe_price_to_earnings': 'pct_days_traded_below_current_pe_price_to_earnings',
+            'pctdays_traded_below_current_price_to_book_value': 'pct_days_traded_below_current_price_to_book_value',
+            'promoter_pledge_pct_qtr': 'promoter_holding_pledge_percentage_pct_qtr',
+            'mf_holding_change_3month_pct': 'mf_holding_change_3monthpct_',
+        }
+
+        # Check special mappings first
+        if field_name in special_mappings:
+            csv_col = special_mappings[field_name]
+            if csv_col in csv_columns:
+                return csv_col
+
+        # Try standard variations
+        variations = [
+            field_name,                                    # exact match
+            field_name + '_',                              # with trailing underscore
+            field_name.replace('_pct', '_pct_'),          # percentage fields
+            field_name.replace('pctdays', 'pct_days'),    # pctdays variations
+        ]
+
+        for variant in variations:
+            if variant in csv_columns:
+                return variant
+
+        return None
+
+    def parse_stock_data(self, filepath):
+        """Parse stock data CSV with comprehensive field mapping for ALL 163 fields"""
+        import pandas as pd
+        import numpy as np
+
+        self.stdout.write("Parsing stock data CSV...")
         TLStockData.objects.all().delete()
         df = pd.read_csv(filepath)
 
-        with transaction.atomic():
-            for _, row in df.iterrows():
-                TLStockData.objects.create(
-                    stock_name=row.get('stock_name'),
-                    nsecode=row.get('nsecode'),
-                    bsecode=row.get('bsecode', ''),
-                    isin=row.get('isin', ''),
-                    industry_name=row.get('industry_name'),
-                    sector_name=row.get('sector_name'),
-                    current_price=row.get('current_price'),
-                    market_capitalization=row.get('market_capitalization'),
-                    trendlyne_durability_score=row.get('trendlyne_durability_score'),
-                    trendlyne_valuation_score=row.get('trendlyne_valuation_score'),
-                    trendlyne_momentum_score=row.get('trendlyne_momentum_score'),
-                )
+        # Get all model field names and CSV columns
+        model_fields = {f.name: f for f in TLStockData._meta.fields}
+        skip_fields = {'id', 'created_at', 'updated_at'}
+        csv_columns = set(df.columns)
 
-        return len(df)
+        self.stdout.write(f"Processing {len(df)} stocks with {len(df.columns)} CSV columns...")
+
+        # Build field mapping once
+        field_mapping = {}
+        unmapped_fields = []
+        for field_name in model_fields:
+            if field_name in skip_fields:
+                continue
+            csv_col = self._get_csv_column_for_field(field_name, csv_columns)
+            if csv_col:
+                field_mapping[field_name] = csv_col
+            else:
+                unmapped_fields.append(field_name)
+
+        self.stdout.write(f"  Mapped {len(field_mapping)} fields, {len(unmapped_fields)} fields not in CSV")
+
+        created_count = 0
+        error_count = 0
+
+        with transaction.atomic():
+            for idx, row in df.iterrows():
+                try:
+                    # Build kwargs using pre-built mapping
+                    kwargs = {}
+
+                    for field_name, csv_col in field_mapping.items():
+                        # Get value from CSV
+                        value = row[csv_col]
+
+                        # Handle NaN, None, and empty values
+                        if pd.isna(value):
+                            value = None
+                        elif isinstance(value, str):
+                            value = value.strip()
+                            if value == '' or value.lower() in ['nan', 'null', 'none', '-', 'na', 'n/a']:
+                                value = None
+                            elif value == 'Export NA':  # Trendlyne specific
+                                value = None
+                        elif isinstance(value, (int, float)):
+                            if np.isinf(value):
+                                value = None
+
+                        kwargs[field_name] = value
+
+                    # Create the record with all mapped fields
+                    TLStockData.objects.create(**kwargs)
+                    created_count += 1
+
+                    if (idx + 1) % 500 == 0:
+                        self.stdout.write(f"  Processed {idx + 1}/{len(df)} stocks...")
+
+                except Exception as e:
+                    error_count += 1
+                    if error_count <= 5:
+                        self.stdout.write(self.style.WARNING(
+                            f"  Error on row {idx + 1} ({row.get('nsecode', 'unknown')}): {str(e)[:100]}"
+                        ))
+
+        self.stdout.write(self.style.SUCCESS(
+            f"✅ Stock data import complete: {created_count} created, {error_count} errors"
+        ))
+
+        return created_count
 
     def parse_option_chains(self, filepath):
         """Parse option chains CSV"""
