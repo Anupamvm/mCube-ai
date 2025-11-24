@@ -9,6 +9,7 @@ from django.db import models
 from django.contrib.auth.models import User
 from decimal import Decimal
 import json
+from django.utils import timezone
 
 
 class TradeSuggestion(models.Model):
@@ -297,6 +298,73 @@ class TradeSuggestionLog(models.Model):
 
     def __str__(self):
         return f"{self.suggestion} - {self.action}"
+
+
+class OrderExecutionControl(models.Model):
+    """
+    Controls ongoing order execution with cancellation capability.
+    Used to stop split/batch orders mid-execution when issues are detected.
+    """
+
+    suggestion = models.OneToOneField(
+        TradeSuggestion,
+        on_delete=models.CASCADE,
+        related_name='execution_control'
+    )
+
+    # Cancellation Flag
+    is_cancelled = models.BooleanField(
+        default=False,
+        help_text='Set to True to stop ongoing order execution'
+    )
+    cancel_reason = models.TextField(
+        blank=True,
+        help_text='Reason for cancellation (server stopped, error detected, user cancelled)'
+    )
+
+    # Progress Tracking
+    batches_completed = models.IntegerField(
+        default=0,
+        help_text='Number of batches/orders completed so far'
+    )
+    total_batches = models.IntegerField(
+        default=0,
+        help_text='Total number of batches planned'
+    )
+
+    # Heartbeat
+    last_heartbeat = models.DateTimeField(
+        auto_now=True,
+        help_text='Last time execution process checked in'
+    )
+
+    # Timestamps
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Order Execution Control'
+        verbose_name_plural = 'Order Execution Controls'
+
+    def __str__(self):
+        status = 'CANCELLED' if self.is_cancelled else f'RUNNING ({self.batches_completed}/{self.total_batches})'
+        return f"Execution #{self.suggestion_id} - {status}"
+
+    def cancel(self, reason='User cancelled'):
+        """Cancel ongoing execution"""
+        self.is_cancelled = True
+        self.cancel_reason = reason
+        self.save()
+
+    def should_continue(self):
+        """Check if execution should continue"""
+        return not self.is_cancelled
+
+    def update_progress(self, batches_completed):
+        """Update execution progress"""
+        self.batches_completed = batches_completed
+        self.last_heartbeat = timezone.now()
+        self.save()
 
 
 class PositionSize(models.Model):

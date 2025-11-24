@@ -129,48 +129,26 @@ class Command(BaseCommand):
         self.stdout.write(self.style.SUCCESS('=' * 70 + '\n'))
 
     def download_all(self):
-        """Download all Trendlyne data"""
+        """Download all Trendlyne data using TrendlyneProvider"""
         try:
-            from apps.data.tools.trendlyne_downloader import (
-                download_contract_data,
-                download_contract_stock_data,
-                download_stock_data,
-                download_option_chains,
-                download_events,
-                download_news,
-                download_investor_calls,
-                download_knowledge_base
-            )
+            from apps.data.providers.trendlyne import TrendlyneProvider
 
             download_dir = self.get_download_dir()
             self.stdout.write(f'\n📁 Download directory: {download_dir}')
+            self.stdout.write('⬇️  Downloading all Trendlyne data...\n')
 
-            datasets = [
-                ('Contract Data', download_contract_data),
-                ('Contract Stock Data', download_contract_stock_data),
-                ('Stock Data', download_stock_data),
-                ('Option Chains', download_option_chains),
-                ('Events', download_events),
-                ('News Articles', download_news),
-                ('Investor Calls', download_investor_calls),
-                ('Knowledge Base', download_knowledge_base),
-            ]
+            with TrendlyneProvider(headless=True, download_dir=str(download_dir)) as provider:
+                result = provider.fetch_all_data(download_dir=str(download_dir))
 
-            for dataset_name, download_func in datasets:
-                try:
-                    self.stdout.write(f'⬇️  Downloading {dataset_name}...')
-                    result = download_func(str(download_dir))
-                    if result:
-                        self.stdout.write(self.style.SUCCESS(f'   ✅ {dataset_name} downloaded'))
-                    else:
-                        self.stdout.write(self.style.WARNING(f'   ⚠️  No data for {dataset_name}'))
-                except Exception as e:
-                    self.stdout.write(self.style.ERROR(f'   ❌ {dataset_name} failed: {e}'))
-
-            self.stdout.write(self.style.SUCCESS('\n✅ Download phase complete\n'))
+                if result.get('success'):
+                    self.stdout.write(self.style.SUCCESS('✅ Download phase complete\n'))
+                else:
+                    error_msg = result.get('error', 'Unknown error')
+                    self.stdout.write(self.style.ERROR(f'❌ Download failed: {error_msg}\n'))
+                    raise CommandError(f'Download failed: {error_msg}')
 
         except ImportError as e:
-            raise CommandError(f'Import error: {e}. Ensure trendlyne.py has required functions.')
+            raise CommandError(f'Import error: {e}. Ensure TrendlyneProvider is available in apps.data.providers.trendlyne')
         except Exception as e:
             raise CommandError(f'Download failed: {e}')
 

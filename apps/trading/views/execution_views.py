@@ -505,7 +505,8 @@ def execute_strangle_orders(request):
                 'error': 'suggestion_id and total_lots are required'
             })
 
-        # Get suggestion
+        # CRITICAL: Get suggestion with FRESH data from database (no cache)
+        # This is essential because user may have edited strikes/lots in the UI
         suggestion = TradeSuggestion.objects.filter(
             id=suggestion_id,
             user=request.user
@@ -516,6 +517,21 @@ def execute_strangle_orders(request):
                 'success': False,
                 'error': 'Trade suggestion not found'
             })
+
+        # CRITICAL: Refresh from database to ensure we have LATEST edited values
+        # This bypasses any Django ORM caching
+        suggestion.refresh_from_db()
+
+        # Log the ACTUAL values we're using for order placement
+        logger.info("="*80)
+        logger.info(f"[CRITICAL ORDER CHECK] Suggestion #{suggestion_id}")
+        logger.info(f"[CRITICAL ORDER CHECK] Call Strike from DB: {suggestion.call_strike}")
+        logger.info(f"[CRITICAL ORDER CHECK] Put Strike from DB: {suggestion.put_strike}")
+        logger.info(f"[CRITICAL ORDER CHECK] Call Premium from DB: {suggestion.call_premium}")
+        logger.info(f"[CRITICAL ORDER CHECK] Put Premium from DB: {suggestion.put_premium}")
+        logger.info(f"[CRITICAL ORDER CHECK] Total Lots from DB: {total_lots}")
+        logger.info(f"[CRITICAL ORDER CHECK] Expiry from DB: {suggestion.expiry_date}")
+        logger.info("="*80)
 
         # Validate suggestion is for strangle strategy
         if suggestion.strategy != 'kotak_strangle':
@@ -545,13 +561,14 @@ def execute_strangle_orders(request):
         expiry_date = suggestion.expiry_date
         expiry_str = expiry_date.strftime('%y%b').upper()  # e.g., 25NOV
 
+        # CRITICAL: Use FRESH database values for strikes
         call_strike = int(suggestion.call_strike)
         put_strike = int(suggestion.put_strike)
 
         call_symbol = f"NIFTY{expiry_str}{call_strike}CE"
         put_symbol = f"NIFTY{expiry_str}{put_strike}PE"
 
-        logger.info(f"Executing strangle orders: {call_symbol} + {put_symbol}, {total_lots} lots")
+        logger.info(f"[ORDER SYMBOLS] Call: {call_symbol}, Put: {put_symbol}, Lots: {total_lots}")
 
         # Place orders in batches (max 20 lots per order, 20 sec delays - Neo API limits)
         batch_result = place_strangle_orders_in_batches(

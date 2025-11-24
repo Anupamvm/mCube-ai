@@ -377,7 +377,9 @@ const FuturesAlgorithm = {
         }
     },
 
-    async run() {
+    async run(confirmed = false) {
+        console.log('[Futures] run() called with confirmed=', confirmed);
+
         // Check if filters are applied
         if (!this.filterApplied) {
             UIBuilders.showNotification({
@@ -395,6 +397,8 @@ const FuturesAlgorithm = {
         const thisMonthVolume = parseInt(document.getElementById('thisMonthVolume').value) || 1000;
         const nextMonthVolume = parseInt(document.getElementById('nextMonthVolume').value) || 800;
 
+        console.log('[Futures] Running with filters:', { thisMonthVolume, nextMonthVolume, confirmed, contractCount: this.filteredContracts.length });
+
         TradingState.setLoading('futures', true);
 
         try {
@@ -402,6 +406,7 @@ const FuturesAlgorithm = {
             const response = await ApiClient.post(ApiClient.endpoints.futures, {
                 this_month_volume: thisMonthVolume,
                 next_month_volume: nextMonthVolume,
+                confirmed: confirmed,  // Add confirmation flag
                 filtered_symbols: this.filteredContracts.map(c => c.symbol)
             }, {
                 onAuthError: (data) => ApiClient.handleAuthError(data, 'futures')
@@ -410,8 +415,32 @@ const FuturesAlgorithm = {
             if (response && response.success) {
                 console.log('[Futures] Algorithm response:', response);
                 this.displayResults(response);
+            } else if (response && response.requires_confirmation) {
+                // Handle confirmation request
+                console.log('[Futures] Confirmation required for', response.contract_count, 'contracts');
+
+                const userConfirmed = confirm(
+                    `${response.message}\n\n` +
+                    `Contracts found: ${response.contract_count}\n` +
+                    `This will analyze ALL contracts and may take several minutes.\n\n` +
+                    `Click OK to proceed or Cancel to adjust filters.`
+                );
+
+                if (userConfirmed) {
+                    console.log('[Futures] User confirmed, re-running with confirmation');
+                    // Re-run with confirmation
+                    await this.run(true);  // Pass confirmed=true
+                } else {
+                    console.log('[Futures] User cancelled');
+                    UIBuilders.showNotification({
+                        type: 'info',
+                        message: '⚠️ Analysis cancelled\n\nPlease adjust volume filters to reduce contract count.',
+                        icon: 'ℹ️',
+                        timeout: 5000
+                    });
+                }
             } else {
-                const errorMsg = response?.error || 'Failed to run futures algorithm';
+                const errorMsg = response?.error || response?.message || 'Failed to run futures algorithm';
                 console.error('[Futures] Error:', response);
 
                 UIBuilders.showNotification({
@@ -669,6 +698,23 @@ const FuturesAlgorithm = {
 
 const NiftyStrangle = {
     currentData: null,
+
+    getCsrfToken() {
+        // Get CSRF token from cookie
+        const name = 'csrftoken';
+        let cookieValue = null;
+        if (document.cookie && document.cookie !== '') {
+            const cookies = document.cookie.split(';');
+            for (let i = 0; i < cookies.length; i++) {
+                const cookie = cookies[i].trim();
+                if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                    cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                    break;
+                }
+            }
+        }
+        return cookieValue;
+    },
 
     async generate() {
         TradingState.setLoading('strangle', true);
@@ -1143,11 +1189,13 @@ const NiftyStrangle = {
             const marginData = this.currentData.strangle.position_sizing.margin_data;
             const callPremium = this.currentData.strangle.call_premium;
             const putPremium = this.currentData.strangle.put_premium;
+            const lotSize = 50; // NIFTY lot size
 
             // Update position data
             position.call_lots = callLots;
             position.put_lots = putLots;
-            position.total_premium_collected = (callLots * callPremium + putLots * putPremium) * 50;
+            // FIXED: Premium calculation - multiply lots by lot_size, then by premium for each leg
+            position.total_premium_collected = (callLots * lotSize * callPremium) + (putLots * lotSize * putPremium);
 
             // Calculate margin using margin_per_lot from margin_data (NOT position)
             const marginPerLot = marginData.margin_per_lot;
@@ -1201,30 +1249,119 @@ const NiftyStrangle = {
 
         const strangle = this.currentData.strangle;
         const spotPrice = strangle.spot_price;
+        const suggestionId = strangle.suggestion_id;
 
-        console.log('[Strangle] Updating strikes:', { callStrike, putStrike, spotPrice });
+        console.log('[Strangle] Updating strikes:', { callStrike, putStrike, spotPrice, suggestionId });
 
-        // Update the strangle data
+        // CRITICAL: Save edited strikes to database IMMEDIATELY
+        console.log('[Strangle] 💾 Saving edited strikes to database...');
+        try {
+            const saveResponse = await fetch('/trading/api/suggestions/update-parameters/', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': this.getCsrfToken()
+                },
+                body: JSON.stringify({
+                    suggestion_id: suggestionId,
+                    call_strike: callStrike,
+                    put_strike: putStrike
+                })
+            });
+
+            const saveData = await saveResponse.json();
+            if (saveData.success) {
+                console.log('[Strangle] ✅ Strikes saved to database:', saveData.message);
+            } else {
+                console.error('[Strangle] ❌ Failed to save strikes:', saveData.error);
+                alert('Failed to save strike changes to database: ' + saveData.error);
+                return; // Don't update UI if save failed
+            }
+        } catch (error) {
+            console.error('[Strangle] ❌ Network error saving strikes:', error);
+            alert('Network error while saving strikes. Please try again.');
+            return;
+        }
+
+        // Update the strangle data in memory
         strangle.call_strike = callStrike;
         strangle.put_strike = putStrike;
 
-        // Fetch new premiums from option chain (simulated with approximation for now)
-        // In production, you'd call backend API to get real premiums
-        // For now, estimate based on distance: further = cheaper
-        const callDistance = callStrike - spotPrice;
-        const putDistance = spotPrice - putStrike;
+        // FETCH REAL PREMIUMS FROM OPTION CHAIN (not estimates!)
+        console.log('[Strangle] 📊 Fetching REAL market premiums from option chain...');
 
-        // Simple premium estimation (this is approximate - real pricing needs Black-Scholes)
-        // Premium roughly decreases as you go OTM
-        const basePremium = 10; // Base premium
-        const callPremium = Math.max(0.5, basePremium * Math.exp(-callDistance / 1000));
-        const putPremium = Math.max(0.5, basePremium * Math.exp(-putDistance / 1000));
+        let callPremium, putPremium;
+        try {
+            const expiryDate = strangle.expiry_date; // Format: YYYY-MM-DD
+            const premiumResponse = await fetch(
+                `/trading/api/get-option-premiums/?call_strike=${callStrike}&put_strike=${putStrike}&expiry=${expiryDate}`
+            );
 
-        // Update premiums (Note: In production, fetch real premiums from backend)
+            const premiumData = await premiumResponse.json();
+
+            if (premiumData.success) {
+                // Use REAL market LTP
+                callPremium = premiumData.call_premium;
+                putPremium = premiumData.put_premium;
+
+                console.log('[Strangle] ✅ Real premiums fetched from market:');
+                console.log(`[Strangle]   Call ${callStrike} CE: ₹${callPremium} (LTP)`);
+                console.log(`[Strangle]   Put ${putStrike} PE: ₹${putPremium} (LTP)`);
+                console.log(`[Strangle]   Data source: ${premiumData.data_source}`);
+            } else {
+                console.warn('[Strangle] ⚠️  Failed to fetch real premiums, using fallback estimation');
+                console.warn('[Strangle]   Error:', premiumData.error);
+
+                // Fallback to estimation only if API fails
+                const callDistance = callStrike - spotPrice;
+                const putDistance = spotPrice - putStrike;
+                const basePremium = 10;
+                callPremium = Math.max(0.5, basePremium * Math.exp(-callDistance / 1000));
+                putPremium = Math.max(0.5, basePremium * Math.exp(-putDistance / 1000));
+
+                alert('⚠️ Could not fetch real market premiums. Using estimated values.\n\n' + premiumData.error);
+            }
+        } catch (error) {
+            console.error('[Strangle] ❌ Error fetching real premiums:', error);
+            alert('❌ Network error fetching market premiums. Please try again.');
+            return; // Don't update if we can't get real premiums
+        }
+
+        // Update premiums in memory
         strangle.call_premium = callPremium;
         strangle.put_premium = putPremium;
 
-        // Update UI displays
+        // CRITICAL: Save REAL market premiums to database
+        console.log('[Strangle] 💾 Saving REAL market premiums to database...');
+        try {
+            const saveResponse = await fetch('/trading/api/suggestions/update-parameters/', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': this.getCsrfToken()
+                },
+                body: JSON.stringify({
+                    suggestion_id: suggestionId,
+                    call_premium: callPremium,
+                    put_premium: putPremium
+                })
+            });
+
+            const saveData = await saveResponse.json();
+            if (saveData.success) {
+                console.log('[Strangle] ✅ Real market premiums saved to database');
+            } else {
+                console.error('[Strangle] ❌ Failed to save premiums:', saveData.error);
+            }
+        } catch (error) {
+            console.error('[Strangle] ❌ Error saving premiums:', error);
+        }
+
+        // Calculate distances
+        const callDistance = callStrike - spotPrice;
+        const putDistance = spotPrice - putStrike;
+
+        // Update UI displays with REAL LTP
         document.getElementById('callPremiumDisplay').textContent = callPremium.toFixed(2);
         document.getElementById('putPremiumDisplay').textContent = putPremium.toFixed(2);
         document.getElementById('callDistanceDisplay').textContent = callDistance.toFixed(0);

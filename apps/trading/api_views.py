@@ -1142,6 +1142,396 @@ def update_suggestion_status(request):
 
 
 @login_required
+@require_POST
+def update_suggestion_parameters(request):
+    """
+    Update trade suggestion parameters (lots, strikes, expiry, etc.) from UI edits
+
+    POST params (JSON):
+        - suggestion_id: ID of the suggestion to update
+        - recommended_lots: Updated number of lots
+        - call_strike: Updated call strike (for strangles)
+        - put_strike: Updated put strike (for strangles)
+        - call_premium: Updated call premium (for strangles)
+        - put_premium: Updated put premium (for strangles)
+        - expiry_date: Updated expiry date (YYYY-MM-DD format)
+        - entry_price: Updated entry price (for futures)
+        - stop_loss: Updated stop loss
+        - target: Updated target
+
+    Returns:
+        JsonResponse with success status and updated values
+    """
+    try:
+        import json
+        from apps.trading.models import TradeSuggestion
+        from datetime import datetime
+
+        # Parse JSON body
+        data = json.loads(request.body)
+        suggestion_id = data.get('suggestion_id')
+
+        if not suggestion_id:
+            return JsonResponse({
+                'success': False,
+                'error': 'suggestion_id is required'
+            })
+
+        # Get suggestion
+        suggestion = TradeSuggestion.objects.filter(
+            id=suggestion_id,
+            user=request.user
+        ).first()
+
+        if not suggestion:
+            return JsonResponse({
+                'success': False,
+                'error': 'Suggestion not found'
+            })
+
+        # Track what was updated
+        updated_fields = []
+
+        # Update lots
+        if 'recommended_lots' in data:
+            new_lots = int(data['recommended_lots'])
+            if new_lots != suggestion.recommended_lots:
+                suggestion.recommended_lots = new_lots
+                updated_fields.append(f'lots: {new_lots}')
+
+                # Recalculate margin_required based on new lots
+                if suggestion.margin_per_lot:
+                    suggestion.margin_required = suggestion.margin_per_lot * new_lots
+                    updated_fields.append(f'margin_required: {suggestion.margin_required}')
+
+        # Update strangle strikes and premiums
+        if 'call_strike' in data:
+            new_call_strike = Decimal(str(data['call_strike']))
+            if new_call_strike != suggestion.call_strike:
+                suggestion.call_strike = new_call_strike
+                updated_fields.append(f'call_strike: {new_call_strike}')
+
+        if 'put_strike' in data:
+            new_put_strike = Decimal(str(data['put_strike']))
+            if new_put_strike != suggestion.put_strike:
+                suggestion.put_strike = new_put_strike
+                updated_fields.append(f'put_strike: {new_put_strike}')
+
+        if 'call_premium' in data:
+            new_call_premium = Decimal(str(data['call_premium']))
+            if new_call_premium != suggestion.call_premium:
+                suggestion.call_premium = new_call_premium
+                updated_fields.append(f'call_premium: {new_call_premium}')
+
+        if 'put_premium' in data:
+            new_put_premium = Decimal(str(data['put_premium']))
+            if new_put_premium != suggestion.put_premium:
+                suggestion.put_premium = new_put_premium
+                updated_fields.append(f'put_premium: {new_put_premium}')
+
+        # Recalculate total premium if call or put premium changed
+        if suggestion.call_premium and suggestion.put_premium:
+            new_total = suggestion.call_premium + suggestion.put_premium
+            if new_total != suggestion.total_premium:
+                suggestion.total_premium = new_total
+                updated_fields.append(f'total_premium: {new_total}')
+
+        # Update expiry date
+        if 'expiry_date' in data:
+            new_expiry = datetime.strptime(data['expiry_date'], '%Y-%m-%d').date()
+            if new_expiry != suggestion.expiry_date:
+                suggestion.expiry_date = new_expiry
+                updated_fields.append(f'expiry_date: {new_expiry}')
+
+                # Recalculate days_to_expiry
+                from datetime import date
+                days_diff = (new_expiry - date.today()).days
+                suggestion.days_to_expiry = days_diff
+                updated_fields.append(f'days_to_expiry: {days_diff}')
+
+        # Update futures-specific fields
+        if 'entry_price' in data:
+            new_entry = Decimal(str(data['entry_price']))
+            # Store in position_details JSON field
+            position_details = suggestion.position_details or {}
+            if position_details.get('margin_data', {}).get('futures_price') != float(new_entry):
+                if 'margin_data' not in position_details:
+                    position_details['margin_data'] = {}
+                position_details['margin_data']['futures_price'] = float(new_entry)
+                suggestion.position_details = position_details
+                updated_fields.append(f'entry_price: {new_entry}')
+
+        if 'stop_loss' in data:
+            new_sl = Decimal(str(data['stop_loss']))
+            position_details = suggestion.position_details or {}
+            if position_details.get('stop_loss') != float(new_sl):
+                position_details['stop_loss'] = float(new_sl)
+                suggestion.position_details = position_details
+                updated_fields.append(f'stop_loss: {new_sl}')
+
+        if 'target' in data:
+            new_target = Decimal(str(data['target']))
+            position_details = suggestion.position_details or {}
+            if position_details.get('target') != float(new_target):
+                position_details['target'] = float(new_target)
+                suggestion.position_details = position_details
+                updated_fields.append(f'target: {new_target}')
+
+        # Save if anything changed
+        if updated_fields:
+            suggestion.save()
+            logger.info(f"Updated TradeSuggestion #{suggestion_id} - {', '.join(updated_fields)}")
+
+            return JsonResponse({
+                'success': True,
+                'message': f'Updated: {", ".join(updated_fields)}',
+                'updated_fields': updated_fields,
+                'suggestion': {
+                    'id': suggestion.id,
+                    'recommended_lots': suggestion.recommended_lots,
+                    'call_strike': float(suggestion.call_strike) if suggestion.call_strike else None,
+                    'put_strike': float(suggestion.put_strike) if suggestion.put_strike else None,
+                    'call_premium': float(suggestion.call_premium) if suggestion.call_premium else None,
+                    'put_premium': float(suggestion.put_premium) if suggestion.put_premium else None,
+                    'total_premium': float(suggestion.total_premium) if suggestion.total_premium else None,
+                    'expiry_date': suggestion.expiry_date.strftime('%Y-%m-%d') if suggestion.expiry_date else None,
+                    'margin_required': float(suggestion.margin_required) if suggestion.margin_required else None,
+                }
+            })
+        else:
+            return JsonResponse({
+                'success': True,
+                'message': 'No changes detected',
+                'updated_fields': []
+            })
+
+    except Exception as e:
+        logger.error(f"Error updating suggestion parameters: {e}", exc_info=True)
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        })
+
+
+@login_required
+@require_POST
+def create_execution_control(request):
+    """Create execution control record for order tracking and cancellation"""
+    try:
+        import json
+        from apps.trading.models import OrderExecutionControl
+
+        data = json.loads(request.body)
+        suggestion_id = data.get('suggestion_id')
+        total_batches = data.get('total_batches', 0)
+
+        if not suggestion_id:
+            return JsonResponse({
+                'success': False,
+                'error': 'suggestion_id is required'
+            })
+
+        # Create or update execution control
+        control, created = OrderExecutionControl.objects.get_or_create(
+            suggestion_id=suggestion_id,
+            defaults={'total_batches': total_batches}
+        )
+
+        if not created:
+            # Reset if reusing
+            control.is_cancelled = False
+            control.cancel_reason = ''
+            control.batches_completed = 0
+            control.total_batches = total_batches
+            control.save()
+
+        return JsonResponse({
+            'success': True,
+            'message': 'Execution control created',
+            'control_id': control.id
+        })
+
+    except Exception as e:
+        logger.error(f"Error creating execution control: {e}", exc_info=True)
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        })
+
+
+@login_required
+@require_POST
+def cancel_execution(request):
+    """Cancel ongoing order execution"""
+    try:
+        import json
+        from apps.trading.models import OrderExecutionControl
+
+        data = json.loads(request.body)
+        suggestion_id = data.get('suggestion_id')
+
+        if not suggestion_id:
+            return JsonResponse({
+                'success': False,
+                'error': 'suggestion_id is required'
+            })
+
+        control = OrderExecutionControl.objects.filter(
+            suggestion_id=suggestion_id
+        ).first()
+
+        if not control:
+            return JsonResponse({
+                'success': False,
+                'error': 'No ongoing execution found'
+            })
+
+        control.cancel(reason='User requested cancellation')
+
+        return JsonResponse({
+            'success': True,
+            'message': 'Order execution cancelled'
+        })
+
+    except Exception as e:
+        logger.error(f"Error cancelling execution: {e}", exc_info=True)
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        })
+
+
+@login_required
+def get_option_premiums(request):
+    """
+    Get option premiums (LTP) for given strikes from OptionChain database
+
+    GET params:
+        - call_strike: Call strike price
+        - put_strike: Put strike price
+        - expiry: Expiry date (YYYY-MM-DD)
+
+    Returns:
+        JsonResponse with call_premium and put_premium from OptionChain (fetched via Breeze)
+    """
+    try:
+        from apps.data.models import OptionChain
+        from datetime import datetime
+        from decimal import Decimal
+
+        call_strike = request.GET.get('call_strike')
+        put_strike = request.GET.get('put_strike')
+        expiry_str = request.GET.get('expiry')
+
+        if not call_strike or not put_strike or not expiry_str:
+            return JsonResponse({
+                'success': False,
+                'error': 'call_strike, put_strike, and expiry are required'
+            })
+
+        # Parse parameters
+        call_strike_val = Decimal(call_strike)
+        put_strike_val = Decimal(put_strike)
+        expiry_date = datetime.strptime(expiry_str, '%Y-%m-%d').date()
+
+        logger.info(f"[PREMIUM FETCH] Looking for: Call {call_strike_val} CE, Put {put_strike_val} PE, Expiry {expiry_date}")
+
+        # Fetch call option data from OptionChain (populated via Breeze API)
+        call_option = OptionChain.objects.filter(
+            underlying='NIFTY',
+            option_type='CE',
+            strike=call_strike_val,
+            expiry_date=expiry_date
+        ).order_by('-snapshot_time').first()  # Get latest snapshot
+
+        # Fetch put option data
+        put_option = OptionChain.objects.filter(
+            underlying='NIFTY',
+            option_type='PE',
+            strike=put_strike_val,
+            expiry_date=expiry_date
+        ).order_by('-snapshot_time').first()
+
+        if not call_option or not put_option:
+            logger.warning(f"[PREMIUM FETCH] ❌ Option data not found!")
+            logger.warning(f"[PREMIUM FETCH] Call option found: {call_option is not None}")
+            logger.warning(f"[PREMIUM FETCH] Put option found: {put_option is not None}")
+
+            return JsonResponse({
+                'success': False,
+                'error': f'Option data not found in database for strikes {call_strike_val}/{put_strike_val} expiry {expiry_date}'
+            })
+
+        # Get LTP (Last Traded Price) from OptionChain
+        call_premium = float(call_option.ltp) if call_option.ltp else 0.0
+        put_premium = float(put_option.ltp) if put_option.ltp else 0.0
+
+        logger.info(f"[PREMIUM FETCH] ✅ Call {call_strike_val} CE: ₹{call_premium}, Put {put_strike_val} PE: ₹{put_premium}")
+        logger.info(f"[PREMIUM FETCH] Data from: {call_option.snapshot_time}")
+
+        return JsonResponse({
+            'success': True,
+            'call_premium': call_premium,
+            'put_premium': put_premium,
+            'total_premium': call_premium + put_premium,
+            'call_strike': float(call_strike_val),
+            'put_strike': float(put_strike_val),
+            'data_source': 'OptionChain (Breeze API)',
+            'snapshot_time': call_option.snapshot_time.isoformat() if call_option.snapshot_time else None,
+            'spot_price': float(call_option.spot_price) if call_option.spot_price else None
+        })
+
+    except Exception as e:
+        logger.error(f"Error fetching option premiums: {e}", exc_info=True)
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        })
+
+
+@login_required
+def get_execution_progress(request, suggestion_id):
+    """Get real-time progress of order execution"""
+    try:
+        from apps.trading.models import OrderExecutionControl
+
+        control = OrderExecutionControl.objects.filter(
+            suggestion_id=suggestion_id
+        ).first()
+
+        if not control:
+            return JsonResponse({
+                'success': False,
+                'error': 'No execution found'
+            })
+
+        # For now, return basic progress
+        # In future, this can be enhanced with detailed batch info
+        return JsonResponse({
+            'success': True,
+            'progress': {
+                'batches_completed': control.batches_completed,
+                'total_batches': control.total_batches,
+                'call_orders': control.batches_completed,  # Simplified for now
+                'put_orders': control.batches_completed,   # Simplified for now
+                'current_batch': {
+                    'batch_num': control.batches_completed + 1,
+                    'lots': None,
+                    'quantity': None
+                },
+                'is_cancelled': control.is_cancelled
+            }
+        })
+
+    except Exception as e:
+        logger.error(f"Error getting execution progress: {e}", exc_info=True)
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        })
+
+
+@login_required
 @require_GET
 def get_contract_details(request):
     """

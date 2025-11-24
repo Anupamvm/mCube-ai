@@ -782,8 +782,12 @@
 
     // 1. Run Futures Algorithm
     async function runFuturesAlgorithm(btn, confirmed = false) {
+        console.log('[Futures] runFuturesAlgorithm called with confirmed=', confirmed);
+
         const thisMonthVol = document.getElementById('futuresThisMonthVolume').value || 1000;
         const nextMonthVol = document.getElementById('futuresNextMonthVolume').value || 800;
+
+        console.log('[Futures] Volume filters:', { thisMonthVol, nextMonthVol });
 
         btn.disabled = true;
         document.getElementById('loadingFutures').classList.add('active');
@@ -805,6 +809,9 @@
 
             const data = await response.json();
 
+            // Debug logging
+            console.log('Futures algorithm response:', data);
+
             // Check for authentication error
             if (handleAuthError(data, 'futures_algorithm', { confirmed })) {
                 return;
@@ -813,6 +820,12 @@
             if (data.success) {
                 displayFuturesTop3Result(data);
             } else if (data.requires_confirmation) {
+                // Stop spinner during confirmation dialog
+                document.getElementById('loadingFutures').classList.remove('active');
+                btn.disabled = false;
+
+                console.log('[Futures] Showing confirmation dialog for', data.contract_count, 'contracts');
+
                 // Ask user for confirmation
                 const userConfirmed = confirm(
                     `${data.message}\n\n` +
@@ -821,15 +834,20 @@
                     `Click OK to proceed or Cancel to adjust filters.`
                 );
 
+                console.log('[Futures] User confirmed:', userConfirmed);
+
                 if (userConfirmed) {
+                    console.log('[Futures] Re-running with confirmation=true');
                     // Re-run with confirmation
                     await runFuturesAlgorithm(btn, true);
                     return;
                 } else {
+                    console.log('[Futures] User cancelled');
                     displayError('Analysis cancelled. Please adjust volume filters to reduce contract count.');
                 }
             } else {
-                displayError(data.error);
+                console.error('[Futures] Unexpected response:', data);
+                displayError(data.error || data.message || 'Failed to run futures algorithm. Please check console for details.');
             }
         } catch (error) {
             displayError('Network error: ' + error.message);

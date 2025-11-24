@@ -629,27 +629,75 @@ def verify_future_trade(request):
             import json
             from datetime import date, datetime
 
-            # Helper to serialize dates and decimals for JSON
+            # Helper to clean data and serialize for JSON
+            import math
+
+            def clean_numeric_value(obj):
+                """Convert NaN and Infinity to None for JSON compatibility"""
+                if isinstance(obj, float):
+                    if math.isnan(obj) or math.isinf(obj):
+                        return None
+                    return obj
+                if isinstance(obj, Decimal):
+                    val = float(obj)
+                    if math.isnan(val) or math.isinf(val):
+                        return None
+                    return val
+                return obj
+
+            def clean_dict_for_json(data):
+                """Recursively clean dictionary to remove NaN and Infinity values"""
+                if isinstance(data, dict):
+                    return {k: clean_dict_for_json(v) for k, v in data.items()}
+                elif isinstance(data, list):
+                    return [clean_dict_for_json(item) for item in data]
+                else:
+                    return clean_numeric_value(data)
+
             def json_serial(obj):
+                """Handle JSON serialization for non-standard types"""
                 if isinstance(obj, (datetime, date)):
                     return obj.isoformat()
                 if isinstance(obj, Decimal):
                     return float(obj)
-                raise TypeError(f"Type {type(obj)} not serializable")
+                # Convert any other non-serializable object to string
+                try:
+                    return str(obj)
+                except:
+                    return None
 
-            # Convert data to JSON-safe format
-            algorithm_reasoning_safe = json.loads(
-                json.dumps({
+            # Convert data to JSON-safe format with error handling
+            try:
+                # Clean data first to remove NaN/Infinity
+                cleaned_data = clean_dict_for_json({
                     'metrics': metrics,
                     'execution_log': execution_log,
                     'analysis_summary': analysis_summary,
                     'composite_score': composite_score
-                }, default=json_serial)
-            )
+                })
 
-            position_details_safe = json.loads(
-                json.dumps(position_sizing, default=json_serial)
-            )
+                algorithm_reasoning_safe = json.loads(
+                    json.dumps(cleaned_data, default=json_serial)
+                )
+            except (ValueError, TypeError) as e:
+                logger.error(f"Error serializing algorithm_reasoning: {e}")
+                algorithm_reasoning_safe = {
+                    'metrics': {},
+                    'execution_log': [],
+                    'analysis_summary': {},
+                    'composite_score': composite_score,
+                    'error': 'Serialization error'
+                }
+
+            try:
+                # Clean position sizing data
+                cleaned_position = clean_dict_for_json(position_sizing)
+                position_details_safe = json.loads(
+                    json.dumps(cleaned_position, default=json_serial)
+                )
+            except (ValueError, TypeError) as e:
+                logger.error(f"Error serializing position_details: {e}")
+                position_details_safe = {'error': 'Serialization error'}
 
             # Calculate stop loss and target from position details or defaults
             # Convert futures_price to Decimal for calculations

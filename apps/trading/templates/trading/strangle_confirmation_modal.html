@@ -80,7 +80,12 @@
                 </tr>
                 <tr>
                   <td class="font-weight-bold">Call Lots:</td>
-                  <td class="text-right"><span id="modal-call-lots">-</span> lots (<span id="modal-call-quantity">-</span> qty)</td>
+                  <td class="text-right">
+                    <input type="number" id="modal-call-lots-input" min="1" max="100"
+                           style="width: 70px; text-align: center; border: 1px solid #ddd; border-radius: 4px; padding: 2px 5px;"
+                           onchange="updateLotsFromModal()" />
+                    lots (<span id="modal-call-quantity">-</span> qty)
+                  </td>
                 </tr>
                 <tr class="table-light">
                   <td colspan="2" class="font-weight-bold text-center">Put Strike Details</td>
@@ -95,7 +100,12 @@
                 </tr>
                 <tr>
                   <td class="font-weight-bold">Put Lots:</td>
-                  <td class="text-right"><span id="modal-put-lots">-</span> lots (<span id="modal-put-quantity">-</span> qty)</td>
+                  <td class="text-right">
+                    <input type="number" id="modal-put-lots-input" min="1" max="100"
+                           style="width: 70px; text-align: center; border: 1px solid #ddd; border-radius: 4px; padding: 2px 5px;"
+                           onchange="updateLotsFromModal()" />
+                    lots (<span id="modal-put-quantity">-</span> qty)
+                  </td>
                 </tr>
                 <tr class="table-light">
                   <td colspan="2" class="font-weight-bold text-center">Margin Details</td>
@@ -147,20 +157,83 @@
 
         <!-- Progress Section (hidden initially) -->
         <div id="strangleExecutionProgress" style="display: none;">
-          <h6 class="font-weight-bold mb-3"><i class="fas fa-spinner fa-spin"></i> Executing Orders...</h6>
-          <div class="progress mb-3" style="height: 30px;">
-            <div class="progress-bar progress-bar-striped progress-bar-animated"
-                 role="progressbar"
-                 id="batch-progress-bar"
-                 style="width: 0%"
-                 aria-valuenow="0"
-                 aria-valuemin="0"
-                 aria-valuemax="100">
-              <span id="progress-text">Starting...</span>
+          <h6 class="font-weight-bold mb-3">
+            <i class="fas fa-sync fa-spin" id="progress-spinner"></i> Executing Orders...
+          </h6>
+
+          <!-- Overall Progress Bar -->
+          <div class="mb-3">
+            <div class="d-flex justify-content-between mb-1">
+              <small class="font-weight-bold">Overall Progress</small>
+              <small id="overall-progress-text">0/0 batches</small>
+            </div>
+            <div class="progress" style="height: 30px;">
+              <div class="progress-bar progress-bar-striped progress-bar-animated bg-success"
+                   role="progressbar"
+                   id="overall-progress-bar"
+                   style="width: 0%"
+                   aria-valuenow="0"
+                   aria-valuemin="0"
+                   aria-valuemax="100">
+                <span id="overall-progress-percent">0%</span>
+              </div>
             </div>
           </div>
-          <div id="batch-status-log" class="border p-2" style="max-height: 300px; overflow-y: auto; font-family: monospace; font-size: 12px;">
-            <!-- Batch execution logs will appear here -->
+
+          <!-- Call Orders Progress -->
+          <div class="mb-3">
+            <div class="d-flex justify-content-between mb-1">
+              <small class="font-weight-bold">📞 Call Orders</small>
+              <small id="call-progress-text">0/0 completed</small>
+            </div>
+            <div class="progress" style="height: 20px;">
+              <div class="progress-bar bg-danger"
+                   role="progressbar"
+                   id="call-progress-bar"
+                   style="width: 0%"
+                   aria-valuenow="0"
+                   aria-valuemin="0"
+                   aria-valuemax="100">
+              </div>
+            </div>
+          </div>
+
+          <!-- Put Orders Progress -->
+          <div class="mb-3">
+            <div class="d-flex justify-content-between mb-1">
+              <small class="font-weight-bold">📉 Put Orders</small>
+              <small id="put-progress-text">0/0 completed</small>
+            </div>
+            <div class="progress" style="height: 20px;">
+              <div class="progress-bar bg-success"
+                   role="progressbar"
+                   id="put-progress-bar"
+                   style="width: 0%"
+                   aria-valuenow="0"
+                   aria-valuemin="0"
+                   aria-valuemax="100">
+              </div>
+            </div>
+          </div>
+
+          <!-- Current Batch Info -->
+          <div class="alert alert-info mb-3" id="current-batch-info">
+            <div class="d-flex justify-content-between align-items-center">
+              <div>
+                <strong>Current Batch:</strong> <span id="current-batch-number">-</span>
+              </div>
+              <div>
+                <strong>Lots:</strong> <span id="current-batch-lots">-</span>
+              </div>
+              <div>
+                <strong>Qty:</strong> <span id="current-batch-qty">-</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Status Log -->
+          <div id="batch-status-log" class="border p-3" style="max-height: 250px; overflow-y: auto; font-family: monospace; font-size: 12px; background: #f8f9fa; border-radius: 4px;">
+            <div style="color: #6c757d; font-style: italic;">Waiting for execution to start...</div>
           </div>
         </div>
       </div>
@@ -168,6 +241,9 @@
       <div class="modal-footer" style="flex-shrink: 0; border-top: 2px solid #dee2e6;">
         <button type="button" class="btn btn-secondary btn-lg" data-dismiss="modal" id="modal-cancel-btn" style="min-width: 150px;">
           <i class="fas fa-times"></i> Cancel
+        </button>
+        <button type="button" class="btn btn-danger btn-lg" id="modal-interrupt-btn" style="min-width: 150px; display: none;" onclick="interruptOrderExecution()">
+          <i class="fas fa-stop-circle"></i> Interrupt Orders
         </button>
         <button type="button" class="btn btn-success btn-lg" id="modal-confirm-btn" style="min-width: 150px;">
           <i class="fas fa-check"></i> Confirm Order
@@ -291,12 +367,12 @@ function showStrangleConfirmModal(suggestionData) {
 
     document.getElementById('modal-call-strike-table').textContent = callStrike;
     document.getElementById('modal-call-premium-table').textContent = `₹${callPremium.toFixed(2)}`;
-    document.getElementById('modal-call-lots').textContent = recommendedLots;
+    document.getElementById('modal-call-lots-input').value = recommendedLots;
     document.getElementById('modal-call-quantity').textContent = recommendedLots * lotSize;
 
     document.getElementById('modal-put-strike-table').textContent = putStrike;
     document.getElementById('modal-put-premium-table').textContent = `₹${putPremium.toFixed(2)}`;
-    document.getElementById('modal-put-lots').textContent = recommendedLots;
+    document.getElementById('modal-put-lots-input').value = recommendedLots;
     document.getElementById('modal-put-quantity').textContent = recommendedLots * lotSize;
 
     const totalCollection = totalPremium * recommendedLots * lotSize;
@@ -459,81 +535,267 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 });
 
+// Global variable to track execution state
+let executionState = {
+    isRunning: false,
+    shouldStop: false,
+    suggestionId: null,
+    totalBatches: 0,
+    completedBatches: 0,
+    callOrders: 0,
+    putOrders: 0,
+    pollInterval: null
+};
+
 function executeStrangleOrders() {
     const suggestionId = document.getElementById('modal-suggestion-id').value;
-    const totalLots = document.getElementById('modal-lots-value').value;
+    executionState.suggestionId = suggestionId;
+    executionState.isRunning = true;
+    executionState.shouldStop = false;
+
+    console.log('[EXECUTE] ========================================');
+    console.log('[EXECUTE] Starting order execution for suggestion #' + suggestionId);
+    console.log('[EXECUTE] Step 1: Fetching FRESH data from database...');
+    console.log('[EXECUTE] ========================================');
 
     // Hide confirmation content, show progress
     document.getElementById('strangleConfirmContent').style.display = 'none';
     document.getElementById('strangleExecutionProgress').style.display = 'block';
     document.getElementById('modal-cancel-btn').style.display = 'none';
+    document.getElementById('modal-interrupt-btn').style.display = 'inline-block';
     document.getElementById('modal-confirm-btn').disabled = true;
-    document.getElementById('modal-confirm-btn').innerHTML = '<i class="fas fa-spinner fa-spin"></i> Placing Orders...';
+    document.getElementById('modal-confirm-btn').style.display = 'none';
 
-    // Make AJAX request
-    console.log('Executing strangle orders:', {suggestionId, totalLots});
+    // Clear previous logs
+    const log = document.getElementById('batch-status-log');
+    log.innerHTML = '';
+    addLogEntry('🔄 Fetching latest trade parameters from database...', 'info');
 
-    fetch('/trading/trigger/execute-strangle/', {
-        method: 'POST',
+    // STEP 1: Fetch fresh data from database before executing orders
+    fetch(`/trading/api/suggestions/${suggestionId}/`, {
+        method: 'GET',
         headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
             'X-CSRFToken': getCookie('csrftoken')
-        },
-        body: `suggestion_id=${suggestionId}&total_lots=${totalLots}`
+        }
     })
     .then(response => {
-        console.log('Response status:', response.status);
+        if (!response.ok) {
+            throw new Error(`Failed to fetch suggestion data: HTTP ${response.status}`);
+        }
+        return response.json();
+    })
+    .then(freshData => {
+        if (!freshData.success || !freshData.suggestion) {
+            throw new Error('Failed to fetch fresh suggestion data');
+        }
+
+        const suggestion = freshData.suggestion;
+        console.log('[EXECUTE] ✅ Fresh data fetched from database:');
+        console.log('[EXECUTE]   - Lots: ' + suggestion.recommended_lots);
+        console.log('[EXECUTE]   - Call Strike: ' + suggestion.call_strike);
+        console.log('[EXECUTE]   - Put Strike: ' + suggestion.put_strike);
+
+        addLogEntry(`✅ Fresh data loaded - ${suggestion.recommended_lots} lots`, 'success');
+        addLogEntry(`📊 Call Strike: ${suggestion.call_strike} | Put Strike: ${suggestion.put_strike}`, 'info');
+
+        // Use FRESH database values (not UI values)
+        const totalLots = suggestion.recommended_lots;
+
+        // Calculate batches
+        const batchSize = 20;
+        const totalBatches = Math.ceil(totalLots / batchSize);
+        executionState.totalBatches = totalBatches;
+
+        // Update UI with batch info
+        document.getElementById('overall-progress-text').textContent = `0/${totalBatches} batches`;
+        document.getElementById('call-progress-text').textContent = `0/${totalBatches} completed`;
+        document.getElementById('put-progress-text').textContent = `0/${totalBatches} completed`;
+
+        addLogEntry(`📦 Total batches: ${totalBatches} (${totalLots} lots ÷ ${batchSize} max per batch)`, 'info');
+        addLogEntry('🚀 Starting order execution...', 'info');
+
+        // STEP 2: Create execution control record
+        return fetch('/trading/api/create-execution-control/', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify({
+                suggestion_id: suggestionId,
+                total_batches: totalBatches
+            })
+        })
+        .then(res => res.json())
+        .then(() => {
+            // STEP 3: Execute orders with fresh data
+            return fetch('/trading/trigger/execute-strangle/', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                    'X-CSRFToken': getCookie('csrftoken')
+                },
+                body: `suggestion_id=${suggestionId}&total_lots=${totalLots}`
+            });
+        });
+    })
+    .then(response => {
+        console.log('[EXECUTE] Response status:', response.status);
         if (!response.ok) {
             throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
         return response.json();
     })
     .then(data => {
-        console.log('Response data:', data);
+        console.log('[EXECUTE] Response data:', data);
         if (data.success) {
+            console.log('[EXECUTE] ✅ Orders executed successfully!');
             showExecutionComplete(data);
         } else {
+            console.error('[EXECUTE] ❌ Order execution failed:', data.error);
             showExecutionError(data.error || 'Unknown error occurred');
         }
     })
     .catch(error => {
-        console.error('Fetch error:', error);
-        showExecutionError('Network error: ' + error.message);
+        console.error('[EXECUTE] ❌ Error:', error);
+        showExecutionError('Error: ' + error.message);
     });
 
-    // Simulate progress (actual progress would come from WebSocket/polling)
-    simulateProgress(totalLots);
+    // Start polling for progress updates
+    startProgressPolling(suggestionId);
 }
 
-function simulateProgress(totalLots) {
-    const ordersPerLeg = Math.ceil(totalLots / 20);
-    let currentOrder = 0;
-
-    const interval = setInterval(function() {
-        currentOrder++;
-        const progress = (currentOrder / ordersPerLeg) * 100;
-
-        document.getElementById('batch-progress-bar').style.width = progress + '%';
-        document.getElementById('progress-text').textContent = `Order ${currentOrder}/${ordersPerLeg}`;
-
-        const log = document.getElementById('batch-status-log');
-        log.innerHTML += `<div>[${new Date().toLocaleTimeString()}] Executing order ${currentOrder}/${ordersPerLeg} (Call + Put)...</div>`;
-        log.scrollTop = log.scrollHeight;
-
-        if (currentOrder >= ordersPerLeg) {
-            clearInterval(interval);
+function startProgressPolling(suggestionId) {
+    // Poll every 2 seconds for progress updates
+    executionState.pollInterval = setInterval(() => {
+        if (!executionState.isRunning) {
+            clearInterval(executionState.pollInterval);
+            return;
         }
-    }, 20000); // 20 seconds per order
+
+        fetch(`/trading/api/execution-progress/${suggestionId}/`)
+            .then(res => res.json())
+            .then(data => {
+                if (data.success) {
+                    updateProgressUI(data.progress);
+                }
+            })
+            .catch(err => {
+                console.error('Error polling progress:', err);
+            });
+    }, 2000);
+}
+
+function updateProgressUI(progress) {
+    const { batches_completed, total_batches, call_orders, put_orders, current_batch, is_cancelled } = progress;
+
+    // Update overall progress
+    const overallPercent = total_batches > 0 ? (batches_completed / total_batches) * 100 : 0;
+    document.getElementById('overall-progress-bar').style.width = overallPercent + '%';
+    document.getElementById('overall-progress-percent').textContent = Math.round(overallPercent) + '%';
+    document.getElementById('overall-progress-text').textContent = `${batches_completed}/${total_batches} batches`;
+
+    // Update call/put progress
+    const callPercent = total_batches > 0 ? (call_orders / total_batches) * 100 : 0;
+    const putPercent = total_batches > 0 ? (put_orders / total_batches) * 100 : 0;
+
+    document.getElementById('call-progress-bar').style.width = callPercent + '%';
+    document.getElementById('put-progress-bar').style.width = putPercent + '%';
+    document.getElementById('call-progress-text').textContent = `${call_orders}/${total_batches} completed`;
+    document.getElementById('put-progress-text').textContent = `${put_orders}/${total_batches} completed`;
+
+    // Update current batch info
+    if (current_batch) {
+        document.getElementById('current-batch-number').textContent = `${current_batch.batch_num}/${total_batches}`;
+        document.getElementById('current-batch-lots').textContent = current_batch.lots || '-';
+        document.getElementById('current-batch-qty').textContent = current_batch.quantity || '-';
+    }
+
+    // Check if cancelled
+    if (is_cancelled) {
+        executionState.isRunning = false;
+        clearInterval(executionState.pollInterval);
+        addLogEntry('🛑 Execution interrupted by user', 'warning');
+    }
+}
+
+function addLogEntry(message, type = 'info') {
+    const log = document.getElementById('batch-status-log');
+    const timestamp = new Date().toLocaleTimeString();
+    const colors = {
+        'info': '#17a2b8',
+        'success': '#28a745',
+        'warning': '#ffc107',
+        'error': '#dc3545'
+    };
+
+    const color = colors[type] || colors['info'];
+    const entry = document.createElement('div');
+    entry.style.color = color;
+    entry.style.marginBottom = '4px';
+    entry.innerHTML = `<strong>[${timestamp}]</strong> ${message}`;
+    log.appendChild(entry);
+    log.scrollTop = log.scrollHeight;
+}
+
+function interruptOrderExecution() {
+    if (!confirm('⚠️ Are you sure you want to interrupt order execution?\n\nThis will stop placing any remaining orders.')) {
+        return;
+    }
+
+    const suggestionId = executionState.suggestionId;
+    addLogEntry('🛑 Sending interrupt signal...', 'warning');
+
+    fetch('/trading/api/cancel-execution/', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': getCookie('csrftoken')
+        },
+        body: JSON.stringify({
+            suggestion_id: suggestionId
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            addLogEntry('✅ Interrupt signal sent successfully', 'success');
+            addLogEntry('⏳ Waiting for current batch to complete...', 'info');
+            executionState.shouldStop = true;
+
+            // Disable interrupt button
+            const btn = document.getElementById('modal-interrupt-btn');
+            btn.disabled = true;
+            btn.innerHTML = '<i class="fas fa-check"></i> Interrupted';
+            btn.classList.remove('btn-danger');
+            btn.classList.add('btn-secondary');
+        } else {
+            addLogEntry('❌ Failed to interrupt: ' + data.error, 'error');
+            alert('Failed to interrupt execution: ' + data.error);
+        }
+    })
+    .catch(error => {
+        console.error('Error interrupting execution:', error);
+        addLogEntry('❌ Network error during interrupt', 'error');
+        alert('Network error while trying to interrupt');
+    });
 }
 
 function showExecutionComplete(data) {
-    const log = document.getElementById('batch-status-log');
-    log.innerHTML += `<div class="text-success font-weight-bold">[${new Date().toLocaleTimeString()}] ✅ All orders executed successfully!</div>`;
-    log.innerHTML += `<div class="mt-2"><strong>Summary:</strong></div>`;
-    log.innerHTML += `<div>• Call Orders: ${data.batch_result.summary.call_success_count} success</div>`;
-    log.innerHTML += `<div>• Put Orders: ${data.batch_result.summary.put_success_count} success</div>`;
+    executionState.isRunning = false;
+    clearInterval(executionState.pollInterval);
 
-    document.getElementById('modal-confirm-btn').style.display = 'none';
+    addLogEntry('✅ All orders executed successfully!', 'success');
+
+    if (data.batch_result && data.batch_result.summary) {
+        addLogEntry(`📊 Summary: ${data.batch_result.summary.call_success_count} call orders, ${data.batch_result.summary.put_success_count} put orders`, 'success');
+    }
+
+    // Stop spinner
+    document.getElementById('progress-spinner').classList.remove('fa-spin');
+
+    // Update buttons
+    document.getElementById('modal-interrupt-btn').style.display = 'none';
     document.getElementById('modal-cancel-btn').style.display = 'inline-block';
     document.getElementById('modal-cancel-btn').textContent = 'Close';
     document.getElementById('modal-cancel-btn').classList.remove('btn-secondary');
@@ -541,10 +803,16 @@ function showExecutionComplete(data) {
 }
 
 function showExecutionError(error) {
-    const log = document.getElementById('batch-status-log');
-    log.innerHTML += `<div class="text-danger font-weight-bold">[${new Date().toLocaleTimeString()}] ❌ Error: ${error}</div>`;
+    executionState.isRunning = false;
+    clearInterval(executionState.pollInterval);
 
-    document.getElementById('modal-confirm-btn').style.display = 'none';
+    addLogEntry(`❌ Error: ${error}`, 'error');
+
+    // Stop spinner
+    document.getElementById('progress-spinner').classList.remove('fa-spin');
+
+    // Update buttons
+    document.getElementById('modal-interrupt-btn').style.display = 'none';
     document.getElementById('modal-cancel-btn').style.display = 'inline-block';
     document.getElementById('modal-cancel-btn').textContent = 'Close';
 }
@@ -562,5 +830,73 @@ function getCookie(name) {
         }
     }
     return cookieValue;
+}
+
+// Update lots when user edits in modal - save to database immediately
+function updateLotsFromModal() {
+    const suggestionId = document.getElementById('modal-suggestion-id').value;
+    const callLotsInput = document.getElementById('modal-call-lots-input');
+    const putLotsInput = document.getElementById('modal-put-lots-input');
+
+    const newLots = parseInt(callLotsInput.value);
+    const lotSize = 50; // NIFTY lot size
+
+    // Sync both inputs (call and put should be same for strangle)
+    callLotsInput.value = newLots;
+    putLotsInput.value = newLots;
+
+    // Update quantity displays
+    document.getElementById('modal-call-quantity').textContent = newLots * lotSize;
+    document.getElementById('modal-put-quantity').textContent = newLots * lotSize;
+
+    // Update hidden field
+    document.getElementById('modal-lots-value').value = newLots;
+
+    // Save to database
+    console.log(`[EDIT] Saving lots change to database: ${newLots} lots for suggestion #${suggestionId}`);
+
+    fetch('/trading/api/suggestions/update-parameters/', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': getCookie('csrftoken')
+        },
+        body: JSON.stringify({
+            suggestion_id: suggestionId,
+            recommended_lots: newLots
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            console.log('[EDIT] ✅ Database updated:', data.message);
+
+            // Update margin displays with recalculated values
+            if (data.suggestion && data.suggestion.margin_required) {
+                document.getElementById('modal-total-margin-required').textContent =
+                    `₹${data.suggestion.margin_required.toLocaleString('en-IN', {maximumFractionDigits: 0})}`;
+            }
+
+            // Show brief success indicator
+            callLotsInput.style.borderColor = '#10B981';
+            putLotsInput.style.borderColor = '#10B981';
+            setTimeout(() => {
+                callLotsInput.style.borderColor = '#ddd';
+                putLotsInput.style.borderColor = '#ddd';
+            }, 1000);
+        } else {
+            console.error('[EDIT] ❌ Failed to update database:', data.error);
+            alert('Failed to save changes: ' + data.error);
+
+            // Revert to original value if save failed
+            const originalLots = strangleModalData.recommended_lots || 1;
+            callLotsInput.value = originalLots;
+            putLotsInput.value = originalLots;
+        }
+    })
+    .catch(error => {
+        console.error('[EDIT] ❌ Network error:', error);
+        alert('Network error while saving changes');
+    });
 }
 </script>

@@ -61,7 +61,7 @@ class DataFreshnessChecker:
                 return {
                     'is_fresh': False,
                     'last_updated': None,
-                    'age_minutes': float('inf'),
+                    'age_minutes': 999999,  # Large number instead of float('inf') for JSON compatibility
                     'needs_update': True,
                     'model': 'TLStockData',
                     'reason': 'No data in database'
@@ -88,7 +88,7 @@ class DataFreshnessChecker:
             return {
                 'is_fresh': False,
                 'last_updated': None,
-                'age_minutes': float('inf'),
+                'age_minutes': 999999,  # Large number instead of float('inf') for JSON compatibility
                 'needs_update': True,
                 'model': 'TLStockData',
                 'error': str(e)
@@ -123,7 +123,7 @@ class DataFreshnessChecker:
                 return {
                     'is_fresh': False,
                     'last_updated': None,
-                    'age_minutes': float('inf'),
+                    'age_minutes': 999999,  # Large number instead of float('inf') for JSON compatibility
                     'needs_update': True,
                     'model': 'ContractStockData',
                     'reason': 'No data in database'
@@ -150,7 +150,7 @@ class DataFreshnessChecker:
             return {
                 'is_fresh': False,
                 'last_updated': None,
-                'age_minutes': float('inf'),
+                'age_minutes': 999999,  # Large number instead of float('inf') for JSON compatibility
                 'needs_update': True,
                 'model': 'ContractStockData',
                 'error': str(e)

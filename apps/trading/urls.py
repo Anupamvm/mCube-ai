@@ -32,8 +32,17 @@ urlpatterns = [
     path('api/suggestions/', api_views.get_trade_suggestions, name='api_get_suggestions'),
     path('api/suggestions/<int:suggestion_id>/', api_views.get_suggestion_details, name='api_get_suggestion_details'),
     path('api/suggestions/update/', api_views.update_suggestion_status, name='api_update_suggestion'),
+    path('api/suggestions/update-parameters/', api_views.update_suggestion_parameters, name='api_update_suggestion_parameters'),
     path('api/get-lot-size/', api_views.get_lot_size, name='api_get_lot_size'),
     path('api/get-contract-details/', api_views.get_contract_details, name='api_get_contract_details'),
+
+    # Order Execution Control
+    path('api/create-execution-control/', api_views.create_execution_control, name='api_create_execution_control'),
+    path('api/cancel-execution/', api_views.cancel_execution, name='api_cancel_execution'),
+    path('api/execution-progress/<int:suggestion_id>/', api_views.get_execution_progress, name='api_execution_progress'),
+
+    # Option Chain Data
+    path('api/get-option-premiums/', api_views.get_option_premiums, name='api_get_option_premiums'),
 
     # Manual Trade Execution (Live Orders)
     path('manual/prepare/', views.prepare_manual_execution, name='prepare_manual_execution'),
