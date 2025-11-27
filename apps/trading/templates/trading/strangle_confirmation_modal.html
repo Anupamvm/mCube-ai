@@ -315,7 +315,12 @@ function showStrangleConfirmModal(suggestionData) {
         console.log('[MODAL]   recommended_lots:', recommendedLots);
         const marginPerLot = suggestionData.margin_per_lot;
         console.log('[MODAL]   margin_per_lot:', marginPerLot);
-        const lotSize = 50; // NIFTY lot size
+        // CRITICAL: Use lot size from Neo API (passed from backend after symbol validation)
+        // Fallback to 50 for NIFTY if not provided, but log warning
+        const lotSize = suggestionData.lot_size || 50;
+        if (!suggestionData.lot_size) {
+            console.warn('[MODAL] ⚠️ lot_size not provided in suggestionData, using default 50');
+        }
         console.log('[MODAL]   lot_size:', lotSize);
 
         // Format expiry - with error handling
@@ -326,10 +331,12 @@ function showStrangleConfirmModal(suggestionData) {
             const expiryDate = new Date(suggestionData.expiry_date);
             console.log('[MODAL]   expiryDate object:', expiryDate);
             if (!isNaN(expiryDate.getTime())) {
-                // Format: 25NOV (day first, then month)
-                const day = expiryDate.getDate().toString().padStart(2, '0');
-                const month = expiryDate.toLocaleDateString('en-US', {month: 'short'}).toUpperCase();
-                expiryStr = day + month;
+                // NSE Symbol Format: NIFTY + DDMMM + STRIKE + CE/PE
+                // Example: NIFTY02DEC27050CE (December 2nd, not year 2025!)
+                // Format: Day (2 digits) + Month (3 letters uppercase)
+                const day = expiryDate.getDate().toString().padStart(2, '0');  // "02"
+                const month = expiryDate.toLocaleDateString('en-US', {month: 'short'}).toUpperCase();  // "DEC"
+                expiryStr = day + month;  // "02DEC"
                 console.log('[MODAL]   formatted expiry:', expiryStr);
             } else {
                 console.warn('[MODAL]   ⚠️  Invalid date');

@@ -556,24 +556,56 @@ def execute_strangle_orders(request):
             })
 
         # Build call and put symbols from suggestion
-        # Format: NIFTY<YY><MMM><STRIKE><CE/PE>
-        # Example: NIFTY25NOV24500CE
+        # NSE Format: NIFTY<DD><MMM><STRIKE><CE/PE>
+        # Example: NIFTY25NOV24500CE = November 25th (DAY 25, not year 25!)
+        # CRITICAL: Use %d%b (day + month), NOT %y%b (year + month)
         expiry_date = suggestion.expiry_date
-        expiry_str = expiry_date.strftime('%y%b').upper()  # e.g., 25NOV
+        expiry_str = expiry_date.strftime('%d%b').upper()  # e.g., 02DEC for Dec 2nd
 
         # CRITICAL: Use FRESH database values for strikes
         call_strike = int(suggestion.call_strike)
         put_strike = int(suggestion.put_strike)
 
-        call_symbol = f"NIFTY{expiry_str}{call_strike}CE"
-        put_symbol = f"NIFTY{expiry_str}{put_strike}PE"
+        # Build Breeze-style symbols (from option chain data)
+        breeze_call_symbol = f"NIFTY{expiry_str}{call_strike}CE"
+        breeze_put_symbol = f"NIFTY{expiry_str}{put_strike}PE"
 
-        logger.info(f"[ORDER SYMBOLS] Call: {call_symbol}, Put: {put_symbol}, Lots: {total_lots}")
+        logger.info(f"[BREEZE SYMBOLS] Call: {breeze_call_symbol}, Put: {breeze_put_symbol}, Lots: {total_lots}")
+
+        # CRITICAL: Map Breeze symbols to Neo symbols before placing orders
+        from apps.brokers.integrations.kotak_neo import map_breeze_symbol_to_neo
+
+        logger.info(f"[SYMBOL MAPPING] Mapping Breeze symbols to Neo format...")
+
+        # Map CALL symbol
+        call_mapping = map_breeze_symbol_to_neo(breeze_call_symbol, expiry_date=expiry_date)
+        if not call_mapping['success']:
+            logger.error(f"Failed to map CALL symbol: {call_mapping['error']}")
+            return JsonResponse({
+                'success': False,
+                'error': f"Failed to map CALL symbol {breeze_call_symbol}: {call_mapping['error']}"
+            })
+
+        # Map PUT symbol
+        put_mapping = map_breeze_symbol_to_neo(breeze_put_symbol, expiry_date=expiry_date)
+        if not put_mapping['success']:
+            logger.error(f"Failed to map PUT symbol: {put_mapping['error']}")
+            return JsonResponse({
+                'success': False,
+                'error': f"Failed to map PUT symbol {breeze_put_symbol}: {put_mapping['error']}"
+            })
+
+        # Use Neo symbols for order placement
+        neo_call_symbol = call_mapping['neo_symbol']
+        neo_put_symbol = put_mapping['neo_symbol']
+        lot_size = call_mapping['lot_size']  # Use lot size from Neo (should be same for both)
+
+        logger.info(f"[NEO SYMBOLS] Call: {neo_call_symbol}, Put: {neo_put_symbol}, Lot Size: {lot_size}")
 
         # Place orders in batches (max 20 lots per order, 20 sec delays - Neo API limits)
         batch_result = place_strangle_orders_in_batches(
-            call_symbol=call_symbol,
-            put_symbol=put_symbol,
+            call_symbol=neo_call_symbol,
+            put_symbol=neo_put_symbol,
             total_lots=total_lots,
             batch_size=20,
             delay_seconds=20,
@@ -584,7 +616,7 @@ def execute_strangle_orders(request):
         if batch_result['success']:
             with transaction.atomic():
                 # Create position
-                lot_size = 50  # NIFTY lot size
+                # Use lot_size from Neo mapping (already fetched above)
                 total_quantity = total_lots * lot_size
 
                 position = Position.objects.create(
@@ -620,8 +652,11 @@ def execute_strangle_orders(request):
             'success': batch_result['success'],
             'message': f"Strangle orders executed: {batch_result['batches_completed']}/{batch_result['total_batches']} batches",
             'batch_result': batch_result,
-            'call_symbol': call_symbol,
-            'put_symbol': put_symbol,
+            'breeze_call_symbol': breeze_call_symbol,
+            'breeze_put_symbol': breeze_put_symbol,
+            'neo_call_symbol': neo_call_symbol,
+            'neo_put_symbol': neo_put_symbol,
+            'lot_size': lot_size,
             'total_lots': total_lots
         })
 

@@ -663,6 +663,272 @@ def get_lot_size_from_neo_with_token(trading_symbol: str, client=None) -> dict:
         }
 
 
+# Cache for Neo scrip master (to avoid repeated downloads)
+_neo_scrip_master_cache = {'data': None, 'timestamp': None}
+_CACHE_DURATION_SECONDS = 3600  # 1 hour
+
+def _get_neo_scrip_master(client) -> list:
+    """
+    Get Neo scrip master with caching.
+    Returns list of all contracts from CSV.
+    """
+    import csv
+    import io
+    import requests
+    import time
+
+    # Check cache
+    current_time = time.time()
+    if (_neo_scrip_master_cache['data'] is not None and
+        _neo_scrip_master_cache['timestamp'] is not None and
+        (current_time - _neo_scrip_master_cache['timestamp']) < _CACHE_DURATION_SECONDS):
+        logger.info("[SCRIP MASTER] Using cached scrip master")
+        return _neo_scrip_master_cache['data']
+
+    logger.info("[SCRIP MASTER] Downloading Neo scrip master...")
+
+    try:
+        # Get scrip master URL from Neo API
+        scrip_master_url = client.scrip_master(exchange_segment='nse_fo')
+
+        if not scrip_master_url or not isinstance(scrip_master_url, str):
+            logger.error("[SCRIP MASTER] Invalid scrip master response")
+            return []
+
+        # If it's a URL, download it
+        if scrip_master_url.startswith('http'):
+            response = requests.get(scrip_master_url, timeout=30)
+            if response.status_code != 200:
+                logger.error(f"[SCRIP MASTER] Failed to download CSV: {response.status_code}")
+                return []
+            scrip_master_csv = response.text
+        else:
+            scrip_master_csv = scrip_master_url
+
+        # Parse CSV
+        reader = csv.DictReader(io.StringIO(scrip_master_csv))
+        contracts = list(reader)
+
+        logger.info(f"[SCRIP MASTER] ✅ Downloaded {len(contracts)} contracts")
+
+        # Cache the data
+        _neo_scrip_master_cache['data'] = contracts
+        _neo_scrip_master_cache['timestamp'] = current_time
+
+        return contracts
+
+    except Exception as e:
+        logger.error(f"[SCRIP MASTER] Error downloading: {e}")
+        return []
+
+
+def map_breeze_symbol_to_neo(breeze_symbol: str, expiry_date=None, client=None) -> dict:
+    """
+    Map Breeze (ICICI) symbol format to Kotak Neo trading symbol.
+
+    CRITICAL: Breeze and Neo use different symbol formats!
+    - Breeze: NIFTY02DEC27050CE (day-based format)
+    - Neo: Must be fetched via search_scrip API
+
+    This function:
+    1. Parses the Breeze-style symbol
+    2. Calls Neo's search_scrip to find the actual Neo trading symbol
+    3. Returns Neo symbol with lot size and token
+
+    Args:
+        breeze_symbol (str): Breeze format symbol (e.g., 'NIFTY02DEC27050CE')
+        expiry_date (date): Optional expiry date object for precise matching
+        client: Optional authenticated Neo client to reuse
+
+    Returns:
+        dict: {
+            'success': bool,
+            'neo_symbol': str,  # Actual Neo trading symbol from pTrdSymbol
+            'lot_size': int,
+            'token': str,
+            'expiry': str,
+            'error': str (if failed)
+        }
+
+    Example:
+        >>> result = map_breeze_symbol_to_neo('NIFTY02DEC27050CE')
+        >>> if result['success']:
+        ...     print(f"Neo symbol: {result['neo_symbol']}")
+        Neo symbol: NIFTY 02 DEC 2025 27050 CE
+    """
+    import re
+    from datetime import datetime
+
+    try:
+        # Use provided client or get new one
+        if client is None:
+            client = _get_authenticated_client()
+
+        # Parse Breeze symbol: NIFTY02DEC27050CE
+        # Pattern: (SYMBOL)(DDMMM)(STRIKE)(CE|PE)
+        pattern = r'^([A-Z]+)(\d{2}[A-Z]{3})(\d+)(CE|PE)$'
+        match = re.match(pattern, breeze_symbol)
+
+        if not match:
+            logger.error(f"Invalid Breeze symbol format: {breeze_symbol}")
+            return {
+                'success': False,
+                'error': f'Invalid symbol format: {breeze_symbol}',
+                'neo_symbol': None,
+                'lot_size': 75,
+                'token': None
+            }
+
+        symbol_name = match.group(1)  # NIFTY
+        expiry_ddmmm = match.group(2)  # 02DEC
+        strike_price = match.group(3)  # 27050
+        option_type = match.group(4)  # CE or PE
+
+        logger.info(f"[SYMBOL MAPPING] Breeze: {breeze_symbol} → Parsed: symbol={symbol_name}, expiry={expiry_ddmmm}, strike={strike_price}, type={option_type}")
+
+        # Get scrip master from Neo
+        scrip_master = _get_neo_scrip_master(client)
+
+        if not scrip_master:
+            logger.error("[SYMBOL MAPPING] Failed to get scrip master")
+            return {
+                'success': False,
+                'error': 'Failed to download Neo scrip master',
+                'neo_symbol': None,
+                'lot_size': 75,
+                'token': None
+            }
+
+        # Filter for matching contracts
+        # Neo format: NIFTY25D0226800CE (NIFTY + YY + D + DD + STRIKE + CE/PE)
+        # Where: YY=year, D=month code, DD=day
+        matching_contracts = []
+
+        for contract in scrip_master:
+            # Check if it's a NIFTY option
+            if contract.get('pSymbolName') != symbol_name:
+                continue
+
+            # Check option type
+            if contract.get('pOptionType') != option_type:
+                continue
+
+            # Check strike price (handle scientific notation)
+            # NOTE: Strike prices in CSV are stored as actual_strike * 100
+            # e.g., 27000 strike is stored as 2700000 or 2.7e+06
+            contract_strike_raw = str(contract.get('dStrikePrice;', ''))
+            try:
+                contract_strike_float = float(contract_strike_raw.replace(',', ''))
+                # Divide by 100 to get actual strike
+                contract_strike = contract_strike_float / 100
+                target_strike = float(strike_price)
+
+                # Compare with small tolerance for floating point
+                if abs(contract_strike - target_strike) > 0.1:
+                    continue
+            except (ValueError, AttributeError):
+                # Fallback to string comparison if float conversion fails
+                if str(strike_price) not in contract_strike_raw:
+                    continue
+
+            # Check if expiry matches (look for the date pattern in symbol)
+            neo_symbol = contract.get('pTrdSymbol', '')
+
+            # Neo format includes date in symbol: NIFTY25D0226800CE
+            # Extract day from Breeze format: 02DEC → day=02
+            expiry_day = expiry_ddmmm[:2]  # "02"
+
+            # Check if this contract matches our expiry date
+            # Look for patterns like "25D02" (year=25, month code D, day=02)
+            if expiry_date:
+                year_short = expiry_date.strftime('%y')  # "25"
+                month_code = expiry_date.strftime('%b')[0].upper()  # "D" for Dec
+                date_pattern = f"{year_short}{month_code}{expiry_day}"  # "25D02"
+
+                if date_pattern in neo_symbol:
+                    matching_contracts.append(contract)
+
+        if matching_contracts:
+            # Use the first match
+            contract = matching_contracts[0]
+            neo_symbol = contract.get('pTrdSymbol', '')
+            lot_size = int(contract.get('lLotSize', 75))
+
+            logger.info(f"[SYMBOL MAPPING] ✅ Found Neo symbol: {neo_symbol}, lot_size={lot_size}")
+
+            return {
+                'success': True,
+                'neo_symbol': str(neo_symbol),
+                'lot_size': lot_size,
+                'token': str(neo_symbol),
+                'expiry': expiry_date.strftime('%d%b%Y').upper() if expiry_date else '',
+                'error': None
+            }
+        else:
+            logger.error(f"[SYMBOL MAPPING] ❌ No matching contract found for {breeze_symbol}")
+            logger.info(f"[SYMBOL MAPPING] Searched for: symbol={symbol_name}, strike={strike_price}, type={option_type}, expiry_day={expiry_ddmmm[:2]}")
+
+            # Show nearby/similar contracts to help debugging
+            logger.info(f"[SYMBOL MAPPING] Searching for similar contracts...")
+
+            # Find contracts with same symbol and option type
+            similar_contracts = []
+            target_strike = float(strike_price)
+
+            for contract in scrip_master:
+                if contract.get('pSymbolName') != symbol_name:
+                    continue
+                if contract.get('pOptionType') != option_type:
+                    continue
+
+                # Get strike (divide by 100 as strikes are stored * 100)
+                try:
+                    contract_strike_raw = str(contract.get('dStrikePrice;', ''))
+                    contract_strike_float = float(contract_strike_raw.replace(',', ''))
+                    contract_strike = contract_strike_float / 100  # Divide by 100
+
+                    # Find strikes within ±200 points
+                    if abs(contract_strike - target_strike) <= 200:
+                        similar_contracts.append({
+                            'symbol': contract.get('pTrdSymbol', ''),
+                            'strike': int(contract_strike),
+                            'lot_size': contract.get('lLotSize', 'N/A')
+                        })
+                except:
+                    continue
+
+            if similar_contracts:
+                # Sort by strike
+                similar_contracts.sort(key=lambda x: x['strike'])
+
+                logger.info(f"[SYMBOL MAPPING] Found {len(similar_contracts)} similar contracts:")
+                for i, c in enumerate(similar_contracts[:10]):  # Show first 10
+                    logger.info(f"[SYMBOL MAPPING]   [{i+1}] {c['symbol']} - Strike: {c['strike']}, Lot: {c['lot_size']}")
+
+                if len(similar_contracts) > 10:
+                    logger.info(f"[SYMBOL MAPPING]   ... and {len(similar_contracts) - 10} more")
+            else:
+                logger.warning(f"[SYMBOL MAPPING] No similar contracts found nearby")
+
+            return {
+                'success': False,
+                'error': f'No matching Neo contract found for {breeze_symbol}',
+                'neo_symbol': None,
+                'lot_size': 75,
+                'token': None
+            }
+
+    except Exception as e:
+        logger.error(f"[SYMBOL MAPPING] Error mapping {breeze_symbol}: {e}", exc_info=True)
+        return {
+            'success': False,
+            'error': str(e),
+            'neo_symbol': None,
+            'lot_size': 75,
+            'token': None
+        }
+
+
 def place_strangle_orders_in_batches(
     call_symbol: str,
     put_symbol: str,
