@@ -6,13 +6,18 @@ and order placement via ICICI Breeze API.
 """
 
 import logging
+import time
+import uuid
 from decimal import Decimal
 from datetime import datetime
 
 from django.contrib.auth.decorators import login_required
 from django.views.decorators.http import require_POST, require_GET
+from django.views.decorators.csrf import csrf_exempt
 from django.http import JsonResponse
 from django.db import transaction
+from django.utils.decorators import method_decorator
+from django.core.cache import cache
 
 from apps.brokers.integrations.breeze import get_breeze_client, get_nfo_margin
 from apps.positions.models import Position
@@ -472,16 +477,22 @@ def place_futures_order(request):
         logger.info(f"Looking up {symbol} futures in SecurityMaster for expiry {expiry_breeze}")
         instrument = get_futures_instrument(symbol, expiry_breeze)
 
+        # Always use contract.lot_size as the primary source (most reliable)
+        lot_size = contract.lot_size
+
         if not instrument:
             logger.warning(f"Instrument not found in SecurityMaster, using contract data")
             # Fallback to contract data if SecurityMaster lookup fails
             stock_code = symbol
-            lot_size = contract.lot_size
         else:
-            # Use SecurityMaster data (more accurate)
+            # Use SecurityMaster data for stock_code (more accurate)
             stock_code = instrument['short_name']
-            lot_size = instrument['lot_size']
+            # Only override lot_size if SecurityMaster has a valid non-zero value
+            if instrument.get('lot_size', 0) > 0:
+                lot_size = instrument['lot_size']
             logger.info(f"SecurityMaster lookup successful: stock_code={stock_code}, lot_size={lot_size}, token={instrument['token']}")
+
+        logger.info(f"Using lot_size={lot_size} from contract data (primary source)")
 
         quantity = lots * lot_size
 
@@ -559,6 +570,18 @@ def place_futures_order(request):
             logger.info(f"{'='*80}")
             logger.info(f"Batch {batch_num}/{total_batches}: Placing order for {batch_lots} lots ({batch_quantity} quantity)")
             logger.info(f"{'='*80}")
+
+            # Safety check: ensure batch_quantity is valid
+            if batch_quantity <= 0:
+                error_msg = f"Invalid batch quantity: {batch_quantity} (batch_lots={batch_lots}, lot_size={lot_size})"
+                logger.error(f"❌ {error_msg}")
+                failed_orders.append({
+                    'batch': batch_num,
+                    'lots': batch_lots,
+                    'error': error_msg,
+                    'response': None
+                })
+                continue
 
             try:
                 # Create Position for this batch (or use existing for subsequent batches)
@@ -1657,6 +1680,1301 @@ def get_lot_size(request):
 
     except Exception as e:
         logger.error(f"Error fetching lot size: {e}", exc_info=True)
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        })
+
+
+@login_required
+@require_GET
+def get_active_positions(request):
+    """
+    Get LIVE active positions from broker API (Breeze or Neo)
+
+    Fetches real-time open positions directly from the broker's API
+    instead of reading from database. Shows only positions with non-zero quantity.
+
+    GET params:
+        - broker: 'breeze' or 'neo'
+
+    Returns:
+        JSON with live positions list including LTP and real-time P&L
+    """
+    try:
+        broker = request.GET.get('broker', '').lower()
+
+        if broker not in ['breeze', 'neo']:
+            return JsonResponse({
+                'success': False,
+                'error': 'Invalid broker. Must be "breeze" or "neo"'
+            })
+
+        positions_data = []
+
+        if broker == 'breeze':
+            # Fetch live positions from Breeze API
+            breeze = get_breeze_client()
+            pos_resp = breeze.get_portfolio_positions()
+
+            if pos_resp and pos_resp.get('Status') == 200:
+                raw_positions = pos_resp.get('Success', [])
+
+                for p in raw_positions:
+                    quantity = int(p.get('quantity') or 0)
+
+                    # Skip positions with zero quantity (closed positions)
+                    if quantity == 0:
+                        continue
+
+                    avg_price = float(p.get('average_price') or 0)
+                    ltp = float(p.get('ltp') or p.get('price') or 0)
+
+                    # Calculate unrealized P&L
+                    if quantity > 0:  # LONG position
+                        unrealized_pnl = (ltp - avg_price) * quantity
+                        direction = 'LONG'
+                    else:  # SHORT position
+                        unrealized_pnl = (avg_price - ltp) * abs(quantity)
+                        direction = 'SHORT'
+
+                    # Realized P&L is typically 0 for carry-forward positions
+                    realized_pnl = 0.0
+
+                    symbol = p.get('stock_code', 'N/A')
+                    product = p.get('product_type', 'N/A')
+                    exchange = p.get('exchange_code', 'NFO')
+
+                    positions_data.append({
+                        'symbol': symbol,
+                        'exchange': exchange,
+                        'product': product,
+                        'direction': direction,
+                        'quantity': abs(quantity),
+                        'net_quantity': quantity,  # Net quantity in shares (for display)
+                        'net_quantity_shares': quantity,  # Net quantity in shares (for closing)
+                        'average_price': avg_price,
+                        'ltp': ltp,
+                        'unrealized_pnl': round(unrealized_pnl, 2),
+                        'realized_pnl': round(realized_pnl, 2),
+                        'total_pnl': round(unrealized_pnl + realized_pnl, 2),
+                        'pnl_percentage': round((unrealized_pnl / (avg_price * abs(quantity)) * 100), 2) if avg_price > 0 else 0,
+                    })
+            else:
+                logger.warning(f"Breeze positions API returned non-200 status: {pos_resp}")
+
+        elif broker == 'neo':
+            # Fetch live positions from Neo API
+            from apps.brokers.integrations.kotak_neo import get_kotak_neo_client
+
+            try:
+                client = get_kotak_neo_client()
+
+                # Log API call details
+                logger.info("="*100)
+                logger.info("📞 CALLING NEO API: client.positions()")
+                logger.info("="*100)
+
+                resp = client.positions()
+
+                # Log raw response
+                logger.info("="*100)
+                logger.info("📥 RAW NEO API RESPONSE:")
+                logger.info(f"Response type: {type(resp)}")
+                logger.info(f"Response keys: {list(resp.keys()) if isinstance(resp, dict) else 'N/A'}")
+                logger.info("="*100)
+                import json
+                logger.info(json.dumps(resp, indent=2, default=str))
+                logger.info("="*100)
+
+                raw_positions = resp.get('data', []) if isinstance(resp, dict) else []
+                logger.info(f"📊 Found {len(raw_positions)} positions in response")
+
+                for p in raw_positions:
+                    symbol = p.get('trdSym', 'N/A')
+                    logger.info("="*80)
+                    logger.info(f"🔍 PROCESSING POSITION: {symbol}")
+                    logger.info("="*80)
+
+                    # Log raw quantities and amounts
+                    logger.info(f"📦 RAW DATA FROM API:")
+                    logger.info(f"  cfBuyQty={p.get('cfBuyQty')}, cfBuyAmt={p.get('cfBuyAmt')}")
+                    logger.info(f"  cfSellQty={p.get('cfSellQty')}, cfSellAmt={p.get('cfSellAmt')}")
+                    logger.info(f"  flBuyQty={p.get('flBuyQty')}, buyAmt={p.get('buyAmt')}")
+                    logger.info(f"  flSellQty={p.get('flSellQty')}, sellAmt={p.get('sellAmt')}")
+                    logger.info(f"  lotSz={p.get('lotSz')}, stkPrc={p.get('stkPrc')}")
+
+                    # Get lot size
+                    lot_sz = int(p.get('lotSz', 1))
+
+                    # QUANTITY CALCULATION
+                    # API returns quantities in SHARES (actual contracts), not lots
+                    cf_buy_qty_shares = int(p.get('cfBuyQty', 0))
+                    fl_buy_qty_shares = int(p.get('flBuyQty', 0))
+                    cf_sell_qty_shares = int(p.get('cfSellQty', 0))
+                    fl_sell_qty_shares = int(p.get('flSellQty', 0))
+
+                    total_buy_qty_shares = cf_buy_qty_shares + fl_buy_qty_shares
+                    total_sell_qty_shares = cf_sell_qty_shares + fl_sell_qty_shares
+                    net_qty_shares = total_buy_qty_shares - total_sell_qty_shares
+
+                    # Convert shares to LOTS for display
+                    # Buy Quantity (lots) = Total Shares / Lot Size
+                    total_buy_qty_lots = total_buy_qty_shares // lot_sz if lot_sz > 0 else total_buy_qty_shares
+                    total_sell_qty_lots = total_sell_qty_shares // lot_sz if lot_sz > 0 else total_sell_qty_shares
+                    net_qty_lots = total_buy_qty_lots - total_sell_qty_lots
+
+                    logger.info(f"📊 QUANTITY CALCULATION:")
+                    logger.info(f"  Lot Size: {lot_sz}")
+                    logger.info(f"  Buy Qty: {cf_buy_qty_shares} shares = {cf_buy_qty_shares}/{lot_sz} = {total_buy_qty_lots} lots")
+                    logger.info(f"  Sell Qty: {cf_sell_qty_shares} shares = {cf_sell_qty_shares}/{lot_sz} = {total_sell_qty_lots} lots")
+                    logger.info(f"  Net Qty: {net_qty_shares} shares = {net_qty_lots} lots")
+
+                    # Skip positions with zero quantity
+                    if net_qty_lots == 0:
+                        logger.info(f"  ⏭️  Skipping {symbol} - zero net quantity")
+                        continue
+
+                    # AMOUNT FIELDS
+                    buy_amt = float(p.get('cfBuyAmt', 0)) + float(p.get('buyAmt', 0))
+                    sell_amt = float(p.get('cfSellAmt', 0)) + float(p.get('sellAmt', 0))
+
+                    logger.info(f"💰 AMOUNTS:")
+                    logger.info(f"  Buy Amount: ₹{buy_amt:,.2f}")
+                    logger.info(f"  Sell Amount: ₹{sell_amt:,.2f}")
+
+                    # AVERAGE PRICE CALCULATION
+                    # Avg Price = Total Amount / Total Quantity in shares
+                    # NOTE: Kotak portal uses SIMPLE average (Total Amt / Total Qty)
+                    # WITHOUT adding transaction costs
+
+                    if net_qty_lots > 0:
+                        # LONG position
+                        avg_price = buy_amt / total_buy_qty_shares if total_buy_qty_shares > 0 else 0
+                        direction = 'LONG'
+
+                        logger.info(f"📈 AVERAGE PRICE (LONG):")
+                        logger.info(f"  Buy Amount: ₹{buy_amt:,.2f}")
+                        logger.info(f"  Total Qty: {total_buy_qty_shares:,} shares")
+                        logger.info(f"  Average Price: ₹{avg_price:.2f}")
+                    else:
+                        # SHORT position
+                        avg_price = sell_amt / total_sell_qty_shares if total_sell_qty_shares > 0 else 0
+                        direction = 'SHORT'
+
+                        logger.info(f"📉 AVERAGE PRICE (SHORT):")
+                        logger.info(f"  Sell Amount: ₹{sell_amt:,.2f}")
+                        logger.info(f"  Total Qty: {total_sell_qty_shares:,} shares")
+                        logger.info(f"  Average Price: ₹{avg_price:.2f}")
+
+                    # GET LTP (Last Traded Price) using the same method as order placement
+                    from apps.brokers.integrations.kotak_neo import get_ltp_from_neo
+
+                    ltp = None
+                    trading_symbol = p.get('trdSym')  # e.g., "BANKNIFTY25DECFUT"
+                    exchange_segment = p.get('exSeg', 'nse_fo')
+
+                    logger.info(f"💹 FETCHING LTP:")
+                    logger.info(f"  Trading Symbol: {trading_symbol}")
+                    logger.info(f"  Exchange Segment: {exchange_segment}")
+
+                    try:
+                        # Use the same authenticated client and method as order placement
+                        ltp = get_ltp_from_neo(
+                            trading_symbol=trading_symbol,
+                            exchange_segment=exchange_segment,
+                            client=client  # Pass the same authenticated client
+                        )
+
+                        if ltp is not None and ltp > 0:
+                            logger.info(f"  ✅ Successfully fetched LTP: ₹{ltp:.2f}")
+                        else:
+                            logger.warning(f"  ⚠️ Could not fetch LTP for {trading_symbol}")
+                    except Exception as e:
+                        logger.error(f"  ❌ Error fetching LTP: {e}", exc_info=True)
+
+                    # P&L CALCULATION
+                    logger.info(f"💰 P&L CALCULATION:")
+
+                    # REALIZED P&L
+                    # For open positions (where you only bought or only sold, not both):
+                    # - If you only bought (LONG), realized P&L = 0
+                    # - If you only sold (SHORT), realized P&L = 0
+                    # - If you have both buys and sells, realized P&L = settled portion
+
+                    if sell_amt == 0 and buy_amt > 0:
+                        # Fully LONG position - no sells yet
+                        realized_pnl = 0.0
+                        logger.info(f"  Realized P&L = ₹0.00 (fully open LONG position, no sells)")
+                    elif buy_amt == 0 and sell_amt > 0:
+                        # Fully SHORT position - no buys yet
+                        realized_pnl = 0.0
+                        logger.info(f"  Realized P&L = ₹0.00 (fully open SHORT position, no buys)")
+                    else:
+                        # Partially closed position
+                        realized_pnl = sell_amt - buy_amt
+                        logger.info(f"  Realized P&L = Sell Amt - Buy Amt")
+                        logger.info(f"  Realized P&L = ₹{sell_amt:,.2f} - ₹{buy_amt:,.2f}")
+                        logger.info(f"  Realized P&L = ₹{realized_pnl:,.2f}")
+
+                    # UNREALIZED P&L = (LTP - Avg Price) × Net Qty in shares
+                    # IMPORTANT: Only calculate if LTP is available and valid
+                    logger.info(f"  Checking LTP: {ltp} (type: {type(ltp)})")
+
+                    if ltp is not None and ltp > 0:
+                        if direction == 'LONG':
+                            # LONG: Profit if LTP > Avg Price
+                            unrealized_pnl = (ltp - avg_price) * net_qty_shares
+                            logger.info(f"  Unrealized P&L (LONG) = (LTP - Avg) × Qty (shares)")
+                            logger.info(f"  Unrealized P&L = (₹{ltp:.2f} - ₹{avg_price:.2f}) × {net_qty_shares}")
+                            logger.info(f"  Unrealized P&L = ₹{ltp - avg_price:.2f} × {net_qty_shares}")
+                            logger.info(f"  Unrealized P&L = ₹{unrealized_pnl:,.2f}")
+                        else:
+                            # SHORT: Profit if Avg Price > LTP
+                            unrealized_pnl = (avg_price - ltp) * abs(net_qty_shares)
+                            logger.info(f"  Unrealized P&L (SHORT) = (Avg - LTP) × Qty (shares)")
+                            logger.info(f"  Unrealized P&L = (₹{avg_price:.2f} - ₹{ltp:.2f}) × {abs(net_qty_shares)}")
+                            logger.info(f"  Unrealized P&L = ₹{avg_price - ltp:.2f} × {abs(net_qty_shares)}")
+                            logger.info(f"  Unrealized P&L = ₹{unrealized_pnl:,.2f}")
+                    else:
+                        unrealized_pnl = 0.0
+                        logger.warning(f"  ⚠️ LTP not available (LTP={ltp}), setting unrealized P&L to ₹0.00")
+
+                    # TOTAL P&L = Realized + Unrealized
+                    total_pnl = realized_pnl + unrealized_pnl
+                    logger.info(f"  📊 Total P&L = ₹{realized_pnl:,.2f} + ₹{unrealized_pnl:,.2f} = ₹{total_pnl:,.2f}")
+
+                    # Get additional fields
+                    product = p.get('prod', 'N/A')
+                    exchange = p.get('exSeg', 'N/A')
+
+                    # Calculate P&L percentage based on investment
+                    investment = avg_price * abs(net_qty_shares)
+                    pnl_pct = (total_pnl / investment * 100) if investment > 0 else 0
+
+                    logger.info("="*80)
+                    logger.info(f"📊 FINAL SUMMARY FOR {symbol}:")
+                    logger.info(f"  Direction: {direction}")
+                    logger.info(f"  Quantity: {abs(net_qty_lots)} lots ({abs(net_qty_shares)} shares)")
+                    logger.info(f"  Average Price: ₹{avg_price:.2f}")
+                    logger.info(f"  LTP: ₹{ltp:.2f}" if ltp is not None and ltp > 0 else "  LTP: Not Available")
+                    logger.info(f"  Realized P&L: ₹{realized_pnl:,.2f}")
+                    logger.info(f"  Unrealized P&L: ₹{unrealized_pnl:,.2f}")
+                    logger.info(f"  Total P&L: ₹{total_pnl:,.2f} ({pnl_pct:+.2f}%)")
+                    logger.info("="*80)
+
+                    # Prepare response data
+                    position_dict = {
+                        'symbol': symbol,
+                        'exchange': exchange,
+                        'product': product,
+                        'direction': direction,
+                        'quantity': abs(net_qty_lots),  # Display in lots
+                        'net_quantity': net_qty_lots,  # Net quantity in lots (for display)
+                        'net_quantity_shares': net_qty_shares,  # Net quantity in shares (for closing)
+                        'average_price': round(avg_price, 2),
+                        'ltp': round(ltp, 2) if ltp is not None and ltp > 0 else None,
+                        'unrealized_pnl': round(unrealized_pnl, 2),
+                        'realized_pnl': round(realized_pnl, 2),
+                        'total_pnl': round(total_pnl, 2),
+                        'pnl_percentage': round(pnl_pct, 2),
+                    }
+
+                    logger.info(f"📤 RESPONSE DATA FOR {symbol}:")
+                    logger.info(json.dumps(position_dict, indent=2))
+
+                    positions_data.append(position_dict)
+
+            except Exception as e:
+                logger.error(f"Error fetching Neo positions: {e}", exc_info=True)
+                return JsonResponse({
+                    'success': False,
+                    'error': f'Failed to fetch Neo positions: {str(e)}'
+                })
+
+        broker_name = 'ICICI Breeze' if broker == 'breeze' else 'Kotak Neo'
+
+        return JsonResponse({
+            'success': True,
+            'broker': broker_name,
+            'positions': positions_data,
+            'count': len(positions_data)
+        })
+
+    except Exception as e:
+        logger.error(f"Error fetching active positions: {e}", exc_info=True)
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        })
+
+
+@login_required
+@require_GET
+def get_position_details(request):
+    """
+    Get detailed information for a specific position
+
+    GET params:
+        - broker: 'breeze' or 'neo'
+        - position_id: Position ID
+
+    Returns:
+        JSON with position details
+    """
+    try:
+        broker = request.GET.get('broker', '').lower()
+        position_id = request.GET.get('position_id')
+
+        if not position_id:
+            return JsonResponse({
+                'success': False,
+                'error': 'position_id is required'
+            })
+
+        broker_name = 'ICICI' if broker == 'breeze' else 'KOTAK'
+
+        position = Position.objects.filter(
+            id=position_id,
+            account__broker=broker_name,
+            account__is_active=True
+        ).select_related('account').first()
+
+        if not position:
+            return JsonResponse({
+                'success': False,
+                'error': 'Position not found'
+            })
+
+        position_data = {
+            'id': position.id,
+            'instrument': position.instrument,
+            'direction': position.direction,
+            'quantity': position.quantity,
+            'lot_size': position.lot_size,
+            'entry_price': float(position.entry_price),
+            'current_price': float(position.current_price),
+            'stop_loss': float(position.stop_loss) if position.stop_loss else None,
+            'target': float(position.target) if position.target else None,
+            'unrealized_pnl': float(position.unrealized_pnl),
+            'realized_pnl': float(position.realized_pnl),
+            'margin_used': float(position.margin_used),
+            'entry_value': float(position.entry_value),
+            'expiry_date': position.expiry_date.strftime('%Y-%m-%d'),
+            'entry_time': position.entry_time.strftime('%Y-%m-%d %H:%M:%S'),
+            'exit_time': position.exit_time.strftime('%Y-%m-%d %H:%M:%S') if position.exit_time else None,
+            'exit_price': float(position.exit_price) if position.exit_price else None,
+            'exit_reason': position.exit_reason,
+            'status': position.status,
+            'strategy_type': position.strategy_type,
+            'call_strike': float(position.call_strike) if position.call_strike else None,
+            'put_strike': float(position.put_strike) if position.put_strike else None,
+            'call_premium': float(position.call_premium) if position.call_premium else None,
+            'put_premium': float(position.put_premium) if position.put_premium else None,
+        }
+
+        return JsonResponse({
+            'success': True,
+            'position': position_data
+        })
+
+    except Exception as e:
+        logger.error(f"Error fetching position details: {e}", exc_info=True)
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        })
+
+
+@login_required
+@require_POST
+def close_position(request):
+    """
+    Close a position by placing exit orders in batches
+
+    POST params (JSON):
+        - broker: 'breeze' or 'neo'
+        - position_id: Position ID
+
+    Returns:
+        JSON with order execution results
+    """
+    try:
+        import json
+        import time
+
+        # Parse JSON body
+        data = json.loads(request.body)
+        broker = data.get('broker', '').lower()
+        position_id = data.get('position_id')
+
+        if not position_id:
+            return JsonResponse({
+                'success': False,
+                'error': 'position_id is required'
+            })
+
+        broker_name = 'ICICI' if broker == 'breeze' else 'KOTAK'
+
+        # Get position
+        position = Position.objects.filter(
+            id=position_id,
+            account__broker=broker_name,
+            account__is_active=True,
+            status=POSITION_STATUS_ACTIVE
+        ).select_related('account').first()
+
+        if not position:
+            return JsonResponse({
+                'success': False,
+                'error': 'Position not found or already closed'
+            })
+
+        # Get contract details
+        contract = ContractData.objects.filter(
+            symbol=position.instrument,
+            option_type='FUTURE',
+            expiry=position.expiry_date
+        ).first()
+
+        if not contract:
+            return JsonResponse({
+                'success': False,
+                'error': f'Contract not found for {position.instrument}'
+            })
+
+        # Format expiry for Breeze
+        expiry_dt = position.expiry_date
+        if isinstance(expiry_dt, str):
+            expiry_dt = datetime.strptime(expiry_dt, '%Y-%m-%d').date()
+        expiry_breeze = expiry_dt.strftime('%d-%b-%Y').upper()
+
+        # Get instrument details from SecurityMaster
+        from apps.brokers.utils.security_master import get_futures_instrument
+
+        logger.info(f"Looking up {position.instrument} futures in SecurityMaster for expiry {expiry_breeze}")
+        instrument = get_futures_instrument(position.instrument, expiry_breeze)
+
+        # Always use contract.lot_size as the primary source (most reliable)
+        lot_size = contract.lot_size
+
+        if not instrument:
+            logger.warning(f"Instrument not found in SecurityMaster, using contract data")
+            stock_code = position.instrument
+        else:
+            stock_code = instrument['short_name']
+            if instrument.get('lot_size', 0) > 0:
+                lot_size = instrument['lot_size']
+            logger.info(f"SecurityMaster lookup successful: stock_code={stock_code}, lot_size={lot_size}, token={instrument['token']}")
+
+        logger.info(f"Using lot_size={lot_size} from contract data (primary source)")
+
+        # Initialize Breeze
+        breeze = get_breeze_client()
+
+        # Calculate batches (10 lots per order, 20 second delay)
+        BATCH_SIZE = 10  # lots per order
+        DELAY_SECONDS = 20  # seconds between orders
+
+        total_lots = position.quantity
+        batches = []
+        remaining_lots = total_lots
+
+        while remaining_lots > 0:
+            batch_lots = min(BATCH_SIZE, remaining_lots)
+            batches.append(batch_lots)
+            remaining_lots -= batch_lots
+
+        total_batches = len(batches)
+        logger.info(f"Closing position: Splitting {total_lots} lots into {total_batches} batches: {batches}")
+
+        # Track all orders
+        successful_orders = []
+        failed_orders = []
+
+        # Place exit orders in batches (opposite direction)
+        for batch_num, batch_lots in enumerate(batches, 1):
+            batch_quantity = batch_lots * lot_size
+
+            logger.info(f"{'='*80}")
+            logger.info(f"Exit Batch {batch_num}/{total_batches}: Closing {batch_lots} lots ({batch_quantity} quantity)")
+            logger.info(f"{'='*80}")
+
+            # Safety check: ensure batch_quantity is valid
+            if batch_quantity <= 0:
+                error_msg = f"Invalid batch quantity: {batch_quantity} (batch_lots={batch_lots}, lot_size={lot_size})"
+                logger.error(f"❌ {error_msg}")
+                failed_orders.append({
+                    'batch': batch_num,
+                    'lots': batch_lots,
+                    'error': error_msg,
+                    'response': None
+                })
+                continue
+
+            try:
+                # Determine action (opposite of position direction)
+                if position.direction == 'LONG':
+                    action = 'sell'  # Close LONG position by selling
+                else:
+                    action = 'buy'   # Close SHORT position by buying
+
+                order_params = {
+                    'stock_code': stock_code,
+                    'exchange_code': 'NFO',
+                    'product': 'futures',
+                    'action': action,
+                    'order_type': 'market',
+                    'quantity': str(batch_quantity),
+                    'price': '0',
+                    'validity': 'day',
+                    'stoploss': '0',
+                    'disclosed_quantity': '0',
+                    'expiry_date': expiry_breeze,
+                    'right': 'others',
+                    'strike_price': '0'
+                }
+
+                logger.info(f"Exit Batch {batch_num} order parameters: {order_params}")
+                if instrument:
+                    logger.info(f"Using SecurityMaster: Symbol={position.instrument} -> StockCode={stock_code}, Token={instrument['token']}")
+
+                order_response = breeze.place_order(**order_params)
+                logger.info(f"Exit Batch {batch_num} Breeze API Response: {order_response}")
+
+                if order_response and order_response.get('Status') == 200:
+                    order_data = order_response.get('Success', {})
+                    order_id = order_data.get('order_id', 'UNKNOWN')
+
+                    # Create Order record
+                    order = Order.objects.create(
+                        account=position.account,
+                        position=position,
+                        broker_order_id=order_id,
+                        instrument=position.instrument,
+                        order_type='MARKET',
+                        direction='SELL' if position.direction == 'LONG' else 'BUY',
+                        quantity=batch_quantity,
+                        price=position.current_price,
+                        exchange='NFO',
+                        status='PENDING'
+                    )
+
+                    successful_orders.append({
+                        'batch': batch_num,
+                        'order_id': order_id,
+                        'lots': batch_lots,
+                        'quantity': batch_quantity,
+                        'order_record_id': order.id
+                    })
+
+                    logger.info(f"✅ Exit Batch {batch_num} SUCCESS: Order ID {order_id}")
+
+                else:
+                    error_msg = order_response.get('Error', 'Unknown error') if order_response else 'API call failed'
+                    logger.error(f"❌ Exit Batch {batch_num} FAILED: {error_msg}")
+
+                    failed_orders.append({
+                        'batch': batch_num,
+                        'lots': batch_lots,
+                        'error': error_msg,
+                        'response': order_response
+                    })
+
+            except Exception as e:
+                logger.error(f"❌ Exit Batch {batch_num} EXCEPTION: {e}", exc_info=True)
+                failed_orders.append({
+                    'batch': batch_num,
+                    'lots': batch_lots,
+                    'error': str(e),
+                    'response': None
+                })
+
+            # Wait 20 seconds before next batch (except for last batch)
+            if batch_num < total_batches:
+                logger.info(f"⏸️  Waiting {DELAY_SECONDS} seconds before next batch...")
+                time.sleep(DELAY_SECONDS)
+
+        # Prepare summary response
+        logger.info(f"{'='*80}")
+        logger.info(f"EXIT ORDER SUMMARY: {len(successful_orders)} successful, {len(failed_orders)} failed")
+        logger.info(f"{'='*80}")
+
+        # Update position status if all orders succeeded
+        if len(successful_orders) == total_batches:
+            position.close_position(
+                exit_price=position.current_price,
+                exit_reason='MANUAL'
+            )
+            logger.info(f"✅ Position {position.id} marked as CLOSED")
+
+        if len(successful_orders) > 0:
+            # At least some orders succeeded
+            return JsonResponse({
+                'success': True,
+                'total_batches': total_batches,
+                'successful_batches': len(successful_orders),
+                'failed_batches': len(failed_orders),
+                'position_id': position.id,
+                'message': f'{len(successful_orders)}/{total_batches} exit batches placed successfully',
+                'orders': successful_orders,
+                'failed_orders': failed_orders if failed_orders else None,
+                'position_closed': len(successful_orders) == total_batches
+            })
+        else:
+            # All batches failed
+            return JsonResponse({
+                'success': False,
+                'error': f'All {total_batches} exit batches failed',
+                'failed_orders': failed_orders,
+                'debug_info': {
+                    'total_batches': total_batches,
+                    'symbol': position.instrument,
+                    'lots': total_lots
+                }
+            })
+
+    except Exception as e:
+        logger.error(f"Error closing position: {e}", exc_info=True)
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        })
+
+
+@csrf_exempt
+def close_live_position(request):
+    """
+    Close a live position from broker API by placing exit orders in batches.
+
+    This is different from close_position() which works with database Position objects.
+    This function works with live positions fetched directly from broker APIs.
+
+    POST params (JSON):
+        - broker: 'breeze' or 'neo'
+        - symbol: Trading symbol (e.g., 'JIOFIN25DECFUT', 'NIFTY25NOV24500CE')
+        - quantity: Net quantity to close (positive for LONG, negative for SHORT)
+        - exchange: Exchange code (e.g., 'NFO', 'nse_fo')
+        - product: Product type (e.g., 'futures', 'NRML', 'MIS')
+        - direction: Position direction ('LONG' or 'SHORT')
+
+    Returns:
+        JSON with order execution results
+    """
+    # Check if user is authenticated
+    if not request.user.is_authenticated:
+        return JsonResponse({
+            'success': False,
+            'error': 'Authentication required'
+        }, status=401)
+
+    # Check if POST method
+    if request.method != 'POST':
+        return JsonResponse({
+            'success': False,
+            'error': 'POST method required'
+        }, status=405)
+
+    try:
+        import json
+
+        # Parse JSON body
+        data = json.loads(request.body)
+        broker = data.get('broker', '').lower()
+        symbol = data.get('symbol')
+        quantity = data.get('quantity')  # Can be positive (LONG) or negative (SHORT)
+        exchange = data.get('exchange', 'NFO')
+        product = data.get('product', 'NRML')
+        direction = data.get('direction', 'LONG').upper()
+
+        logger.info(f"="*100)
+        logger.info(f"CLOSING LIVE POSITION: {broker.upper()} - {symbol}")
+        logger.info(f"Direction: {direction}, Quantity: {quantity}, Product: {product}")
+        logger.info(f"="*100)
+
+        if broker not in ['breeze', 'neo']:
+            return JsonResponse({
+                'success': False,
+                'error': 'Invalid broker. Must be "breeze" or "neo"'
+            })
+
+        if not symbol or quantity is None:
+            return JsonResponse({
+                'success': False,
+                'error': 'symbol and quantity are required'
+            })
+
+        # Convert quantity to absolute value
+        abs_quantity = abs(int(quantity))
+
+        if abs_quantity == 0:
+            return JsonResponse({
+                'success': False,
+                'error': 'Position has zero quantity'
+            })
+
+        # Generate cancellation key based on user and symbol (so frontend knows it)
+        cancellation_key = f"cancel_order_{request.user.id}_{broker}_{symbol.replace('/', '_')}"
+        # Store cancellation flag in cache with 10 minute expiry (initially False)
+        cache.set(cancellation_key, False, 600)
+
+        # Generate progress tracking key
+        progress_key = f"close_progress_{request.user.id}_{broker}_{symbol.replace('/', '_')}"
+
+        # Initialize progress in cache
+        def update_progress(batches_completed, total_batches, current_batch=None, log_message=None, log_type='info', is_complete=False, is_success=False, is_cancelled=False):
+            progress = {
+                'batches_completed': batches_completed,
+                'total_batches': total_batches,
+                'current_batch': current_batch,
+                'is_cancelled': is_cancelled,
+                'is_complete': is_complete,
+                'is_success': is_success,
+                'last_log_message': log_message,
+                'last_log_type': log_type
+            }
+            cache.set(progress_key, progress, 600)
+            return progress
+
+        logger.info(f"Created cancellation key: {cancellation_key}")
+        logger.info(f"Created progress key: {progress_key}")
+
+        # Handle Neo broker
+        if broker == 'neo':
+            from apps.brokers.integrations.kotak_neo import close_position_in_batches
+
+            # Determine transaction type (opposite of position direction)
+            # LONG position -> SELL to close
+            # SHORT position -> BUY to close
+            transaction_type = 'S' if direction == 'LONG' else 'B'
+
+            logger.info(f"Closing Neo position: {symbol} with transaction type {transaction_type}")
+
+            # Initialize progress for Neo
+            update_progress(0, 0, log_message='Starting position closure on Kotak Neo...', log_type='info')
+
+            # Call Neo batch closing function
+            result = close_position_in_batches(
+                trading_symbol=symbol,
+                total_quantity=abs_quantity,
+                transaction_type=transaction_type,
+                product=product if product in ['NRML', 'MIS', 'CNC'] else 'NRML',
+                batch_size=10,  # 10 lots per batch
+                delay_seconds=10,  # 10 second delay between batches
+                position_type='OPTION',  # Will work for futures too
+                cancellation_key=cancellation_key,  # Pass cancellation key
+                progress_key=progress_key  # Pass progress key for tracking
+            )
+
+            if result['success']:
+                logger.info(f"✅ Neo position closed successfully: {result['summary']}")
+                return JsonResponse({
+                    'success': True,
+                    'cancelled': result.get('cancelled', False),
+                    'broker': 'neo',
+                    'symbol': symbol,
+                    'message': result.get('message', f"Position closed: {result['summary']['success_count']}/{result['total_batches']} batches succeeded"),
+                    'batches_completed': result['batches_completed'],
+                    'total_batches': result['total_batches'],
+                    'successful_batches': result['summary']['success_count'],
+                    'summary': result['summary']
+                })
+            else:
+                logger.error(f"❌ Neo position close failed: {result.get('error')}")
+                return JsonResponse({
+                    'success': False,
+                    'error': result.get('error', 'Failed to close position'),
+                    'batches_completed': result.get('batches_completed', 0),
+                    'orders': result.get('orders', [])
+                })
+
+        # Handle Breeze broker
+        elif broker == 'breeze':
+            import time
+            from apps.brokers.integrations.breeze import get_breeze_client
+
+            # Determine action (opposite of position direction)
+            action = 'sell' if direction == 'LONG' else 'buy'
+
+            logger.info(f"Closing Breeze position: {symbol} with action {action}")
+
+            # Get Breeze client
+            breeze = get_breeze_client()
+
+            # Get the actual position from Breeze to get all required fields
+            try:
+                pos_resp = breeze.get_portfolio_positions()
+                if not pos_resp or pos_resp.get('Status') != 200:
+                    return JsonResponse({
+                        'success': False,
+                        'error': f'Failed to fetch positions from Breeze: {pos_resp.get("Error", "Unknown error")}'
+                    })
+
+                # Find the matching position
+                positions = pos_resp.get('Success', [])
+                matching_pos = None
+
+                for pos in positions:
+                    # Match by product type (Futures/Options) and quantity
+                    pos_qty = int(pos.get('quantity', 0))
+                    if abs(pos_qty) == abs_quantity:
+                        # Also check product type matches
+                        if product.lower() in pos.get('product_type', '').lower():
+                            matching_pos = pos
+                            logger.info(f"Found matching position: {pos.get('stock_code')} with quantity {pos_qty}")
+                            break
+
+                if not matching_pos:
+                    # If no exact match, try to find by stock code in the symbol
+                    # Extract base symbol from Neo format (e.g., JIOFIN26JANFUT -> JIOFIN)
+                    import re
+                    match = re.match(r'^([A-Z]+)', symbol.upper())
+                    base_symbol = match.group(1) if match else symbol
+
+                    for pos in positions:
+                        if pos.get('stock_code') == base_symbol:
+                            matching_pos = pos
+                            logger.info(f"Found position by symbol match: {base_symbol}")
+                            break
+
+                if not matching_pos:
+                    return JsonResponse({
+                        'success': False,
+                        'error': f'Could not find position for {symbol} in Breeze positions'
+                    })
+
+                # Extract all required fields from the position
+                stock_code = matching_pos.get('stock_code')
+                exchange_code = matching_pos.get('exchange_code', 'NFO')
+                product_type = matching_pos.get('product_type', 'Futures')
+                expiry_date = matching_pos.get('expiry_date', '')
+                right = matching_pos.get('right', 'others')
+                strike_price = matching_pos.get('strike_price', '0')
+                pos_quantity = int(matching_pos.get('quantity', 0))
+
+                logger.info(f"Position details:")
+                logger.info(f"  stock_code={stock_code}")
+                logger.info(f"  exchange_code={exchange_code}")
+                logger.info(f"  product_type={product_type}")
+                logger.info(f"  expiry_date={expiry_date}")
+                logger.info(f"  right={right}")
+                logger.info(f"  strike_price={strike_price}")
+                logger.info(f"  quantity={pos_quantity}")
+
+            except Exception as e:
+                logger.error(f"Error fetching Breeze positions: {e}", exc_info=True)
+                return JsonResponse({
+                    'success': False,
+                    'error': f'Failed to get position details: {str(e)}'
+                })
+
+            # Calculate batches based on quantity in shares
+            # Standard lot sizes for common symbols
+            STANDARD_LOT_SIZES = {
+                'NIFTY': 25,
+                'BANKNIFTY': 15,
+                'FINNIFTY': 25,
+                'MIDCPNIFTY': 50,
+                'JIOFIN': 2350,
+                'RELIANCE': 250,
+                'TCS': 150,
+                'INFY': 300,
+            }
+            lot_size = STANDARD_LOT_SIZES.get(stock_code, 1)
+
+            BATCH_SIZE_LOTS = 10  # 10 lots per batch for Breeze
+            DELAY_SECONDS = 40  # 40 second delay between batches for Breeze
+
+            batch_size_shares = BATCH_SIZE_LOTS * lot_size
+            total_lots = abs_quantity // lot_size if lot_size > 0 else 0
+
+            logger.info(f"Lot size for {stock_code}: {lot_size}")
+            logger.info(f"Total quantity: {abs_quantity} shares = {total_lots} lots")
+            logger.info(f"Batch size: {BATCH_SIZE_LOTS} lots = {batch_size_shares} shares")
+
+            if total_lots == 0:
+                return JsonResponse({
+                    'success': False,
+                    'error': f'Quantity {abs_quantity} is less than one lot (lot size: {lot_size})'
+                })
+
+            batches = []
+            remaining_shares = abs_quantity
+
+            while remaining_shares > 0:
+                batch_shares = min(batch_size_shares, remaining_shares)
+                batches.append(batch_shares)
+                remaining_shares -= batch_shares
+
+            total_batches = len(batches)
+            logger.info(f"Closing Breeze position: {total_lots} lots in {total_batches} batches")
+
+            # Initialize progress
+            update_progress(0, total_batches, log_message=f'Starting position closure on ICICI Breeze: {total_batches} batches', log_type='info')
+
+            successful_orders = []
+            failed_orders = []
+
+            # Place exit orders in batches
+            for batch_num, batch_shares in enumerate(batches, 1):
+                # Check for cancellation before processing batch
+                if cache.get(cancellation_key):
+                    logger.warning(f"⚠️ Order placement cancelled by user at batch {batch_num}/{total_batches}")
+
+                    # Update progress to show cancellation
+                    update_progress(
+                        len(successful_orders),
+                        total_batches,
+                        is_complete=True,
+                        is_success=False,
+                        is_cancelled=True,
+                        log_message=f'🛑 Cancelled at batch {batch_num}/{total_batches}. Completed {len(successful_orders)} batches.',
+                        log_type='warning'
+                    )
+
+                    return JsonResponse({
+                        'success': True,
+                        'cancelled': True,
+                        'broker': 'breeze',
+                        'symbol': symbol,
+                        'message': f'Order placement stopped by user. Completed {len(successful_orders)}/{total_batches} batches.',
+                        'successful_batches': len(successful_orders),
+                        'failed_batches': len(failed_orders),
+                        'total_batches': total_batches,
+                        'orders': successful_orders,
+                        'failed_orders': failed_orders if failed_orders else None
+                    })
+
+                batch_lots = batch_shares // lot_size
+
+                logger.info(f"Exit Batch {batch_num}/{total_batches}: {batch_lots} lots ({batch_shares} shares)")
+
+                # Update progress - starting batch
+                update_progress(
+                    len(successful_orders),
+                    total_batches,
+                    current_batch={'batch_num': batch_num, 'lots': batch_lots, 'quantity': batch_shares},
+                    log_message=f'Processing batch {batch_num}/{total_batches}: {batch_lots} lots',
+                    log_type='info'
+                )
+
+                try:
+                    # Use exact parameters from the position
+                    order_params = {
+                        'stock_code': stock_code,
+                        'exchange_code': exchange_code,
+                        'product': product_type.lower(),  # 'futures' or 'options'
+                        'action': action,
+                        'order_type': 'market',
+                        'quantity': str(batch_shares),
+                        'price': '0',
+                        'validity': 'day',
+                        'stoploss': '0',
+                        'disclosed_quantity': '0',
+                        'expiry_date': expiry_date,
+                        'right': right,
+                        'strike_price': str(strike_price)
+                    }
+
+                    logger.info(f"Order params: {order_params}")
+                    order_response = breeze.place_order(**order_params)
+                    logger.info(f"Breeze response: {order_response}")
+
+                    if order_response and order_response.get('Status') == 200:
+                        order_data = order_response.get('Success', {})
+                        order_id = order_data.get('order_id', 'UNKNOWN')
+
+                        successful_orders.append({
+                            'batch': batch_num,
+                            'order_id': order_id,
+                            'lots': batch_lots,
+                            'quantity': batch_shares
+                        })
+
+                        logger.info(f"✅ Batch {batch_num} SUCCESS: Order ID {order_id}")
+                        # Update progress - batch succeeded
+                        update_progress(
+                            len(successful_orders),
+                            total_batches,
+                            log_message=f'✅ Batch {batch_num}/{total_batches} completed successfully',
+                            log_type='success'
+                        )
+                    else:
+                        error_msg = order_response.get('Error', 'Unknown error') if order_response else 'API call failed'
+                        logger.error(f"❌ Batch {batch_num} FAILED: {error_msg}")
+
+                        failed_orders.append({
+                            'batch': batch_num,
+                            'lots': batch_lots,
+                            'error': error_msg
+                        })
+                        # Update progress - batch failed and STOP
+                        update_progress(
+                            len(successful_orders),
+                            total_batches,
+                            is_complete=True,
+                            is_success=False,
+                            log_message=f'❌ Batch {batch_num}/{total_batches} failed. Stopping execution.',
+                            log_type='error'
+                        )
+
+                        # Stop execution on first failure
+                        return JsonResponse({
+                            'success': False,
+                            'broker': 'breeze',
+                            'symbol': symbol,
+                            'error': f'Batch {batch_num} failed: {error_msg}',
+                            'message': f'Stopped at batch {batch_num}/{total_batches} due to failure.',
+                            'successful_batches': len(successful_orders),
+                            'failed_batches': len(failed_orders),
+                            'total_batches': total_batches,
+                            'orders': successful_orders,
+                            'failed_orders': failed_orders
+                        })
+
+                except Exception as e:
+                    logger.error(f"❌ Batch {batch_num} EXCEPTION: {e}", exc_info=True)
+                    failed_orders.append({
+                        'batch': batch_num,
+                        'lots': batch_lots,
+                        'error': str(e)
+                    })
+                    # Update progress - batch exception and STOP
+                    update_progress(
+                        len(successful_orders),
+                        total_batches,
+                        is_complete=True,
+                        is_success=False,
+                        log_message=f'❌ Batch {batch_num}/{total_batches} error: {str(e)[:50]}. Stopping execution.',
+                        log_type='error'
+                    )
+
+                    # Stop execution on exception
+                    return JsonResponse({
+                        'success': False,
+                        'broker': 'breeze',
+                        'symbol': symbol,
+                        'error': f'Batch {batch_num} exception: {str(e)}',
+                        'message': f'Stopped at batch {batch_num}/{total_batches} due to error.',
+                        'successful_batches': len(successful_orders),
+                        'failed_batches': len(failed_orders),
+                        'total_batches': total_batches,
+                        'orders': successful_orders,
+                        'failed_orders': failed_orders
+                    })
+
+                # Check for cancellation after batch completes (success or failure)
+                if cache.get(cancellation_key):
+                    logger.warning(f"⚠️ Order placement cancelled by user after batch {batch_num}/{total_batches}")
+
+                    # Update progress to show cancellation
+                    update_progress(
+                        len(successful_orders),
+                        total_batches,
+                        is_complete=True,
+                        is_success=False,
+                        is_cancelled=True,
+                        log_message=f'🛑 Cancelled after batch {batch_num}/{total_batches}. Completed {len(successful_orders)} batches.',
+                        log_type='warning'
+                    )
+
+                    return JsonResponse({
+                        'success': True,
+                        'cancelled': True,
+                        'broker': 'breeze',
+                        'symbol': symbol,
+                        'message': f'Order placement stopped by user. Completed {len(successful_orders)}/{total_batches} batches.',
+                        'successful_batches': len(successful_orders),
+                        'failed_batches': len(failed_orders),
+                        'total_batches': total_batches,
+                        'orders': successful_orders,
+                        'failed_orders': failed_orders if failed_orders else None
+                    })
+
+                # Wait before next batch (except last)
+                if batch_num < total_batches:
+                    logger.info(f"⏸️  Waiting {DELAY_SECONDS} seconds...")
+                    time.sleep(DELAY_SECONDS)
+
+                    # Check for cancellation after sleep
+                    if cache.get(cancellation_key):
+                        logger.warning(f"⚠️ Order placement cancelled by user during wait after batch {batch_num}/{total_batches}")
+
+                        # Update progress to show cancellation
+                        update_progress(
+                            len(successful_orders),
+                            total_batches,
+                            is_complete=True,
+                            is_success=False,
+                            is_cancelled=True,
+                            log_message=f'🛑 Cancelled during wait after batch {batch_num}/{total_batches}. Completed {len(successful_orders)} batches.',
+                            log_type='warning'
+                        )
+
+                        return JsonResponse({
+                            'success': True,
+                            'cancelled': True,
+                            'broker': 'breeze',
+                            'symbol': symbol,
+                            'message': f'Order placement stopped by user. Completed {len(successful_orders)}/{total_batches} batches.',
+                            'successful_batches': len(successful_orders),
+                            'failed_batches': len(failed_orders),
+                            'total_batches': total_batches,
+                            'orders': successful_orders,
+                            'failed_orders': failed_orders if failed_orders else None
+                        })
+
+            # Final progress update
+            if len(successful_orders) > 0:
+                update_progress(
+                    len(successful_orders),
+                    total_batches,
+                    is_complete=True,
+                    is_success=True,
+                    log_message=f'✅ Completed: {len(successful_orders)}/{total_batches} batches successful' if len(failed_orders) == 0 else f'⚠️ Completed with {len(failed_orders)} failures',
+                    log_type='success' if len(failed_orders) == 0 else 'warning'
+                )
+            else:
+                update_progress(
+                    0,
+                    total_batches,
+                    is_complete=True,
+                    is_success=False,
+                    log_message=f'❌ All {total_batches} batches failed',
+                    log_type='error'
+                )
+
+            # Return results
+            if len(successful_orders) > 0:
+                return JsonResponse({
+                    'success': True,
+                    'broker': 'breeze',
+                    'symbol': symbol,
+                    'message': f'{len(successful_orders)}/{total_batches} exit batches placed successfully',
+                    'successful_batches': len(successful_orders),
+                    'failed_batches': len(failed_orders),
+                    'total_batches': total_batches,
+                    'orders': successful_orders,
+                    'failed_orders': failed_orders if failed_orders else None
+                })
+            else:
+                return JsonResponse({
+                    'success': False,
+                    'error': f'All {total_batches} exit batches failed',
+                    'failed_orders': failed_orders
+                })
+
+        # If we get here, something went wrong
+        return JsonResponse({
+            'success': False,
+            'error': 'Unknown error - broker not supported or invalid parameters'
+        })
+
+    except Exception as e:
+        logger.error(f"Error closing live position: {e}", exc_info=True)
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        })
+
+
+@csrf_exempt
+def get_close_position_progress(request, broker, symbol):
+    """
+    Get progress of an ongoing close position operation.
+
+    URL params:
+        - broker: 'breeze' or 'neo'
+        - symbol: Trading symbol
+
+    Returns:
+        JSON with progress information
+    """
+    if not request.user.is_authenticated:
+        return JsonResponse({
+            'success': False,
+            'error': 'Authentication required'
+        }, status=401)
+
+    try:
+        # Generate the progress key
+        progress_key = f"close_progress_{request.user.id}_{broker}_{symbol.replace('/', '_')}"
+
+        # Get progress from cache
+        progress = cache.get(progress_key, {
+            'batches_completed': 0,
+            'total_batches': 0,
+            'current_batch': None,
+            'is_cancelled': False,
+            'is_complete': False,
+            'is_success': False,
+            'last_log_message': None,
+            'last_log_type': None
+        })
+
+        return JsonResponse({
+            'success': True,
+            'progress': progress
+        })
+
+    except Exception as e:
+        logger.error(f"Error getting close position progress: {e}", exc_info=True)
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        })
+
+
+@csrf_exempt
+def cancel_order_placement(request):
+    """
+    Cancel an ongoing batch order placement.
+
+    POST params (JSON):
+        - broker: 'breeze' or 'neo'
+        - symbol: Trading symbol
+
+    Returns:
+        JSON with cancellation status
+    """
+    if not request.user.is_authenticated:
+        return JsonResponse({
+            'success': False,
+            'error': 'Authentication required'
+        }, status=401)
+
+    if request.method != 'POST':
+        return JsonResponse({
+            'success': False,
+            'error': 'POST method required'
+        }, status=405)
+
+    try:
+        import json
+        data = json.loads(request.body)
+        broker = data.get('broker', '').lower()
+        symbol = data.get('symbol')
+
+        if not broker or not symbol:
+            return JsonResponse({
+                'success': False,
+                'error': 'broker and symbol are required'
+            })
+
+        # Generate the same cancellation key used by close_live_position
+        cancellation_key = f"cancel_order_{request.user.id}_{broker}_{symbol.replace('/', '_')}"
+
+        # Set the cancellation flag
+        cache.set(cancellation_key, True, 600)
+        logger.info(f"Cancellation requested for key: {cancellation_key}")
+
+        return JsonResponse({
+            'success': True,
+            'message': 'Cancellation requested. Remaining batches will be skipped.'
+        })
+
+    except Exception as e:
+        logger.error(f"Error cancelling order placement: {e}", exc_info=True)
         return JsonResponse({
             'success': False,
             'error': str(e)

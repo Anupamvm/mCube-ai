@@ -3073,3 +3073,11 @@ def update_neo_session(request):
             'success': False,
             'error': str(e)
         })
+
+
+@login_required
+def view_trades(request):
+    """
+    View all active trades across Breeze and Neo accounts
+    """
+    return render(request, 'trading/view_trades.html')

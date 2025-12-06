@@ -446,7 +446,21 @@
             </div>
         </div>
 
-        <!-- 3. Verify Future Trade -->
+        <!-- 3. View Trades -->
+        <div class="trigger-card">
+            <div class="trigger-header">
+                <span class="trigger-icon">📈</span>
+                <h2 class="trigger-title">View Trades</h2>
+            </div>
+            <p class="trigger-description">
+                View and manage all active positions across Breeze and Neo accounts. Monitor P&L and close positions in batches.
+            </p>
+            <button class="btn btn-primary" onclick="window.location.href='{% url 'trading:view_trades' %}'" id="btnViewTrades">
+                View Active Positions
+            </button>
+        </div>
+
+        <!-- 4. Verify Future Trade -->
         <div class="trigger-card">
             <div class="trigger-header">
                 <span class="trigger-icon">✅</span>

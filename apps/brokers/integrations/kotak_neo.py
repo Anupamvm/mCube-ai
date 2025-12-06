@@ -14,6 +14,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from neo_api_client import NeoAPI
 from django.utils import timezone
+from django.core.cache import cache
 from apps.core.models import CredentialStore
 from apps.core.constants import BROKER_KOTAK
 from apps.brokers.models import BrokerLimit, BrokerPosition
@@ -494,74 +495,328 @@ def get_lot_size_from_neo(trading_symbol: str, client=None) -> int:
     """
     Get lot size for a trading symbol using Neo API search_scrip.
 
+    Handles both OPTIONS and FUTURES symbols.
+
     Args:
-        trading_symbol (str): Trading symbol (e.g., 'NIFTY25NOV27050CE')
+        trading_symbol (str): Trading symbol
+            - Options: 'NIFTY25NOV27050CE', 'BANKNIFTY25DEC48000PE'
+            - Futures: 'NIFTY26JANFUT', 'JIOFIN25DECFUT'
         client: Optional authenticated client to reuse
 
     Returns:
         int: Lot size for the symbol
 
-    Raises:
-        ValueError: If symbol not found or lot size cannot be determined
-
     Example:
-        >>> lot_size = get_lot_size_from_neo('NIFTY25NOV27050CE')
-        >>> print(lot_size)  # 75
+        >>> lot_size = get_lot_size_from_neo('NIFTY25NOV27050CE')  # 25 (options)
+        >>> lot_size = get_lot_size_from_neo('JIOFIN25DECFUT')  # 2350 (futures)
     """
     try:
         # Use provided client or get new one
         if client is None:
             client = _get_authenticated_client()
 
-        # Parse symbol to extract components
-        # Format: NIFTY25NOV27050CE
-        # Extract: symbol=NIFTY, expiry=25NOV, strike=27050, option_type=CE
-
         import re
-
-        # Pattern: (SYMBOL)(DDMMM)(STRIKE)(CE|PE)
-        pattern = r'^([A-Z]+)(\d{2}[A-Z]{3})(\d+)(CE|PE)$'
-        match = re.match(pattern, trading_symbol)
-
-        if not match:
-            logger.warning(f"Unable to parse trading symbol: {trading_symbol}, using default lot size 75")
-            return 75  # Default for NIFTY
-
-        symbol_name = match.group(1)  # NIFTY
-        expiry_date = match.group(2)  # 25NOV
-        strike_price = match.group(3)  # 27050
-        option_type = match.group(4)  # CE or PE
-
-        # Convert expiry to Neo format: 25NOV → 25NOV2025
-        # Assume current year if not specified
         from datetime import datetime
-        current_year = datetime.now().year
-        expiry_full = f"{expiry_date}{current_year}"  # 25NOV2025
 
-        logger.info(f"Searching scrip: symbol={symbol_name}, expiry={expiry_full}, strike={strike_price}, type={option_type}")
+        # Check if it's a FUTURES symbol: SYMBOL + YYMMMFUT
+        # Pattern: (SYMBOL)(YY)(MMM)FUT
+        futures_pattern = r'^([A-Z]+)(\d{2})([A-Z]{3})FUT$'
+        futures_match = re.match(futures_pattern, trading_symbol)
 
-        # Search using Neo API
-        result = client.search_scrip(
-            exchange_segment='nse_fo',
-            symbol=symbol_name,
-            expiry=expiry_full,
-            option_type=option_type,
-            strike_price=strike_price
-        )
+        if futures_match:
+            # It's a futures contract
+            symbol_name = futures_match.group(1)  # JIOFIN, NIFTY, BANKNIFTY
+            year_suffix = futures_match.group(2)  # 25, 26
+            month_name = futures_match.group(3)  # DEC, JAN
 
-        if result and isinstance(result, list) and len(result) > 0:
-            scrip = result[0]
-            lot_size = scrip.get('lLotSize', scrip.get('iLotSize', 75))
-            logger.info(f"✅ Found lot size for {trading_symbol}: {lot_size}")
-            return int(lot_size)
-        else:
-            logger.warning(f"No scrip found for {trading_symbol}, using default lot size 75")
-            return 75  # Default for NIFTY
+            logger.info(f"Detected FUTURES symbol: {trading_symbol}")
+
+            # Search using Neo API (for futures, no strike or option_type needed)
+            result = client.search_scrip(
+                exchange_segment='nse_fo',
+                symbol=symbol_name
+            )
+
+            if result and isinstance(result, list):
+                # Find the matching futures contract
+                # Match by trading symbol directly
+                for scrip in result:
+                    if scrip.get('pTrdSymbol') == trading_symbol:
+                        lot_size = scrip.get('lLotSize', scrip.get('iLotSize', 50))
+                        logger.info(f"✅ Found lot size for {trading_symbol}: {lot_size}")
+                        return int(lot_size)
+
+                logger.warning(f"No exact match found for {trading_symbol}, using first {symbol_name} contract")
+                # Fallback: use first contract's lot size (usually same for all expiries)
+                if len(result) > 0:
+                    lot_size = result[0].get('lLotSize', result[0].get('iLotSize', 50))
+                    logger.info(f"✅ Found lot size for {symbol_name} futures: {lot_size}")
+                    return int(lot_size)
+
+            logger.warning(f"No scrip found for {trading_symbol}, using default lot size 50")
+            return 50  # Default for futures
+
+        # Check if it's an OPTIONS symbol: SYMBOL + DDMMM + STRIKE + CE/PE
+        # Pattern: (SYMBOL)(DDMMM)(STRIKE)(CE|PE)
+        options_pattern = r'^([A-Z]+)(\d{2}[A-Z]{3})(\d+)(CE|PE)$'
+        options_match = re.match(options_pattern, trading_symbol)
+
+        if options_match:
+            # It's an options contract
+            symbol_name = options_match.group(1)  # NIFTY
+            expiry_date = options_match.group(2)  # 25NOV
+            strike_price = options_match.group(3)  # 27050
+            option_type = options_match.group(4)  # CE or PE
+
+            # Convert expiry to Neo format: 25NOV → 25NOV2025
+            current_year = datetime.now().year
+            expiry_full = f"{expiry_date}{current_year}"  # 25NOV2025
+
+            logger.info(f"Detected OPTIONS symbol: {trading_symbol}")
+            logger.info(f"Searching scrip: symbol={symbol_name}, expiry={expiry_full}, strike={strike_price}, type={option_type}")
+
+            # Search using Neo API
+            result = client.search_scrip(
+                exchange_segment='nse_fo',
+                symbol=symbol_name,
+                expiry=expiry_full,
+                option_type=option_type,
+                strike_price=strike_price
+            )
+
+            if result and isinstance(result, list) and len(result) > 0:
+                scrip = result[0]
+                lot_size = scrip.get('lLotSize', scrip.get('iLotSize', 25))
+                logger.info(f"✅ Found lot size for {trading_symbol}: {lot_size}")
+                return int(lot_size)
+            else:
+                logger.warning(f"No scrip found for {trading_symbol}, using default lot size 25")
+                return 25  # Default for NIFTY options
+
+        # Unknown format
+        logger.warning(f"Unable to parse trading symbol: {trading_symbol}, using default lot size 50")
+        return 50  # Default fallback
 
     except Exception as e:
         logger.error(f"Error fetching lot size for {trading_symbol}: {e}")
-        logger.warning(f"Using default lot size 75")
-        return 75  # Default fallback
+        logger.warning(f"Using default lot size 50")
+        return 50  # Default fallback
+
+
+def map_neo_symbol_to_breeze(neo_symbol: str) -> dict:
+    """
+    Map Neo (Kotak) futures symbol to Breeze (ICICI) format for getting live quotes.
+
+    Neo Format: NIFTY26JANFUT, BANKNIFTY25DECFUT
+    Breeze Format: stock_code + expiry_date (separate parameters)
+
+    Args:
+        neo_symbol (str): Neo trading symbol (e.g., 'NIFTY26JANFUT', 'BANKNIFTY25DECFUT')
+
+    Returns:
+        dict: {
+            'success': bool,
+            'stock_code': str,  # e.g., 'NIFTY', 'BANKNIFTY'
+            'expiry_date': str,  # e.g., '30-JAN-2026' (DD-MMM-YYYY format)
+            'product_type': str,  # 'futures'
+            'exchange_code': str,  # 'NFO'
+            'error': str (if failed)
+        }
+
+    Example:
+        >>> result = map_neo_symbol_to_breeze('NIFTY26JANFUT')
+        >>> # Returns: {'success': True, 'stock_code': 'NIFTY', 'expiry_date': '30-JAN-2026', ...}
+    """
+    import re
+    from datetime import date
+    import calendar
+
+    try:
+        # Parse Neo futures symbol: NIFTY26JANFUT or BANKNIFTY25DECFUT
+        # Pattern: (SYMBOL)(YY)(MMM)FUT
+        pattern = r'^([A-Z]+)(\d{2})([A-Z]{3})FUT$'
+        match = re.match(pattern, neo_symbol)
+
+        if not match:
+            return {
+                'success': False,
+                'error': f'Invalid Neo futures symbol format: {neo_symbol}',
+                'stock_code': None,
+                'expiry_date': None,
+                'product_type': 'futures',
+                'exchange_code': 'NFO'
+            }
+
+        stock_code = match.group(1)  # NIFTY or BANKNIFTY
+        year_suffix = match.group(2)  # 26, 25
+        month_name = match.group(3)  # JAN, DEC
+
+        # Convert year suffix to full year (26 -> 2026, 25 -> 2025)
+        year = 2000 + int(year_suffix)
+
+        # Convert month name to month number
+        month_map = {
+            'JAN': 1, 'FEB': 2, 'MAR': 3, 'APR': 4, 'MAY': 5, 'JUN': 6,
+            'JUL': 7, 'AUG': 8, 'SEP': 9, 'OCT': 10, 'NOV': 11, 'DEC': 12
+        }
+        month = month_map.get(month_name)
+
+        if not month:
+            return {
+                'success': False,
+                'error': f'Invalid month in symbol: {month_name}',
+                'stock_code': None,
+                'expiry_date': None,
+                'product_type': 'futures',
+                'exchange_code': 'NFO'
+            }
+
+        # Calculate last trading Thursday of the month (standard F&O expiry)
+        # Note: F&O contracts expire on the last Thursday, but if that Thursday
+        # is a holiday, the expiry moves to the previous trading day
+        last_day = calendar.monthrange(year, month)[1]
+        last_date = date(year, month, last_day)
+
+        # Find last Thursday
+        last_thursday = last_date
+        while last_thursday.weekday() != 3:  # 3 = Thursday
+            last_thursday = date(year, month, last_thursday.day - 1)
+
+        # Format expiry date as DD-Mon-YYYY (Breeze format with title case month)
+        # Example: 27-Jan-2026, NOT 27-JAN-2026
+        expiry_date = last_thursday.strftime('%d-%b-%Y')
+
+        logger.info(f"[NEO→BREEZE MAPPING] {neo_symbol} → stock_code={stock_code}, expiry={expiry_date}")
+
+        return {
+            'success': True,
+            'stock_code': stock_code,
+            'expiry_date': expiry_date,
+            'product_type': 'futures',
+            'exchange_code': 'NFO',
+            'error': None
+        }
+
+    except Exception as e:
+        logger.error(f"Error mapping Neo symbol to Breeze: {e}")
+        return {
+            'success': False,
+            'error': str(e),
+            'stock_code': None,
+            'expiry_date': None,
+            'product_type': 'futures',
+            'exchange_code': 'NFO'
+        }
+
+
+def get_ltp_from_neo(trading_symbol: str, exchange_segment: str = 'nse_fo', client=None) -> float:
+    """
+    Get Last Traded Price (LTP) for a Neo trading symbol using Breeze API.
+
+    This function maps Neo symbols to Breeze format and fetches real-time LTP
+    from Breeze API for the actual traded instrument (futures contract).
+
+    Args:
+        trading_symbol (str): Neo trading symbol (e.g., 'NIFTY26JANFUT', 'BANKNIFTY25DECFUT')
+        exchange_segment (str): Exchange segment (default: 'nse_fo')
+        client: Optional authenticated Neo client (not used, kept for compatibility)
+
+    Returns:
+        float: Real-time LTP for the futures contract, or None if not found
+
+    Example:
+        >>> ltp = get_ltp_from_neo('NIFTY26JANFUT')
+        >>> print(ltp)  # 26499.30 (real-time futures price from Breeze)
+    """
+    try:
+        from apps.brokers.integrations.breeze import get_breeze_client
+
+        # Map Neo symbol to Breeze format
+        mapping = map_neo_symbol_to_breeze(trading_symbol)
+
+        if not mapping['success']:
+            logger.error(f"Failed to map Neo symbol to Breeze: {mapping['error']}")
+            return None
+
+        logger.info(f"Fetching real-time LTP for {trading_symbol} futures contract via Breeze")
+
+        # Get Breeze client
+        breeze = get_breeze_client()
+
+        # Strategy 1: Get all futures contracts for this stock and match by month/year
+        # This automatically handles holiday-adjusted expiry dates (e.g., 27-Jan vs 29-Jan)
+        try:
+            resp = breeze.get_option_chain_quotes(
+                stock_code=mapping['stock_code'],
+                exchange_code=mapping['exchange_code'],
+                product_type=mapping['product_type'],
+                expiry_date=""  # Empty string returns all available expiries
+            )
+
+            if resp and resp.get('Status') == 200:
+                contracts = resp.get('Success', [])
+                if contracts:
+                    # Match contract by month and year (handles holiday adjustments)
+                    calc_expiry = mapping['expiry_date']
+                    calc_month_year = calc_expiry.split('-')[1:3]  # ['Jan', '2026']
+
+                    for contract in contracts:
+                        contract_expiry = contract.get('expiry_date', '')
+                        if contract_expiry:
+                            contract_month_year = contract_expiry.split('-')[1:3]
+
+                            if contract_month_year == calc_month_year:
+                                ltp = float(contract.get('ltp', 0))
+                                if ltp > 0:
+                                    logger.info(f"✅ Real-time futures LTP for {trading_symbol}: ₹{ltp:.2f}")
+                                    logger.info(f"   Breeze expiry: {contract_expiry} (Neo mapped to {calc_expiry})")
+                                    return ltp
+
+        except Exception as e:
+            logger.error(f"Error calling Breeze get_option_chain_quotes: {e}")
+
+        # Final fallback to Neo search_scrip when Breeze spot also fails
+        logger.info(f"Falling back to Neo search_scrip for {trading_symbol}")
+
+        # Use provided client or get new one
+        if client is None:
+            client = _get_authenticated_client()
+
+        # Extract base symbol from trading symbol
+        import re
+        match = re.match(r'^([A-Z]+)', trading_symbol)
+        base_symbol = match.group(1) if match else trading_symbol
+
+        logger.info(f"Fetching LTP from Neo search_scrip for {trading_symbol}")
+
+        # Search using Neo API
+        result = client.search_scrip(
+            exchange_segment=exchange_segment,
+            symbol=base_symbol
+        )
+
+        if result and isinstance(result, list):
+            # Find exact match for trading symbol
+            for scrip in result:
+                if scrip.get('pTrdSymbol') == trading_symbol:
+                    # Extract price from scrip data
+                    base_price = float(scrip.get('pScripBasePrice', 0))
+
+                    if base_price > 0:
+                        # Divide by 100 to get actual price
+                        ltp = base_price / 100
+                        logger.info(f"⚠️ LTP for {trading_symbol} from Neo (may be delayed): ₹{ltp:.2f}")
+                        return ltp
+
+            logger.warning(f"No exact match found for {trading_symbol} in Neo search results")
+            return None
+        else:
+            logger.warning(f"No scrip found for {trading_symbol} in Neo")
+            return None
+
+    except Exception as e:
+        logger.error(f"Error fetching LTP for {trading_symbol}: {e}")
+        return None
 
 
 def get_lot_size_from_neo_with_token(trading_symbol: str, client=None) -> dict:
@@ -1119,6 +1374,539 @@ def place_strangle_orders_in_batches(
 
     except Exception as e:
         logger.exception(f"Error in batch order placement: {e}")
+        return {
+            'success': False,
+            'error': str(e),
+            'total_lots': total_lots,
+            'batches_completed': batches_completed,
+            'call_orders': call_orders,
+            'put_orders': put_orders
+        }
+
+
+def close_position_in_batches(
+    trading_symbol: str,
+    total_quantity: int,
+    transaction_type: str,  # 'B' (BUY to close SHORT) or 'S' (SELL to close LONG)
+    product: str = 'NRML',
+    batch_size: int = 20,
+    delay_seconds: int = 20,
+    position_type: str = 'OPTION',  # 'OPTION' or 'FUTURE'
+    cancellation_key: str = None,  # Cache key to check for cancellation between batches
+    progress_key: str = None  # Cache key for progress tracking
+):
+    """
+    Close a position (futures or options) in batches with delays.
+
+    This function places exit orders in batches to avoid overwhelming the broker API
+    and to provide better execution monitoring.
+
+    Args:
+        trading_symbol (str): Trading symbol (e.g., 'NIFTY25DECFUT', 'NIFTY25NOV24500CE')
+        total_quantity (int): Total quantity to close (in shares/contracts)
+        transaction_type (str): 'B' to close SHORT position, 'S' to close LONG position
+        product (str): Product type - 'NRML', 'MIS' (default: 'NRML')
+        batch_size (int): Maximum lots per order (default: 20, Neo API limit)
+        delay_seconds (int): Delay between orders in seconds (default: 20)
+        position_type (str): 'OPTION' or 'FUTURE' (default: 'OPTION')
+
+    Returns:
+        dict: Batch execution results
+            {
+                'success': True/False,
+                'total_quantity': int,
+                'batches_completed': int,
+                'orders': [list of order results],
+                'summary': {
+                    'success_count': int,
+                    'failed_count': int,
+                    'total_orders_placed': int
+                },
+                'error': str (if failed)
+            }
+
+    Example:
+        >>> # Close 3350 shares (167 lots) LONG position
+        >>> result = close_position_in_batches(
+        ...     trading_symbol='NIFTY25DECFUT',
+        ...     total_quantity=3350,
+        ...     transaction_type='S',  # SELL to close LONG
+        ...     batch_size=20,
+        ...     delay_seconds=20,
+        ...     position_type='FUTURE'
+        ... )
+    """
+    import time
+    import threading
+
+    logger.info(f"Starting batch position closing: {total_quantity} qty in batches")
+
+    # Get single authenticated session for all orders
+    try:
+        client = _get_authenticated_client()
+        logger.info("✅ Single Neo API session established for closing position")
+    except Exception as e:
+        logger.error(f"Failed to establish Neo session: {e}")
+        return {
+            'success': False,
+            'error': f'Authentication failed: {str(e)}',
+            'orders': []
+        }
+
+    # Get lot size dynamically from Neo API
+    lot_size = get_lot_size_from_neo(trading_symbol, client=client)
+    logger.info(f"Using lot size: {lot_size} for {trading_symbol}")
+
+    # Calculate total lots
+    total_lots = total_quantity // lot_size if lot_size > 0 else 0
+    logger.info(f"Total quantity: {total_quantity} shares = {total_lots} lots")
+
+    orders = []
+    batches_completed = 0
+
+    # Calculate number of batches
+    num_batches = (total_lots + batch_size - 1) // batch_size  # Ceiling division
+
+    # Initialize progress
+    if progress_key:
+        cache.set(progress_key, {
+            'batches_completed': 0,
+            'total_batches': num_batches,
+            'current_batch': None,
+            'is_cancelled': False,
+            'is_complete': False,
+            'is_success': False,
+            'last_log_message': f'Calculated {num_batches} batches for {total_lots} lots',
+            'last_log_type': 'info'
+        }, 600)
+
+    try:
+        for batch_num in range(1, num_batches + 1):
+            # Check for cancellation before processing batch
+            if cancellation_key and cache.get(cancellation_key):
+                logger.warning(f"⚠️ Order placement cancelled by user at batch {batch_num}/{num_batches}")
+
+                # Update progress
+                if progress_key:
+                    cache.set(progress_key, {
+                        'batches_completed': batches_completed,
+                        'total_batches': num_batches,
+                        'current_batch': None,
+                        'is_cancelled': True,
+                        'is_complete': True,
+                        'is_success': False,
+                        'last_log_message': f'Cancelled at batch {batch_num}/{num_batches}',
+                        'last_log_type': 'warning'
+                    }, 600)
+
+                success_count = sum(1 for o in orders if o['result'].get('success'))
+                failed_count = len(orders) - success_count
+                return {
+                    'success': True,
+                    'cancelled': True,
+                    'total_quantity': total_quantity,
+                    'batches_completed': batches_completed,
+                    'total_batches': num_batches,
+                    'orders': orders,
+                    'summary': {
+                        'success_count': success_count,
+                        'failed_count': failed_count,
+                        'total_orders_placed': len(orders)
+                    },
+                    'message': f'Order placement stopped by user. Completed {batches_completed}/{num_batches} batches.'
+                }
+
+            # Calculate lots for this batch
+            remaining_lots = total_lots - (batch_num - 1) * batch_size
+            current_batch_lots = min(batch_size, remaining_lots)
+            current_batch_quantity = current_batch_lots * lot_size
+
+            logger.info(f"Batch {batch_num}/{num_batches}: Closing {current_batch_lots} lots ({current_batch_quantity} qty)")
+
+            # Update progress - starting batch
+            if progress_key:
+                cache.set(progress_key, {
+                    'batches_completed': batches_completed,
+                    'total_batches': num_batches,
+                    'current_batch': {
+                        'batch_num': batch_num,
+                        'lots': current_batch_lots,
+                        'quantity': current_batch_quantity
+                    },
+                    'is_cancelled': False,
+                    'is_complete': False,
+                    'is_success': False,
+                    'last_log_message': f'Processing batch {batch_num}/{num_batches}: {current_batch_lots} lots',
+                    'last_log_type': 'info'
+                }, 600)
+
+            # Place exit order
+            order_result = place_option_order(
+                trading_symbol=trading_symbol,
+                transaction_type=transaction_type,
+                quantity=current_batch_quantity,
+                product=product,
+                order_type='MKT',
+                client=client  # Reuse session
+            )
+
+            # Record result
+            orders.append({
+                'batch': batch_num,
+                'lots': current_batch_lots,
+                'quantity': current_batch_quantity,
+                'result': order_result
+            })
+
+            batches_completed += 1
+
+            if order_result.get('success'):
+                logger.info(f"✅ Exit batch {batch_num}: Order ID {order_result['order_id']}")
+                # Update progress - batch succeeded
+                if progress_key:
+                    cache.set(progress_key, {
+                        'batches_completed': batches_completed,
+                        'total_batches': num_batches,
+                        'current_batch': None,
+                        'is_cancelled': False,
+                        'is_complete': False,
+                        'is_success': False,
+                        'last_log_message': f'✅ Batch {batch_num}/{num_batches} completed successfully',
+                        'last_log_type': 'success'
+                    }, 600)
+            else:
+                # Batch failed - STOP immediately
+                error_msg = order_result.get('error', 'Unknown error')
+                logger.error(f"❌ Exit batch {batch_num} failed: {error_msg}")
+
+                # Update progress - batch failed and STOP
+                if progress_key:
+                    cache.set(progress_key, {
+                        'batches_completed': batches_completed,
+                        'total_batches': num_batches,
+                        'current_batch': None,
+                        'is_cancelled': False,
+                        'is_complete': True,
+                        'is_success': False,
+                        'last_log_message': f'❌ Batch {batch_num}/{num_batches} failed. Stopping execution.',
+                        'last_log_type': 'error'
+                    }, 600)
+
+                # Return immediately with failure
+                success_count = sum(1 for o in orders if o['result'].get('success'))
+                failed_count = len(orders) - success_count
+                return {
+                    'success': False,
+                    'error': f'Batch {batch_num} failed: {error_msg}',
+                    'total_quantity': total_quantity,
+                    'total_lots': total_lots,
+                    'batches_completed': batches_completed,
+                    'total_batches': num_batches,
+                    'orders': orders,
+                    'summary': {
+                        'success_count': success_count,
+                        'failed_count': failed_count,
+                        'total_orders_placed': len(orders)
+                    },
+                    'message': f'Stopped at batch {batch_num}/{num_batches} due to failure.'
+                }
+
+            # Check for cancellation after batch completes (success or failure)
+            if cancellation_key and cache.get(cancellation_key):
+                logger.warning(f"⚠️ Order placement cancelled by user after batch {batch_num}/{num_batches}")
+
+                # Update progress
+                if progress_key:
+                    cache.set(progress_key, {
+                        'batches_completed': batches_completed,
+                        'total_batches': num_batches,
+                        'current_batch': None,
+                        'is_cancelled': True,
+                        'is_complete': True,
+                        'is_success': False,
+                        'last_log_message': f'🛑 Cancelled after batch {batch_num}/{num_batches}. Completed {batches_completed} batches.',
+                        'last_log_type': 'warning'
+                    }, 600)
+
+                success_count = sum(1 for o in orders if o['result'].get('success'))
+                failed_count = len(orders) - success_count
+                return {
+                    'success': True,
+                    'cancelled': True,
+                    'total_quantity': total_quantity,
+                    'batches_completed': batches_completed,
+                    'total_batches': num_batches,
+                    'orders': orders,
+                    'summary': {
+                        'success_count': success_count,
+                        'failed_count': failed_count,
+                        'total_orders_placed': len(orders)
+                    },
+                    'message': f'Order placement stopped by user. Completed {batches_completed}/{num_batches} batches.'
+                }
+
+            # Delay before next batch (except for last batch)
+            if batch_num < num_batches:
+                logger.info(f"⏱️  Waiting {delay_seconds} seconds before next batch...")
+                time.sleep(delay_seconds)
+
+                # Check for cancellation after sleep
+                if cancellation_key and cache.get(cancellation_key):
+                    logger.warning(f"⚠️ Order placement cancelled by user during wait after batch {batch_num}/{num_batches}")
+
+                    # Update progress
+                    if progress_key:
+                        cache.set(progress_key, {
+                            'batches_completed': batches_completed,
+                            'total_batches': num_batches,
+                            'current_batch': None,
+                            'is_cancelled': True,
+                            'is_complete': True,
+                            'is_success': False,
+                            'last_log_message': f'🛑 Cancelled during wait after batch {batch_num}/{num_batches}. Completed {batches_completed} batches.',
+                            'last_log_type': 'warning'
+                        }, 600)
+
+                    success_count = sum(1 for o in orders if o['result'].get('success'))
+                    failed_count = len(orders) - success_count
+                    return {
+                        'success': True,
+                        'cancelled': True,
+                        'total_quantity': total_quantity,
+                        'batches_completed': batches_completed,
+                        'total_batches': num_batches,
+                        'orders': orders,
+                        'summary': {
+                            'success_count': success_count,
+                            'failed_count': failed_count,
+                            'total_orders_placed': len(orders)
+                        },
+                        'message': f'Order placement stopped by user. Completed {batches_completed}/{num_batches} batches.'
+                    }
+
+        # Calculate summary
+        success_count = sum(1 for order in orders if order['result']['success'])
+        failed_count = len(orders) - success_count
+
+        success = (failed_count == 0)
+
+        logger.info(f"Batch execution complete: {batches_completed}/{num_batches} batches processed")
+        logger.info(f"Summary: {success_count}/{len(orders)} success")
+
+        # Final progress update
+        if progress_key:
+            cache.set(progress_key, {
+                'batches_completed': batches_completed,
+                'total_batches': num_batches,
+                'current_batch': None,
+                'is_cancelled': False,
+                'is_complete': True,
+                'is_success': success,
+                'last_log_message': f'✅ Completed: {success_count}/{len(orders)} orders successful' if success else f'⚠️ Completed with {failed_count} failures',
+                'last_log_type': 'success' if success else 'warning'
+            }, 600)
+
+        return {
+            'success': success,
+            'total_quantity': total_quantity,
+            'total_lots': total_lots,
+            'batches_completed': batches_completed,
+            'total_batches': num_batches,
+            'orders': orders,
+            'summary': {
+                'success_count': success_count,
+                'failed_count': failed_count,
+                'total_orders_placed': len(orders)
+            }
+        }
+
+    except Exception as e:
+        logger.exception(f"Error in batch position closing: {e}")
+        return {
+            'success': False,
+            'error': str(e),
+            'total_quantity': total_quantity,
+            'batches_completed': batches_completed,
+            'orders': orders
+        }
+
+
+def close_strangle_positions_in_batches(
+    call_symbol: str,
+    put_symbol: str,
+    total_lots: int,
+    batch_size: int = 20,
+    delay_seconds: int = 20,
+    product: str = 'NRML'
+):
+    """
+    Close strangle positions (Call BUY + Put BUY) in batches with delays.
+
+    This function closes strangle positions in batches to avoid overwhelming the broker API.
+    Since strangles are typically sold, closing them requires buying back both legs.
+
+    Args:
+        call_symbol (str): Call option trading symbol (e.g., 'NIFTY25NOV24500CE')
+        put_symbol (str): Put option trading symbol (e.g., 'NIFTY25NOV24000PE')
+        total_lots (int): Total number of lots to close
+        batch_size (int): Maximum lots per order (default: 20, Neo API limit)
+        delay_seconds (int): Delay between orders in seconds (default: 20)
+        product (str): Product type - 'NRML', 'MIS' (default: 'NRML')
+
+    Returns:
+        dict: Batch execution results
+            {
+                'success': True/False,
+                'total_lots': int,
+                'batches_completed': int,
+                'call_orders': [list of order results],
+                'put_orders': [list of order results],
+                'summary': {
+                    'call_success_count': int,
+                    'put_success_count': int,
+                    'call_failed_count': int,
+                    'put_failed_count': int
+                },
+                'error': str (if failed)
+            }
+    """
+    import time
+    import threading
+
+    logger.info(f"Starting batch strangle closing: {total_lots} lots in batches of {batch_size}")
+
+    # Get single authenticated session for all orders
+    try:
+        client = _get_authenticated_client()
+        logger.info("✅ Single Neo API session established for all orders")
+    except Exception as e:
+        logger.error(f"Failed to establish Neo session: {e}")
+        return {
+            'success': False,
+            'error': f'Authentication failed: {str(e)}',
+            'call_orders': [],
+            'put_orders': []
+        }
+
+    # Get lot size dynamically from Neo API
+    lot_size = get_lot_size_from_neo(call_symbol, client=client)
+    logger.info(f"Using lot size: {lot_size} for {call_symbol}")
+
+    call_orders = []
+    put_orders = []
+    batches_completed = 0
+
+    # Calculate number of batches
+    num_batches = (total_lots + batch_size - 1) // batch_size  # Ceiling division
+
+    try:
+        for batch_num in range(1, num_batches + 1):
+            # Calculate lots for this batch
+            remaining_lots = total_lots - (batch_num - 1) * batch_size
+            current_batch_lots = min(batch_size, remaining_lots)
+            current_batch_quantity = current_batch_lots * lot_size
+
+            logger.info(f"Batch {batch_num}/{num_batches}: Closing {current_batch_lots} lots ({current_batch_quantity} qty)")
+
+            # Optimization: Place CALL and PUT exit orders in parallel using threads
+            call_result = {}
+            put_result = {}
+
+            def place_call_exit_order():
+                nonlocal call_result
+                call_result = place_option_order(
+                    trading_symbol=call_symbol,
+                    transaction_type='B',  # BUY to close SELL
+                    quantity=current_batch_quantity,
+                    product=product,
+                    order_type='MKT',
+                    client=client  # Reuse session
+                )
+
+            def place_put_exit_order():
+                nonlocal put_result
+                put_result = place_option_order(
+                    trading_symbol=put_symbol,
+                    transaction_type='B',  # BUY to close SELL
+                    quantity=current_batch_quantity,
+                    product=product,
+                    order_type='MKT',
+                    client=client  # Reuse session
+                )
+
+            # Start both orders in parallel
+            call_thread = threading.Thread(target=place_call_exit_order)
+            put_thread = threading.Thread(target=place_put_exit_order)
+
+            logger.info(f"⚡ Placing CALL and PUT exit orders in parallel...")
+            call_thread.start()
+            put_thread.start()
+
+            # Wait for both to complete
+            call_thread.join()
+            put_thread.join()
+
+            # Record results
+            call_orders.append({
+                'batch': batch_num,
+                'lots': current_batch_lots,
+                'quantity': current_batch_quantity,
+                'result': call_result
+            })
+
+            put_orders.append({
+                'batch': batch_num,
+                'lots': current_batch_lots,
+                'quantity': current_batch_quantity,
+                'result': put_result
+            })
+
+            if call_result.get('success'):
+                logger.info(f"✅ CALL EXIT batch {batch_num}: Order ID {call_result['order_id']}")
+            else:
+                logger.error(f"❌ CALL EXIT batch {batch_num} failed: {call_result.get('error', 'Unknown error')}")
+
+            if put_result.get('success'):
+                logger.info(f"✅ PUT EXIT batch {batch_num}: Order ID {put_result['order_id']}")
+            else:
+                logger.error(f"❌ PUT EXIT batch {batch_num} failed: {put_result.get('error', 'Unknown error')}")
+
+            batches_completed += 1
+
+            # Delay before next batch (except for last batch)
+            if batch_num < num_batches:
+                logger.info(f"⏱️  Waiting {delay_seconds} seconds before next batch...")
+                time.sleep(delay_seconds)
+
+        # Calculate summary
+        call_success_count = sum(1 for order in call_orders if order['result']['success'])
+        put_success_count = sum(1 for order in put_orders if order['result']['success'])
+        call_failed_count = len(call_orders) - call_success_count
+        put_failed_count = len(put_orders) - put_success_count
+
+        success = (call_failed_count == 0 and put_failed_count == 0)
+
+        logger.info(f"Batch strangle closing complete: {batches_completed}/{num_batches} batches processed")
+        logger.info(f"Summary: Call {call_success_count}/{len(call_orders)} success, Put {put_success_count}/{len(put_orders)} success")
+
+        return {
+            'success': success,
+            'total_lots': total_lots,
+            'batches_completed': batches_completed,
+            'total_batches': num_batches,
+            'call_orders': call_orders,
+            'put_orders': put_orders,
+            'summary': {
+                'call_success_count': call_success_count,
+                'put_success_count': put_success_count,
+                'call_failed_count': call_failed_count,
+                'put_failed_count': put_failed_count,
+                'total_orders_placed': len(call_orders) + len(put_orders)
+            }
+        }
+
+    except Exception as e:
+        logger.exception(f"Error in batch strangle closing: {e}")
         return {
             'success': False,
             'error': str(e),

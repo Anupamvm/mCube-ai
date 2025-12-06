@@ -11,6 +11,7 @@ code organization and maintainability.
 import logging
 from datetime import datetime, timedelta
 from django.shortcuts import render
+from django.contrib.auth.decorators import login_required
 from django.db.models import Q
 
 from apps.data.models import ContractData
@@ -156,3 +157,11 @@ def manual_triggers(request):
     }
 
     return render(request, 'trading/manual_triggers.html', context)
+
+
+@login_required
+def view_trades(request):
+    """
+    View all active trades across Breeze and Neo accounts
+    """
+    return render(request, 'trading/view_trades.html')

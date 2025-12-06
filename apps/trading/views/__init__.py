@@ -58,6 +58,7 @@ from .session_views import (
 from .template_views import (
     manual_triggers,
     manual_triggers_refactored,
+    view_trades,
 )
 
 # Re-export everything for backward compatibility
@@ -95,4 +96,5 @@ __all__ = [
     # Template views
     'manual_triggers',
     'manual_triggers_refactored',
+    'view_trades',
 ]

@@ -100,13 +100,20 @@ class LoginAPI(object):
     def login_2fa(self, OTP):
         params = self.api_client.configuration.login_params
         body_params = {}
+
+        # Debug logging
+        print(f"DEBUG login_2fa: OTP length={len(str(OTP))}, login_params keys={list(params.keys()) if params else None}")
+
         if 'mobileNumber' in params and len(str(OTP)) == 6:
+            print(f"DEBUG: Using mobileNumber path with MPIN")
             body_params['mobileNumber'] = str(params['mobileNumber'])
             body_params['mpin'] = str(OTP)
         elif 'pan' in params and len(str(OTP)) == 6:
+            print(f"DEBUG: Using PAN path with MPIN")
             body_params['pan'] = str(params['pan'])
             body_params['mpin'] = str(OTP)
         else:
+            print(f"DEBUG: Using userId/OTP path (fallback)")
             body_params['userId'] = str(self.api_client.configuration.userId)
             body_params['otp'] = str(OTP)
         header_params = {'Authorization': "Bearer " + self.api_client.configuration.bearer_token,
@@ -123,5 +130,15 @@ class LoginAPI(object):
             self.api_client.configuration.edit_token = edit_token_json_resp.get("data").get("token")
             self.api_client.configuration.edit_sid = edit_token_json_resp.get("data").get("sid")
             self.api_client.configuration.edit_rid = edit_token_json_resp.get("data").get("rid")
-            self.api_client.configuration.serverId = edit_token_json_resp.get("data").get("hsServerId")
+
+            # Set serverId - use hsServerId if available, otherwise fallback to dataCenter
+            hs_server_id = edit_token_json_resp.get("data").get("hsServerId")
+            if hs_server_id:
+                self.api_client.configuration.serverId = hs_server_id
+            else:
+                # Fallback to dataCenter if hsServerId is empty
+                data_center = edit_token_json_resp.get("data").get("dataCenter")
+                self.api_client.configuration.serverId = data_center if data_center else ""
+                if data_center:
+                    print(f"INFO: Using dataCenter '{data_center}' as serverId (hsServerId not provided)")
         return edit_token_json_resp

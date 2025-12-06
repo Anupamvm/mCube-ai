@@ -130,18 +130,36 @@ class NeoAPI(BrokerInterface if isinstance(BrokerInterface, type) else object):
             )
 
             # Login with PAN (username field stores PAN)
+            print(f"🔑 Logging in with PAN: {creds.username}")
             response = self.neo.login(
                 pan=creds.username,
                 password=creds.password
             )
 
-            if response:
-                # Complete 2FA with OTP/session token
-                session_response = self.neo.session_2fa(OTP=creds.session_token)
+            print(f"📋 Login response keys: {list(response.keys()) if isinstance(response, dict) else 'not a dict'}")
+            if 'error' in response:
+                print(f"❌ Login error: {response['error']}")
+
+            if response and 'error' not in response:
+                # Complete 2FA with MPIN
+                # For Neo: session_token field actually stores the MPIN (6 digits)
+                # neo_password stores the login password (not used for 2FA)
+                mpin_value = creds.session_token  # 6-digit MPIN
+                print(f"🔐 Attempting 2FA with MPIN (length: {len(str(mpin_value))})")
+                session_response = self.neo.session_2fa(OTP=mpin_value)
 
                 if session_response and session_response.get('data'):
                     self.session_active = True
-                    print("✅ Neo login successful")
+
+                    # Log serverId availability for debugging
+                    server_id = session_response.get('data', {}).get('hsServerId')
+                    has_server_id = hasattr(self.neo.configuration, 'serverId') and self.neo.configuration.serverId
+                    print(f"✅ Neo login successful - serverId in response: {server_id}, serverId in config: {has_server_id}")
+
+                    if not has_server_id:
+                        print(f"⚠️ WARNING: serverId not set in configuration. Quotes API may not work.")
+                        print(f"Session response data keys: {session_response.get('data', {}).keys()}")
+
                     return True
                 else:
                     print(f"❌ Neo 2FA failed: {session_response}")

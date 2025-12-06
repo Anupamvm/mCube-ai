@@ -11,6 +11,7 @@ urlpatterns = [
     # Manual Trade Triggers
     path('triggers/', views.manual_triggers_refactored, name='manual_triggers'),  # New refactored version (replaced old)
     path('triggers-old/', views.manual_triggers, name='manual_triggers_old'),  # Old version kept as backup
+    path('view-trades/', views.view_trades, name='view_trades'),  # View active positions
     path('trigger/futures/', views.trigger_futures_algorithm, name='trigger_futures'),
     path('trigger/strangle/', views.trigger_nifty_strangle, name='trigger_strangle'),
     path('trigger/verify/', views.verify_future_trade, name='verify_trade'),
@@ -43,6 +44,14 @@ urlpatterns = [
 
     # Option Chain Data
     path('api/get-option-premiums/', api_views.get_option_premiums, name='api_get_option_premiums'),
+
+    # Active Positions Management
+    path('api/get-positions/', api_views.get_active_positions, name='api_get_positions'),
+    path('api/get-position-details/', api_views.get_position_details, name='api_get_position_details'),
+    path('api/close-position/', api_views.close_position, name='api_close_position'),
+    path('api/close-live-position/', api_views.close_live_position, name='api_close_live_position'),
+    path('api/close-position-progress/<str:broker>/<path:symbol>/', api_views.get_close_position_progress, name='api_close_position_progress'),
+    path('api/cancel-order-placement/', api_views.cancel_order_placement, name='api_cancel_order_placement'),
 
     # Manual Trade Execution (Live Orders)
     path('manual/prepare/', views.prepare_manual_execution, name='prepare_manual_execution'),

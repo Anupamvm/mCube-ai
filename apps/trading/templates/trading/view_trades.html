@@ -1,0 +1,1062 @@
+{% extends "core/master_base.html" %}
+{% load static %}
+
+{% block title %}View Active Trades - mCube Trading{% endblock %}
+
+{% block extra_css %}
+<style>
+    .page-header {
+        background: var(--white);
+        padding: 2rem 0;
+        margin-bottom: 2rem;
+        box-shadow: var(--shadow-sm);
+    }
+
+    .page-title {
+        font-size: 2rem;
+        font-weight: 700;
+        color: var(--dark);
+        margin: 0 0 0.5rem 0;
+    }
+
+    .page-subtitle {
+        color: var(--gray);
+        margin: 0;
+    }
+
+    .broker-section {
+        background: var(--white);
+        border-radius: var(--radius-lg);
+        padding: 2rem;
+        margin-bottom: 2rem;
+        box-shadow: var(--shadow-md);
+    }
+
+    .table-container {
+        overflow-x: auto;
+        margin-top: 1rem;
+    }
+
+    .broker-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 1.5rem;
+        padding-bottom: 1rem;
+        border-bottom: 2px solid var(--lighter);
+    }
+
+    .broker-title {
+        font-size: 1.5rem;
+        font-weight: 600;
+        color: var(--dark);
+        margin: 0;
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+    }
+
+    .broker-icon {
+        font-size: 2rem;
+    }
+
+    .refresh-btn {
+        padding: 0.5rem 1rem;
+        background: var(--primary);
+        color: white;
+        border: none;
+        border-radius: var(--radius-md);
+        cursor: pointer;
+        font-size: 0.875rem;
+        font-weight: 600;
+        transition: all 0.2s ease;
+    }
+
+    .refresh-btn:hover {
+        background: #1d4ed8;
+        transform: translateY(-1px);
+    }
+
+    .refresh-btn:disabled {
+        background: var(--gray-light);
+        cursor: not-allowed;
+        transform: none;
+    }
+
+    .positions-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 1rem;
+    }
+
+    .positions-table th {
+        background: var(--lighter);
+        padding: 0.75rem;
+        text-align: left;
+        font-weight: 600;
+        color: var(--dark);
+        font-size: 0.875rem;
+        border-bottom: 2px solid var(--gray-light);
+    }
+
+    .positions-table td {
+        padding: 1rem 0.75rem;
+        border-bottom: 1px solid var(--lighter);
+        font-size: 0.875rem;
+    }
+
+    .positions-table tbody tr:hover {
+        background: var(--lighter);
+    }
+
+    .status-badge {
+        display: inline-block;
+        padding: 0.25rem 0.75rem;
+        border-radius: var(--radius-md);
+        font-size: 0.75rem;
+        font-weight: 600;
+        text-transform: uppercase;
+    }
+
+    .status-active {
+        background: #D1FAE5;
+        color: #065F46;
+    }
+
+    .status-closed {
+        background: #E5E7EB;
+        color: #374151;
+    }
+
+    .direction-long {
+        color: #10B981;
+        font-weight: 600;
+    }
+
+    .direction-short {
+        color: #EF4444;
+        font-weight: 600;
+    }
+
+    .direction-neutral {
+        color: #6366F1;
+        font-weight: 600;
+    }
+
+    .pnl-positive {
+        color: #10B981;
+        font-weight: 600;
+    }
+
+    .pnl-negative {
+        color: #EF4444;
+        font-weight: 600;
+    }
+
+    .pnl-neutral {
+        color: var(--gray);
+        font-weight: 600;
+    }
+
+    .close-btn {
+        padding: 0.5rem 1rem;
+        background: #EF4444;
+        color: white;
+        border: none;
+        border-radius: var(--radius-md);
+        cursor: pointer;
+        font-size: 0.75rem;
+        font-weight: 600;
+        transition: all 0.2s ease;
+    }
+
+    .close-btn:hover {
+        background: #DC2626;
+        transform: translateY(-1px);
+    }
+
+    .close-btn:disabled {
+        background: var(--gray-light);
+        cursor: not-allowed;
+        transform: none;
+    }
+
+    .no-positions {
+        text-align: center;
+        padding: 3rem;
+        color: var(--gray);
+    }
+
+    .no-positions-icon {
+        font-size: 4rem;
+        margin-bottom: 1rem;
+    }
+
+    .loading-spinner {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        padding: 2rem;
+        color: var(--gray);
+    }
+
+    .loading-spinner::before {
+        content: "";
+        width: 40px;
+        height: 40px;
+        border: 4px solid var(--lighter);
+        border-top-color: var(--primary);
+        border-radius: 50%;
+        animation: spin 1s linear infinite;
+        margin-right: 1rem;
+    }
+
+    @keyframes spin {
+        to { transform: rotate(360deg); }
+    }
+
+    /* Close Position Modal */
+    .modal-overlay {
+        display: none;
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0, 0, 0, 0.7);
+        z-index: 10000;
+        justify-content: center;
+        align-items: center;
+    }
+
+    .modal-overlay.active {
+        display: flex;
+    }
+
+    .modal-content {
+        background: white;
+        border-radius: var(--radius-lg);
+        padding: 2rem;
+        max-width: 600px;
+        width: 90%;
+        max-height: 80vh;
+        overflow-y: auto;
+        box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
+    }
+
+    .modal-header {
+        margin-bottom: 1.5rem;
+    }
+
+    .modal-header h2 {
+        font-size: 1.5rem;
+        font-weight: 600;
+        color: var(--dark);
+        margin: 0 0 0.5rem 0;
+    }
+
+    .modal-header p {
+        color: var(--gray);
+        margin: 0;
+        font-size: 0.875rem;
+    }
+
+    .modal-body {
+        margin-bottom: 1.5rem;
+    }
+
+    .modal-info-grid {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 1rem;
+        margin-bottom: 1.5rem;
+    }
+
+    .modal-info-item {
+        background: var(--lighter);
+        padding: 1rem;
+        border-radius: var(--radius-md);
+    }
+
+    .modal-info-label {
+        font-size: 0.75rem;
+        color: var(--gray);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        margin-bottom: 0.25rem;
+    }
+
+    .modal-info-value {
+        font-size: 1.125rem;
+        font-weight: 600;
+        color: var(--dark);
+    }
+
+    .modal-footer {
+        display: flex;
+        justify-content: flex-end;
+        gap: 1rem;
+    }
+
+    .btn {
+        padding: 0.75rem 1.5rem;
+        border: none;
+        border-radius: var(--radius-md);
+        font-weight: 600;
+        font-size: 0.875rem;
+        cursor: pointer;
+        transition: all 0.2s ease;
+    }
+
+    .btn-secondary {
+        background: #EF4444;
+        color: white;
+        border: 1px solid #DC2626;
+    }
+
+    .btn-secondary:hover {
+        background: #DC2626;
+        border-color: #B91C1C;
+    }
+
+    .btn-secondary:disabled {
+        background: #F87171;
+        color: white;
+        border-color: #EF4444;
+        cursor: not-allowed;
+        opacity: 0.6;
+    }
+
+    .btn-danger {
+        background: #EF4444;
+        color: white;
+    }
+
+    .btn-danger:hover {
+        background: #DC2626;
+        transform: translateY(-1px);
+    }
+
+    .btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+        transform: none;
+    }
+
+    .progress-message {
+        background: #DBEAFE;
+        color: #1E40AF;
+        padding: 1rem;
+        border-radius: var(--radius-md);
+        margin-top: 1rem;
+        font-size: 0.875rem;
+        text-align: center;
+    }
+
+    .error-message {
+        background: #FEE2E2;
+        color: #991B1B;
+        padding: 1rem;
+        border-radius: var(--radius-md);
+        margin-top: 1rem;
+        font-size: 0.875rem;
+    }
+
+    .success-message {
+        background: #D1FAE5;
+        color: #065F46;
+        padding: 1rem;
+        border-radius: var(--radius-md);
+        margin-top: 1rem;
+        font-size: 0.875rem;
+    }
+
+    .warning-message {
+        background: #FEF3C7;
+        color: #92400E;
+        padding: 1rem;
+        border-radius: var(--radius-md);
+        margin-top: 1rem;
+        font-size: 0.875rem;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+{% csrf_token %}
+<div class="page-header">
+    <div class="container">
+        <h1 class="page-title">Active Trades</h1>
+        <p class="page-subtitle">Monitor and manage your active positions across all broker accounts</p>
+    </div>
+</div>
+
+<div class="container">
+    <!-- Breeze Positions -->
+    <div class="broker-section" id="breezeSection">
+        <div class="broker-header">
+            <h2 class="broker-title">
+                <span class="broker-icon">🌊</span>
+                ICICI Breeze Positions
+            </h2>
+            <button class="refresh-btn" onclick="refreshPositions('breeze')" id="refreshBreezeBtn">
+                🔄 Refresh
+            </button>
+        </div>
+        <div id="breezePositions">
+            <div class="loading-spinner">Loading Breeze positions...</div>
+        </div>
+    </div>
+
+    <!-- Neo Positions -->
+    <div class="broker-section" id="neoSection">
+        <div class="broker-header">
+            <h2 class="broker-title">
+                <span class="broker-icon">🚀</span>
+                Kotak Neo Positions
+            </h2>
+            <button class="refresh-btn" onclick="refreshPositions('neo')" id="refreshNeoBtn">
+                🔄 Refresh
+            </button>
+        </div>
+        <div id="neoPositions">
+            <div class="loading-spinner">Loading Neo positions...</div>
+        </div>
+    </div>
+</div>
+
+<!-- Close Position Modal -->
+<div class="modal-overlay" id="closePositionModal" onclick="handleOverlayClick(event)">
+    <div class="modal-content" onclick="event.stopPropagation()">
+        <div class="modal-header">
+            <h2>⚠️ Close Position</h2>
+            <p>Are you sure you want to close this position? This action cannot be undone.</p>
+        </div>
+        <div class="modal-body">
+            <!-- Confirmation Section -->
+            <div id="modalConfirmSection">
+                <div class="modal-info-grid" id="modalPositionInfo"></div>
+                <div id="modalMessages"></div>
+            </div>
+
+            <!-- Progress Section (hidden initially) -->
+            <div id="modalProgressSection" style="display: none;">
+                <h3 style="font-size: 1.125rem; margin-bottom: 1rem;">
+                    <span id="progress-spinner">🔄</span> Closing Position...
+                </h3>
+
+                <!-- Overall Progress Bar -->
+                <div style="margin-bottom: 1.5rem;">
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem; font-size: 0.875rem;">
+                        <strong>Overall Progress</strong>
+                        <span id="overall-progress-text">0/0 batches</span>
+                    </div>
+                    <div style="background: #E5E7EB; border-radius: 8px; height: 30px; overflow: hidden;">
+                        <div id="overall-progress-bar"
+                             style="width: 0%; height: 100%; background: linear-gradient(90deg, #10B981, #059669); display: flex; align-items: center; justify-content: center; color: white; font-weight: 600; font-size: 0.875rem; transition: width 0.3s ease;">
+                            <span id="overall-progress-percent">0%</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Current Batch Info -->
+                <div style="background: #EFF6FF; border: 1px solid #BFDBFE; border-radius: 8px; padding: 1rem; margin-bottom: 1rem;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.875rem;">
+                        <div>
+                            <strong>Current Batch:</strong> <span id="current-batch-number">-</span>
+                        </div>
+                        <div>
+                            <strong>Lots:</strong> <span id="current-batch-lots">-</span>
+                        </div>
+                        <div>
+                            <strong>Qty:</strong> <span id="current-batch-qty">-</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Status Log -->
+                <div id="batch-status-log"
+                     style="max-height: 200px; overflow-y: auto; font-family: monospace; font-size: 0.75rem; background: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 8px; padding: 0.75rem;">
+                    <div style="color: #6B7280; font-style: italic;">Waiting for execution to start...</div>
+                </div>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secondary" onclick="closeModal()" id="modalCancelBtn">Cancel</button>
+            <button class="btn btn-danger" onclick="confirmClosePosition()" id="modalConfirmBtn">
+                Close Position
+            </button>
+        </div>
+    </div>
+</div>
+
+<script>
+let currentPosition = null;
+let isOrderProcessing = false;
+let closeExecutionState = {
+    isRunning: false,
+    pollInterval: null,
+    sessionId: null,
+    broker: null,
+    symbol: null
+};
+
+// Load positions on page load
+document.addEventListener('DOMContentLoaded', function() {
+    loadPositions('breeze');
+    loadPositions('neo');
+
+    // Add ESC key handler to close modal
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape' && !isOrderProcessing) {
+            const modal = document.getElementById('closePositionModal');
+            if (modal.classList.contains('active')) {
+                closeModal();
+            }
+        }
+    });
+});
+
+// Load positions for a broker
+async function loadPositions(broker) {
+    const container = document.getElementById(`${broker}Positions`);
+    container.innerHTML = '<div class="loading-spinner">Loading positions...</div>';
+
+    try {
+        const response = await fetch(`/trading/api/get-positions/?broker=${broker}`);
+        const data = await response.json();
+
+        if (data.success) {
+            displayPositions(broker, data.positions);
+        } else {
+            container.innerHTML = `<div class="error-message">Error: ${data.error}</div>`;
+        }
+    } catch (error) {
+        console.error(`Error loading ${broker} positions:`, error);
+        container.innerHTML = `<div class="error-message">Failed to load positions. Please try again.</div>`;
+    }
+}
+
+// Refresh positions
+function refreshPositions(broker) {
+    const btn = document.getElementById(`refresh${broker.charAt(0).toUpperCase() + broker.slice(1)}Btn`);
+    btn.disabled = true;
+    btn.textContent = '⏳ Loading...';
+
+    loadPositions(broker).finally(() => {
+        btn.disabled = false;
+        btn.textContent = '🔄 Refresh';
+    });
+}
+
+// Display positions in table
+function displayPositions(broker, positions) {
+    const container = document.getElementById(`${broker}Positions`);
+
+    if (!positions || positions.length === 0) {
+        container.innerHTML = `
+            <div class="no-positions">
+                <div class="no-positions-icon">📭</div>
+                <p>No active positions found</p>
+            </div>
+        `;
+        return;
+    }
+
+    const tableHTML = `
+        <div class="table-container">
+        <table class="positions-table">
+            <thead>
+                <tr>
+                    <th>Action</th>
+                    <th>Symbol</th>
+                    <th>Direction</th>
+                    <th>Qty</th>
+                    <th>Avg Price</th>
+                    <th>LTP</th>
+                    <th>Unrealized P&L</th>
+                    <th>Realized P&L</th>
+                    <th>Total P&L</th>
+                    <th>P&L %</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${positions.map(pos => `
+                    <tr>
+                        <td>
+                            <button class="close-btn" onclick="showCloseModal('${broker}', '${pos.symbol}', ${JSON.stringify(pos).replace(/"/g, '&quot;')})">Close</button>
+                        </td>
+                        <td><strong>${pos.symbol}</strong><br><small style="color: var(--gray);">${pos.product}</small></td>
+                        <td><span class="direction-${pos.direction.toLowerCase()}">${pos.direction}</span></td>
+                        <td>${pos.quantity}</td>
+                        <td>₹${parseFloat(pos.average_price).toFixed(2)}</td>
+                        <td>${pos.ltp ? '₹' + parseFloat(pos.ltp).toFixed(2) : '<span style="color: var(--gray);">N/A</span>'}</td>
+                        <td class="${getPnLClass(pos.unrealized_pnl)}">
+                            ₹${parseFloat(pos.unrealized_pnl).toFixed(2)}
+                        </td>
+                        <td class="${getPnLClass(pos.realized_pnl)}">
+                            ₹${parseFloat(pos.realized_pnl).toFixed(2)}
+                        </td>
+                        <td class="${getPnLClass(pos.total_pnl)}">
+                            <strong>₹${parseFloat(pos.total_pnl).toFixed(2)}</strong>
+                        </td>
+                        <td class="${getPnLClass(pos.unrealized_pnl)}">
+                            ${parseFloat(pos.pnl_percentage).toFixed(2)}%
+                        </td>
+                    </tr>
+                `).join('')}
+            </tbody>
+        </table>
+        </div>
+    `;
+
+    container.innerHTML = tableHTML;
+}
+
+// Get P&L CSS class
+function getPnLClass(pnl) {
+    const value = parseFloat(pnl);
+    if (value > 0) return 'pnl-positive';
+    if (value < 0) return 'pnl-negative';
+    return 'pnl-neutral';
+}
+
+// Show close position modal
+function showCloseModal(broker, symbol, posData) {
+    currentPosition = { broker, symbol, posData };
+
+    const modal = document.getElementById('closePositionModal');
+    const modalInfo = document.getElementById('modalPositionInfo');
+    const modalMessages = document.getElementById('modalMessages');
+
+    modalMessages.innerHTML = '';
+
+    const pos = posData;
+    modalInfo.innerHTML = `
+        <div class="modal-info-item">
+            <div class="modal-info-label">Symbol</div>
+            <div class="modal-info-value">${pos.symbol}</div>
+        </div>
+        <div class="modal-info-item">
+            <div class="modal-info-label">Product</div>
+            <div class="modal-info-value">${pos.product}</div>
+        </div>
+        <div class="modal-info-item">
+            <div class="modal-info-label">Direction</div>
+            <div class="modal-info-value">${pos.direction}</div>
+        </div>
+        <div class="modal-info-item">
+            <div class="modal-info-label">Quantity</div>
+            <div class="modal-info-value">${pos.quantity}</div>
+        </div>
+        <div class="modal-info-item">
+            <div class="modal-info-label">Avg Price</div>
+            <div class="modal-info-value">₹${parseFloat(pos.average_price).toFixed(2)}</div>
+        </div>
+        <div class="modal-info-item">
+            <div class="modal-info-label">LTP</div>
+            <div class="modal-info-value">${pos.ltp ? '₹' + parseFloat(pos.ltp).toFixed(2) : 'N/A'}</div>
+        </div>
+        <div class="modal-info-item">
+            <div class="modal-info-label">Unrealized P&L</div>
+            <div class="modal-info-value ${getPnLClass(pos.unrealized_pnl)}">
+                ₹${parseFloat(pos.unrealized_pnl).toFixed(2)} (${parseFloat(pos.pnl_percentage).toFixed(2)}%)
+            </div>
+        </div>
+        <div class="modal-info-item">
+            <div class="modal-info-label">Total P&L</div>
+            <div class="modal-info-value ${getPnLClass(pos.total_pnl)}">
+                <strong>₹${parseFloat(pos.total_pnl).toFixed(2)}</strong>
+            </div>
+        </div>
+    `;
+    modal.classList.add('active');
+}
+
+// Handle overlay click (close modal when clicking outside)
+function handleOverlayClick(event) {
+    // Only close if clicked on overlay itself, not when order is processing
+    if (event.target.id === 'closePositionModal' && !isOrderProcessing) {
+        closeModal();
+    }
+}
+
+// Close modal
+function closeModal() {
+    // Don't allow closing while order is processing (unless explicitly stopped)
+    if (isOrderProcessing) {
+        console.log('Cannot close modal while processing orders. Use Stop button instead.');
+        return;
+    }
+
+    const modal = document.getElementById('closePositionModal');
+    const modalMessages = document.getElementById('modalMessages');
+    const confirmBtn = document.getElementById('modalConfirmBtn');
+    const cancelBtn = document.getElementById('modalCancelBtn');
+
+    // Reset modal state
+    modal.classList.remove('active');
+    modalMessages.innerHTML = '';
+
+    // Reset buttons to default state
+    confirmBtn.textContent = 'Close Position';
+    confirmBtn.disabled = false;
+    confirmBtn.onclick = confirmClosePosition;
+
+    cancelBtn.textContent = 'Cancel';
+    cancelBtn.disabled = false;
+    cancelBtn.onclick = closeModal;
+
+    currentPosition = null;
+    isOrderProcessing = false;
+
+    // Stop progress polling if running
+    if (closeExecutionState.pollInterval) {
+        clearInterval(closeExecutionState.pollInterval);
+        closeExecutionState.pollInterval = null;
+    }
+    closeExecutionState.isRunning = false;
+}
+
+// Progress tracking functions
+function showProgressSection() {
+    document.getElementById('modalConfirmSection').style.display = 'none';
+    document.getElementById('modalProgressSection').style.display = 'block';
+}
+
+function hideProgressSection() {
+    document.getElementById('modalConfirmSection').style.display = 'block';
+    document.getElementById('modalProgressSection').style.display = 'none';
+}
+
+function addLogEntry(message, type = 'info') {
+    const log = document.getElementById('batch-status-log');
+    const timestamp = new Date().toLocaleTimeString();
+    const colors = {
+        'info': '#3B82F6',
+        'success': '#10B981',
+        'warning': '#F59E0B',
+        'error': '#EF4444'
+    };
+
+    const color = colors[type] || colors['info'];
+    const entry = document.createElement('div');
+    entry.style.color = color;
+    entry.style.marginBottom = '4px';
+    entry.innerHTML = `<strong>[${timestamp}]</strong> ${message}`;
+    log.appendChild(entry);
+    log.scrollTop = log.scrollHeight;
+}
+
+function updateProgressUI(progress) {
+    const { batches_completed, total_batches, current_batch, is_cancelled, is_complete, is_success } = progress;
+
+    // Update overall progress
+    const overallPercent = total_batches > 0 ? (batches_completed / total_batches) * 100 : 0;
+    document.getElementById('overall-progress-bar').style.width = overallPercent + '%';
+    document.getElementById('overall-progress-percent').textContent = Math.round(overallPercent) + '%';
+    document.getElementById('overall-progress-text').textContent = `${batches_completed}/${total_batches} batches`;
+
+    // Update current batch info
+    if (current_batch) {
+        document.getElementById('current-batch-number').textContent = `${current_batch.batch_num}/${total_batches}`;
+        document.getElementById('current-batch-lots').textContent = current_batch.lots || '-';
+        document.getElementById('current-batch-qty').textContent = current_batch.quantity || '-';
+    }
+
+    // Check if cancelled or complete
+    if (is_cancelled || is_complete) {
+        closeExecutionState.isRunning = false;
+        if (closeExecutionState.pollInterval) {
+            clearInterval(closeExecutionState.pollInterval);
+            closeExecutionState.pollInterval = null;
+        }
+
+        if (is_cancelled) {
+            addLogEntry('🛑 Execution interrupted by user', 'warning');
+        }
+
+        // Reset processing flag
+        isOrderProcessing = false;
+
+        // If cancelled, immediately close modal and refresh
+        if (is_cancelled) {
+            const broker = currentPosition.broker;
+            closeModal();
+            loadPositions(broker);
+
+            // Reset confirm button display
+            const confirmBtn = document.getElementById('modalConfirmBtn');
+            confirmBtn.style.display = '';
+        } else {
+            // If completed (not cancelled), show close button and auto-close after 2 seconds
+            const confirmBtn = document.getElementById('modalConfirmBtn');
+            const cancelBtn = document.getElementById('modalCancelBtn');
+
+            confirmBtn.style.display = 'none';
+            cancelBtn.textContent = 'Close';
+            cancelBtn.disabled = false;
+            cancelBtn.onclick = closeModal;
+            cancelBtn.style.background = '';
+            cancelBtn.style.cursor = '';
+
+            // Auto-close after 2 seconds
+            setTimeout(() => {
+                if (currentPosition) {
+                    const broker = currentPosition.broker;
+                    closeModal();
+                    loadPositions(broker);
+                    confirmBtn.style.display = '';
+                }
+            }, 2000);
+        }
+    }
+}
+
+function startProgressPolling() {
+    if (closeExecutionState.pollInterval) {
+        clearInterval(closeExecutionState.pollInterval);
+    }
+
+    closeExecutionState.pollInterval = setInterval(() => {
+        if (!closeExecutionState.isRunning) {
+            clearInterval(closeExecutionState.pollInterval);
+            return;
+        }
+
+        const broker = closeExecutionState.broker;
+        const symbol = closeExecutionState.symbol;
+
+        fetch(`/trading/api/close-position-progress/${broker}/${encodeURIComponent(symbol)}/`)
+            .then(res => res.json())
+            .then(data => {
+                if (data.success) {
+                    updateProgressUI(data.progress);
+
+                    // Add log entries for new batches
+                    if (data.progress.last_log_message) {
+                        addLogEntry(data.progress.last_log_message, data.progress.last_log_type || 'info');
+                    }
+
+                    // Check if execution is complete
+                    if (data.progress.is_complete) {
+                        closeExecutionState.isRunning = false;
+                        clearInterval(closeExecutionState.pollInterval);
+
+                        if (data.progress.is_success) {
+                            addLogEntry('✅ Position closed successfully', 'success');
+                        } else {
+                            addLogEntry('❌ Position closing failed', 'error');
+                        }
+                    }
+                }
+            })
+            .catch(err => {
+                console.error('Error polling progress:', err);
+            });
+    }, 1500); // Poll every 1.5 seconds
+}
+
+async function stopOrderPlacement() {
+    if (!currentPosition) {
+        console.error('No position available');
+        return;
+    }
+
+    // Show confirmation dialog
+    if (!confirm('⚠️ Are you sure you want to interrupt order execution?\n\nThis will stop placing any remaining batches.')) {
+        return;
+    }
+
+    const cancelBtn = document.getElementById('modalCancelBtn');
+    const pos = currentPosition.posData;
+    const broker = currentPosition.broker;
+
+    addLogEntry('🛑 Sending interrupt signal...', 'warning');
+
+    try {
+        // Call the cancel API to set the cancellation flag
+        const response = await fetch('/trading/api/cancel-order-placement/', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCsrfToken()
+            },
+            body: JSON.stringify({
+                broker: broker,
+                symbol: pos.symbol
+            })
+        });
+
+        const data = await response.json();
+        if (data.success) {
+            console.log('Cancellation requested successfully');
+            addLogEntry('✅ Interrupt signal sent successfully', 'success');
+            addLogEntry('⏳ Waiting for current batch to complete...', 'info');
+
+            // Disable and update the Stop button
+            cancelBtn.disabled = true;
+            cancelBtn.textContent = '✓ Interrupted';
+            cancelBtn.style.background = '#6B7280';
+            cancelBtn.style.cursor = 'not-allowed';
+        } else {
+            console.error('Failed to request cancellation:', data.error);
+            addLogEntry('❌ Failed to interrupt: ' + data.error, 'error');
+            alert('Failed to interrupt execution: ' + data.error);
+        }
+    } catch (error) {
+        console.error('Error requesting cancellation:', error);
+        addLogEntry('❌ Network error during interrupt', 'error');
+        alert('Network error while trying to interrupt');
+    }
+}
+
+// Confirm close position
+async function confirmClosePosition() {
+    if (!currentPosition) return;
+
+    const confirmBtn = document.getElementById('modalConfirmBtn');
+    const cancelBtn = document.getElementById('modalCancelBtn');
+    const modalMessages = document.getElementById('modalMessages');
+
+    // Set processing flag to prevent accidental closing
+    isOrderProcessing = true;
+
+    confirmBtn.disabled = true;
+    confirmBtn.textContent = '⏳ Closing...';
+
+    // Change Cancel button to Stop button (enabled immediately with red background)
+    cancelBtn.textContent = '🛑 Stop';
+    cancelBtn.disabled = false;
+    cancelBtn.onclick = stopOrderPlacement;
+    cancelBtn.style.background = '#EF4444';
+    cancelBtn.style.color = 'white';
+
+    const pos = currentPosition.posData;
+    const broker = currentPosition.broker;
+
+    // Switch to progress view
+    showProgressSection();
+    addLogEntry('🚀 Starting position closure...', 'info');
+    addLogEntry(`Closing ${pos.symbol} on ${broker === 'breeze' ? 'ICICI Breeze' : 'Kotak Neo'}`, 'info');
+
+    // Start progress polling
+    closeExecutionState.isRunning = true;
+    closeExecutionState.broker = broker;
+    closeExecutionState.symbol = pos.symbol;
+    startProgressPolling();
+
+    try {
+        // Call the close_live_position API (this starts async execution)
+        const response = await fetch('/trading/api/close-live-position/', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCsrfToken()
+            },
+            body: JSON.stringify({
+                broker: broker,
+                symbol: pos.symbol,
+                quantity: pos.net_quantity_shares,  // Use shares for closing
+                exchange: pos.exchange,
+                product: pos.product,
+                direction: pos.direction
+            })
+        });
+
+        const data = await response.json();
+
+        // Stop polling
+        closeExecutionState.isRunning = false;
+        if (closeExecutionState.pollInterval) {
+            clearInterval(closeExecutionState.pollInterval);
+        }
+
+        if (data.success) {
+            // Success - final status will come from progress polling
+            const wasCancelled = data.cancelled || false;
+            if (wasCancelled) {
+                addLogEntry(`⚠️ ${data.message || 'Position partially closed'}`, 'warning');
+            } else {
+                addLogEntry(`✅ ${data.message || 'Position closed successfully'}`, 'success');
+            }
+
+            // Reset processing flag to allow closing
+            isOrderProcessing = false;
+
+            // Change buttons
+            cancelBtn.textContent = 'Close';
+            cancelBtn.disabled = false;
+            cancelBtn.onclick = closeModal;
+            confirmBtn.style.display = 'none';
+
+            // Refresh positions after 3 seconds
+            setTimeout(() => {
+                closeModal();
+                loadPositions(broker);
+                confirmBtn.style.display = '';
+            }, 3000);
+
+        } else {
+            // Failed
+            addLogEntry(`❌ ${data.error || 'Failed to close position'}`, 'error');
+
+            // Reset processing flag to allow closing
+            isOrderProcessing = false;
+
+            // Reset buttons
+            confirmBtn.textContent = 'Close';
+            confirmBtn.disabled = false;
+            confirmBtn.onclick = closeModal;
+            cancelBtn.textContent = 'Cancel';
+            cancelBtn.disabled = false;
+            cancelBtn.onclick = closeModal;
+        }
+
+    } catch (error) {
+        console.error('Error closing position:', error);
+
+        // Stop polling
+        closeExecutionState.isRunning = false;
+        if (closeExecutionState.pollInterval) {
+            clearInterval(closeExecutionState.pollInterval);
+        }
+
+        addLogEntry(`❌ Error: ${error.message}`, 'error');
+
+        // Reset processing flag to allow closing
+        isOrderProcessing = false;
+
+        // Reset buttons
+        confirmBtn.textContent = 'Close';
+        confirmBtn.disabled = false;
+        confirmBtn.onclick = closeModal;
+        cancelBtn.textContent = 'Cancel';
+        cancelBtn.disabled = false;
+        cancelBtn.onclick = closeModal;
+    }
+}
+
+// Get CSRF token
+function getCsrfToken() {
+    // Try to get from form input first
+    const tokenInput = document.querySelector('[name=csrfmiddlewaretoken]');
+    if (tokenInput) return tokenInput.value;
+
+    // Try to get from cookie
+    const name = 'csrftoken';
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
+        }
+    }
+    return cookieValue || '';
+}
+</script>
+{% endblock %}
