@@ -60,6 +60,11 @@
         font-size: 2rem;
     }
 
+    .broker-actions {
+        display: flex;
+        gap: 0.75rem;
+    }
+
     .refresh-btn {
         padding: 0.5rem 1rem;
         background: var(--primary);
@@ -78,6 +83,29 @@
     }
 
     .refresh-btn:disabled {
+        background: var(--gray-light);
+        cursor: not-allowed;
+        transform: none;
+    }
+
+    .average-btn {
+        padding: 0.5rem 1rem;
+        background: #10b981;
+        color: white;
+        border: none;
+        border-radius: var(--radius-md);
+        cursor: pointer;
+        font-size: 0.875rem;
+        font-weight: 600;
+        transition: all 0.2s ease;
+    }
+
+    .average-btn:hover {
+        background: #059669;
+        transform: translateY(-1px);
+    }
+
+    .average-btn:disabled {
         background: var(--gray-light);
         cursor: not-allowed;
         transform: none;
@@ -379,6 +407,159 @@
         margin-top: 1rem;
         font-size: 0.875rem;
     }
+
+    /* Average Position Modal Styles */
+    .average-modal-content {
+        background: white;
+        border-radius: var(--radius-lg);
+        padding: 0;
+        max-width: 900px;
+        width: 95%;
+        max-height: 90vh;
+        overflow-y: auto;
+        box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
+    }
+
+    .average-modal-header {
+        background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+        color: white;
+        padding: 1.5rem 2rem;
+        border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+    .average-modal-header h2 {
+        margin: 0;
+        font-size: 1.5rem;
+        font-weight: 600;
+    }
+
+    .average-modal-close {
+        background: rgba(255, 255, 255, 0.2);
+        color: white;
+        border: none;
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        cursor: pointer;
+        font-size: 1.25rem;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: all 0.2s ease;
+    }
+
+    .average-modal-close:hover {
+        background: rgba(255, 255, 255, 0.3);
+    }
+
+    .average-modal-body {
+        padding: 2rem;
+    }
+
+    .score-card {
+        background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
+        border-radius: 8px;
+        padding: 20px;
+        margin-bottom: 20px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        border: 1px solid #3b82f6;
+    }
+
+    .score-header {
+        color: #1f2937;
+        margin-bottom: 15px;
+        font-size: 1.25rem;
+        font-weight: 600;
+    }
+
+    .score-total {
+        background: white;
+        padding: 15px;
+        border-radius: 6px;
+        margin-bottom: 15px;
+        text-align: center;
+    }
+
+    .score-value {
+        font-size: 2.5rem;
+        font-weight: 700;
+        margin: 5px 0;
+    }
+
+    .score-components {
+        background: white;
+        padding: 15px;
+        border-radius: 6px;
+    }
+
+    .score-bar-container {
+        margin-bottom: 12px;
+    }
+
+    .score-bar-label {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 4px;
+        font-size: 0.8rem;
+    }
+
+    .score-bar-track {
+        height: 8px;
+        background: #e5e7eb;
+        border-radius: 4px;
+        overflow: hidden;
+        position: relative;
+    }
+
+    .score-bar-fill {
+        height: 100%;
+        transition: width 0.3s;
+    }
+
+    .score-description {
+        font-size: 0.7rem;
+        color: #9ca3af;
+        margin-top: 2px;
+    }
+
+    .position-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 15px;
+        margin-bottom: 20px;
+    }
+
+    .position-card {
+        background: white;
+        padding: 15px;
+        border-radius: 8px;
+        border-left: 4px solid #3b82f6;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+
+    .position-label {
+        font-size: 0.75rem;
+        color: #6b7280;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        margin-bottom: 5px;
+    }
+
+    .position-value {
+        font-size: 1.25rem;
+        font-weight: 700;
+        color: #1f2937;
+    }
+
+    .position-subvalue {
+        font-size: 0.8rem;
+        color: #6b7280;
+        margin-top: 3px;
+    }
 </style>
 {% endblock %}
 
@@ -399,9 +580,14 @@
                 <span class="broker-icon">🌊</span>
                 ICICI Breeze Positions
             </h2>
-            <button class="refresh-btn" onclick="refreshPositions('breeze')" id="refreshBreezeBtn">
-                🔄 Refresh
-            </button>
+            <div class="broker-actions">
+                <button class="average-btn" onclick="showAverageModal('breeze')" id="averageBreezeBtn">
+                    📈 Average Position
+                </button>
+                <button class="refresh-btn" onclick="refreshPositions('breeze')" id="refreshBreezeBtn">
+                    🔄 Refresh
+                </button>
+            </div>
         </div>
         <div id="breezePositions">
             <div class="loading-spinner">Loading Breeze positions...</div>
@@ -415,9 +601,14 @@
                 <span class="broker-icon">🚀</span>
                 Kotak Neo Positions
             </h2>
-            <button class="refresh-btn" onclick="refreshPositions('neo')" id="refreshNeoBtn">
-                🔄 Refresh
-            </button>
+            <div class="broker-actions">
+                <button class="average-btn" onclick="showAverageModal('neo')" id="averageNeoBtn">
+                    📈 Average Position
+                </button>
+                <button class="refresh-btn" onclick="refreshPositions('neo')" id="refreshNeoBtn">
+                    🔄 Refresh
+                </button>
+            </div>
         </div>
         <div id="neoPositions">
             <div class="loading-spinner">Loading Neo positions...</div>
@@ -486,6 +677,19 @@
             <button class="btn btn-danger" onclick="confirmClosePosition()" id="modalConfirmBtn">
                 Close Position
             </button>
+        </div>
+    </div>
+</div>
+
+<!-- Average Position Modal -->
+<div class="modal-overlay" id="averagePositionModal" onclick="handleAverageOverlayClick(event)">
+    <div class="average-modal-content" onclick="event.stopPropagation()">
+        <div class="average-modal-header">
+            <h2>📈 Average Position Recommendation</h2>
+            <button class="average-modal-close" onclick="closeAverageModal()">✕</button>
+        </div>
+        <div class="average-modal-body" id="averageModalBody">
+            <div class="loading-spinner">Loading recommendations...</div>
         </div>
     </div>
 </div>
@@ -1057,6 +1261,536 @@ function getCsrfToken() {
         }
     }
     return cookieValue || '';
+}
+
+// ======================================
+// Average Position Modal Functions
+// ======================================
+
+// Show average position modal
+async function showAverageModal(broker) {
+    const modal = document.getElementById('averagePositionModal');
+    const modalBody = document.getElementById('averageModalBody');
+
+    modal.classList.add('active');
+    modalBody.innerHTML = '<div class="loading-spinner">Loading position recommendations...</div>';
+
+    try {
+        // Get all positions for the broker
+        const response = await fetch(`/trading/api/get-positions/?broker=${broker}`);
+        const data = await response.json();
+
+        if (data.success && data.positions && data.positions.length > 0) {
+            // Build the modal content with all positions
+            displayAverageRecommendations(broker, data.positions);
+        } else {
+            modalBody.innerHTML = `
+                <div class="no-positions">
+                    <div class="no-positions-icon">📭</div>
+                    <p>No active positions found for averaging</p>
+                </div>
+            `;
+        }
+    } catch (error) {
+        console.error('Error loading positions for averaging:', error);
+        modalBody.innerHTML = `<div class="error-message">Failed to load positions. Please try again.</div>`;
+    }
+}
+
+// Display average recommendations for each position
+function displayAverageRecommendations(broker, positions) {
+    const modalBody = document.getElementById('averageModalBody');
+
+    const html = `
+        <div style="margin-bottom: 20px;">
+            <p style="color: #6b7280; margin-bottom: 20px;">
+                Select a position below to view averaging recommendations based on real-time market analysis.
+            </p>
+        </div>
+
+        ${positions.map(pos => `
+            <div style="background: white; border: 1px solid #e5e7eb; border-radius: 8px; padding: 20px; margin-bottom: 15px; cursor: pointer; transition: all 0.2s;"
+                 onclick="verifyPositionForAveraging('${broker}', '${pos.symbol}')"
+                 onmouseover="this.style.borderColor='#3b82f6'; this.style.boxShadow='0 4px 6px rgba(0,0,0,0.1)'"
+                 onmouseout="this.style.borderColor='#e5e7eb'; this.style.boxShadow=''">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div>
+                        <h3 style="margin: 0 0 8px 0; font-size: 1.25rem; color: #1f2937;">${pos.symbol}</h3>
+                        <div style="display: flex; gap: 15px; font-size: 0.875rem; color: #6b7280;">
+                            <span>Direction: <strong class="${pos.direction.toLowerCase() === 'long' ? 'direction-long' : 'direction-short'}">${pos.direction}</strong></span>
+                            <span>Qty: <strong>${pos.quantity}</strong></span>
+                            <span>Avg Price: <strong>₹${parseFloat(pos.average_price).toFixed(2)}</strong></span>
+                        </div>
+                    </div>
+                    <div style="text-align: right;">
+                        <div style="font-size: 0.75rem; color: #6b7280; margin-bottom: 4px;">Unrealized P&L</div>
+                        <div class="${getPnLClass(pos.unrealized_pnl)}" style="font-size: 1.25rem; font-weight: 700;">
+                            ₹${parseFloat(pos.unrealized_pnl).toFixed(2)}
+                        </div>
+                        <div style="font-size: 0.875rem; color: #6b7280;">
+                            ${parseFloat(pos.pnl_percentage).toFixed(2)}%
+                        </div>
+                    </div>
+                </div>
+                <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid #f3f4f6; text-align: center; color: #3b82f6; font-size: 0.875rem; font-weight: 600;">
+                    Click to verify averaging opportunity →
+                </div>
+            </div>
+        `).join('')}
+    `;
+
+    modalBody.innerHTML = html;
+}
+
+// Current averaging analysis data
+let currentAveragingData = null;
+
+// Verify position for averaging (calls the verify API)
+async function verifyPositionForAveraging(broker, symbol) {
+    const modalBody = document.getElementById('averageModalBody');
+    modalBody.innerHTML = '<div class="loading-spinner">Analyzing position for averaging...</div>';
+
+    try {
+        // First, get the position details
+        const positionsResponse = await fetch(`/trading/api/get-positions/?broker=${broker}`);
+        const positionsData = await positionsResponse.json();
+
+        if (!positionsData.success) {
+            throw new Error('Failed to fetch position details');
+        }
+
+        // Find the specific position
+        const position = positionsData.positions.find(p => p.symbol === symbol);
+        if (!position) {
+            throw new Error('Position not found');
+        }
+
+        // Extract expiry date from position (format varies by broker)
+        // For futures, symbol usually contains expiry info
+        const expiry_date = position.expiry_date || '';  // Will be extracted from position data
+
+        // Call averaging analysis API
+        const response = await fetch('/trading/api/analyze-averaging/', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCsrfToken()
+            },
+            body: JSON.stringify({
+                broker: broker,
+                symbol: symbol,
+                direction: position.direction,
+                entry_price: position.average_price,
+                quantity: position.net_quantity_shares || position.quantity,
+                expiry_date: expiry_date
+            })
+        });
+
+        const data = await response.json();
+
+        if (!data.success) {
+            modalBody.innerHTML = `
+                <div class="error-message">
+                    <strong>Analysis Failed</strong><br>
+                    ${data.error || 'Unable to analyze position for averaging'}
+                </div>
+                <div style="margin-top: 20px; text-align: center;">
+                    <button class="btn btn-secondary" onclick="showAverageModal('${broker}')">← Back to Positions</button>
+                </div>
+            `;
+            return;
+        }
+
+        // Store current data for later use
+        currentAveragingData = {
+            ...data,
+            broker: broker,
+            symbol: symbol,
+            position: position
+        };
+
+        // Display the averaging recommendation
+        displayAveragingAnalysis(data, broker, symbol);
+
+    } catch (error) {
+        console.error('Error verifying position:', error);
+        modalBody.innerHTML = `
+            <div class="error-message">
+                <strong>Error</strong><br>
+                ${error.message || 'Failed to analyze position. Please try again.'}
+            </div>
+            <div style="margin-top: 20px; text-align: center;">
+                <button class="btn btn-secondary" onclick="showAverageModal('${broker}')">← Back to Positions</button>
+            </div>
+        `;
+    }
+}
+
+// Display averaging analysis results
+function displayAveragingAnalysis(data, broker, symbol) {
+    const modalBody = document.getElementById('averageModalBody');
+
+    const recommendation = data.recommendation;
+    const confidence = data.confidence;
+    const critical_checks = data.critical_checks || {};
+    const additional_checks = data.additional_checks || {};
+    const risk_assessment = data.risk_assessment || {};
+    const position_sizing = data.position_sizing || {};
+
+    // Determine recommendation color and badge
+    let recColor = '#6b7280';
+    let recBadge = 'NO AVERAGE';
+    let recIcon = '⛔';
+
+    if (recommendation === 'STRONG_AVERAGE') {
+        recColor = '#10b981';
+        recBadge = 'STRONG BUY';
+        recIcon = '✅';
+    } else if (recommendation === 'MODERATE_AVERAGE') {
+        recColor = '#f59e0b';
+        recBadge = 'MODERATE BUY';
+        recIcon = '⚠️';
+    } else if (recommendation === 'WEAK_AVERAGE') {
+        recColor = '#ef4444';
+        recBadge = 'WEAK - RISKY';
+        recIcon = '❌';
+    }
+
+    let html = `
+        <!-- Recommendation Banner -->
+        <div style="background: linear-gradient(135deg, ${recColor} 0%, ${recColor}dd 100%); color: white; padding: 20px; border-radius: 8px; margin-bottom: 20px; text-align: center;">
+            <div style="font-size: 3rem; margin-bottom: 10px;">${recIcon}</div>
+            <h2 style="margin: 0; font-size: 1.75rem;">${recBadge}</h2>
+            <p style="margin: 10px 0 0 0; font-size: 1rem; opacity: 0.9;">${data.reason}</p>
+            <div style="margin-top: 15px; font-size: 2rem; font-weight: 700;">
+                Confidence: ${confidence}/100
+            </div>
+        </div>
+
+        <!-- Price Summary -->
+        <div style="background: white; border-radius: 8px; padding: 20px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+            <h3 style="color: #1f2937; margin: 0 0 15px 0;">📊 Price Analysis</h3>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 15px;">
+                <div class="position-card">
+                    <div class="position-label">Entry Price</div>
+                    <div class="position-value">₹${parseFloat(data.entry_price).toFixed(2)}</div>
+                </div>
+                <div class="position-card">
+                    <div class="position-label">Current Price</div>
+                    <div class="position-value">₹${parseFloat(data.current_price).toFixed(2)}</div>
+                </div>
+                <div class="position-card">
+                    <div class="position-label">Price Change</div>
+                    <div class="position-value" style="color: ${data.price_change_pct < 0 ? '#ef4444' : '#10b981'};">
+                        ${data.price_change_pct > 0 ? '+' : ''}${parseFloat(data.price_change_pct).toFixed(2)}%
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Critical Checks -->
+        <div class="score-card">
+            <h3 class="score-header">🔍 Critical Checks (Must Pass)</h3>
+
+            ${buildCheckCard(
+                'Price Movement Check',
+                critical_checks.price_drop_check,
+                critical_checks.price_drop_check?.passed ? '✅' : '❌'
+            )}
+
+            ${buildCheckCard(
+                'Support/Resistance Proximity',
+                critical_checks.support_proximity_check,
+                critical_checks.support_proximity_check?.passed ? '✅' : '❌'
+            )}
+
+            ${buildCheckCard(
+                'Open Interest',
+                critical_checks.open_interest_check,
+                critical_checks.open_interest_check?.passed ? '✅' : '❌'
+            )}
+        </div>
+
+        <!-- Additional Checks -->
+        ${Object.keys(additional_checks).length > 0 ? `
+            <div style="background: white; border-radius: 8px; padding: 20px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                <h3 style="color: #1f2937; margin: 0 0 15px 0;">📈 Additional Analysis</h3>
+                ${buildAdditionalChecks(additional_checks)}
+            </div>
+        ` : ''}
+
+        <!-- Risk Assessment -->
+        ${risk_assessment.risk_level ? `
+            <div style="background: ${risk_assessment.risk_level === 'LOW' ? '#d1fae5' : (risk_assessment.risk_level === 'MEDIUM' ? '#fef3c7' : '#fee2e2')}; border-radius: 8px; padding: 20px; margin-bottom: 20px;">
+                <h3 style="color: #1f2937; margin: 0 0 15px 0;">⚠️ Risk Assessment</h3>
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <span style="font-size: 1.125rem; color: #1f2937;">Risk Level:</span>
+                    <span style="font-size: 1.5rem; font-weight: 700; color: ${risk_assessment.risk_level === 'LOW' ? '#059669' : (risk_assessment.risk_level === 'MEDIUM' ? '#d97706' : '#dc2626')};">
+                        ${risk_assessment.risk_level}
+                    </span>
+                </div>
+                <div style="margin-top: 10px; color: #6b7280; font-size: 0.875rem;">
+                    ${risk_assessment.message || ''}
+                </div>
+            </div>
+        ` : ''}
+    `;
+
+    // Only show position sizing if recommendation is not NO_AVERAGE
+    if (recommendation !== 'NO_AVERAGE' && position_sizing.recommended_lots > 0) {
+        html += buildPositionSizingSection(position_sizing, data, broker, symbol);
+    } else {
+        html += `
+            <div style="text-align: center; margin-top: 20px;">
+                <button class="btn btn-secondary" onclick="showAverageModal('${broker}')">← Back to Positions</button>
+            </div>
+        `;
+    }
+
+    modalBody.innerHTML = html;
+}
+
+// Helper function to build check cards
+function buildCheckCard(title, check, icon) {
+    if (!check) return '';
+
+    return `
+        <div style="background: white; padding: 15px; border-radius: 6px; margin-bottom: 10px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                <h4 style="margin: 0; font-size: 1rem; color: #1f2937;">${icon} ${title}</h4>
+                <span style="background: ${check.passed ? '#d1fae5' : '#fee2e2'}; color: ${check.passed ? '#065f46' : '#991b1b'}; padding: 4px 12px; border-radius: 12px; font-size: 0.75rem; font-weight: 600;">
+                    ${check.passed ? 'PASSED' : 'FAILED'}
+                </span>
+            </div>
+            <p style="margin: 0; color: #6b7280; font-size: 0.875rem;">${check.message || ''}</p>
+        </div>
+    `;
+}
+
+// Helper function to build additional checks
+function buildAdditionalChecks(checks) {
+    let html = '<div style="display: grid; gap: 10px;">';
+
+    if (checks.trend) {
+        html += buildCheckCard('Trend Analysis', checks.trend, checks.trend.healthy ? '✅' : '⚠️');
+    }
+
+    if (checks.volume) {
+        html += buildCheckCard('Volume Check', checks.volume, checks.volume.adequate ? '✅' : '⚠️');
+    }
+
+    if (checks.sector) {
+        html += buildCheckCard('Sector Health', checks.sector, checks.sector.healthy ? '✅' : '⚠️');
+    }
+
+    if (checks.volatility) {
+        html += buildCheckCard('Volatility', checks.volatility, checks.volatility.acceptable ? '✅' : '⚠️');
+    }
+
+    html += '</div>';
+    return html;
+}
+
+// Build position sizing section with editable lots
+function buildPositionSizingSection(position_sizing, data, broker, symbol) {
+    const recommended_lots = position_sizing.recommended_lots || 0;
+    const current_lots = position_sizing.current_lots || 0;
+    const lot_size = data.lot_size || 0;
+
+    return `
+        <div style="background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%); border-radius: 12px; padding: 25px; margin-bottom: 20px; color: white;">
+            <h3 style="color: white; margin-bottom: 20px; font-size: 1.3rem;">📊 Position Sizing Recommendation</h3>
+
+            <!-- Current Position Info -->
+            <div style="background: rgba(255,255,255,0.15); padding: 15px; border-radius: 8px; margin-bottom: 20px;">
+                <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; text-align: center;">
+                    <div>
+                        <div style="font-size: 0.75rem; opacity: 0.9;">Current Lots</div>
+                        <div style="font-size: 1.5rem; font-weight: 700;">${current_lots}</div>
+                    </div>
+                    <div>
+                        <div style="font-size: 0.75rem; opacity: 0.9;">Current Qty</div>
+                        <div style="font-size: 1.5rem; font-weight: 700;">${position_sizing.current_quantity || 0}</div>
+                    </div>
+                    <div>
+                        <div style="font-size: 0.75rem; opacity: 0.9;">Avg Price</div>
+                        <div style="font-size: 1.5rem; font-weight: 700;">₹${parseFloat(data.entry_price).toFixed(2)}</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Lot Size Editor -->
+            <div style="background: rgba(255,255,255,0.15); padding: 20px; border-radius: 8px; margin-bottom: 20px;">
+                <h4 style="color: white; margin-bottom: 15px; font-size: 1rem;">🎯 Adjust Averaging Size</h4>
+                <div style="display: flex; align-items: center; gap: 15px; justify-content: center;">
+                    <button onclick="adjustAveragingLots(-1)"
+                            style="background: #ef4444; color: white; width: 40px; height: 40px; border: none; border-radius: 8px; font-size: 1.5rem; cursor: pointer; font-weight: 700;">−</button>
+                    <div style="text-align: center;">
+                        <input type="number"
+                               id="averagingLotsInput"
+                               value="${recommended_lots}"
+                               min="1"
+                               max="100"
+                               onchange="updateAveragingPosition()"
+                               style="width: 100px; padding: 12px; border: none; border-radius: 8px; text-align: center; font-size: 1.25rem; font-weight: 700;">
+                        <div style="font-size: 0.875rem; margin-top: 5px;">Lots to Add</div>
+                    </div>
+                    <button onclick="adjustAveragingLots(1)"
+                            style="background: #10b981; color: white; width: 40px; height: 40px; border: none; border-radius: 8px; font-size: 1.5rem; cursor: pointer; font-weight: 700;">+</button>
+                </div>
+                <div style="display: flex; gap: 10px; justify-content: center; margin-top: 15px;">
+                    <button onclick="setAveragingLots(${Math.max(1, Math.floor(current_lots * 0.1))})" style="padding: 8px 16px; background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.3); border-radius: 6px; color: white; cursor: pointer; font-size: 0.875rem;">10% (${Math.max(1, Math.floor(current_lots * 0.1))} lots)</button>
+                    <button onclick="setAveragingLots(${Math.max(1, Math.floor(current_lots * 0.25))})" style="padding: 8px 16px; background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.3); border-radius: 6px; color: white; cursor: pointer; font-size: 0.875rem;">25% (${Math.max(1, Math.floor(current_lots * 0.25))} lots)</button>
+                    <button onclick="setAveragingLots(${recommended_lots})" style="padding: 8px 16px; background: rgba(16,185,129,0.3); border: 1px solid rgba(16,185,129,0.5); border-radius: 6px; color: white; cursor: pointer; font-size: 0.875rem;">Recommended (${recommended_lots} lots)</button>
+                </div>
+            </div>
+
+            <!-- Live Position Summary -->
+            <div id="averagingPositionSummary" style="background: rgba(255,255,255,0.15); padding: 20px; border-radius: 8px;">
+                ${buildAveragingPositionSummary(position_sizing, data, recommended_lots)}
+            </div>
+        </div>
+
+        <!-- Action Buttons -->
+        <div style="display: flex; gap: 15px; justify-content: center; margin-top: 20px;">
+            <button onclick="executeAveragingOrder()" class="btn btn-primary" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; padding: 14px 40px; border: none; border-radius: 8px; font-size: 1.125rem; font-weight: 600; cursor: pointer;">
+                ✅ Place Averaging Order
+            </button>
+            <button onclick="showAverageModal('${broker}')" class="btn btn-secondary" style="background: #6b7280; color: white; padding: 14px 40px; border: none; border-radius: 8px; font-size: 1.125rem; font-weight: 600; cursor: pointer;">
+                ← Back to Positions
+            </button>
+        </div>
+    `;
+}
+
+// Build averaging position summary
+function buildAveragingPositionSummary(position_sizing, data, add_lots) {
+    const lot_size = data.lot_size || 0;
+    const current_price = data.current_price || 0;
+    const entry_price = data.entry_price || 0;
+    const current_quantity = position_sizing.current_quantity || 0;
+
+    const add_quantity = add_lots * lot_size;
+    const new_total_quantity = current_quantity + add_quantity;
+    const new_avg_price = ((entry_price * current_quantity) + (current_price * add_quantity)) / new_total_quantity;
+    const price_improvement = Math.abs(new_avg_price - entry_price);
+    const improvement_pct = (price_improvement / entry_price) * 100;
+
+    const margin_per_lot = position_sizing.margin_per_lot || 0;
+    const margin_required = add_lots * margin_per_lot;
+    const available_margin = position_sizing.available_margin || 0;
+    const margin_utilization = available_margin > 0 ? ((margin_required / available_margin) * 100).toFixed(1) : '0';
+
+    return `
+        <h4 style="color: white; margin-bottom: 15px; font-size: 1rem;">📈 After Averaging Summary</h4>
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 15px; margin-bottom: 15px;">
+            <div style="background: rgba(255,255,255,0.1); padding: 12px; border-radius: 6px;">
+                <div style="font-size: 0.75rem; opacity: 0.9;">Add Quantity</div>
+                <div style="font-size: 1.25rem; font-weight: 700;">+${add_quantity}</div>
+                <div style="font-size: 0.7rem; opacity: 0.8;">${add_lots} lots</div>
+            </div>
+            <div style="background: rgba(255,255,255,0.1); padding: 12px; border-radius: 6px;">
+                <div style="font-size: 0.75rem; opacity: 0.9;">New Total Qty</div>
+                <div style="font-size: 1.25rem; font-weight: 700;">${new_total_quantity}</div>
+                <div style="font-size: 0.7rem; opacity: 0.8;">${Math.floor(new_total_quantity / lot_size)} lots</div>
+            </div>
+            <div style="background: rgba(255,255,255,0.1); padding: 12px; border-radius: 6px;">
+                <div style="font-size: 0.75rem; opacity: 0.9;">New Avg Price</div>
+                <div style="font-size: 1.25rem; font-weight: 700; color: #a7f3d0;">₹${new_avg_price.toFixed(2)}</div>
+                <div style="font-size: 0.7rem; opacity: 0.8;">Improved by ${improvement_pct.toFixed(2)}%</div>
+            </div>
+            <div style="background: rgba(255,255,255,0.1); padding: 12px; border-radius: 6px;">
+                <div style="font-size: 0.75rem; opacity: 0.9;">Margin Required</div>
+                <div style="font-size: 1.25rem; font-weight: 700;">₹${formatIndianNumber(margin_required)}</div>
+                <div style="font-size: 0.7rem; opacity: 0.8;">${margin_utilization}% utilization</div>
+            </div>
+        </div>
+        <div style="padding: 15px; background: rgba(59, 130, 246, 0.2); border-radius: 6px; border: 1px solid rgba(59, 130, 246, 0.4);">
+            <div style="font-size: 0.875rem; opacity: 0.9;">
+                💰 <strong>Margin Available:</strong> ₹${formatIndianNumber(available_margin)} •
+                <strong>Utilization:</strong> ${margin_utilization}% •
+                ${margin_utilization > 60 ? '⚠️ High' : '✅ Safe'}
+            </div>
+        </div>
+    `;
+}
+
+// Adjust averaging lots
+function adjustAveragingLots(delta) {
+    const input = document.getElementById('averagingLotsInput');
+    const currentValue = parseInt(input.value) || 1;
+    const newValue = Math.max(1, Math.min(100, currentValue + delta));
+    input.value = newValue;
+    updateAveragingPosition();
+}
+
+// Set specific averaging lots
+function setAveragingLots(lots) {
+    document.getElementById('averagingLotsInput').value = lots;
+    updateAveragingPosition();
+}
+
+// Update averaging position summary
+function updateAveragingPosition() {
+    const lots = parseInt(document.getElementById('averagingLotsInput').value) || 1;
+
+    if (currentAveragingData) {
+        const position_sizing = currentAveragingData.position_sizing;
+        const summary = buildAveragingPositionSummary(position_sizing, currentAveragingData, lots);
+        document.getElementById('averagingPositionSummary').innerHTML = summary;
+    }
+}
+
+// Format Indian number system
+function formatIndianNumber(num) {
+    if (!num) return '0';
+    const x = num.toString();
+    const lastThree = x.substring(x.length - 3);
+    const otherNumbers = x.substring(0, x.length - 3);
+    if (otherNumbers !== '') {
+        return otherNumbers.replace(/\B(?=(\d{2})+(?!\d))/g, ",") + "," + lastThree;
+    }
+    return lastThree;
+}
+
+// Execute averaging order
+async function executeAveragingOrder() {
+    if (!currentAveragingData) {
+        alert('No averaging data available');
+        return;
+    }
+
+    const lots = parseInt(document.getElementById('averagingLotsInput').value) || 0;
+    if (lots === 0) {
+        alert('Please enter a valid lot size');
+        return;
+    }
+
+    // Show confirmation
+    const lot_size = currentAveragingData.lot_size || 0;
+    const quantity = lots * lot_size;
+    const current_price = currentAveragingData.current_price || 0;
+    const value = quantity * current_price;
+
+    if (!confirm(`⚠️ CONFIRM AVERAGING ORDER\n\nSymbol: ${currentAveragingData.symbol}\nDirection: ${currentAveragingData.direction}\nQuantity: ${quantity} (${lots} lots)\nPrice: ₹${current_price.toFixed(2)}\nValue: ₹${formatIndianNumber(value)}\n\nThis will add to your existing position. Continue?`)) {
+        return;
+    }
+
+    // TODO: Implement order placement
+    alert('Order placement will be implemented in the next phase.\n\nThis will:\n1. Place futures order via Breeze/Neo API\n2. Update your position\n3. Show order confirmation');
+}
+
+// Handle overlay click for average modal
+function handleAverageOverlayClick(event) {
+    if (event.target.id === 'averagePositionModal') {
+        closeAverageModal();
+    }
+}
+
+// Close average modal
+function closeAverageModal() {
+    const modal = document.getElementById('averagePositionModal');
+    modal.classList.remove('active');
 }
 </script>
 {% endblock %}

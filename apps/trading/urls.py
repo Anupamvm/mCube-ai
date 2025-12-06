@@ -52,6 +52,7 @@ urlpatterns = [
     path('api/close-live-position/', api_views.close_live_position, name='api_close_live_position'),
     path('api/close-position-progress/<str:broker>/<path:symbol>/', api_views.get_close_position_progress, name='api_close_position_progress'),
     path('api/cancel-order-placement/', api_views.cancel_order_placement, name='api_cancel_order_placement'),
+    path('api/analyze-averaging/', api_views.analyze_position_averaging, name='api_analyze_averaging'),
 
     # Manual Trade Execution (Live Orders)
     path('manual/prepare/', views.prepare_manual_execution, name='prepare_manual_execution'),

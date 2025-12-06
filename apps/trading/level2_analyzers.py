@@ -7,6 +7,7 @@ Comprehensive analyzers for fundamental, valuation, institutional, technical, an
 import logging
 from typing import Dict, List, Optional, Tuple
 from decimal import Decimal
+from datetime import datetime, timedelta, date
 
 logger = logging.getLogger(__name__)
 
@@ -511,4 +512,240 @@ class ValuationDeepDive:
             'absolute_valuation': {},
             'relative_valuation': {},
             'valuation_summary': {'overall_assessment': f"Analysis unavailable: {reason}", 'key_insights': []}
+        }
+
+
+def calculate_support_resistance(symbol: str) -> Dict:
+    """
+    Calculate support and resistance levels using pivot points and historical data
+
+    Args:
+        symbol: Stock code/symbol
+
+    Returns:
+        dict: Support and resistance levels
+            {
+                'success': bool,
+                'support_levels': List[float],
+                'resistance_levels': List[float],
+                'pivot_point': float
+            }
+    """
+    try:
+        from apps.brokers.models import HistoricalPrice
+
+        # Get last 30 days of historical data
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=30)
+
+        # Fetch historical prices
+        prices = HistoricalPrice.objects.filter(
+            stock_code=symbol,
+            product_type='cash',
+            datetime__gte=start_date,
+            datetime__lte=end_date
+        ).order_by('-datetime')[:30]
+
+        if not prices.exists():
+            logger.warning(f"No historical price data found for {symbol}")
+            return {
+                'success': False,
+                'message': f'No historical data available for {symbol}',
+                'support_levels': [],
+                'resistance_levels': []
+            }
+
+        # Get high, low, close from most recent data
+        latest = prices.first()
+        high = float(latest.high or 0)
+        low = float(latest.low or 0)
+        close = float(latest.close or 0)
+
+        if high == 0 or low == 0 or close == 0:
+            return {
+                'success': False,
+                'message': 'Invalid price data',
+                'support_levels': [],
+                'resistance_levels': []
+            }
+
+        # Calculate pivot point (standard method)
+        pivot = (high + low + close) / 3
+
+        # Calculate support and resistance levels
+        # R1 = 2*PP - Low
+        # R2 = PP + (High - Low)
+        # R3 = High + 2*(PP - Low)
+        # S1 = 2*PP - High
+        # S2 = PP - (High - Low)
+        # S3 = Low - 2*(High - PP)
+
+        r1 = 2 * pivot - low
+        r2 = pivot + (high - low)
+        r3 = high + 2 * (pivot - low)
+
+        s1 = 2 * pivot - high
+        s2 = pivot - (high - low)
+        s3 = low - 2 * (high - pivot)
+
+        # Also identify swing highs and lows from last 30 days
+        swing_highs = []
+        swing_lows = []
+
+        price_list = list(prices)
+        for i in range(1, len(price_list) - 1):
+            current_high = float(price_list[i].high or 0)
+            current_low = float(price_list[i].low or 0)
+            prev_high = float(price_list[i-1].high or 0)
+            next_high = float(price_list[i+1].high or 0)
+            prev_low = float(price_list[i-1].low or 0)
+            next_low = float(price_list[i+1].low or 0)
+
+            # Swing high: higher than both neighbors
+            if current_high > prev_high and current_high > next_high:
+                swing_highs.append(current_high)
+
+            # Swing low: lower than both neighbors
+            if current_low < prev_low and current_low < next_low:
+                swing_lows.append(current_low)
+
+        # Combine and deduplicate resistance levels
+        resistance_levels = sorted(list(set([r1, r2, r3] + swing_highs)))
+        # Keep only levels above current price
+        resistance_levels = [r for r in resistance_levels if r > close][:5]
+
+        # Combine and deduplicate support levels
+        support_levels = sorted(list(set([s1, s2, s3] + swing_lows)), reverse=True)
+        # Keep only levels below current price
+        support_levels = [s for s in support_levels if s < close][:5]
+
+        return {
+            'success': True,
+            'support_levels': [round(s, 2) for s in support_levels],
+            'resistance_levels': [round(r, 2) for r in resistance_levels],
+            'pivot_point': round(pivot, 2),
+            'current_price': round(close, 2)
+        }
+
+    except Exception as e:
+        logger.error(f"Error calculating support/resistance for {symbol}: {e}", exc_info=True)
+        return {
+            'success': False,
+            'message': f'Error: {str(e)}',
+            'support_levels': [],
+            'resistance_levels': []
+        }
+
+
+def analyze_sector_strength(symbol: str) -> Dict:
+    """
+    Analyze sector strength for a given stock
+
+    Args:
+        symbol: Stock code/symbol
+
+    Returns:
+        dict: Sector strength analysis
+            {
+                'success': bool,
+                'score': int (0-100),
+                'status': str ('STRONG', 'NEUTRAL', 'WEAK'),
+                'sector': str,
+                'details': dict
+            }
+    """
+    try:
+        from apps.data.models import TLStockData
+
+        # Try to find stock data (TLStockData uses 'nsecode' field)
+        stock_data = TLStockData.objects.filter(nsecode=symbol).first()
+
+        if not stock_data:
+            logger.warning(f"No TLStockData found for {symbol}")
+            return {
+                'success': False,
+                'message': f'No stock data found for {symbol}',
+                'score': 50,
+                'status': 'NEUTRAL'
+            }
+
+        # Calculate sector strength score based on available metrics
+        score = 50  # Default neutral
+
+        # Check sector performance metrics
+        sector_pe = stock_data.sector_pe_ttm or 0
+        sector_roe = stock_data.sector_return_on_equity_roe or 0
+        sector_revenue_growth = stock_data.sector_revenue_growth_qtr_yoy_pct or 0
+        sector_profit_growth = stock_data.sector_net_profit_growth_qtr_yoy_pct or 0
+
+        # Stock vs sector metrics
+        stock_pe = stock_data.pe_ttm_price_to_earnings or 0
+        stock_roe = stock_data.roe_annual_pct or 0
+        stock_revenue_growth = stock_data.revenue_growth_qtr_yoy_pct or 0
+        stock_profit_growth = stock_data.net_profit_qtr_growth_yoy_pct or 0
+
+        # Sector health indicators
+        if sector_revenue_growth > 15:
+            score += 15
+        elif sector_revenue_growth > 10:
+            score += 10
+        elif sector_revenue_growth > 5:
+            score += 5
+        elif sector_revenue_growth < 0:
+            score -= 10
+
+        if sector_profit_growth > 15:
+            score += 15
+        elif sector_profit_growth > 10:
+            score += 10
+        elif sector_profit_growth > 5:
+            score += 5
+        elif sector_profit_growth < 0:
+            score -= 10
+
+        if sector_roe > 20:
+            score += 10
+        elif sector_roe > 15:
+            score += 5
+
+        # Stock performance relative to sector
+        if stock_revenue_growth > sector_revenue_growth:
+            score += 10
+
+        if stock_profit_growth > sector_profit_growth:
+            score += 10
+
+        # Cap score at 0-100
+        score = max(0, min(100, score))
+
+        # Determine status
+        if score >= 70:
+            status = 'STRONG'
+        elif score >= 40:
+            status = 'NEUTRAL'
+        else:
+            status = 'WEAK'
+
+        return {
+            'success': True,
+            'score': score,
+            'status': status,
+            'sector': stock_data.sector_name or 'Unknown',
+            'details': {
+                'sector_revenue_growth': round(sector_revenue_growth, 2),
+                'sector_profit_growth': round(sector_profit_growth, 2),
+                'sector_roe': round(sector_roe, 2),
+                'stock_vs_sector_revenue': round(stock_revenue_growth - sector_revenue_growth, 2),
+                'stock_vs_sector_profit': round(stock_profit_growth - sector_profit_growth, 2),
+                'outperforming_sector': stock_revenue_growth > sector_revenue_growth and stock_profit_growth > sector_profit_growth
+            }
+        }
+
+    except Exception as e:
+        logger.error(f"Error analyzing sector strength for {symbol}: {e}", exc_info=True)
+        return {
+            'success': False,
+            'message': f'Error: {str(e)}',
+            'score': 50,
+            'status': 'NEUTRAL'
         }

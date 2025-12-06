@@ -12,7 +12,7 @@ from decimal import Decimal
 from datetime import datetime
 
 from django.contrib.auth.decorators import login_required
-from django.views.decorators.http import require_POST, require_GET
+from django.views.decorators.http import require_POST, require_GET, require_http_methods
 from django.views.decorators.csrf import csrf_exempt
 from django.http import JsonResponse
 from django.db import transaction
@@ -1745,6 +1745,24 @@ def get_active_positions(request):
                     product = p.get('product_type', 'N/A')
                     exchange = p.get('exchange_code', 'NFO')
 
+                    # Extract expiry date from Breeze response
+                    expiry_date = None
+                    expiry_dt_str = p.get('expiry_date', '')
+                    if expiry_dt_str:
+                        try:
+                            from datetime import datetime as dt
+                            # Breeze usually returns expiry in DD-MMM-YYYY format
+                            # Try multiple formats
+                            for fmt in ['%d-%b-%Y', '%Y-%m-%d', '%d-%m-%Y']:
+                                try:
+                                    expiry_dt = dt.strptime(expiry_dt_str, fmt)
+                                    expiry_date = expiry_dt.strftime('%Y-%m-%d')
+                                    break
+                                except:
+                                    continue
+                        except Exception as e:
+                            logger.warning(f"Could not parse Breeze expiry date '{expiry_dt_str}': {e}")
+
                     positions_data.append({
                         'symbol': symbol,
                         'exchange': exchange,
@@ -1759,6 +1777,7 @@ def get_active_positions(request):
                         'realized_pnl': round(realized_pnl, 2),
                         'total_pnl': round(unrealized_pnl + realized_pnl, 2),
                         'pnl_percentage': round((unrealized_pnl / (avg_price * abs(quantity)) * 100), 2) if avg_price > 0 else 0,
+                        'expiry_date': expiry_date,  # Add expiry date for averaging analysis
                     })
             else:
                 logger.warning(f"Breeze positions API returned non-200 status: {pos_resp}")
@@ -1963,6 +1982,18 @@ def get_active_positions(request):
                     logger.info(f"  Total P&L: ₹{total_pnl:,.2f} ({pnl_pct:+.2f}%)")
                     logger.info("="*80)
 
+                    # Extract expiry date from Neo response (format: "30 Dec, 2025")
+                    expiry_date = None
+                    expiry_dt_str = p.get('expDt', '')
+                    if expiry_dt_str:
+                        try:
+                            from datetime import datetime as dt
+                            # Convert "30 Dec, 2025" to "2025-12-30"
+                            expiry_dt = dt.strptime(expiry_dt_str, '%d %b, %Y')
+                            expiry_date = expiry_dt.strftime('%Y-%m-%d')
+                        except Exception as e:
+                            logger.warning(f"Could not parse expiry date '{expiry_dt_str}': {e}")
+
                     # Prepare response data
                     position_dict = {
                         'symbol': symbol,
@@ -1978,6 +2009,7 @@ def get_active_positions(request):
                         'realized_pnl': round(realized_pnl, 2),
                         'total_pnl': round(total_pnl, 2),
                         'pnl_percentage': round(pnl_pct, 2),
+                        'expiry_date': expiry_date,  # Add expiry date for averaging analysis
                     }
 
                     logger.info(f"📤 RESPONSE DATA FOR {symbol}:")
@@ -2975,6 +3007,232 @@ def cancel_order_placement(request):
 
     except Exception as e:
         logger.error(f"Error cancelling order placement: {e}", exc_info=True)
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        })
+
+
+@require_http_methods(["POST"])
+def analyze_position_averaging(request):
+    """
+    Analyze an existing futures position for averaging opportunities.
+
+    This endpoint runs a comprehensive analysis to determine if adding to an
+    existing position (averaging) is a good idea based on:
+
+    CRITICAL CONDITIONS (must pass):
+    1. Price movement: Down 1.5%+ from entry (LONG) or Up 1.5%+ (SHORT)
+    2. Support/Resistance: Near support (LONG) or resistance (SHORT)
+
+    ADDITIONAL CHECKS:
+    3. Trend analysis (not in strong opposite trend)
+    4. Volume & liquidity
+    5. Sector health
+    6. Volatility assessment
+
+    POST params (JSON):
+        - broker: 'breeze' or 'neo'
+        - symbol: Trading symbol (e.g., 'RELIANCE-I')
+        - direction: Position direction ('LONG' or 'SHORT')
+        - entry_price: Original entry price
+        - quantity: Current position quantity
+        - expiry_date: Futures expiry (YYYY-MM-DD format)
+
+    Returns:
+        JSON with averaging recommendation and analysis
+    """
+    if not request.user.is_authenticated:
+        return JsonResponse({
+            'success': False,
+            'error': 'Authentication required'
+        }, status=401)
+
+    if request.method != 'POST':
+        return JsonResponse({
+            'success': False,
+            'error': 'POST method required'
+        }, status=405)
+
+    try:
+        import json
+        from apps.trading.averaging_analyzer import AveragingAnalyzer
+        from apps.brokers.integrations.breeze import get_breeze_client
+        from apps.brokers.integrations.kotak_neo import get_kotak_neo_client
+        from apps.data.models import ContractData
+
+        data = json.loads(request.body)
+        broker = data.get('broker', '').lower()
+        symbol = data.get('symbol', '')
+        direction = data.get('direction', 'LONG').upper()
+        entry_price = float(data.get('entry_price', 0))
+        quantity = int(data.get('quantity', 0))
+        expiry_date = data.get('expiry_date', '')
+
+        if not all([broker, symbol, entry_price, quantity]):
+            return JsonResponse({
+                'success': False,
+                'error': 'broker, symbol, entry_price, and quantity are required'
+            })
+
+        logger.info(f"Analyzing averaging for {symbol} {direction} @ ₹{entry_price} ({quantity} qty)")
+
+        # Extract base symbol from both Breeze and Neo formats
+        # Breeze: JIOFIN-I -> JIOFIN
+        # Neo: JIOFIN25DECFUT -> JIOFIN, NIFTY26JANFUT -> NIFTY
+        import re
+        if '-' in symbol:
+            # Breeze format with hyphen
+            base_symbol = symbol.split('-')[0]
+        else:
+            # Neo format - extract alphabetic characters from the start
+            match = re.match(r'^([A-Z]+)', symbol.upper())
+            base_symbol = match.group(1) if match else symbol
+
+        logger.info(f"Extracted base symbol: '{base_symbol}' from '{symbol}'")
+
+        # Get lot size from ContractData
+        lot_size = 0
+        if expiry_date:
+            contract = ContractData.objects.filter(
+                symbol=base_symbol,
+                option_type='FUTURE',
+                expiry=expiry_date
+            ).first()
+
+            if contract:
+                lot_size = contract.lot_size
+                logger.info(f"Found lot size from ContractData: {lot_size}")
+
+        # Fallback lot sizes if not found
+        if not lot_size:
+            fallback_lot_sizes = {
+                'RELIANCE': 250,
+                'TCS': 150,
+                'INFY': 300,
+                'HDFCBANK': 550,
+                'ICICIBANK': 1375,
+                'SBIN': 1500,
+                'NIFTY': 50,
+                'BANKNIFTY': 15,
+            }
+            lot_size = fallback_lot_sizes.get(base_symbol, 500)
+            logger.warning(f"Using fallback lot size for {base_symbol}: {lot_size}")
+
+        # Initialize analyzer with Breeze client (always use Breeze for LTP fetching)
+        breeze = get_breeze_client()
+        analyzer = AveragingAnalyzer(breeze_client=breeze)
+
+        # Get Neo client if needed (for future margin calculations)
+        if broker == 'neo':
+            neo = get_kotak_neo_client()
+
+        # Run averaging analysis
+        analysis_result = analyzer.analyze_position_for_averaging(
+            symbol=base_symbol,
+            direction=direction,
+            entry_price=entry_price,
+            current_quantity=quantity,
+            lot_size=lot_size,
+            expiry_date=expiry_date,
+            exchange='NFO'
+        )
+
+        logger.info(f"Analysis result received: success={analysis_result.get('success')}, recommendation={analysis_result.get('recommendation')}")
+        logger.info(f"Analysis result keys: {list(analysis_result.keys())}")
+        if 'error' in analysis_result:
+            logger.error(f"Analysis error: {analysis_result.get('error')}")
+        if 'reason' in analysis_result:
+            logger.info(f"Analysis reason: {analysis_result.get('reason')}")
+        logger.info(f"Execution log length: {len(analysis_result.get('execution_log', []))}")
+        for i, log_entry in enumerate(analysis_result.get('execution_log', [])):
+            logger.info(f"  Execution log [{i}]: {log_entry}")
+
+        # Log critical checks details
+        critical_checks = analysis_result.get('critical_checks', {})
+        logger.info(f"Price drop check: {critical_checks.get('price_drop_check')}")
+        logger.info(f"Support proximity check: {critical_checks.get('support_proximity_check')}")
+
+        if not analysis_result.get('success'):
+            logger.warning(f"Analysis failed - returning error response")
+            return JsonResponse({
+                'success': False,
+                'error': analysis_result.get('error', 'Analysis failed'),
+                'execution_log': analysis_result.get('execution_log', [])
+            })
+
+        # Add margin information
+        position_sizing = analysis_result.get('position_sizing', {})
+        recommended_lots = position_sizing.get('recommended_lots', 0)
+
+        if recommended_lots > 0:
+            # Fetch margin requirements
+            from apps.trading.position_sizer import PositionSizer
+
+            if broker == 'breeze':
+                sizer = PositionSizer(breeze_client=breeze)
+
+                # Format expiry for Breeze
+                from datetime import datetime
+                if expiry_date:
+                    expiry_dt = datetime.strptime(expiry_date, '%Y-%m-%d')
+                    expiry_breeze = expiry_dt.strftime('%d-%b-%Y').upper()
+                else:
+                    expiry_breeze = None
+
+                margin_response = sizer.fetch_margin_requirement(
+                    stock_code=base_symbol,
+                    expiry=expiry_breeze,
+                    quantity=lot_size * recommended_lots,
+                    direction=direction,
+                    futures_price=analysis_result.get('current_price', 0)
+                )
+
+                if margin_response.get('success'):
+                    # Get available margin
+                    try:
+                        margin_data = breeze.get_margin(exchange_code="NFO")
+                        if margin_data and margin_data.get('Status') == 200:
+                            margin_info = margin_data.get('Success', {})
+                            available_margin = float(margin_info.get('cash_limit', 0)) - float(margin_info.get('block_by_trade', 0))
+                        else:
+                            available_margin = 5000000  # Default 50L
+                    except:
+                        available_margin = 5000000
+
+                    position_sizing['margin_per_lot'] = margin_response.get('margin_per_lot', 0)
+                    position_sizing['total_margin_required'] = margin_response.get('total_margin', 0)
+                    position_sizing['available_margin'] = available_margin
+                    position_sizing['margin_utilization_pct'] = (
+                        margin_response.get('total_margin', 0) / available_margin * 100
+                    ) if available_margin > 0 else 0
+
+        # Format response similar to verify_future_trade
+        response_data = {
+            'success': True,
+            'symbol': base_symbol,
+            'direction': direction,
+            'entry_price': entry_price,
+            'current_price': analysis_result.get('current_price', 0),
+            'price_change_pct': analysis_result.get('price_change_pct', 0),
+            'recommendation': analysis_result.get('recommendation', 'NO_AVERAGE'),
+            'confidence': analysis_result.get('confidence', 0),
+            'reason': analysis_result.get('reason', ''),
+            'critical_checks': analysis_result.get('critical_checks', {}),
+            'additional_checks': analysis_result.get('additional_checks', {}),
+            'risk_assessment': analysis_result.get('risk_assessment', {}),
+            'position_sizing': position_sizing,
+            'execution_log': analysis_result.get('execution_log', []),
+            'lot_size': lot_size,
+            'expiry_date': expiry_date
+        }
+
+        logger.info(f"✅ Averaging analysis complete: {response_data['recommendation']} (Confidence: {response_data['confidence']}%)")
+
+        return JsonResponse(response_data)
+
+    except Exception as e:
+        logger.error(f"Error in averaging analysis: {e}", exc_info=True)
         return JsonResponse({
             'success': False,
             'error': str(e)
