@@ -1,6 +1,12 @@
 """
 Management command to setup initial users and groups for the mCube Trading System.
 
+SECURITY:
+  Passwords are loaded from environment variables or auto-generated securely.
+  Set the following environment variables to customize:
+    - MCUBE_ADMIN_PASSWORD: Admin user password
+    - MCUBE_TRADER_PASSWORD: Trader user password
+
 Usage:
     python manage.py setup_users
 """
@@ -9,6 +15,7 @@ from django.core.management.base import BaseCommand
 from django.contrib.auth.models import User, Group, Permission
 from django.contrib.contenttypes.models import ContentType
 from apps.brokers.models import BrokerLimit, BrokerPosition, OptionChainQuote, HistoricalPrice
+from apps.core.utils.password_utils import get_password_from_env
 
 
 class Command(BaseCommand):
@@ -51,9 +58,10 @@ class Command(BaseCommand):
         self.stdout.write(self.style.SUCCESS('✓ User group has view permissions'))
 
         # Create default admin user
+        # SECURITY: Password loaded from MCUBE_ADMIN_PASSWORD env var or auto-generated
         admin_username = 'admin'
         admin_email = 'admin@mcube.ai'
-        admin_password = 'admin123'  # Change this in production!
+        admin_password = get_password_from_env('MCUBE_ADMIN_PASSWORD')
 
         if not User.objects.filter(username=admin_username).exists():
             admin_user = User.objects.create_superuser(
@@ -65,15 +73,22 @@ class Command(BaseCommand):
             )
             admin_user.groups.add(admin_group)
             self.stdout.write(self.style.SUCCESS(f'✓ Created admin user: {admin_username}'))
-            self.stdout.write(self.style.WARNING(f'  Password: {admin_password}'))
-            self.stdout.write(self.style.WARNING('  ⚠️  CHANGE THIS PASSWORD IN PRODUCTION!'))
+
+            # Show password only if auto-generated (not from env var)
+            import os
+            if 'MCUBE_ADMIN_PASSWORD' not in os.environ:
+                self.stdout.write(self.style.WARNING(f'  Auto-generated Password: {admin_password}'))
+                self.stdout.write(self.style.WARNING('  ⚠️  Save this password or set MCUBE_ADMIN_PASSWORD env var!'))
+            else:
+                self.stdout.write('  Password loaded from MCUBE_ADMIN_PASSWORD environment variable')
         else:
             self.stdout.write('  Admin user already exists')
 
         # Create default trader user
+        # SECURITY: Password loaded from MCUBE_TRADER_PASSWORD env var or auto-generated
         trader_username = 'trader'
         trader_email = 'trader@mcube.ai'
-        trader_password = 'trader123'  # Change this in production!
+        trader_password = get_password_from_env('MCUBE_TRADER_PASSWORD')
 
         if not User.objects.filter(username=trader_username).exists():
             trader_user = User.objects.create_user(
@@ -85,8 +100,13 @@ class Command(BaseCommand):
             )
             trader_user.groups.add(user_group)
             self.stdout.write(self.style.SUCCESS(f'✓ Created trader user: {trader_username}'))
-            self.stdout.write(self.style.WARNING(f'  Password: {trader_password}'))
-            self.stdout.write(self.style.WARNING('  ⚠️  CHANGE THIS PASSWORD IN PRODUCTION!'))
+
+            # Show password only if auto-generated (not from env var)
+            if 'MCUBE_TRADER_PASSWORD' not in os.environ:
+                self.stdout.write(self.style.WARNING(f'  Auto-generated Password: {trader_password}'))
+                self.stdout.write(self.style.WARNING('  ⚠️  Save this password or set MCUBE_TRADER_PASSWORD env var!'))
+            else:
+                self.stdout.write('  Password loaded from MCUBE_TRADER_PASSWORD environment variable')
         else:
             self.stdout.write('  Trader user already exists')
 
@@ -99,15 +119,19 @@ class Command(BaseCommand):
         self.stdout.write('')
         self.stdout.write(f'  Admin User:')
         self.stdout.write(f'    Username: {admin_username}')
-        self.stdout.write(f'    Password: {admin_password}')
+        self.stdout.write(f'    Email:    {admin_email}')
         self.stdout.write(f'    Access:   Full system access')
         self.stdout.write('')
         self.stdout.write(f'  Trader User:')
         self.stdout.write(f'    Username: {trader_username}')
-        self.stdout.write(f'    Password: {trader_password}')
+        self.stdout.write(f'    Email:    {trader_email}')
         self.stdout.write(f'    Access:   View broker data and execute trades')
         self.stdout.write('')
-        self.stdout.write(self.style.WARNING('⚠️  IMPORTANT: Change default passwords before deploying to production!'))
+        self.stdout.write(self.style.SUCCESS('✓ Passwords are securely managed via environment variables or auto-generated'))
+        self.stdout.write('')
+        self.stdout.write('To set custom passwords, use environment variables:')
+        self.stdout.write('  export MCUBE_ADMIN_PASSWORD="your_secure_password"')
+        self.stdout.write('  export MCUBE_TRADER_PASSWORD="your_secure_password"')
         self.stdout.write('')
         self.stdout.write('Login at: http://localhost:8000/brokers/login/')
         self.stdout.write('')

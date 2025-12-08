@@ -1471,41 +1471,57 @@ def trigger_nifty_strangle(request):
         # Convert position details to JSON-safe format
         position_details_safe = json.loads(
             json.dumps(position_sizing, default=json_serial)
-        )
+        ) if position_sizing else {}
 
-        suggestion = TradeSuggestion.objects.create(
-            user=request.user,
-            strategy='kotak_strangle',
-            suggestion_type='OPTIONS',
-            instrument='NIFTY',
-            direction='NEUTRAL',
+        # Build TradeSuggestion with position sizing data if available
+        suggestion_kwargs = {
+            'user': request.user,
+            'strategy': 'kotak_strangle',
+            'suggestion_type': 'OPTIONS',
+            'instrument': 'NIFTY',
+            'direction': 'NEUTRAL',
             # Market Data
-            spot_price=nifty_price,
-            vix=vix,
-            expiry_date=expiry_date,
-            days_to_expiry=days_to_expiry,
+            'spot_price': nifty_price,
+            'vix': vix,
+            'expiry_date': expiry_date,
+            'days_to_expiry': days_to_expiry,
             # Strike Details
-            call_strike=Decimal(str(call_strike)),
-            put_strike=Decimal(str(put_strike)),
-            call_premium=call_premium,
-            put_premium=put_premium,
-            total_premium=total_premium,
-            # Position Sizing
-            recommended_lots=position_sizing['position']['call_lots'],
-            margin_required=Decimal(str(position_sizing['position']['total_margin_required'])),
-            margin_available=Decimal(str(position_sizing['margin_data']['available_margin'])),
-            margin_per_lot=Decimal(str(position_sizing['margin_data']['margin_per_lot'])),
-            margin_utilization=Decimal(str(position_sizing['position']['margin_utilization_percent'])),
+            'call_strike': Decimal(str(call_strike)),
+            'put_strike': Decimal(str(put_strike)),
+            'call_premium': call_premium,
+            'put_premium': put_premium,
+            'total_premium': total_premium,
             # Risk Metrics
-            max_profit=total_premium,
-            breakeven_upper=Decimal(str(breakeven_upper)),
-            breakeven_lower=Decimal(str(breakeven_lower)),
+            'max_profit': total_premium,
+            'breakeven_upper': Decimal(str(breakeven_upper)),
+            'breakeven_lower': Decimal(str(breakeven_lower)),
             # Complete Data
-            algorithm_reasoning=algorithm_reasoning_safe,
-            position_details=position_details_safe,
+            'algorithm_reasoning': algorithm_reasoning_safe,
+            'position_details': position_details_safe,
             # Expiry: 24 hours from now
-            expires_at=timezone.now() + timedelta(hours=24)
-        )
+            'expires_at': timezone.now() + timedelta(hours=24)
+        }
+
+        # Add position sizing data if available
+        if position_sizing:
+            suggestion_kwargs.update({
+                'recommended_lots': position_sizing['position']['call_lots'],
+                'margin_required': Decimal(str(position_sizing['position']['total_margin_required'])),
+                'margin_available': Decimal(str(position_sizing['margin_data']['available_margin'])),
+                'margin_per_lot': Decimal(str(position_sizing['margin_data']['margin_per_lot'])),
+                'margin_utilization': Decimal(str(position_sizing['position']['margin_utilization_percent'])),
+            })
+        else:
+            # Use defaults when position sizing unavailable
+            suggestion_kwargs.update({
+                'recommended_lots': 0,
+                'margin_required': Decimal('0'),
+                'margin_available': Decimal('0'),
+                'margin_per_lot': Decimal('0'),
+                'margin_utilization': Decimal('0'),
+            })
+
+        suggestion = TradeSuggestion.objects.create(**suggestion_kwargs)
 
         logger.info(f"Saved trade suggestion #{suggestion.id} for {request.user.username}")
 

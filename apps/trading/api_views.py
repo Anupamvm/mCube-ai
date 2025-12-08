@@ -1784,7 +1784,7 @@ def get_active_positions(request):
 
         elif broker == 'neo':
             # Fetch live positions from Neo API
-            from apps.brokers.integrations.kotak_neo import get_kotak_neo_client
+            from apps.brokers.integrations.kotak_neo import get_kotak_neo_client, NeoAuthenticationError
 
             try:
                 client = get_kotak_neo_client()
@@ -2017,11 +2017,41 @@ def get_active_positions(request):
 
                     positions_data.append(position_dict)
 
+            except NeoAuthenticationError as e:
+                logger.error(f"Neo authentication error: {e.message}", exc_info=True)
+
+                # Return user-friendly error based on error type
+                error_messages = {
+                    'connection': (
+                        'Unable to connect to Kotak Neo servers. The broker servers may be '
+                        'temporarily unavailable or experiencing high load. Please try again in a few minutes.'
+                    ),
+                    'credentials': (
+                        'Invalid Kotak Neo credentials. Please check your PAN, password, and MPIN '
+                        'in the broker settings.'
+                    ),
+                    '2fa': (
+                        'Kotak Neo 2FA/session error. Your MPIN may be incorrect or the session '
+                        'may have expired. Please verify your MPIN in the broker settings.'
+                    ),
+                    'unknown': f'Kotak Neo authentication failed: {e.message}'
+                }
+
+                return JsonResponse({
+                    'success': False,
+                    'error': error_messages.get(e.error_type, error_messages['unknown']),
+                    'error_type': e.error_type,
+                    'is_retryable': e.is_retryable,
+                    'technical_details': e.message
+                })
+
             except Exception as e:
                 logger.error(f"Error fetching Neo positions: {e}", exc_info=True)
                 return JsonResponse({
                     'success': False,
-                    'error': f'Failed to fetch Neo positions: {str(e)}'
+                    'error': f'Failed to fetch Neo positions: {str(e)}',
+                    'error_type': 'unknown',
+                    'is_retryable': False
                 })
 
         broker_name = 'ICICI Breeze' if broker == 'breeze' else 'Kotak Neo'

@@ -18,68 +18,25 @@ from django.core.cache import cache
 from apps.core.models import CredentialStore
 from apps.core.constants import BROKER_KOTAK
 from apps.brokers.models import BrokerLimit, BrokerPosition
+from apps.brokers.utils.common import parse_float as _parse_float, parse_decimal
+from apps.brokers.utils.auth_manager import (
+    get_credentials,
+    validate_jwt_token as _is_token_valid,
+    save_session_token,
+    extract_sid_from_jwt
+)
 
 logger = logging.getLogger(__name__)
 
 
-def _parse_float(val):
-    """
-    Extract numeric content from val and return as float.
-    Falls back to 0.0 if parsing fails.
-    Strips commas and percent signs.
-    """
-    if val is None:
-        return 0.0
-    if isinstance(val, (int, float)):
-        return float(val)
-    s = str(val).strip()
-    if not s:
-        return 0.0
-    s = s.replace(',', '')
-    if s.endswith('%'):
-        s = s[:-1]
-    m = re.search(r'-?\d+\.?\d*', s)
-    if not m:
-        logger.warning(f"Float parse: no numeric data in '{val}', defaulting to 0.0")
-        return 0.0
-    try:
-        return float(m.group())
-    except ValueError:
-        logger.warning(f"Float parse: invalid conversion for '{val}', defaulting to 0.0")
-        return 0.0
+class NeoAuthenticationError(Exception):
+    """Custom exception for Neo authentication failures with detailed error info."""
 
-
-def _is_token_valid(token):
-    """
-    Check if a JWT token is still valid (not expired).
-
-    Args:
-        token: JWT token string
-
-    Returns:
-        bool: True if token is valid and not expired
-    """
-    if not token:
-        return False
-
-    try:
-        # Decode without verification to check expiration
-        payload = jwt.decode(token, options={'verify_signature': False})
-        exp_timestamp = payload.get('exp')
-
-        if not exp_timestamp:
-            return False
-
-        # Check if token expires in more than 5 minutes
-        exp_datetime = datetime.fromtimestamp(exp_timestamp)
-        now = datetime.now()
-        time_until_expiry = exp_datetime - now
-
-        # Return True if token has more than 5 minutes validity
-        return time_until_expiry.total_seconds() > 300
-    except Exception as e:
-        logger.warning(f"Error checking token validity: {e}")
-        return False
+    def __init__(self, message: str, error_type: str = 'unknown', is_retryable: bool = False):
+        self.message = message
+        self.error_type = error_type
+        self.is_retryable = is_retryable
+        super().__init__(message)
 
 
 def _get_authenticated_client():
@@ -87,12 +44,13 @@ def _get_authenticated_client():
     Get authenticated Kotak Neo API client using tools.neo.NeoAPI wrapper.
 
     Uses the NeoAPI wrapper from tools.neo which handles authentication properly.
+    Includes retry logic (10 attempts) for connection issues.
 
     Returns:
         NeoAPI: Authenticated Neo API client (the .neo attribute from tools.neo.NeoAPI)
 
     Raises:
-        ValueError: If credentials not found or authentication fails
+        NeoAuthenticationError: If credentials not found or authentication fails
     """
     try:
         from tools.neo import NeoAPI as NeoAPIWrapper
@@ -102,22 +60,64 @@ def _get_authenticated_client():
         # Create NeoAPI wrapper instance (loads creds from database automatically)
         neo_wrapper = NeoAPIWrapper()
 
-        # Perform login (handles 2FA automatically)
+        # Perform login (handles 2FA automatically with retries)
         login_result = neo_wrapper.login()
         logger.info(f"Neo login result: {login_result}, session_active: {neo_wrapper.session_active}")
 
         if login_result and neo_wrapper.session_active:
-            logger.info("✅ Neo API authentication successful via tools.neo wrapper")
-            # Return the underlying neo_api_client instance
-            logger.info(f"Returning Neo client: {neo_wrapper.neo}")
+            logger.info("Neo API authentication successful via tools.neo wrapper")
             return neo_wrapper.neo
         else:
-            logger.error(f"❌ Neo API login failed: result={login_result}, session_active={neo_wrapper.session_active}")
-            raise ValueError("Neo API login failed via tools.neo wrapper")
+            # Get detailed error from the wrapper
+            last_error = neo_wrapper.get_last_error() or "Unknown authentication error"
+            logger.error(f"Neo API login failed: {last_error}")
 
-    except Exception as e:
-        logger.error(f"Failed to get authenticated Neo client: {e}")
+            # Categorize the error for better UI messaging
+            error_lower = last_error.lower()
+            if any(kw in error_lower for kw in ['timeout', 'connection', 'network', 'unreachable']):
+                raise NeoAuthenticationError(
+                    f"Kotak Neo server unreachable after multiple retries: {last_error}",
+                    error_type='connection',
+                    is_retryable=True
+                )
+            elif any(kw in error_lower for kw in ['invalid', 'credential', 'password', 'pan', 'mpin']):
+                raise NeoAuthenticationError(
+                    f"Invalid credentials: {last_error}",
+                    error_type='credentials',
+                    is_retryable=False
+                )
+            elif any(kw in error_lower for kw in ['2fa', 'otp', 'session']):
+                raise NeoAuthenticationError(
+                    f"2FA/Session error: {last_error}",
+                    error_type='2fa',
+                    is_retryable=False
+                )
+            else:
+                raise NeoAuthenticationError(
+                    f"Authentication failed: {last_error}",
+                    error_type='unknown',
+                    is_retryable=False
+                )
+
+    except NeoAuthenticationError:
         raise
+    except Exception as e:
+        error_msg = str(e) if str(e) else repr(e)
+        logger.error(f"Failed to get authenticated Neo client: {error_msg}")
+
+        # Check if it's a connection error
+        error_lower = error_msg.lower()
+        if any(kw in error_lower for kw in ['timeout', 'connection', 'network']):
+            raise NeoAuthenticationError(
+                f"Connection error: {error_msg}",
+                error_type='connection',
+                is_retryable=True
+            )
+        raise NeoAuthenticationError(
+            f"Unexpected error: {error_msg}",
+            error_type='unknown',
+            is_retryable=False
+        )
 
 
 def fetch_and_save_kotakneo_data():
@@ -270,7 +270,7 @@ def auto_login_kotak_neo():
     """
     Perform Kotak Neo login and 2FA, returning session token and sid.
 
-    This function uses the same session management as _get_authenticated_client(),
+    This function uses centralized auth_manager for session management,
     reusing saved tokens when available to avoid OTP requirement.
 
     Returns:
@@ -279,7 +279,8 @@ def auto_login_kotak_neo():
     Raises:
         ValueError: If credentials not found
     """
-    creds = CredentialStore.objects.filter(service='kotakneo').first()
+    # Use centralized credential loading
+    creds = get_credentials('kotakneo')
     if not creds:
         raise ValueError("No Kotak Neo credentials found in CredentialStore")
 
@@ -287,14 +288,12 @@ def auto_login_kotak_neo():
     saved_token = creds.sid  # JWT session token stored in sid field
     otp_code = creds.session_token  # OTP code
 
+    # Use centralized token validation
     if saved_token and _is_token_valid(saved_token):
         logger.info("Reusing saved Kotak Neo session token for auto_login")
-        # Extract sid from JWT token (we don't save it separately anymore)
-        try:
-            payload = jwt.decode(saved_token, options={'verify_signature': False})
-            sid = payload.get('jti', 'unknown')  # JWT ID as SID
-        except:
-            sid = 'unknown'
+
+        # Use centralized SID extraction
+        sid = extract_sid_from_jwt(saved_token)
 
         return {
             'token': saved_token,
@@ -315,12 +314,9 @@ def auto_login_kotak_neo():
     session_token = data.get('token')
     session_sid = data.get('sid')
 
-    # Save token for future use
+    # Use centralized token saving with additional sid field
     if session_token:
-        creds.sid = session_token  # Store JWT token in sid field
-        creds.last_session_update = timezone.now()
-        creds.save(update_fields=['sid', 'last_session_update'])
-
+        save_session_token('kotakneo', session_token, additional_data={'sid': session_token})
         logger.info(f"Saved new Kotak Neo session token from auto_login (valid until midnight, SID: {session_sid[:20]}...)")
 
     return {
@@ -482,13 +478,19 @@ def get_kotak_neo_client():
         NeoAPI: Authenticated client instance
 
     Raises:
-        ValueError: If authentication fails
+        NeoAuthenticationError: If authentication fails with detailed error info
     """
     try:
         return _get_authenticated_client()
+    except NeoAuthenticationError:
+        raise
     except Exception as e:
         logger.error(f"Failed to get Kotak Neo client: {e}")
-        raise
+        raise NeoAuthenticationError(
+            f"Unexpected error getting Neo client: {e}",
+            error_type='unknown',
+            is_retryable=False
+        )
 
 
 def get_lot_size_from_neo(trading_symbol: str, client=None) -> int:

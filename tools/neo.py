@@ -36,6 +36,9 @@ from datetime import datetime
 import pandas as pd
 import re
 import logging
+import time
+
+logger = logging.getLogger(__name__)
 
 try:
     from apps.brokers.interfaces import BrokerInterface, MarginData, Position, Order, Quote
@@ -107,70 +110,137 @@ class NeoAPI(BrokerInterface if isinstance(BrokerInterface, type) else object):
             print(f"Error loading Neo credentials: {e}")
             raise
     
-    def login(self) -> bool:
+    def login(self, max_retries: int = 10, retry_delay: float = 2.0) -> bool:
         """
-        Login to Kotak Neo and establish session
+        Login to Kotak Neo and establish session with retry logic.
+
+        Args:
+            max_retries: Maximum number of login attempts (default: 10)
+            retry_delay: Delay between retries in seconds (default: 2.0)
 
         Returns:
             bool: True if login successful
         """
-        try:
-            from neo_api_client import NeoAPI as KotakNeoAPI
-            from apps.core.models import CredentialStore
+        from neo_api_client import NeoAPI as KotakNeoAPI
+        from apps.core.models import CredentialStore
 
-            # Get fresh credentials to access session_token
-            creds = CredentialStore.objects.filter(service='kotakneo').first()
-            if not creds:
-                raise Exception("Kotak Neo credentials not found in database")
-
-            self.neo = KotakNeoAPI(
-                consumer_key=self.consumer_key,
-                consumer_secret=self.consumer_secret,
-                environment='prod'
-            )
-
-            # Login with PAN (username field stores PAN)
-            print(f"🔑 Logging in with PAN: {creds.username}")
-            response = self.neo.login(
-                pan=creds.username,
-                password=creds.password
-            )
-
-            print(f"📋 Login response keys: {list(response.keys()) if isinstance(response, dict) else 'not a dict'}")
-            if 'error' in response:
-                print(f"❌ Login error: {response['error']}")
-
-            if response and 'error' not in response:
-                # Complete 2FA with MPIN
-                # For Neo: session_token field actually stores the MPIN (6 digits)
-                # neo_password stores the login password (not used for 2FA)
-                mpin_value = creds.session_token  # 6-digit MPIN
-                print(f"🔐 Attempting 2FA with MPIN (length: {len(str(mpin_value))})")
-                session_response = self.neo.session_2fa(OTP=mpin_value)
-
-                if session_response and session_response.get('data'):
-                    self.session_active = True
-
-                    # Log serverId availability for debugging
-                    server_id = session_response.get('data', {}).get('hsServerId')
-                    has_server_id = hasattr(self.neo.configuration, 'serverId') and self.neo.configuration.serverId
-                    print(f"✅ Neo login successful - serverId in response: {server_id}, serverId in config: {has_server_id}")
-
-                    if not has_server_id:
-                        print(f"⚠️ WARNING: serverId not set in configuration. Quotes API may not work.")
-                        print(f"Session response data keys: {session_response.get('data', {}).keys()}")
-
-                    return True
-                else:
-                    print(f"❌ Neo 2FA failed: {session_response}")
-                    return False
-            else:
-                print(f"❌ Neo login failed: {response}")
-                return False
-
-        except Exception as e:
-            print(f"❌ Neo login error: {e}")
+        # Get fresh credentials to access session_token
+        creds = CredentialStore.objects.filter(service='kotakneo').first()
+        if not creds:
+            self.last_error = "Kotak Neo credentials not found in database"
+            logger.error(self.last_error)
             return False
+
+        last_error = None
+
+        for attempt in range(1, max_retries + 1):
+            try:
+                logger.info(f"Neo login attempt {attempt}/{max_retries}")
+
+                self.neo = KotakNeoAPI(
+                    consumer_key=self.consumer_key,
+                    consumer_secret=self.consumer_secret,
+                    environment='prod'
+                )
+
+                # Login with PAN (username field stores PAN)
+                logger.info(f"Logging in with PAN: {creds.username[:4]}****")
+                response = self.neo.login(
+                    pan=creds.username,
+                    password=creds.password
+                )
+
+                if response and 'error' in response:
+                    last_error = f"Login error: {response.get('error', 'Unknown error')}"
+                    logger.warning(f"Attempt {attempt}: {last_error}")
+                    if attempt < max_retries:
+                        time.sleep(retry_delay)
+                    continue
+
+                if response and 'error' not in response:
+                    # Complete 2FA with MPIN
+                    mpin_value = creds.session_token  # 6-digit MPIN
+                    logger.info(f"Attempting 2FA with MPIN (length: {len(str(mpin_value))})")
+                    session_response = self.neo.session_2fa(OTP=mpin_value)
+
+                    if session_response and session_response.get('data'):
+                        self.session_active = True
+                        self.last_error = None
+
+                        # Log serverId availability for debugging
+                        server_id = session_response.get('data', {}).get('hsServerId')
+                        has_server_id = hasattr(self.neo.configuration, 'serverId') and self.neo.configuration.serverId
+                        logger.info(f"Neo login successful on attempt {attempt} - serverId: {server_id}")
+
+                        if not has_server_id:
+                            logger.warning("serverId not set in configuration. Quotes API may not work.")
+
+                        return True
+                    else:
+                        last_error = f"2FA failed: {session_response}"
+                        logger.warning(f"Attempt {attempt}: {last_error}")
+                        if attempt < max_retries:
+                            time.sleep(retry_delay)
+                        continue
+                else:
+                    last_error = f"Login failed: {response}"
+                    logger.warning(f"Attempt {attempt}: {last_error}")
+                    if attempt < max_retries:
+                        time.sleep(retry_delay)
+                    continue
+
+            except Exception as e:
+                # Handle exceptions with broken __str__ methods (like ApiException)
+                last_error = self._format_exception(e)
+
+                # Check if it's a connection/timeout error
+                error_lower = last_error.lower()
+                is_retryable = any(keyword in error_lower for keyword in [
+                    'timeout', 'connection', 'connect', 'network', 'unreachable',
+                    'temporarily', 'retry', 'reset', 'refused'
+                ])
+
+                logger.warning(f"Attempt {attempt}: {last_error} (retryable: {is_retryable})")
+
+                if is_retryable and attempt < max_retries:
+                    # Exponential backoff for connection errors
+                    wait_time = retry_delay * (1.5 ** (attempt - 1))
+                    wait_time = min(wait_time, 30)  # Cap at 30 seconds
+                    logger.info(f"Waiting {wait_time:.1f}s before retry...")
+                    time.sleep(wait_time)
+                    continue
+                elif not is_retryable:
+                    # Non-retryable error (auth failure, invalid credentials, etc.)
+                    break
+
+        # All retries exhausted
+        self.last_error = last_error or "Login failed after all retries"
+        self.session_active = False
+        logger.error(f"Neo login failed after {max_retries} attempts: {self.last_error}")
+        return False
+
+    def _format_exception(self, e: Exception) -> str:
+        """Format exception message, handling broken __str__ methods."""
+        try:
+            msg = str(e)
+            if msg:
+                return msg
+        except Exception:
+            pass
+
+        # Try common exception attributes
+        for attr in ['reason', 'message', 'msg', 'args']:
+            val = getattr(e, attr, None)
+            if val:
+                if isinstance(val, tuple) and val:
+                    return str(val[0])
+                return str(val)
+
+        return f"{type(e).__name__}: Unknown error"
+
+    def get_last_error(self) -> Optional[str]:
+        """Get the last error message from login or API calls."""
+        return getattr(self, 'last_error', None)
     
     def logout(self) -> bool:
         """Logout from Neo"""

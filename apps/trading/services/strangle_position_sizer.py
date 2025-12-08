@@ -81,10 +81,10 @@ class StranglePositionSizer:
             total_margin = Decimal(str(margin_data['total_margin']))
             collateral = Decimal(str(margin_data['collateral']))
 
-            # Validate that we have non-zero margin
+            # Log warning if margin is zero or negative but still return the data
             if available_margin <= 0:
-                logger.error("Neo API returned zero or negative available margin")
-                raise ValueError("Margin not found: Neo API returned zero margin values")
+                logger.warning(f"Neo API returned zero or negative available margin: ₹{available_margin:,.2f}")
+                logger.warning("Position sizing will recommend 0 lots due to insufficient margin")
 
             return {
                 'available_margin': available_margin,
@@ -92,7 +92,8 @@ class StranglePositionSizer:
                 'total_margin': total_margin,
                 'collateral': collateral,
                 'source': 'neo_api',
-                'fetched_at': datetime.now()
+                'fetched_at': datetime.now(),
+                'margin_available': available_margin > 0  # Flag to indicate if margin is available
             }
 
         except Exception as e:
@@ -277,31 +278,48 @@ class StranglePositionSizer:
             # Calculate lots using 50% margin utilization rule
             # Max lots = Available Margin / Margin per Lot
             # Recommended = Max lots / 2 (for 50% utilization)
-            max_lots_possible = int(available_margin / margin_per_lot)
 
-            # Use only 50% of available margin for initial position
-            recommended_lots = max(1, int(max_lots_possible / 2))
+            # Handle negative or zero available margin
+            insufficient_margin = available_margin <= 0
 
-            logger.info("")
-            logger.info("STEP 3: LOT CALCULATION (50% MARGIN RULE)")
-            logger.info(f"  Formula: (Available Margin ÷ Margin per Lot) ÷ 2")
-            logger.info(f"  ")
-            logger.info(f"  Available Margin: ₹{available_margin:,.2f}")
-            logger.info(f"  Margin per Lot: ₹{margin_per_lot:,.2f}")
-            logger.info(f"  ")
-            logger.info(f"  Max Lots (100% margin): ₹{available_margin:,.2f} ÷ ₹{margin_per_lot:,.2f} = {max_lots_possible} lots")
-            logger.info(f"  Recommended (50% rule): {max_lots_possible} ÷ 2 = {recommended_lots} lots")
-            logger.info(f"  ")
-            logger.info(f"  Margin to be used: {recommended_lots} × ₹{margin_per_lot:,.2f} = ₹{margin_per_lot * recommended_lots:,.2f}")
-            logger.info(f"  Margin utilization: {float((margin_per_lot * recommended_lots / available_margin) * 100):.1f}%")
+            if insufficient_margin:
+                max_lots_possible = 0
+                recommended_lots = 0
+                logger.warning("")
+                logger.warning("STEP 3: LOT CALCULATION - INSUFFICIENT MARGIN")
+                logger.warning(f"  Available Margin: ₹{available_margin:,.2f} (NEGATIVE/ZERO)")
+                logger.warning(f"  Used Margin: ₹{margin_data.get('used_margin', 0):,.2f}")
+                logger.warning(f"  Collateral: ₹{margin_data.get('collateral', 0):,.2f}")
+                logger.warning(f"  ")
+                logger.warning(f"  ⚠️  MARGIN EXHAUSTED - Account is over-leveraged")
+                logger.warning(f"  ⚠️  Recommended Lots: 0 (cannot take new positions)")
+                logger.warning(f"  ")
+                logger.warning(f"  Action Required: Close existing positions or add funds")
+            else:
+                max_lots_possible = int(available_margin / margin_per_lot)
+                # Use only 50% of available margin for initial position
+                recommended_lots = max(1, int(max_lots_possible / 2))
 
-            if recommended_lots < 1 and available_margin > margin_per_lot:
-                logger.warning(f"Calculated 0 lots but have sufficient margin. Setting to 1 lot.")
-                recommended_lots = 1
+                logger.info("")
+                logger.info("STEP 3: LOT CALCULATION (50% MARGIN RULE)")
+                logger.info(f"  Formula: (Available Margin ÷ Margin per Lot) ÷ 2")
+                logger.info(f"  ")
+                logger.info(f"  Available Margin: ₹{available_margin:,.2f}")
+                logger.info(f"  Margin per Lot: ₹{margin_per_lot:,.2f}")
+                logger.info(f"  ")
+                logger.info(f"  Max Lots (100% margin): ₹{available_margin:,.2f} ÷ ₹{margin_per_lot:,.2f} = {max_lots_possible} lots")
+                logger.info(f"  Recommended (50% rule): {max_lots_possible} ÷ 2 = {recommended_lots} lots")
+                logger.info(f"  ")
+                logger.info(f"  Margin to be used: {recommended_lots} × ₹{margin_per_lot:,.2f} = ₹{margin_per_lot * recommended_lots:,.2f}")
+                logger.info(f"  Margin utilization: {float((margin_per_lot * recommended_lots / available_margin) * 100):.1f}%")
+
+                if recommended_lots < 1 and available_margin > margin_per_lot:
+                    logger.warning(f"Calculated 0 lots but have sufficient margin. Setting to 1 lot.")
+                    recommended_lots = 1
 
             logger.info(f"    Final Recommended: {recommended_lots} lots")
 
-            if recommended_lots == 0:
+            if recommended_lots == 0 and not insufficient_margin:
                 logger.error(f"ZERO LOTS CALCULATED!")
                 logger.error(f"  margin_per_lot: {margin_per_lot}")
                 logger.error(f"  usable_margin: {usable_margin}")
@@ -340,8 +358,11 @@ class StranglePositionSizer:
                 put_premium=put_premium
             )
 
-            # Calculate margin utilization percentage
-            margin_utilization = float((total_margin_required / available_margin) * Decimal('100'))
+            # Calculate margin utilization percentage (handle zero/negative margin)
+            if available_margin > 0:
+                margin_utilization = float((total_margin_required / available_margin) * Decimal('100'))
+            else:
+                margin_utilization = 0.0  # No utilization when no margin available
 
             result = {
                 'symbol': 'NIFTY',
@@ -365,6 +386,8 @@ class StranglePositionSizer:
                     'source': margin_data['source'],
                     'margin_per_lot': float(margin_per_lot),
                     'max_lots_possible': max_lots_possible,
+                    'insufficient_margin': insufficient_margin,
+                    'margin_warning': 'Account over-leveraged. Close positions or add funds.' if insufficient_margin else None,
                 },
 
                 # Position sizing

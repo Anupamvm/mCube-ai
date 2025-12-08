@@ -29,6 +29,17 @@ from apps.core.constants import BROKER_ICICI
 from apps.brokers.models import BrokerLimit, BrokerPosition, OptionChainQuote, HistoricalPrice, NiftyOptionChain
 from apps.data.models import OptionChain
 from apps.brokers.exceptions import BreezeAuthenticationError, BreezeAPIError
+from apps.brokers.utils.common import parse_float as _parse_float, parse_decimal
+from apps.brokers.utils.auth_manager import (
+    get_credentials,
+    save_session_token,
+    is_session_valid_breeze
+)
+from apps.brokers.utils.api_patterns import (
+    get_breeze_customer_details,
+    fetch_breeze_margin_data,
+    calculate_position_pnl
+)
 
 logger = logging.getLogger(__name__)
 
@@ -275,33 +286,6 @@ class BreezeAPIClient:
             }
 
 
-def _parse_float(val):
-    """
-    Extract numeric content from val and return as float.
-    Falls back to 0.0 if parsing fails.
-    Strips commas and percent signs.
-    """
-    if val is None:
-        return 0.0
-    if isinstance(val, (int, float)):
-        return float(val)
-    s = str(val).strip()
-    if not s:
-        return 0.0
-    s = s.replace(',', '')
-    if s.endswith('%'):
-        s = s[:-1]
-    m = re.search(r'-?\d+\.?\d*', s)
-    if not m:
-        logger.warning(f"Float parse: no numeric data in '{val}', defaulting to 0.0")
-        return 0.0
-    try:
-        return float(m.group())
-    except ValueError:
-        logger.warning(f"Float parse: invalid conversion for '{val}', defaulting to 0.0")
-        return 0.0
-
-
 def get_all_nifty_expiry_dates(max_expiries: int = 10, timeout: int = 15) -> List[str]:
     """
     Fetch all available NIFTY options expiry dates from NSE.
@@ -421,25 +405,30 @@ def get_or_prompt_breeze_token():
     """
     Check if Breeze session token is valid.
 
+    Uses centralized auth_manager for session validation.
+
     Returns:
         str: 'prompt' if token needs to be entered, 'ready' if valid
 
     Raises:
         Exception: If credentials not found
     """
-    creds = CredentialStore.objects.filter(service='breeze').first()
+    # Use centralized credential loading
+    creds = get_credentials('breeze')
     if not creds:
         raise Exception("No Breeze credentials found in DB")
-    if (not creds.session_token or
-        not creds.last_session_update or
-        creds.last_session_update.date() != dj_timezone.now().date()):
-        return 'prompt'
-    return 'ready'
+
+    # Use centralized session validation
+    if is_session_valid_breeze(creds):
+        return 'ready'
+    return 'prompt'
 
 
 def save_breeze_token(session_token):
     """
     Save Breeze session token to database.
+
+    Uses centralized auth_manager for token saving.
 
     Args:
         session_token: The session token from ICICI portal
@@ -447,17 +436,17 @@ def save_breeze_token(session_token):
     Raises:
         Exception: If credentials not found
     """
-    creds = CredentialStore.objects.filter(service='breeze').first()
-    if not creds:
-        raise Exception("No Breeze credentials found in DB")
-    creds.session_token = session_token
-    creds.last_session_update = dj_timezone.now()
-    creds.save()
+    # Use centralized token saving
+    success = save_session_token('breeze', session_token)
+    if not success:
+        raise Exception("Failed to save Breeze session token")
 
 
 def get_breeze_client():
     """
     Get authenticated Breeze API client.
+
+    Uses centralized auth_manager for credential management.
 
     Returns:
         BreezeConnect: Authenticated client instance
@@ -466,7 +455,8 @@ def get_breeze_client():
         BreezeAuthenticationError: If credentials not found or authentication fails
     """
     try:
-        creds = CredentialStore.objects.filter(service='breeze').first()
+        # Use centralized credential loading
+        creds = get_credentials('breeze')
         if not creds:
             raise BreezeAuthenticationError("No Breeze credentials found in database")
 
@@ -630,44 +620,29 @@ def get_nfo_margin():
     """
     try:
         breeze = get_breeze_client()
-        creds = CredentialStore.objects.filter(service='breeze').first()
+
+        # Use centralized credential loading
+        creds = get_credentials('breeze')
         if not creds:
             logger.error("No Breeze credentials found")
             return None
 
-        appkey = creds.api_key
-        secret_key = creds.api_secret
-        session_key = creds.session_token
+        # Use common pattern for customer details and margin fetching
+        rest_token, _ = get_breeze_customer_details(
+            creds.api_key,
+            creds.api_secret,
+            creds.session_token
+        )
 
-        # Fetch customer details for rest token
-        cd_url = "https://api.icicidirect.com/breezeapi/api/v1/customerdetails"
-        time_stamp = datetime.now(dt_timezone.utc).isoformat()[:19] + '.000Z'
-        cd_payload = json.dumps({"SessionToken": session_key, "AppKey": appkey})
-        cd_headers = {'Content-Type': 'application/json'}
-        cd_resp = requests.get(cd_url, headers=cd_headers, data=cd_payload)
-        rest_token = cd_resp.json().get('Success', {}).get('session_token')
+        # Use common pattern for margin data fetching
+        margins = fetch_breeze_margin_data(
+            creds.api_key,
+            creds.api_secret,
+            rest_token,
+            exchange_code="NFO"
+        )
 
-        # Fetch margin data for NFO
-        margin_url = "https://api.icicidirect.com/breezeapi/api/v1/margin"
-        payload = json.dumps({"exchange_code": "NFO"}, separators=(',', ':'))
-        checksum = hashlib.sha256((time_stamp + payload + secret_key).encode()).hexdigest()
-        headers = {
-            'Content-Type': 'application/json',
-            'X-Checksum': 'token ' + checksum,
-            'X-Timestamp': time_stamp,
-            'X-AppKey': appkey,
-            'X-SessionToken': rest_token,
-        }
-        margin_resp = requests.get(margin_url, headers=headers, data=payload)
-        margin_data = margin_resp.json()
-
-        if margin_data.get('Status') == 200:
-            margins = margin_data.get('Success', {})
-            logger.info(f"NFO Margin fetched: cash_limit={margins.get('cash_limit')}, amount_allocated={margins.get('amount_allocated')}")
-            return margins
-        else:
-            logger.error(f"Failed to fetch NFO margin: {margin_data}")
-            return None
+        return margins
 
     except Exception as e:
         logger.error(f"Error fetching NFO margin: {e}", exc_info=True)
@@ -688,32 +663,22 @@ def fetch_and_save_breeze_data():
     funds_resp = breeze.get_funds()
     funds = funds_resp.get('Success', {})
 
-    creds = CredentialStore.objects.filter(service='breeze').first()
-    appkey = creds.api_key
-    secret_key = creds.api_secret
-    session_key = creds.session_token
+    # Use centralized credential loading and API patterns
+    creds = get_credentials('breeze')
 
-    # Fetch customer details for rest token
-    cd_url = "https://api.icicidirect.com/breezeapi/api/v1/customerdetails"
-    time_stamp = datetime.now(dt_timezone.utc).isoformat()[:19] + '.000Z'
-    cd_payload = json.dumps({"SessionToken": session_key, "AppKey": appkey})
-    cd_headers = {'Content-Type': 'application/json'}
-    cd_resp = requests.get(cd_url, headers=cd_headers, data=cd_payload)
-    rest_token = cd_resp.json().get('Success', {}).get('session_token')
+    # Use common pattern for customer details and margin fetching
+    rest_token, _ = get_breeze_customer_details(
+        creds.api_key,
+        creds.api_secret,
+        creds.session_token
+    )
 
-    # Fetch margin data
-    margin_url = "https://api.icicidirect.com/breezeapi/api/v1/margin"
-    payload = json.dumps({"exchange_code": "NFO"}, separators=(',', ':'))
-    checksum = hashlib.sha256((time_stamp + payload + secret_key).encode()).hexdigest()
-    headers = {
-        'Content-Type': 'application/json',
-        'X-Checksum': 'token ' + checksum,
-        'X-Timestamp': time_stamp,
-        'X-AppKey': appkey,
-        'X-SessionToken': rest_token,
-    }
-    margin_resp = requests.get(margin_url, headers=headers, data=payload)
-    margins = margin_resp.json().get('Success', {})
+    margins = fetch_breeze_margin_data(
+        creds.api_key,
+        creds.api_secret,
+        rest_token,
+        exchange_code="NFO"
+    )
 
     limit_record = BrokerLimit.objects.create(
         broker=BROKER_ICICI,
@@ -741,15 +706,10 @@ def fetch_and_save_breeze_data():
             buy_amt = buy_qty * avg_price_val
             sell_amt = sell_qty * avg_price_val
 
-            # FIXED: Calculate unrealized P&L correctly
-            # For LONG (quantity > 0): (LTP - Avg) * quantity
-            # For SHORT (quantity < 0): (Avg - LTP) * abs(quantity)
-            if quantity > 0:
-                unrealized = (ltp_val - avg_price_val) * quantity
-            elif quantity < 0:
-                unrealized = (avg_price_val - ltp_val) * abs(quantity)
-            else:
-                unrealized = 0.0
+            # Use common pattern for P&L calculation
+            unrealized_pnl_val, realized_pnl_val = calculate_position_pnl(
+                quantity, avg_price_val, ltp_val
+            )
 
             symbol = p.get('stock_code') or f"{p.get('underlying', '')} {p.get('strike_price', '')} {p.get('right', '')}".strip()
 
@@ -767,8 +727,8 @@ def fetch_and_save_breeze_data():
                 sell_amount=Decimal(str(sell_amt)),
                 ltp=Decimal(str(ltp_val)),
                 average_price=Decimal(str(avg_price_val)),
-                realized_pnl=Decimal('0.00'),
-                unrealized_pnl=Decimal(str(unrealized)),
+                realized_pnl=realized_pnl_val,
+                unrealized_pnl=unrealized_pnl_val,
             )
             pos_objs.append(pos)
         except (ValueError, Exception) as e:
