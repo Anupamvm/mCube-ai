@@ -270,7 +270,7 @@ class TrendlyneProvider(BaseWebScraper):
 
     def fetch_market_snapshot(self, download_dir: str = None) -> Dict:
         """
-        Download market snapshot data from Trendlyne
+        Download market snapshot (stock) data from Trendlyne Market Snapshot Downloader
 
         Args:
             download_dir: Override default download directory
@@ -282,89 +282,278 @@ class TrendlyneProvider(BaseWebScraper):
             download_dir = self.download_dir
 
         try:
-            # Try different URLs for market snapshot download
-            snapshot_urls = [
-                f"{self.BASE_URL}/tools/data-downloader/trendlyne-excel-connect/",
-                f"{self.BASE_URL}/tools/data-downloader/market-snapshot-excel/",
-                f"{self.BASE_URL}/equity/market-snapshot/",
+            # Record files before download to detect new files
+            files_before = set(os.listdir(download_dir))
+
+            download_success = False
+
+            # PRIMARY APPROACH: Navigate to Data Downloader page and click "Market Snapshot Downloader"
+            # The sidebar has: Stock Data Downloader, F&O Data Downloader, Portfolio Downloader, Market Snapshot Downloader
+            data_downloader_url = f"{self.BASE_URL}/tools/data-downloader/trendlyne-excel-connect/"
+            self.logger.info(f"Navigating to Data Downloader page: {data_downloader_url}")
+            self.driver.get(data_downloader_url)
+            time.sleep(4)
+
+            # Check if we're logged in (not redirected to login)
+            if "login" in self.driver.current_url.lower():
+                self.logger.warning("Redirected to login - session may have expired")
+                return {'success': False, 'error': 'Login required - session expired'}
+
+            # Log page info for debugging
+            self.logger.info(f"Page title: {self.driver.title}")
+            self.logger.info(f"Current URL: {self.driver.current_url}")
+
+            # Step 1: Click on "Market Snapshot Downloader" in the left sidebar
+            self.logger.info("Looking for 'Market Snapshot Downloader' in sidebar...")
+            sidebar_selectors = [
+                (By.XPATH, "//a[contains(text(), 'Market Snapshot Downloader')]"),
+                (By.XPATH, "//span[contains(text(), 'Market Snapshot Downloader')]/parent::a"),
+                (By.XPATH, "//*[contains(text(), 'Market Snapshot')]"),
+                (By.CSS_SELECTOR, "a[href*='market-snapshot']"),
             ]
 
-            page_loaded = False
-            for url in snapshot_urls:
+            clicked_sidebar = False
+            for selector_type, selector in sidebar_selectors:
                 try:
-                    self.driver.get(url)
-                    self.logger.info(f"Trying URL: {url}")
-                    time.sleep(5)
-
-                    # Check if we're on a valid page (not login redirect)
-                    if "login" not in self.driver.current_url.lower():
-                        page_loaded = True
-                        self.logger.info(f"Successfully loaded: {url}")
-                        break
-                except Exception:
+                    element = WebDriverWait(self.driver, 5).until(
+                        EC.element_to_be_clickable((selector_type, selector))
+                    )
+                    self.logger.info(f"Found sidebar item: {element.text}")
+                    element.click()
+                    time.sleep(3)
+                    clicked_sidebar = True
+                    self.logger.info("Clicked on Market Snapshot Downloader")
+                    break
+                except Exception as e:
+                    self.logger.debug(f"Sidebar selector {selector} failed: {e}")
                     continue
 
-            if not page_loaded:
-                raise DataProviderException("Could not access Market Snapshot page - may require premium subscription")
+            if not clicked_sidebar:
+                # Try direct URL to Market Snapshot Downloader
+                self.logger.info("Sidebar click failed, trying direct URL...")
+                snapshot_urls = [
+                    f"{self.BASE_URL}/tools/data-downloader/market-snapshot-downloader/",
+                    f"{self.BASE_URL}/research/data-downloader/market-snapshot-downloader/",
+                    f"{self.BASE_URL}/equity/market-snapshot-downloader/",
+                ]
+                for url in snapshot_urls:
+                    try:
+                        self.driver.get(url)
+                        time.sleep(3)
+                        if "market-snapshot" in self.driver.current_url.lower():
+                            clicked_sidebar = True
+                            self.logger.info(f"Navigated to: {self.driver.current_url}")
+                            break
+                    except:
+                        continue
 
-            # Try multiple selectors for download button
+            # Save screenshot of the Market Snapshot page
+            self.save_debug_screenshot("market_snapshot_page")
+            self.logger.info(f"Current URL after navigation: {self.driver.current_url}")
+
+            # Step 2: On the Market Snapshot page, look for download button/link
+            # The page shows: MarketSnapshot-Data.xls with a blue "DOWNLOAD" button
+            self.logger.info("Looking for download button on Market Snapshot page...")
+
+            # First, let's find all clickable elements and log them for debugging
+            try:
+                all_buttons = self.driver.find_elements(By.TAG_NAME, "button")
+                all_links = self.driver.find_elements(By.TAG_NAME, "a")
+                self.logger.info(f"Found {len(all_buttons)} buttons and {len(all_links)} links on page")
+
+                # Look for any element with DOWNLOAD text
+                for btn in all_buttons:
+                    try:
+                        if 'download' in btn.text.lower():
+                            self.logger.info(f"Found button with text: '{btn.text}'")
+                    except:
+                        pass
+                for link in all_links:
+                    try:
+                        if 'download' in link.text.lower():
+                            self.logger.info(f"Found link with text: '{link.text}', href: {link.get_attribute('href')[:60] if link.get_attribute('href') else 'N/A'}")
+                    except:
+                        pass
+            except Exception as e:
+                self.logger.warning(f"Error scanning page elements: {e}")
+
             download_selectors = [
+                # The blue DOWNLOAD button (exact match)
+                (By.XPATH, "//a[text()='DOWNLOAD']"),
+                (By.XPATH, "//button[text()='DOWNLOAD']"),
                 (By.XPATH, "//a[contains(text(), 'DOWNLOAD')]"),
-                (By.XPATH, "//a[contains(text(), 'Download')]"),
-                (By.XPATH, "//a[contains(text(), 'DOWNLOAD EXCEL')]"),
-                (By.XPATH, "//a[contains(text(), 'Download Excel')]"),
                 (By.XPATH, "//button[contains(text(), 'DOWNLOAD')]"),
-                (By.XPATH, "//button[contains(text(), 'Download')]"),
-                (By.XPATH, "//button[contains(text(), 'Download Data')]"),
-                (By.CSS_SELECTOR, "a.download-btn"),
-                (By.CSS_SELECTOR, "button.download-btn"),
-                (By.CSS_SELECTOR, "[data-action='download']"),
-                (By.XPATH, "//a[contains(@class, 'download')]"),
-                (By.XPATH, "//button[contains(@class, 'download')]"),
-                (By.XPATH, "//a[contains(@href, 'download')]"),
-                (By.XPATH, "//a[contains(@href, 'excel')]"),
+                # Look for buttons near MarketSnapshot-Data text
+                (By.XPATH, "//*[contains(text(), 'MarketSnapshot')]/following::a[1]"),
+                (By.XPATH, "//*[contains(text(), 'MarketSnapshot')]/following::button[1]"),
+                # CSS selectors for primary buttons
+                (By.CSS_SELECTOR, "a.btn-primary"),
+                (By.CSS_SELECTOR, "button.btn-primary"),
+                # Href-based selectors
+                (By.XPATH, "//a[contains(@href, 'download-stocks-data')]"),
+                (By.XPATH, "//a[contains(@href, 'Stocks-data')]"),
+                (By.CSS_SELECTOR, "a[href*='download']"),
             ]
 
-            download_button = self.try_multiple_selectors(download_selectors, action="click")
-            self.logger.info("Market Snapshot download initiated...")
-            time.sleep(10)
+            for selector_type, selector in download_selectors:
+                try:
+                    self.logger.info(f"Trying selector: {selector}")
+                    element = WebDriverWait(self.driver, 3).until(
+                        EC.element_to_be_clickable((selector_type, selector))
+                    )
+                    href = element.get_attribute('href') or 'N/A'
+                    text = element.text or 'N/A'
+                    self.logger.info(f"Found download element!")
+                    self.logger.info(f"  Text: '{text}', Href: {href[:80] if href != 'N/A' else 'N/A'}...")
 
-            # Find downloaded file - look for stock data files specifically
-            # Stock data files are named like "Stocks-data-IND-*.xlsx"
-            all_files = os.listdir(download_dir)
-            stock_files = [f for f in all_files if f.startswith("Stocks-data") and (f.endswith(".xlsx") or f.endswith(".csv"))]
+                    # Scroll element into view
+                    self.driver.execute_script("arguments[0].scrollIntoView(true);", element)
+                    time.sleep(1)
+
+                    # Try JavaScript click if regular click fails
+                    try:
+                        element.click()
+                    except Exception:
+                        self.logger.info("Regular click failed, trying JavaScript click...")
+                        self.driver.execute_script("arguments[0].click();", element)
+
+                    self.logger.info("Click executed, waiting for download...")
+                    time.sleep(12)  # Wait for download
+
+                    # Check if a new file was downloaded
+                    files_after = set(os.listdir(download_dir))
+                    new_files = files_after - files_before
+
+                    if new_files:
+                        self.logger.info(f"New files downloaded: {new_files}")
+                        # Check if any new file looks like stock data
+                        for f in new_files:
+                            if f.startswith("Stocks-data"):
+                                self.logger.info(f"Downloaded stock data file: {f}")
+                                download_success = True
+                                break
+
+                    if download_success:
+                        break
+                except Exception as e:
+                    self.logger.debug(f"Selector {selector} failed: {e}")
+                    continue
+
+            # SECONDARY APPROACH: Try direct download URL
+            if not download_success:
+                self.logger.info("Button click failed, trying direct download URLs...")
+
+                # Try various direct download URL patterns
+                direct_urls = [
+                    f"{self.BASE_URL}/research/data-downloader/download-stocks-data/?type=IND",
+                    f"{self.BASE_URL}/research/data-downloader/download-stocks-data/",
+                    f"{self.BASE_URL}/tools/data-downloader/download-stocks-data/?type=IND",
+                    f"{self.BASE_URL}/tools/data-downloader/download-stocks-data/",
+                ]
+
+                for url in direct_urls:
+                    try:
+                        self.logger.info(f"Trying direct URL: {url}")
+                        self.driver.get(url)
+                        time.sleep(10)
+
+                        files_after = set(os.listdir(download_dir))
+                        new_files = files_after - files_before
+                        if new_files:
+                            for f in new_files:
+                                if f.startswith("Stocks-data") or f.endswith('.xlsx'):
+                                    self.logger.info(f"Downloaded via direct URL: {f}")
+                                    download_success = True
+                                    break
+                        if download_success:
+                            break
+                    except Exception as e:
+                        self.logger.debug(f"Direct URL {url} failed: {e}")
+                        continue
+
+            # TERTIARY APPROACH: Look for any download links on the page
+            if not download_success:
+                self.logger.info("Searching page for any download links...")
+                try:
+                    # Find all anchor tags
+                    links = self.driver.find_elements(By.TAG_NAME, "a")
+                    potential_links = []
+
+                    for link in links:
+                        try:
+                            href = link.get_attribute('href') or ''
+                            text = link.text.lower()
+                            # Look for download-related links
+                            if any(keyword in href.lower() for keyword in ['download', 'xlsx', 'stock']):
+                                potential_links.append({'href': href, 'text': link.text, 'element': link})
+                            elif any(keyword in text for keyword in ['download', 'stock', 'snapshot']):
+                                potential_links.append({'href': href, 'text': link.text, 'element': link})
+                        except:
+                            continue
+
+                    if potential_links:
+                        self.logger.info(f"Found {len(potential_links)} potential download links:")
+                        for i, pl in enumerate(potential_links[:5]):
+                            self.logger.info(f"  {i+1}. '{pl['text'][:30]}' -> {pl['href'][:60]}")
+
+                        # Try clicking each link
+                        for pl in potential_links:
+                            try:
+                                if pl['href']:
+                                    self.driver.get(pl['href'])
+                                    time.sleep(10)
+                                    files_after = set(os.listdir(download_dir))
+                                    new_files = files_after - files_before
+                                    if new_files:
+                                        self.logger.info(f"Downloaded via link: {new_files}")
+                                        download_success = True
+                                        break
+                            except:
+                                continue
+                except Exception as e:
+                    self.logger.warning(f"Error searching for links: {e}")
+
+            # Check for newly downloaded files
+            files_after = set(os.listdir(download_dir))
+            new_files = files_after - files_before
+
+            # Filter for stock data files - ONLY look for Stocks-data pattern (original Trendlyne naming)
+            stock_files = [f for f in new_files if f.startswith("Stocks-data") and (f.endswith(".xlsx") or f.endswith(".csv"))]
 
             if not stock_files:
-                # Fallback: look for any new xlsx/csv file
-                files = [f for f in all_files if f.endswith(".xlsx") or f.endswith(".csv")]
-                if not files:
-                    raise DataProviderException("No Excel/CSV file found after download")
-                files.sort(key=lambda x: os.path.getctime(os.path.join(download_dir, x)), reverse=True)
-                latest_file = files[0]
-            else:
-                stock_files.sort(key=lambda x: os.path.getctime(os.path.join(download_dir, x)), reverse=True)
-                latest_file = stock_files[0]
+                # Check all existing files for Stocks-data pattern
+                all_files = os.listdir(download_dir)
+                stock_files = [f for f in all_files if f.startswith("Stocks-data") and (f.endswith(".xlsx") or f.endswith(".csv"))]
 
-            # Determine file extension
-            file_ext = ".xlsx" if latest_file.endswith(".xlsx") else ".csv"
+            if not stock_files:
+                self.logger.error("No Stock data file found. This feature may require a premium Trendlyne subscription.")
+                raise DataProviderException("No Stock data file found after download attempt. The Excel Connect feature may require premium subscription.")
 
-            # Rename to standard format
-            new_filename = f"stock_data_{datetime.now().strftime('%Y-%m-%d')}{file_ext}"
-            new_path = os.path.join(download_dir, new_filename)
+            # Use the most recent stock file
+            stock_files.sort(key=lambda x: os.path.getctime(os.path.join(download_dir, x)), reverse=True)
+            latest_file = stock_files[0]
+            file_path = os.path.join(download_dir, latest_file)
 
-            # Only rename if not already renamed
-            if latest_file != new_filename:
-                os.rename(
-                    os.path.join(download_dir, latest_file),
-                    new_path
-                )
+            # Validate the file has stock data columns (not F&O data)
+            import pandas as pd
+            try:
+                df_check = pd.read_excel(file_path, nrows=5)
+                if 'SYMBOL' in df_check.columns and 'OPTION TYPE' in df_check.columns:
+                    self.logger.error(f"File {latest_file} appears to be F&O data, not stock data")
+                    raise DataProviderException("Downloaded file is F&O data, not stock data")
+                if 'Stock Name' not in df_check.columns and 'NSEcode' not in df_check.columns:
+                    self.logger.warning(f"File {latest_file} may not be valid stock data - missing expected columns")
+            except DataProviderException:
+                raise
+            except Exception as e:
+                self.logger.warning(f"Could not validate file: {e}")
 
-            self.logger.info(f"✅ Stock Data saved: {new_filename}")
+            self.logger.info(f"✅ Stock Data saved: {latest_file}")
 
             return {
                 'success': True,
-                'filename': new_filename,
-                'path': new_path
+                'filename': latest_file,
+                'path': file_path
             }
 
         except Exception as e:

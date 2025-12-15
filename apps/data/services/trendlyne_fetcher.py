@@ -170,35 +170,104 @@ class TrendlyneDataFetcher:
             self.log("[4/6] Downloading Market Snapshot (Stock data)...", "info")
 
             try:
-                # First check if we already have a stock data file downloaded
                 import os
+                import pandas as pd
+                from datetime import datetime, timedelta
                 stock_file_path = None
-                all_files = os.listdir(str(self.download_dir))
-                stock_files = [f for f in all_files if f.startswith("Stocks-data") and (f.endswith(".xlsx") or f.endswith(".csv"))]
 
-                if stock_files:
-                    # Use the most recent stock data file
-                    stock_files.sort(key=lambda x: os.path.getctime(os.path.join(str(self.download_dir), x)), reverse=True)
-                    stock_file_path = os.path.join(str(self.download_dir), stock_files[0])
-                    self.log(f"Found existing stock data file: {stock_files[0]}", "info")
+                # ALWAYS try to download fresh stock data first
+                self.log("Attempting to download fresh stock data from Trendlyne...", "info")
+                self.log("Navigating to Market Snapshot Downloader page...", "info")
 
-                if not stock_file_path:
-                    # Try to download via provider
+                # Redirect provider's logger output to our SSE log
+                import logging
+
+                class SSELogHandler(logging.Handler):
+                    def __init__(self, log_func):
+                        super().__init__()
+                        self.log_func = log_func
+
+                    def emit(self, record):
+                        try:
+                            msg = self.format(record)
+                            level = "info"
+                            if record.levelno >= logging.ERROR:
+                                level = "error"
+                            elif record.levelno >= logging.WARNING:
+                                level = "warning"
+                            self.log_func(f"[Provider] {msg}", level)
+                        except:
+                            pass
+
+                # Add our handler to the provider's logger
+                provider_logger = logging.getLogger('TrendlyneProvider')
+                sse_handler = SSELogHandler(self.log)
+                sse_handler.setFormatter(logging.Formatter('%(message)s'))
+                provider_logger.addHandler(sse_handler)
+                provider_logger.setLevel(logging.DEBUG)
+
+                try:
                     snapshot_result = provider.fetch_market_snapshot(download_dir=str(self.download_dir))
-                    self.log(f"Market Snapshot result: {snapshot_result}", "info")
+                    self.log(f"Market Snapshot result: success={snapshot_result.get('success')}", "info")
+                    if snapshot_result.get('error'):
+                        self.log(f"Error details: {snapshot_result.get('error')}", "warning")
+                    if snapshot_result.get('filename'):
+                        self.log(f"Downloaded file: {snapshot_result.get('filename')}", "info")
+                except Exception as provider_error:
+                    self.log(f"Provider error during fetch_market_snapshot: {provider_error}", "error")
+                    import traceback
+                    self.log(f"Traceback: {traceback.format_exc()[:300]}", "error")
+                    snapshot_result = {'success': False, 'error': str(provider_error)}
+                finally:
+                    # Remove our handler
+                    provider_logger.removeHandler(sse_handler)
 
-                    if snapshot_result.get('success'):
-                        stock_file_path = snapshot_result.get('path')
-                        self.log(f"Market Snapshot downloaded: {snapshot_result.get('filename')}", "success")
-                    else:
-                        self.log(f"Market Snapshot download failed: {snapshot_result.get('error')}", "warning")
-                        # Check again for any stock files that may have been downloaded
-                        all_files = os.listdir(str(self.download_dir))
-                        stock_files = [f for f in all_files if f.startswith("Stocks-data") and (f.endswith(".xlsx") or f.endswith(".csv"))]
-                        if stock_files:
-                            stock_files.sort(key=lambda x: os.path.getctime(os.path.join(str(self.download_dir), x)), reverse=True)
-                            stock_file_path = os.path.join(str(self.download_dir), stock_files[0])
-                            self.log(f"Found stock data file after download attempt: {stock_files[0]}", "info")
+                if snapshot_result.get('success'):
+                    # Validate the downloaded file
+                    downloaded_path = snapshot_result.get('path')
+                    try:
+                        df_check = pd.read_excel(downloaded_path, nrows=5)
+                        if 'Stock Name' in df_check.columns or 'NSEcode' in df_check.columns:
+                            stock_file_path = downloaded_path
+                            self.log(f"Fresh stock data downloaded: {snapshot_result.get('filename')}", "success")
+                        else:
+                            self.log(f"Downloaded file is not stock data (missing expected columns)", "warning")
+                            self.log(f"Found columns: {list(df_check.columns)[:10]}", "warning")
+                    except Exception as e:
+                        self.log(f"Error validating downloaded file: {e}", "warning")
+                else:
+                    self.log(f"Market Snapshot download failed: {snapshot_result.get('error')}", "warning")
+
+                # FALLBACK: If download failed, check for existing valid stock data file
+                if not stock_file_path:
+                    self.log("Download failed - checking for existing stock data file as fallback...", "warning")
+                    all_files = os.listdir(str(self.download_dir))
+
+                    # Only look for files that match the Trendlyne stock data naming pattern
+                    stock_files = [f for f in all_files if f.startswith("Stocks-data") and (f.endswith(".xlsx") or f.endswith(".csv"))]
+
+                    if stock_files:
+                        # Use the most recent file
+                        stock_files.sort(key=lambda x: os.path.getctime(os.path.join(str(self.download_dir), x)), reverse=True)
+                        candidate_file = os.path.join(str(self.download_dir), stock_files[0])
+
+                        # Check file age
+                        file_time = datetime.fromtimestamp(os.path.getctime(candidate_file))
+                        file_age = datetime.now() - file_time
+                        age_hours = file_age.total_seconds() / 3600
+
+                        try:
+                            df_check = pd.read_excel(candidate_file, nrows=5)
+                            if 'Stock Name' in df_check.columns or 'NSEcode' in df_check.columns:
+                                stock_file_path = candidate_file
+                                if age_hours > 24:
+                                    self.log(f"Using STALE stock data file ({age_hours:.1f} hours old): {stock_files[0]}", "warning")
+                                else:
+                                    self.log(f"Using existing stock data file ({age_hours:.1f} hours old): {stock_files[0]}", "info")
+                            else:
+                                self.log(f"File {stock_files[0]} doesn't have stock data columns", "warning")
+                        except Exception as e:
+                            self.log(f"Error checking file {stock_files[0]}: {e}", "warning")
 
                 if stock_file_path:
                     self.log(f"Processing stock data from: {stock_file_path}", "info")
@@ -403,8 +472,26 @@ class TrendlyneDataFetcher:
             self.log(f"Reading CSV file: {filepath}", "info")
             df = pd.read_csv(filepath)
 
-        self.log(f"Found {len(df)} stocks in file", "info")
+        self.log(f"Found {len(df)} rows in file", "info")
         self.log(f"Columns in file ({len(df.columns)}): {list(df.columns)[:10]}...", "info")
+
+        # Validate this is stock data, not F&O data
+        # Stock data files have 'Stock Name', 'NSEcode', 'Industry Name' columns
+        # F&O data files have 'SYMBOL', 'OPTION TYPE', 'STRIKE PRICE' columns
+        required_stock_columns = ['Stock Name', 'NSEcode']
+        fno_columns = ['SYMBOL', 'OPTION TYPE', 'STRIKE PRICE']
+
+        has_stock_cols = all(col in df.columns for col in required_stock_columns)
+        has_fno_cols = all(col in df.columns for col in fno_columns)
+
+        if has_fno_cols and not has_stock_cols:
+            self.log(f"ERROR: File appears to be F&O data, not stock data. Found columns: {list(df.columns)[:10]}", "error")
+            self.log("Stock data file should have 'Stock Name', 'NSEcode', 'Industry Name' columns", "error")
+            return 0
+
+        if not has_stock_cols:
+            self.log(f"WARNING: File missing expected stock columns. Found: {list(df.columns)[:15]}", "warning")
+            # Continue anyway as column names might be slightly different
 
         # Comprehensive column mapping from Excel headers to model fields
         column_mapping = {

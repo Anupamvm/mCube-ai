@@ -221,7 +221,22 @@
                                 📥 Fetch Fresh Data
                             </button>
                         </div>
-                        <div style="font-size: 0.7rem; color: #9ca3af; margin-top: 10px; font-style: italic;">
+                        <!-- Data Freshness Info -->
+                        <div id="dataFreshnessInfo" style="font-size: 0.75rem; margin-top: 12px; padding: 10px; background: {% if data_freshness.is_stale %}#fef3c7{% else %}#d1fae5{% endif %}; border-radius: 6px; border-left: 3px solid {% if data_freshness.is_stale %}#f59e0b{% else %}#10b981{% endif %};">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                                <span style="font-weight: 600; color: {% if data_freshness.is_stale %}#92400e{% else %}#065f46{% endif %};">
+                                    {% if data_freshness.is_stale %}⚠️ Data may be stale{% else %}✅ Data is fresh{% endif %}
+                                </span>
+                                <span style="color: #6b7280;">
+                                    Last updated: <strong id="lastUpdatedTime">{{ data_freshness.last_updated_display }}</strong>
+                                </span>
+                            </div>
+                            <div style="color: #4b5563; display: flex; gap: 15px;">
+                                <span>📊 F&O Contracts: <strong id="contractDataCount">{{ data_freshness.contract_count|default:"0" }}</strong></span>
+                                <span>📈 Stocks: <strong id="stockDataCount">{{ data_freshness.stock_count|default:"0" }}</strong></span>
+                            </div>
+                        </div>
+                        <div style="font-size: 0.7rem; color: #9ca3af; margin-top: 8px; font-style: italic;">
                             <strong>Update List</strong>: Filter existing data (fast) | <strong>Fetch Fresh Data</strong>: Download from Trendlyne (2-3 min)
                         </div>
                     </div>
@@ -2103,9 +2118,11 @@ const TrendlyneLogger = {
             this.eventSource.close();
             this.eventSource = null;
         }
-        // Refresh the contracts list if fetch completed successfully
+        // Refresh the page if fetch completed successfully to show updated data freshness
         if (this.isComplete) {
-            TradeVerification.refreshContracts();
+            // Reload the page to get fresh data counts and timestamps
+            window.location.reload();
+            return;
         }
         // Reset button state
         const btn = document.getElementById('btnFetchTrendlyne');

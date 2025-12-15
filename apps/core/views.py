@@ -257,13 +257,15 @@ def view_documentation(request, doc_name):
 @user_passes_test(is_admin_user, login_url='/login/')
 def trigger_trendlyne_download(request):
     """
-    Trigger Trendlyne Data Population
+    Trigger Trendlyne Data Population using the unified TrendlyneDataFetcher service.
 
     Complete workflow:
-    1. Clear old data from database
-    2. Convert XLSX files to CSV
-    3. Parse CSV and populate database
-    4. Show final status
+    1. Login to Trendlyne via Selenium
+    2. Download F&O contracts data
+    3. Download Market Snapshot (Stock data)
+    4. Fetch Forecaster data (21 screeners)
+    5. Parse and save all to database
+    6. Cleanup
 
     Populates:
     - ContractData (F&O contracts)
@@ -280,15 +282,24 @@ def trigger_trendlyne_download(request):
     try:
         def populate_task():
             try:
-                from django.core.management import call_command
-                from io import StringIO
+                from apps.data.services.trendlyne_fetcher import TrendlyneDataFetcher, TrendlyneLogCallback
 
-                logger.info("Starting Trendlyne data population workflow...")
+                logger.info("Starting Trendlyne FULL data fetch workflow...")
 
-                # Run the complete populate workflow
-                output = StringIO()
-                call_command('populate_trendlyne', stdout=output)
-                logger.info(f"Population output: {output.getvalue()}")
+                # Create a simple log callback that logs to Django logger
+                class DjangoLogCallback(TrendlyneLogCallback):
+                    def log(self, message: str, level: str = "info"):
+                        super().log(message, level)
+                        if level == "error":
+                            logger.error(f"[Trendlyne] {message}")
+                        elif level == "warning":
+                            logger.warning(f"[Trendlyne] {message}")
+                        else:
+                            logger.info(f"[Trendlyne] {message}")
+
+                callback = DjangoLogCallback()
+                fetcher = TrendlyneDataFetcher(callback)
+                result = fetcher.fetch_fno_data()
 
                 # Get final statistics
                 from apps.data.models import ContractData, TLStockData
@@ -301,13 +312,16 @@ def trigger_trendlyne_download(request):
                 logger.info(f"  - ContractData: {contract_count:,}")
                 logger.info(f"  - TLStockData: {stock_count:,}")
 
+                if result.get('data'):
+                    logger.info(f"  - Forecaster Screeners: {result['data'].get('forecaster_screeners', 0)}/21")
+
             except Exception as e:
                 logger.error(f"Trendlyne population failed: {e}", exc_info=True)
 
         thread = threading.Thread(target=populate_task, daemon=True)
         thread.start()
 
-        messages.success(request, "Trendlyne data population started! Workflow: Clear old data → Convert XLSX → Parse CSV → Populate DB. Refresh in 1-2 minutes to see updated data.")
+        messages.success(request, "Trendlyne FULL data fetch started! Using Selenium to: Login → Download F&O → Download Stock Data → Fetch Forecaster (21 pages) → Parse & Populate DB. Refresh in 2-3 minutes to see updated data.")
 
     except Exception as e:
         messages.error(request, f"Failed to start population: {str(e)}")
@@ -364,11 +378,13 @@ def trigger_fno_data_download(request):
 @user_passes_test(is_admin_user, login_url='/login/')
 def trigger_trendlyne_full_cycle(request):
     """
-    Trigger complete Trendlyne data pipeline:
-    1. Clear previous files
-    2. Download new data
-    3. Parse & populate database
-    4. Clean temporary files
+    Trigger complete Trendlyne data pipeline using unified TrendlyneDataFetcher:
+    1. Login to Trendlyne via Selenium
+    2. Download F&O contracts data
+    3. Download Market Snapshot (Stock data)
+    4. Fetch Forecaster data (21 screeners)
+    5. Parse and save all to database
+    6. Cleanup
 
     This provides comprehensive data refresh with all statistics
     """
@@ -382,12 +398,24 @@ def trigger_trendlyne_full_cycle(request):
     try:
         def full_cycle_task():
             try:
-                from django.core.management import call_command
-                from io import StringIO
+                from apps.data.services.trendlyne_fetcher import TrendlyneDataFetcher, TrendlyneLogCallback
 
-                # Run the full cycle command
-                out = StringIO()
-                call_command('trendlyne_data_manager', '--full-cycle', stdout=out)
+                logger.info("Starting Trendlyne FULL cycle workflow...")
+
+                # Create a simple log callback that logs to Django logger
+                class DjangoLogCallback(TrendlyneLogCallback):
+                    def log(self, message: str, level: str = "info"):
+                        super().log(message, level)
+                        if level == "error":
+                            logger.error(f"[Trendlyne] {message}")
+                        elif level == "warning":
+                            logger.warning(f"[Trendlyne] {message}")
+                        else:
+                            logger.info(f"[Trendlyne] {message}")
+
+                callback = DjangoLogCallback()
+                fetcher = TrendlyneDataFetcher(callback)
+                result = fetcher.fetch_fno_data()
 
                 # Get summary statistics
                 from apps.data.models import (
@@ -415,7 +443,7 @@ def trigger_trendlyne_full_cycle(request):
         thread = threading.Thread(target=full_cycle_task, daemon=True)
         thread.start()
 
-        messages.success(request, "Full Trendlyne data cycle initiated (Download → Parse → Populate → Cleanup). Refresh in 60 seconds to see all updated statistics.")
+        messages.success(request, "Full Trendlyne data cycle initiated! Using Selenium to: Login → Download F&O → Download Stock Data → Fetch Forecaster (21 pages) → Parse & Populate DB. Refresh in 2-3 minutes to see all updated statistics.")
 
     except Exception as e:
         messages.error(request, f"Failed to start Trendlyne full cycle: {str(e)}")
@@ -428,13 +456,11 @@ def trigger_trendlyne_full_cycle(request):
 @user_passes_test(is_admin_user, login_url='/login/')
 def trigger_market_snapshot_download(request):
     """
-    Trigger Market Snapshot data download and database population.
-    Only downloads if existing files are older than 10 minutes.
+    Trigger Market Snapshot (Stock) data download and database population.
+    Uses unified TrendlyneDataFetcher for downloading and parsing.
     """
     from django.contrib import messages
     import threading
-    import os
-    from datetime import datetime
 
     if request.method != 'POST':
         messages.error(request, "Invalid request method")
@@ -443,51 +469,26 @@ def trigger_market_snapshot_download(request):
     try:
         def market_snapshot_task():
             try:
-                from apps.data.tools.trendlyne import getMarketSnapshotData, init_driver_with_download, login_to_trendlyne
-                from django.conf import settings
+                from apps.data.services.trendlyne_fetcher import TrendlyneDataFetcher, TrendlyneLogCallback
 
-                data_dir = os.path.join(settings.BASE_DIR, 'apps', 'data', 'tldata')
-                os.makedirs(data_dir, exist_ok=True)
+                logger.info("Starting Market Snapshot (Stock Data) fetch...")
 
-                # Check if existing files are fresh (< 10 minutes)
-                snapshot_files = [f for f in os.listdir(data_dir) if f.startswith('market_snapshot_') and (f.endswith('.csv') or f.endswith('.xlsx'))]
+                # Create a simple log callback that logs to Django logger
+                class DjangoLogCallback(TrendlyneLogCallback):
+                    def log(self, message: str, level: str = "info"):
+                        super().log(message, level)
+                        if level == "error":
+                            logger.error(f"[Trendlyne] {message}")
+                        elif level == "warning":
+                            logger.warning(f"[Trendlyne] {message}")
+                        else:
+                            logger.info(f"[Trendlyne] {message}")
 
-                should_download = True
-                if snapshot_files:
-                    snapshot_files.sort(reverse=True)
-                    latest_file = snapshot_files[0]
-                    file_path = os.path.join(data_dir, latest_file)
-                    file_time = datetime.fromtimestamp(os.path.getmtime(file_path))
-                    age_minutes = (datetime.now() - file_time).total_seconds() / 60
+                callback = DjangoLogCallback()
+                fetcher = TrendlyneDataFetcher(callback)
 
-                    if age_minutes < 10:
-                        logger.info(f"Market Snapshot data is fresh ({age_minutes:.1f} minutes old). Skipping download.")
-                        should_download = False
-
-                if should_download:
-                    # Initialize driver and login
-                    driver = init_driver_with_download(data_dir)
-                    try:
-                        login_success = login_to_trendlyne(driver)
-                        if not login_success:
-                            logger.error("Failed to login to Trendlyne")
-                            return
-
-                        # Download market snapshot
-                        logger.info("Downloading Market Snapshot data from Trendlyne...")
-                        getMarketSnapshotData(driver, download_dir=data_dir)
-                        logger.info("Market Snapshot data download completed")
-
-                    finally:
-                        driver.quit()
-
-                # Parse and populate database
-                from django.core.management import call_command
-                from io import StringIO
-
-                logger.info("Parsing Market Snapshot data into database...")
-                out = StringIO()
-                call_command('trendlyne_data_manager', '--parse-market-snapshot', stdout=out)
+                # The fetch_fno_data method fetches ALL data including stock data
+                result = fetcher.fetch_fno_data()
 
                 from apps.data.models import TLStockData
                 record_count = TLStockData.objects.count()
@@ -500,7 +501,7 @@ def trigger_market_snapshot_download(request):
         thread = threading.Thread(target=market_snapshot_task, daemon=True)
         thread.start()
 
-        messages.success(request, "Market Snapshot data download initiated. Will check file freshness (< 10 min) before downloading. Refresh in 30 seconds to see results.")
+        messages.success(request, "Market Snapshot (Stock Data) download initiated! Using Selenium to: Login → Download Stock Data → Parse & Populate TLStockData. Refresh in 2-3 minutes to see results.")
 
     except Exception as e:
         messages.error(request, f"Failed to start Market Snapshot download: {str(e)}")
@@ -514,12 +515,10 @@ def trigger_market_snapshot_download(request):
 def trigger_forecaster_download(request):
     """
     Trigger Forecaster data download (21 screener pages).
-    Only downloads if existing files are older than 10 minutes.
+    Uses unified TrendlyneDataFetcher for downloading.
     """
     from django.contrib import messages
     import threading
-    import os
-    from datetime import datetime
 
     if request.method != 'POST':
         messages.error(request, "Invalid request method")
@@ -528,46 +527,32 @@ def trigger_forecaster_download(request):
     try:
         def forecaster_task():
             try:
-                from apps.data.tools.trendlyne import getTrendlyneForecasterData, init_driver_with_download, login_to_trendlyne
-                from django.conf import settings
+                from apps.data.services.trendlyne_fetcher import TrendlyneDataFetcher, TrendlyneLogCallback
 
-                data_dir = os.path.join(settings.BASE_DIR, 'apps', 'data', 'tldata')
-                forecaster_dir = os.path.join(data_dir, 'forecaster')
-                os.makedirs(forecaster_dir, exist_ok=True)
+                logger.info("Starting Forecaster data (21 screeners) fetch...")
 
-                # Check if existing files are fresh (< 10 minutes)
-                forecaster_files = [f for f in os.listdir(forecaster_dir) if f.startswith('trendlyne_') and f.endswith('.csv')] if os.path.exists(forecaster_dir) else []
+                # Create a simple log callback that logs to Django logger
+                class DjangoLogCallback(TrendlyneLogCallback):
+                    def log(self, message: str, level: str = "info"):
+                        super().log(message, level)
+                        if level == "error":
+                            logger.error(f"[Trendlyne] {message}")
+                        elif level == "warning":
+                            logger.warning(f"[Trendlyne] {message}")
+                        else:
+                            logger.info(f"[Trendlyne] {message}")
 
-                should_download = True
-                if forecaster_files:
-                    file_times = [os.path.getmtime(os.path.join(forecaster_dir, f)) for f in forecaster_files]
-                    most_recent_time = datetime.fromtimestamp(max(file_times))
-                    age_minutes = (datetime.now() - most_recent_time).total_seconds() / 60
+                callback = DjangoLogCallback()
+                fetcher = TrendlyneDataFetcher(callback)
 
-                    if age_minutes < 10:
-                        logger.info(f"Forecaster data is fresh ({age_minutes:.1f} minutes old). Skipping download.")
-                        should_download = False
+                # The fetch_fno_data method fetches ALL data including Forecaster data
+                result = fetcher.fetch_fno_data()
 
-                if should_download:
-                    # Initialize driver and login
-                    driver = init_driver_with_download(data_dir)
-                    try:
-                        login_success = login_to_trendlyne(driver)
-                        if not login_success:
-                            logger.error("Failed to login to Trendlyne")
-                            return
-
-                        # Download forecaster data (21 pages)
-                        logger.info("Downloading Forecaster data (21 pages) from Trendlyne...")
-                        getTrendlyneForecasterData(driver, output_dir=forecaster_dir)
-                        logger.info("Forecaster data download completed")
-
-                    finally:
-                        driver.quit()
-
-                # Count files
-                forecaster_files = [f for f in os.listdir(forecaster_dir) if f.startswith('trendlyne_') and f.endswith('.csv')]
-                logger.info(f"Forecaster data ready: {len(forecaster_files)} CSV files")
+                if result.get('data'):
+                    forecaster_count = result['data'].get('forecaster_screeners', 0)
+                    logger.info(f"Forecaster data fetch completed: {forecaster_count}/21 screeners")
+                else:
+                    logger.info("Forecaster data fetch completed")
 
             except Exception as e:
                 logger.error(f"Forecaster data task failed: {e}", exc_info=True)
@@ -575,7 +560,7 @@ def trigger_forecaster_download(request):
         thread = threading.Thread(target=forecaster_task, daemon=True)
         thread.start()
 
-        messages.success(request, "Forecaster data download initiated (21 screener pages). Will check file freshness (< 10 min) before downloading. Refresh in 60 seconds to see results.")
+        messages.success(request, "Forecaster data download initiated (21 screener pages)! Using Selenium to: Login → Fetch all 21 Forecaster screeners → Save to CSV. Refresh in 2-3 minutes to see results.")
 
     except Exception as e:
         messages.error(request, f"Failed to start Forecaster download: {str(e)}")

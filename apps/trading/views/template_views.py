@@ -33,9 +33,69 @@ def manual_triggers_refactored(request):
     Features: Tab-based navigation, modal dialogs, broker authentication
 
     Returns:
-        HttpResponse: Rendered template
+        HttpResponse: Rendered template with data freshness info
     """
-    return render(request, 'trading/manual_triggers_refactored.html')
+    from apps.data.models import TLStockData
+
+    # Get data freshness info
+    data_freshness = {
+        'contract_count': 0,
+        'stock_count': 0,
+        'last_updated': None,
+        'last_updated_display': 'Never',
+        'is_stale': True,  # Data older than 24 hours
+    }
+
+    try:
+        # Get ContractData freshness
+        contract_count = ContractData.objects.count()
+        latest_contract = ContractData.objects.order_by('-updated_at').first()
+
+        # Get TLStockData freshness
+        stock_count = TLStockData.objects.count()
+        latest_stock = TLStockData.objects.order_by('-updated_at').first()
+
+        data_freshness['contract_count'] = contract_count
+        data_freshness['stock_count'] = stock_count
+
+        # Determine last update time (most recent of both)
+        last_updated = None
+        if latest_contract and latest_stock:
+            last_updated = max(latest_contract.updated_at, latest_stock.updated_at)
+        elif latest_contract:
+            last_updated = latest_contract.updated_at
+        elif latest_stock:
+            last_updated = latest_stock.updated_at
+
+        if last_updated:
+            data_freshness['last_updated'] = last_updated
+            # Format for display
+            now = datetime.now(last_updated.tzinfo) if last_updated.tzinfo else datetime.now()
+            age = now - last_updated
+
+            if age.total_seconds() < 60:
+                data_freshness['last_updated_display'] = 'Just now'
+            elif age.total_seconds() < 3600:
+                minutes = int(age.total_seconds() / 60)
+                data_freshness['last_updated_display'] = f'{minutes} min ago'
+            elif age.total_seconds() < 86400:
+                hours = int(age.total_seconds() / 3600)
+                data_freshness['last_updated_display'] = f'{hours} hr ago'
+            else:
+                days = int(age.total_seconds() / 86400)
+                data_freshness['last_updated_display'] = f'{days} day(s) ago'
+
+            # Check if stale (older than 24 hours)
+            data_freshness['is_stale'] = age.total_seconds() > 86400
+
+    except Exception as e:
+        logger.warning(f"Error getting data freshness: {e}")
+
+    context = {
+        'data_freshness': data_freshness,
+    }
+
+    return render(request, 'trading/manual_triggers_refactored.html', context)
 
 
 def manual_triggers(request):
