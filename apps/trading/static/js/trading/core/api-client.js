@@ -23,21 +23,62 @@ const ApiClient = (function() {
         return cookieValue;
     }
 
-    // Get CSRF token
-    const csrftoken = getCookie('csrftoken');
+    // Get CSRF token (retrieve fresh each time in case it changes)
+    function getCSRFToken() {
+        return getCookie('csrftoken');
+    }
+
+    // For backward compatibility
+    const csrftoken = getCSRFToken();
 
     // Standardized POST request
     async function post(url, data = {}, options = {}) {
         try {
+            // Get fresh CSRF token for each request
+            const token = getCSRFToken();
+
             const response = await fetch(url, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'X-CSRFToken': csrftoken,
+                    'X-CSRFToken': token,
                     ...options.headers
                 },
                 body: JSON.stringify(data)
             });
+
+            // Check if response is JSON
+            const contentType = response.headers.get('content-type');
+            if (!contentType || !contentType.includes('application/json')) {
+                // Non-JSON response - likely a login redirect, CSRF error, or error page
+                console.error('[ApiClient] Non-JSON response received:', contentType, 'Status:', response.status);
+
+                // Get the response text once
+                const text = await response.text();
+
+                // Check for CSRF error (403)
+                if (response.status === 403) {
+                    if (text.includes('CSRF')) {
+                        console.error('[ApiClient] CSRF error - token may be invalid or missing');
+                        return { success: false, error: 'Security token expired. Please refresh the page.', csrf_error: true };
+                    }
+                    return { success: false, error: 'Access forbidden. Please refresh the page.', auth_required: true };
+                }
+
+                // Check for redirect
+                if (response.status === 302 || response.redirected) {
+                    return { success: false, error: 'Session expired. Please refresh the page.', auth_required: true };
+                }
+
+                // Check if it's HTML (login page redirect)
+                if (text.includes('<!DOCTYPE') || text.includes('<html')) {
+                    if (text.includes('CSRF')) {
+                        return { success: false, error: 'Security token expired. Please refresh the page.', csrf_error: true };
+                    }
+                    return { success: false, error: 'Session expired. Please refresh the page.', auth_required: true };
+                }
+                return { success: false, error: 'Unexpected response from server' };
+            }
 
             const result = await response.json();
 
@@ -165,7 +206,8 @@ const ApiClient = (function() {
 
         // Data endpoints
         getContracts: '/trading/trigger/get-contracts/',
-        refreshTrendlyne: '/trading/trigger/refresh-trendlyne/',
+        startTrendlyneFetch: '/trading/trigger/start-trendlyne-fetch/',
+        streamTrendlyneLogs: (sessionId) => `/trading/trigger/trendlyne-logs/${sessionId}/`,
         getSuggestion: (id) => `/trading/api/suggestions/${id}/`,
         listSuggestions: '/trading/api/suggestions/',
         updateSuggestion: '/trading/api/suggestions/update/',

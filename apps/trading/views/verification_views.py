@@ -2,100 +2,180 @@
 Trading Verification Views - Contract Analysis and Data Management
 
 This module contains views for verifying futures contracts and managing market data:
-- Refresh Trendlyne market data
+- Trendlyne data fetching with real-time log streaming (SSE)
 - Fetch contracts with volume filtering
 - Verify futures contract for trading with comprehensive analysis
 
 All views integrate with Breeze API for real-time market data and analysis.
 """
 
+import json
 import logging
+import time
+import uuid
+from functools import wraps
 from django.contrib.auth.decorators import login_required
 from django.views.decorators.http import require_POST
-from django.http import JsonResponse
+from django.http import JsonResponse, StreamingHttpResponse
 
 logger = logging.getLogger(__name__)
 
 
-@login_required
-@require_POST
-def refresh_trendlyne_data(request):
+def ajax_login_required(view_func):
     """
-    Trigger Trendlyne data refresh for F&O contracts.
+    Decorator that returns JSON response for unauthenticated AJAX requests
+    instead of redirecting to login page.
+    """
+    @wraps(view_func)
+    def wrapper(request, *args, **kwargs):
+        if not request.user.is_authenticated:
+            return JsonResponse({
+                'success': False,
+                'error': 'Authentication required. Please log in.',
+                'auth_required': True
+            }, status=401)
+        return view_func(request, *args, **kwargs)
+    return wrapper
 
-    Runs the trendlyne_data_manager management command in the background
-    to fetch latest futures and options contract data from Trendlyne.
+
+@ajax_login_required
+@require_POST
+def start_trendlyne_fetch(request):
+    """
+    Start a Trendlyne data fetch and return a session ID for SSE streaming.
+
+    This initiates the Selenium-based data fetch in a background thread and
+    returns a session ID that can be used to connect to the SSE log stream.
 
     Request Body (JSON):
-        {
-            "data_type": "fno"  # Currently only "fno" supported
-        }
+        {} (empty or any data)
 
     Returns:
         JsonResponse: {
             'success': bool,
-            'message': str,
-            'output': str  # Command stdout if successful
+            'session_id': str,  # UUID for SSE connection
+            'message': str
         }
 
     Error Responses:
-        - 408: Command timeout (> 5 minutes)
-        - 500: Command execution error
+        - 500: Failed to start fetch process
 
-    Side Effects:
-        - Runs subprocess command: python manage.py trendlyne_data_manager --full-cycle
-        - Updates ContractData records in database
-        - May take several minutes to complete
-
-    Notes:
-        - 5 minute timeout enforced
-        - Command runs synchronously (blocks until complete)
-        - Full cycle fetches all available F&O data
+    Usage:
+        1. POST to this endpoint to start the fetch
+        2. Use session_id to connect to /trigger/trendlyne-logs/<session_id>/
+        3. Listen for SSE events until 'complete' or 'error' type received
     """
-    import subprocess
-    import json
-
     try:
-        body = json.loads(request.body)
-        data_type = body.get('data_type', 'fno')  # fno, stocks, etc.
+        session_id = str(uuid.uuid4())
 
-        logger.info(f"Triggering Trendlyne data refresh for: {data_type}")
+        # Start the fetch in background
+        from apps.data.services.trendlyne_fetcher import start_trendlyne_fetch as start_fetch
+        start_fetch(session_id)
 
-        # Run the management command in background
-        # For now, we'll run the full cycle to ensure fresh data
-        result = subprocess.run(
-            ['python', 'manage.py', 'trendlyne_data_manager', '--full-cycle'],
-            capture_output=True,
-            text=True,
-            timeout=300  # 5 minute timeout
-        )
+        logger.info(f"Started Trendlyne fetch session: {session_id}")
 
-        if result.returncode == 0:
-            logger.info("Trendlyne data refresh completed successfully")
-            return JsonResponse({
-                'success': True,
-                'message': 'Trendlyne data refreshed successfully',
-                'output': result.stdout
-            })
-        else:
-            logger.error(f"Trendlyne refresh failed: {result.stderr}")
-            return JsonResponse({
-                'success': False,
-                'error': result.stderr or 'Command failed'
-            })
-
-    except subprocess.TimeoutExpired:
-        logger.error("Trendlyne refresh timed out")
         return JsonResponse({
-            'success': False,
-            'error': 'Data refresh timed out. Please try again later.'
+            'success': True,
+            'session_id': session_id,
+            'message': 'Trendlyne data fetch started'
         })
+
     except Exception as e:
-        logger.error(f"Error refreshing Trendlyne data: {str(e)}", exc_info=True)
+        logger.error(f"Error starting Trendlyne fetch: {str(e)}", exc_info=True)
         return JsonResponse({
             'success': False,
             'error': str(e)
         })
+
+
+@ajax_login_required
+def stream_trendlyne_logs(request, session_id):
+    """
+    Server-Sent Events (SSE) endpoint for streaming Trendlyne fetch logs.
+
+    Streams real-time log messages from the Trendlyne data fetch process.
+    Each log message includes timestamp, level, and message content.
+
+    URL Parameters:
+        session_id: UUID returned from start_trendlyne_fetch
+
+    SSE Event Format:
+        data: {"type": "log|connected|complete|error", "timestamp": "HH:MM:SS", "level": "info|success|warning|error", "message": "..."}
+
+    Event Types:
+        - connected: Initial connection established
+        - log: Regular log message with level and content
+        - complete: Fetch process finished successfully
+        - error: Error occurred during fetch
+
+    Usage (JavaScript):
+        const eventSource = new EventSource('/trading/trigger/trendlyne-logs/<session_id>/');
+        eventSource.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+            if (data.type === 'log') {
+                console.log(`[${data.level}] ${data.message}`);
+            } else if (data.type === 'complete') {
+                eventSource.close();
+            }
+        };
+
+    Notes:
+        - Stream times out after 5 minutes
+        - Session is cleaned up after stream ends
+        - 10 second idle timeout for detecting completion
+    """
+    from apps.data.services.trendlyne_fetcher import get_active_session, cleanup_session
+
+    def event_stream():
+        """Generator that yields SSE formatted events"""
+        callback = get_active_session(session_id)
+
+        if not callback:
+            yield f"data: {json.dumps({'type': 'error', 'message': 'Session not found'})}\n\n"
+            return
+
+        # Send initial connection message
+        yield f"data: {json.dumps({'type': 'connected', 'message': 'Connected to log stream'})}\n\n"
+
+        max_wait_time = 300  # 5 minutes max
+        start_time = time.time()
+        last_activity = time.time()
+        idle_timeout = 30  # 30 seconds of no logs means completion (Selenium downloads take time)
+
+        while callback.is_running and (time.time() - start_time) < max_wait_time:
+            logs = callback.get_logs(timeout=0.5)
+
+            if logs:
+                last_activity = time.time()
+                for log in logs:
+                    event_data = {
+                        'type': 'log',
+                        'timestamp': log['timestamp'],
+                        'level': log['level'],
+                        'message': log['message']
+                    }
+                    yield f"data: {json.dumps(event_data)}\n\n"
+            else:
+                # Check for idle timeout (process might be done)
+                if (time.time() - last_activity) > idle_timeout:
+                    break
+
+            # Small sleep to prevent tight loop
+            time.sleep(0.1)
+
+        # Send completion message
+        yield f"data: {json.dumps({'type': 'complete', 'message': 'Fetch process completed'})}\n\n"
+
+        # Cleanup session
+        cleanup_session(session_id)
+
+    response = StreamingHttpResponse(
+        event_stream(),
+        content_type='text/event-stream'
+    )
+    response['Cache-Control'] = 'no-cache'
+    response['X-Accel-Buffering'] = 'no'
+    return response
 
 
 @login_required

@@ -235,16 +235,19 @@ class TrendlyneProvider(BaseWebScraper):
             self.logger.info("F&O download initiated...")
             time.sleep(10)
 
-            # Find downloaded file
-            files = [f for f in os.listdir(download_dir) if f.endswith(".csv")]
+            # Find downloaded file (could be .xlsx or .csv)
+            files = [f for f in os.listdir(download_dir) if f.endswith(".xlsx") or f.endswith(".csv")]
             if not files:
-                raise DataProviderException("No CSV file found after download")
+                raise DataProviderException("No Excel/CSV file found after download")
 
             files.sort(key=lambda x: os.path.getctime(os.path.join(download_dir, x)), reverse=True)
             latest_file = files[0]
 
+            # Determine file extension
+            file_ext = ".xlsx" if latest_file.endswith(".xlsx") else ".csv"
+
             # Rename to standard format
-            new_filename = f"fno_data_{datetime.now().strftime('%Y-%m-%d')}.csv"
+            new_filename = f"fno_data_{datetime.now().strftime('%Y-%m-%d')}{file_ext}"
             os.rename(
                 os.path.join(download_dir, latest_file),
                 os.path.join(download_dir, new_filename)
@@ -279,41 +282,89 @@ class TrendlyneProvider(BaseWebScraper):
             download_dir = self.download_dir
 
         try:
-            self.driver.get(f"{self.BASE_URL}/tools/data-downloader/market-snapshot-excel/")
-            self.logger.info("Navigated to Market Snapshot Downloader...")
-            time.sleep(5)
+            # Try different URLs for market snapshot download
+            snapshot_urls = [
+                f"{self.BASE_URL}/tools/data-downloader/trendlyne-excel-connect/",
+                f"{self.BASE_URL}/tools/data-downloader/market-snapshot-excel/",
+                f"{self.BASE_URL}/equity/market-snapshot/",
+            ]
 
-            download_button = self.wait_for_element(
-                By.XPATH,
-                "//a[contains(text(), 'DOWNLOAD')]",
-                timeout=15,
-                condition=EC.element_to_be_clickable
-            )
-            download_button.click()
+            page_loaded = False
+            for url in snapshot_urls:
+                try:
+                    self.driver.get(url)
+                    self.logger.info(f"Trying URL: {url}")
+                    time.sleep(5)
+
+                    # Check if we're on a valid page (not login redirect)
+                    if "login" not in self.driver.current_url.lower():
+                        page_loaded = True
+                        self.logger.info(f"Successfully loaded: {url}")
+                        break
+                except Exception:
+                    continue
+
+            if not page_loaded:
+                raise DataProviderException("Could not access Market Snapshot page - may require premium subscription")
+
+            # Try multiple selectors for download button
+            download_selectors = [
+                (By.XPATH, "//a[contains(text(), 'DOWNLOAD')]"),
+                (By.XPATH, "//a[contains(text(), 'Download')]"),
+                (By.XPATH, "//a[contains(text(), 'DOWNLOAD EXCEL')]"),
+                (By.XPATH, "//a[contains(text(), 'Download Excel')]"),
+                (By.XPATH, "//button[contains(text(), 'DOWNLOAD')]"),
+                (By.XPATH, "//button[contains(text(), 'Download')]"),
+                (By.XPATH, "//button[contains(text(), 'Download Data')]"),
+                (By.CSS_SELECTOR, "a.download-btn"),
+                (By.CSS_SELECTOR, "button.download-btn"),
+                (By.CSS_SELECTOR, "[data-action='download']"),
+                (By.XPATH, "//a[contains(@class, 'download')]"),
+                (By.XPATH, "//button[contains(@class, 'download')]"),
+                (By.XPATH, "//a[contains(@href, 'download')]"),
+                (By.XPATH, "//a[contains(@href, 'excel')]"),
+            ]
+
+            download_button = self.try_multiple_selectors(download_selectors, action="click")
             self.logger.info("Market Snapshot download initiated...")
             time.sleep(10)
 
-            # Find downloaded file
-            files = [f for f in os.listdir(download_dir) if f.endswith(".csv")]
-            if not files:
-                raise DataProviderException("No CSV file found after download")
+            # Find downloaded file - look for stock data files specifically
+            # Stock data files are named like "Stocks-data-IND-*.xlsx"
+            all_files = os.listdir(download_dir)
+            stock_files = [f for f in all_files if f.startswith("Stocks-data") and (f.endswith(".xlsx") or f.endswith(".csv"))]
 
-            files.sort(key=lambda x: os.path.getctime(os.path.join(download_dir, x)), reverse=True)
-            latest_file = files[0]
+            if not stock_files:
+                # Fallback: look for any new xlsx/csv file
+                files = [f for f in all_files if f.endswith(".xlsx") or f.endswith(".csv")]
+                if not files:
+                    raise DataProviderException("No Excel/CSV file found after download")
+                files.sort(key=lambda x: os.path.getctime(os.path.join(download_dir, x)), reverse=True)
+                latest_file = files[0]
+            else:
+                stock_files.sort(key=lambda x: os.path.getctime(os.path.join(download_dir, x)), reverse=True)
+                latest_file = stock_files[0]
+
+            # Determine file extension
+            file_ext = ".xlsx" if latest_file.endswith(".xlsx") else ".csv"
 
             # Rename to standard format
-            new_filename = f"market_snapshot_{datetime.now().strftime('%Y-%m-%d')}.csv"
-            os.rename(
-                os.path.join(download_dir, latest_file),
-                os.path.join(download_dir, new_filename)
-            )
+            new_filename = f"stock_data_{datetime.now().strftime('%Y-%m-%d')}{file_ext}"
+            new_path = os.path.join(download_dir, new_filename)
 
-            self.logger.info(f"✅ Market Snapshot saved: {new_filename}")
+            # Only rename if not already renamed
+            if latest_file != new_filename:
+                os.rename(
+                    os.path.join(download_dir, latest_file),
+                    new_path
+                )
+
+            self.logger.info(f"✅ Stock Data saved: {new_filename}")
 
             return {
                 'success': True,
                 'filename': new_filename,
-                'path': os.path.join(download_dir, new_filename)
+                'path': new_path
             }
 
         except Exception as e:

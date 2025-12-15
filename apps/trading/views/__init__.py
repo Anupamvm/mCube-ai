@@ -40,7 +40,8 @@ from .algorithm_views import (
 from .verification_views import (
     verify_future_trade,
     get_contracts,
-    refresh_trendlyne_data,
+    start_trendlyne_fetch,
+    stream_trendlyne_logs,
 )
 
 from .execution_views import (
@@ -81,7 +82,8 @@ __all__ = [
     # Verification views
     'verify_future_trade',
     'get_contracts',
-    'refresh_trendlyne_data',
+    'start_trendlyne_fetch',
+    'stream_trendlyne_logs',
 
     # Execution views
     'prepare_manual_execution',

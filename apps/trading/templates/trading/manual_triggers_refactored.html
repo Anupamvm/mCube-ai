@@ -262,6 +262,29 @@
 
         <!-- Notification Container -->
         <div id="notificationContainer" class="notification-container"></div>
+
+        <!-- Trendlyne Fetch Log Modal -->
+        <div id="trendlyneLogModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); z-index: 10000; justify-content: center; align-items: center;">
+            <div style="background: #1f2937; border-radius: 12px; width: 90%; max-width: 700px; max-height: 80vh; display: flex; flex-direction: column; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);">
+                <div style="padding: 20px; border-bottom: 1px solid #374151; display: flex; justify-content: space-between; align-items: center;">
+                    <h3 style="margin: 0; color: #f9fafb; font-size: 1.25rem;">
+                        <span id="trendlyneLogTitle">📥 Fetching Trendlyne Data</span>
+                    </h3>
+                    <button onclick="TrendlyneLogger.close()" style="background: none; border: none; color: #9ca3af; font-size: 1.5rem; cursor: pointer; padding: 5px;">&times;</button>
+                </div>
+                <div id="trendlyneLogContent" style="flex: 1; overflow-y: auto; padding: 15px; font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Roboto Mono', monospace; font-size: 0.85rem; background: #111827; min-height: 300px; max-height: 400px;">
+                    <!-- Logs will be appended here -->
+                </div>
+                <div style="padding: 15px; border-top: 1px solid #374151; display: flex; justify-content: space-between; align-items: center;">
+                    <div id="trendlyneLogStatus" style="color: #9ca3af; font-size: 0.875rem;">
+                        <span id="logStatusIcon">⏳</span> <span id="logStatusText">Connecting...</span>
+                    </div>
+                    <button id="trendlyneLogCloseBtn" onclick="TrendlyneLogger.close()" style="background: #3b82f6; color: white; padding: 10px 20px; border: none; border-radius: 6px; cursor: pointer; font-weight: 600; display: none;">
+                        Close & Refresh List
+                    </button>
+                </div>
+            </div>
+        </div>
     </main>
 </div>
 
@@ -2054,6 +2077,164 @@ const NiftyStrangle = {
     }
 };
 
+// Trendlyne Logger - Handles SSE log streaming
+const TrendlyneLogger = {
+    eventSource: null,
+    isComplete: false,
+
+    show() {
+        const modal = document.getElementById('trendlyneLogModal');
+        modal.style.display = 'flex';
+        document.getElementById('trendlyneLogContent').innerHTML = '';
+        document.getElementById('logStatusIcon').textContent = '⏳';
+        document.getElementById('logStatusText').textContent = 'Connecting...';
+        document.getElementById('trendlyneLogCloseBtn').style.display = 'none';
+        this.isComplete = false;
+    },
+
+    hide() {
+        const modal = document.getElementById('trendlyneLogModal');
+        modal.style.display = 'none';
+    },
+
+    close() {
+        this.hide();
+        if (this.eventSource) {
+            this.eventSource.close();
+            this.eventSource = null;
+        }
+        // Refresh the contracts list if fetch completed successfully
+        if (this.isComplete) {
+            TradeVerification.refreshContracts();
+        }
+        // Reset button state
+        const btn = document.getElementById('btnFetchTrendlyne');
+        btn.disabled = false;
+        btn.textContent = '📥 Fetch Fresh Data';
+    },
+
+    addLog(message, level = 'info') {
+        const content = document.getElementById('trendlyneLogContent');
+        const logLine = document.createElement('div');
+        logLine.style.marginBottom = '4px';
+        logLine.style.lineHeight = '1.5';
+
+        // Color based on level
+        const colors = {
+            info: '#9ca3af',
+            success: '#10b981',
+            warning: '#f59e0b',
+            error: '#ef4444'
+        };
+
+        // Icon based on level
+        const icons = {
+            info: '▸',
+            success: '✓',
+            warning: '⚠',
+            error: '✗'
+        };
+
+        const timestamp = new Date().toLocaleTimeString();
+        logLine.innerHTML = `<span style="color: #6b7280;">[${timestamp}]</span> <span style="color: ${colors[level] || colors.info};">${icons[level] || icons.info}</span> <span style="color: ${colors[level] || colors.info};">${this.escapeHtml(message)}</span>`;
+
+        content.appendChild(logLine);
+        content.scrollTop = content.scrollHeight;
+    },
+
+    escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    },
+
+    setStatus(icon, text) {
+        document.getElementById('logStatusIcon').textContent = icon;
+        document.getElementById('logStatusText').textContent = text;
+    },
+
+    showCloseButton() {
+        document.getElementById('trendlyneLogCloseBtn').style.display = 'block';
+    },
+
+    async startFetch() {
+        this.show();
+
+        try {
+            // Start the fetch process
+            this.addLog('Initiating Trendlyne data fetch...', 'info');
+            this.setStatus('⏳', 'Starting...');
+
+            const response = await ApiClient.post(ApiClient.endpoints.startTrendlyneFetch, {});
+
+            if (!response || !response.success) {
+                throw new Error(response?.error || 'Failed to start fetch');
+            }
+
+            const sessionId = response.session_id;
+            this.addLog(`Session started: ${sessionId.substring(0, 8)}...`, 'info');
+            this.setStatus('📡', 'Connected - Streaming logs...');
+
+            // Connect to SSE stream with credentials
+            const streamUrl = ApiClient.endpoints.streamTrendlyneLogs(sessionId);
+            this.eventSource = new EventSource(streamUrl, { withCredentials: true });
+
+            this.eventSource.onmessage = (event) => {
+                try {
+                    // Check if response is HTML (error page)
+                    if (event.data.trim().startsWith('<!DOCTYPE') || event.data.trim().startsWith('<html')) {
+                        this.addLog('Authentication error - please refresh the page', 'error');
+                        this.setStatus('❌', 'Auth Error');
+                        this.showCloseButton();
+                        this.eventSource.close();
+                        return;
+                    }
+
+                    const data = JSON.parse(event.data);
+
+                    if (data.type === 'log') {
+                        this.addLog(data.message, data.level);
+                    } else if (data.type === 'connected') {
+                        this.addLog('Connected to log stream', 'success');
+                    } else if (data.type === 'complete') {
+                        this.addLog('Fetch process completed!', 'success');
+                        this.setStatus('✅', 'Complete');
+                        this.isComplete = true;
+                        this.showCloseButton();
+                        this.eventSource.close();
+                        this.eventSource = null;
+                    } else if (data.type === 'error') {
+                        this.addLog(data.message, 'error');
+                        this.setStatus('❌', 'Error');
+                        this.showCloseButton();
+                    }
+                } catch (e) {
+                    console.error('Error parsing SSE message:', e, 'Raw data:', event.data);
+                    this.addLog(`Parse error: ${e.message}`, 'error');
+                }
+            };
+
+            this.eventSource.onerror = (error) => {
+                console.error('SSE Error:', error);
+                this.addLog('SSE connection error', 'error');
+                if (this.eventSource && this.eventSource.readyState === EventSource.CLOSED) {
+                    this.addLog('Connection closed', 'info');
+                    if (!this.isComplete) {
+                        this.setStatus('⚠️', 'Connection lost');
+                        this.showCloseButton();
+                    }
+                }
+            };
+
+        } catch (error) {
+            console.error('Fetch error:', error);
+            this.addLog(`Error: ${error.message}`, 'error');
+            this.setStatus('❌', 'Failed');
+            this.showCloseButton();
+        }
+    }
+};
+
 const TradeVerification = {
     contracts: [],
     currentContract: null,
@@ -2126,45 +2307,12 @@ const TradeVerification = {
         const select = document.getElementById('contractSelect');
 
         btn.disabled = true;
-        btn.textContent = '⏳ Downloading...';
-        select.innerHTML = '<option value="">⏳ Downloading Trendlyne data... Please wait 2-3 minutes...</option>';
+        btn.textContent = '⏳ Opening...';
+        select.innerHTML = '<option value="">⏳ Fetching Trendlyne data... Check the log window</option>';
         select.disabled = true;
 
-        try {
-            const response = await ApiClient.post(ApiClient.endpoints.refreshTrendlyne, {
-                data_type: 'fno'
-            });
-
-            if (response && response.success) {
-                UIBuilders.showNotification({
-                    type: 'success',
-                    message: 'Trendlyne data downloaded! Updating list...',
-                    icon: '✅',
-                    timeout: 3000
-                });
-
-                btn.textContent = '✅ Downloaded';
-
-                // Refresh the contract list
-                setTimeout(async () => {
-                    await this.refreshContracts();
-                    btn.textContent = '📥 Fetch Fresh Data';
-                }, 1000);
-            } else {
-                throw new Error(response?.error || 'Failed to fetch Trendlyne data');
-            }
-        } catch (error) {
-            UIBuilders.showNotification({
-                type: 'error',
-                message: 'Failed to fetch Trendlyne data: ' + error.message,
-                icon: '❌'
-            });
-            select.innerHTML = '<option value="">❌ Error occurred. Try again.</option>';
-            btn.textContent = '📥 Fetch Fresh Data';
-        } finally {
-            btn.disabled = false;
-            select.disabled = false;
-        }
+        // Use the new TrendlyneLogger with SSE streaming
+        TrendlyneLogger.startFetch();
     },
 
     async verify() {

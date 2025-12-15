@@ -109,33 +109,33 @@ class ContractData(TimeStampedModel):
     symbol = models.CharField(max_length=50)
     option_type = models.CharField(max_length=10)  # CE/PE/FUT
     strike_price = models.FloatField(null=True, blank=True)
-    price = models.FloatField()
-    spot = models.FloatField()
+    price = models.FloatField(null=True, blank=True)
+    spot = models.FloatField(null=True, blank=True)
     expiry = models.CharField(max_length=50)
-    last_updated = models.CharField(max_length=50)
+    last_updated = models.CharField(max_length=50, null=True, blank=True)
     build_up = models.CharField(max_length=100, blank=True)
-    lot_size = models.IntegerField()
+    lot_size = models.IntegerField(null=True, blank=True)
 
     # Price metrics
-    day_change = models.FloatField()
-    pct_day_change = models.FloatField()
-    open_price = models.FloatField()
-    high_price = models.FloatField()
-    low_price = models.FloatField()
-    prev_close_price = models.FloatField()
+    day_change = models.FloatField(null=True, blank=True)
+    pct_day_change = models.FloatField(null=True, blank=True)
+    open_price = models.FloatField(null=True, blank=True)
+    high_price = models.FloatField(null=True, blank=True)
+    low_price = models.FloatField(null=True, blank=True)
+    prev_close_price = models.FloatField(null=True, blank=True)
 
     # Open Interest metrics
-    oi = models.BigIntegerField()
-    pct_oi_change = models.FloatField()
-    oi_change = models.BigIntegerField()
-    prev_day_oi = models.BigIntegerField()
+    oi = models.BigIntegerField(null=True, blank=True)
+    pct_oi_change = models.FloatField(null=True, blank=True)
+    oi_change = models.BigIntegerField(null=True, blank=True)
+    prev_day_oi = models.BigIntegerField(null=True, blank=True)
 
     # Volume metrics
-    traded_contracts = models.BigIntegerField()
-    traded_contracts_change_pct = models.FloatField()
-    shares_traded = models.BigIntegerField()
-    pct_volume_shares_change = models.FloatField()
-    prev_day_vol = models.BigIntegerField()
+    traded_contracts = models.BigIntegerField(null=True, blank=True)
+    traded_contracts_change_pct = models.FloatField(null=True, blank=True)
+    shares_traded = models.BigIntegerField(null=True, blank=True)
+    pct_volume_shares_change = models.FloatField(null=True, blank=True)
+    prev_day_vol = models.BigIntegerField(null=True, blank=True)
 
     # Futures metrics
     basis = models.FloatField(null=True, blank=True)

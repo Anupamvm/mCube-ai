@@ -534,58 +534,6 @@ def manual_triggers(request):
 
 @login_required
 @require_POST
-def refresh_trendlyne_data(request):
-    """
-    Trigger Trendlyne data refresh for F&O contracts
-    """
-    import subprocess
-    import json
-
-    try:
-        body = json.loads(request.body)
-        data_type = body.get('data_type', 'fno')  # fno, stocks, etc.
-
-        logger.info(f"Triggering Trendlyne data refresh for: {data_type}")
-
-        # Run the management command in background
-        # For now, we'll run the full cycle to ensure fresh data
-        result = subprocess.run(
-            ['python', 'manage.py', 'trendlyne_data_manager', '--full-cycle'],
-            capture_output=True,
-            text=True,
-            timeout=300  # 5 minute timeout
-        )
-
-        if result.returncode == 0:
-            logger.info("Trendlyne data refresh completed successfully")
-            return JsonResponse({
-                'success': True,
-                'message': 'Trendlyne data refreshed successfully',
-                'output': result.stdout
-            })
-        else:
-            logger.error(f"Trendlyne refresh failed: {result.stderr}")
-            return JsonResponse({
-                'success': False,
-                'error': result.stderr or 'Command failed'
-            })
-
-    except subprocess.TimeoutExpired:
-        logger.error("Trendlyne refresh timed out")
-        return JsonResponse({
-            'success': False,
-            'error': 'Data refresh timed out. Please try again later.'
-        })
-    except Exception as e:
-        logger.error(f"Error refreshing Trendlyne data: {str(e)}", exc_info=True)
-        return JsonResponse({
-            'success': False,
-            'error': str(e)
-        })
-
-
-@login_required
-@require_POST
 def get_contracts(request):
     """
     AJAX endpoint to fetch futures contracts based on dynamic volume thresholds
