@@ -73,7 +73,6 @@ INSTALLED_APPS = [
     'apps.core.apps.CoreConfig',
     'apps.accounts.apps.AccountsConfig',
     'apps.positions.apps.PositionsConfig',
-    'apps.orders.apps.OrdersConfig',
     'apps.strategies.apps.StrategiesConfig',
     'apps.risk.apps.RiskConfig',
     'apps.data.apps.DataConfig',

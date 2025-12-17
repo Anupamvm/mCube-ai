@@ -21,7 +21,7 @@ def sync_orders_from_broker():
     """
     try:
         from apps.accounts.models import BrokerAccount
-        from apps.orders.models import Order
+        from apps.brokers.models import Order
         from datetime import datetime
 
         synced_count = 0
@@ -34,7 +34,7 @@ def sync_orders_from_broker():
             try:
                 if account.broker == 'KOTAK':
                     # Sync from Kotak Neo
-                    from apps.brokers.kotak_neo import get_order_book
+                    from apps.brokers.integrations.kotak_neo import get_order_book
                     orders_data = get_order_book(account)
 
                     # Update orders in database
@@ -49,7 +49,7 @@ def sync_orders_from_broker():
 
                 elif account.broker == 'BREEZE':
                     # Sync from ICICI Breeze
-                    from apps.brokers.breeze import get_order_book
+                    from apps.brokers.integrations.breeze import get_order_book
                     orders_data = get_order_book(account)
 
                     Order.objects.filter(

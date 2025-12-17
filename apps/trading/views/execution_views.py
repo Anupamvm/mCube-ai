@@ -201,7 +201,7 @@ def confirm_manual_execution(request):
     from decimal import Decimal
     from django.db import transaction
 
-    from apps.orders.models import Order
+    from apps.brokers.models import Order
     from apps.accounts.models import BrokerAccount
     from apps.brokers.integrations.breeze import get_breeze_client
     from apps.brokers.integrations.kotak_neo import get_kotak_client
@@ -472,7 +472,7 @@ def execute_strangle_orders(request):
     from apps.brokers.integrations.kotak_neo import place_strangle_orders_in_batches
     from apps.positions.models import Position
     from apps.accounts.models import BrokerAccount
-    from apps.orders.models import Order
+    from apps.brokers.models import Order
 
     try:
         # Parse JSON body (frontend sends JSON, not form data)

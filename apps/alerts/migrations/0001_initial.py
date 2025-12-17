@@ -10,7 +10,7 @@ class Migration(migrations.Migration):
 
     dependencies = [
         ('accounts', '0001_initial'),
-        ('orders', '0001_initial'),
+        ('brokers', '0001_initial'),
         ('positions', '0001_initial'),
     ]
 
@@ -40,7 +40,7 @@ class Migration(migrations.Migration):
                 ('action_notes', models.TextField(blank=True)),
                 ('metadata', models.JSONField(blank=True, default=dict)),
                 ('account', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.CASCADE, related_name='alerts', to='accounts.brokeraccount')),
-                ('order', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='alerts', to='orders.order')),
+                ('order', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='alerts', to='brokers.order')),
                 ('position', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='alerts', to='positions.position')),
             ],
             options={

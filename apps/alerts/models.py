@@ -43,7 +43,7 @@ class Alert(TimeStampedModel):
     )
 
     order = models.ForeignKey(
-        'orders.Order',
+        'brokers.Order',
         on_delete=models.SET_NULL,
         null=True,
         blank=True,

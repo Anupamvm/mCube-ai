@@ -1,7 +1,8 @@
 """
 Account models for mCube Trading System
 
-This module contains models for broker accounts and API credentials.
+This module contains models for broker accounts.
+Note: API credentials are stored in CredentialStore (apps/core/models.py).
 """
 
 from decimal import Decimal
@@ -179,117 +180,4 @@ class BrokerAccount(TimeStampedModel):
         self.is_active = False
         if reason:
             self.notes = f"{self.notes}\n[DEACTIVATED] {reason}".strip()
-        self.save()
-
-
-class APICredential(TimeStampedModel):
-    """
-    API credentials for broker accounts
-
-    Stores encrypted API keys and secrets for broker API access.
-    Credentials are never logged and should be encrypted at rest.
-
-    Fields:
-        account: Associated broker account
-        consumer_key: API consumer key
-        consumer_secret: API consumer secret (encrypted)
-        access_token: API access token (encrypted)
-        refresh_token: API refresh token (encrypted)
-        is_valid: Whether credentials are currently valid
-        last_authenticated: Last successful authentication timestamp
-    """
-
-    account = models.OneToOneField(
-        BrokerAccount,
-        on_delete=models.CASCADE,
-        related_name='credentials',
-        help_text="Associated broker account"
-    )
-
-    consumer_key = models.CharField(
-        max_length=200,
-        help_text="API consumer key"
-    )
-
-    consumer_secret = models.CharField(
-        max_length=200,
-        help_text="API consumer secret (encrypted)"
-    )
-
-    access_token = models.CharField(
-        max_length=500,
-        blank=True,
-        help_text="API access token (encrypted)"
-    )
-
-    refresh_token = models.CharField(
-        max_length=500,
-        blank=True,
-        help_text="API refresh token (encrypted)"
-    )
-
-    # Additional broker-specific fields
-    mobile_number = models.CharField(
-        max_length=20,
-        blank=True,
-        help_text="Mobile number (for Kotak)"
-    )
-
-    password = models.CharField(
-        max_length=200,
-        blank=True,
-        help_text="Account password (encrypted)"
-    )
-
-    # Status tracking
-    is_valid = models.BooleanField(
-        default=False,
-        help_text="Whether credentials are currently valid"
-    )
-
-    last_authenticated = models.DateTimeField(
-        null=True,
-        blank=True,
-        help_text="Last successful authentication timestamp"
-    )
-
-    expires_at = models.DateTimeField(
-        null=True,
-        blank=True,
-        help_text="Token expiration timestamp"
-    )
-
-    class Meta:
-        db_table = 'api_credentials'
-        verbose_name = 'API Credential'
-        verbose_name_plural = 'API Credentials'
-
-    def __str__(self):
-        return f"Credentials for {self.account.account_name}"
-
-    def is_expired(self) -> bool:
-        """
-        Check if credentials are expired
-
-        Returns:
-            bool: True if expired
-        """
-        from django.utils import timezone
-
-        if not self.expires_at:
-            return True
-
-        return timezone.now() > self.expires_at
-
-    def mark_invalid(self):
-        """Mark credentials as invalid"""
-        self.is_valid = False
-        self.save()
-
-    def mark_valid(self):
-        """Mark credentials as valid"""
-        from django.utils import timezone
-
-        self.is_valid = True
-        self.last_authenticated = timezone.now()
         self.save()

@@ -65,18 +65,17 @@ mCube is an automated trading system that manages two accounts with different st
 
 ```
 mCube-ai/
-├── apps/               # 12 Django applications
+├── apps/               # 11 Django applications
 │   ├── core/          # Shared utilities, credentials
 │   ├── accounts/      # Broker accounts
 │   ├── positions/     # Position tracking
-│   ├── orders/        # Order management
 │   ├── strategies/    # Trading strategies
 │   ├── risk/          # Risk management
 │   ├── data/          # Market data, Trendlyne
 │   ├── llm/           # LLM integration
 │   ├── analytics/     # P&L tracking
 │   ├── alerts/        # Telegram bot
-│   ├── brokers/       # Broker integrations
+│   ├── brokers/       # Broker integrations, orders
 │   └── trading/       # Trading workflows
 ├── templates/         # HTML templates
 ├── static/            # CSS, JS assets

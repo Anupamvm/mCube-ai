@@ -12,7 +12,7 @@ from django.db import transaction
 
 from apps.trading.models import TradeSuggestion, TradeSuggestionLog
 from apps.positions.models import Position
-from apps.orders.models import Order
+from apps.brokers.models import Order
 from apps.accounts.models import BrokerAccount
 from apps.brokers.integrations.breeze import BreezeAPIClient
 from apps.brokers.integrations.kotak import KotakNeoAPIClient

@@ -124,18 +124,19 @@
 │  └───────────────────────────────────────────────────────┘  │
 │                           ↕                                  │
 │  ┌───────────────────────────────────────────────────────┐  │
-│  │           Django Backend (9 Applications)             │  │
+│  │           Django Backend (11 Applications)            │  │
 │  │                                                         │  │
 │  │  • core/        Base models, utilities, constants     │  │
-│  │  • accounts/    Broker accounts (Kotak, ICICI) , data accounts (trendlyne)        │  │
+│  │  • accounts/    Broker accounts (Kotak, ICICI)        │  │
 │  │  • strategies/  Trading strategy logic                │  │
 │  │  • positions/   Position tracking & monitoring        │  │
-│  │  • orders/      Order management & execution          │  │
+│  │  • brokers/     Broker APIs, orders & execution       │  │
 │  │  • risk/        Risk limits & circuit breakers        │  │
-│  │  • data/        Market data, OI, news aggregation     │  │
+│  │  • data/        Market data, OI, Trendlyne            │  │
 │  │  • llm/         LLM-based validation (Ollama)         │  │
 │  │  • analytics/   P&L tracking, learning engine         │  │
-│  │  • alerts/      Telegram    │  │
+│  │  • alerts/      Telegram notifications                │  │
+│  │  • trading/     Trading workflows & approvals         │  │
 │  └───────────────────────────────────────────────────────┘  │
 │                           ↕                                  │
 │  ┌───────────────────────────────────────────────────────┐  │
@@ -748,17 +749,18 @@ mcube/
 │   ├── wsgi.py
 │   └── celery.py
 │
-├── apps/                                # Django applications (9 apps)
+├── apps/                                # Django applications (11 apps)
 │   ├── core/                            # Core utilities
 │   ├── accounts/                        # Broker accounts
 │   ├── strategies/                      # Trading strategies
 │   ├── positions/                       # Position tracking
-│   ├── orders/                          # Order management
+│   ├── brokers/                         # Broker APIs & orders
 │   ├── risk/                            # Risk management
 │   ├── data/                            # Market data
 │   ├── llm/                             # LLM integration
 │   ├── analytics/                       # Analytics & learning
-│   └── alerts/                          # Notifications
+│   ├── alerts/                          # Notifications
+│   └── trading/                         # Trading workflows
 │
 ├── templates/                           # Global templates
 ├── static/                              # Static assets
@@ -1092,19 +1094,20 @@ PAPER_TRADING=True
 - [ ] Create management command: `init_system.py`
 
 **Day 5-7: Database Models**
-- [ ] Create all 9 Django apps
-- [ ] Implement all database models:
-  - [ ] `apps/core/models.py` - TimeStampedModel
-  - [ ] `apps/accounts/models.py` - BrokerAccount, APICredential
-  - [ ] `apps/strategies/models.py` - StrategyConfig, StrategyLearning
-  - [ ] `apps/positions/models.py` - Position, MonitorLog
-  - [ ] `apps/orders/models.py` - Order, Execution
-  - [ ] `apps/risk/models.py` - RiskLimit, CircuitBreaker
-  - [ ] `apps/data/models.py` - MarketData, OptionChain, Event
-  - [ ] `apps/llm/models.py` - LLMValidation, LLMPrompt
-  - [ ] `apps/analytics/models.py` - DailyPnL, Performance
-  - [ ] `apps/alerts/models.py` - Alert, AlertLog
-- [ ] Run makemigrations and migrate
+- [x] Create all 11 Django apps
+- [x] Implement all database models:
+  - [x] `apps/core/models.py` - TimeStampedModel, CredentialStore
+  - [x] `apps/accounts/models.py` - BrokerAccount
+  - [x] `apps/strategies/models.py` - StrategyConfig, StrategyLearning
+  - [x] `apps/positions/models.py` - Position, MonitorLog
+  - [x] `apps/brokers/models.py` - Order, Execution, BrokerLimit, BrokerPosition
+  - [x] `apps/risk/models.py` - RiskLimit, CircuitBreaker
+  - [x] `apps/data/models.py` - MarketData, OptionChain, Event
+  - [x] `apps/llm/models.py` - LLMValidation, LLMPrompt
+  - [x] `apps/analytics/models.py` - DailyPnL, Performance
+  - [x] `apps/alerts/models.py` - Alert, AlertLog
+  - [x] `apps/trading/models.py` - TradeSuggestion
+- [x] Run makemigrations and migrate
 - [ ] Register all models in admin.py
 
 #### Week 2: Core Business Logic

@@ -31,7 +31,7 @@ def home_page(request):
         try:
             from apps.positions.models import Position
             from apps.accounts.models import BrokerAccount
-            from apps.orders.models import Order
+            from apps.brokers.models import Order
 
             # Get active positions count
             active_positions = Position.objects.filter(status='ACTIVE').count()
@@ -1684,7 +1684,7 @@ def test_orders():
 
     # Test 1: Order model access
     try:
-        from apps.orders.models import Order
+        from apps.brokers.models import Order
         count = Order.objects.count()
         pending = Order.objects.filter(status='PENDING').count()
         filled = Order.objects.filter(status='FILLED').count()
@@ -1703,7 +1703,7 @@ def test_orders():
 
     # Test 2: Execution tracking
     try:
-        from apps.orders.models import Execution
+        from apps.brokers.models import Execution
         count = Execution.objects.count()
         latest = Execution.objects.order_by('-exchange_timestamp').first()
 
@@ -1721,7 +1721,7 @@ def test_orders():
 
     # Test 3: Order creation capability
     try:
-        from apps.orders.models import Order
+        from apps.brokers.models import Order
         # Just test that we can access the model methods
         test_order = Order(
             quantity=1,
@@ -3388,7 +3388,7 @@ def refresh_dashboard_stat(request, stat_type):
     try:
         from apps.positions.models import Position
         from apps.accounts.models import BrokerAccount
-        from apps.orders.models import Order
+        from apps.brokers.models import Order
         from decimal import Decimal
         
         STALE_THRESHOLD = timedelta(minutes=5)
@@ -3439,7 +3439,7 @@ def refresh_dashboard_stat(request, stat_type):
             if last_order and (django_timezone.now() - last_order.created_at) > STALE_THRESHOLD:
                 # Data might be stale, fetch from API
                 try:
-                    from apps.orders.services.order_sync import sync_orders_from_broker
+                    from apps.brokers.services.order_sync import sync_orders_from_broker
                     sync_orders_from_broker()
                     from_api = True
                 except Exception as e:

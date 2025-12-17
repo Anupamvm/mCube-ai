@@ -21,7 +21,7 @@ from django.core.cache import cache
 
 from apps.brokers.integrations.breeze import get_breeze_client, get_nfo_margin
 from apps.positions.models import Position
-from apps.orders.models import Order
+from apps.brokers.models import Order
 from apps.accounts.models import BrokerAccount
 from apps.core.constants import POSITION_STATUS_ACTIVE
 # from apps.positions.services.averaging_manager import AveragingManager  # TODO: Fix - class doesn't exist

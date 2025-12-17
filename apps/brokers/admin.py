@@ -3,7 +3,10 @@ Admin configuration for brokers app
 """
 
 from django.contrib import admin
-from apps.brokers.models import BrokerLimit, BrokerPosition, OptionChainQuote, HistoricalPrice
+from apps.brokers.models import (
+    BrokerLimit, BrokerPosition, OptionChainQuote, HistoricalPrice,
+    Order, Execution
+)
 
 
 @admin.register(BrokerLimit)
@@ -138,3 +141,71 @@ class HistoricalPriceAdmin(admin.ModelAdmin):
     ordering = ['-datetime']
 
     date_hierarchy = 'datetime'
+
+
+@admin.register(Order)
+class OrderAdmin(admin.ModelAdmin):
+    """Admin interface for Order model"""
+
+    list_display = [
+        'instrument',
+        'order_type',
+        'direction',
+        'quantity',
+        'status',
+        'broker_order_id',
+        'created_at',
+    ]
+
+    list_filter = [
+        'status',
+        'order_type',
+        'direction',
+        'exchange',
+    ]
+
+    search_fields = [
+        'instrument',
+        'broker_order_id',
+        'account__account_name',
+    ]
+
+    readonly_fields = [
+        'created_at',
+        'updated_at',
+        'placed_at',
+        'filled_at',
+        'cancelled_at',
+    ]
+
+    date_hierarchy = 'created_at'
+
+
+@admin.register(Execution)
+class ExecutionAdmin(admin.ModelAdmin):
+    """Admin interface for Execution model"""
+
+    list_display = [
+        'execution_id',
+        'order',
+        'quantity',
+        'price',
+        'exchange_timestamp',
+    ]
+
+    list_filter = [
+        'exchange',
+        'transaction_type',
+    ]
+
+    search_fields = [
+        'execution_id',
+        'order__instrument',
+    ]
+
+    readonly_fields = [
+        'created_at',
+        'updated_at',
+    ]
+
+    date_hierarchy = 'exchange_timestamp'

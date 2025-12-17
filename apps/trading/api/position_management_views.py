@@ -20,7 +20,7 @@ from django.core.cache import cache
 
 from apps.brokers.integrations.breeze import get_breeze_client
 from apps.positions.models import Position
-from apps.orders.models import Order
+from apps.brokers.models import Order
 from apps.core.constants import POSITION_STATUS_ACTIVE
 from apps.data.models import ContractData
 

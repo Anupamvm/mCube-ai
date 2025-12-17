@@ -40,7 +40,6 @@ urlpatterns = [
     path('data/', include('apps.data.urls')),
     path('analytics/', include('apps.analytics.urls')),
     path('positions/', include('apps.positions.urls')),
-    path('orders/', include('apps.orders.urls')),
     path('strategies/', include('apps.strategies.urls')),
     path('risk/', include('apps.risk.urls')),
     path('alerts/', include('apps.alerts.urls')),

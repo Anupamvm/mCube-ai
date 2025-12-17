@@ -469,8 +469,11 @@ secrets.py
 | File | Purpose |
 |------|---------|
 | `apps/core/models.py` | CredentialStore model |
+| `apps/brokers/models.py` | Order, Execution, BrokerLimit, BrokerPosition models |
 | `apps/brokers/interfaces.py` | BrokerInterface & factory |
 | `apps/brokers/integrations/breeze.py` | Breeze integration |
+| `apps/brokers/integrations/kotak_neo.py` | Kotak Neo integration |
+| `apps/brokers/services/order_sync.py` | Order synchronization service |
 | `tools/neo.py` | NeoAPI implementation |
 | `apps/core/management/commands/setup_credentials.py` | CLI commands |
 

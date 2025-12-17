@@ -14,10 +14,10 @@ This document explains how mCube is built and how all components work together.
     │  │    Frontend (Templates + Bootstrap 5 + HTMX)    │    │
     │  └─────────────────────────────────────────────────┘    │
     │  ┌─────────────────────────────────────────────────┐    │
-    │  │           Django Backend (12 Apps)               │    │
-    │  │    core | accounts | positions | orders |        │    │
-    │  │    strategies | risk | data | llm | analytics |  │    │
-    │  │    alerts | brokers | trading                    │    │
+    │  │           Django Backend (11 Apps)               │    │
+    │  │    core | accounts | positions | strategies |    │    │
+    │  │    risk | data | llm | analytics | alerts |      │    │
+    │  │    brokers | trading                             │    │
     │  └─────────────────────────────────────────────────┘    │
     │  ┌─────────────────────────────────────────────────┐    │
     │  │    Celery Workers + Django Background Tasks      │    │
@@ -57,18 +57,17 @@ mCube-ai/
 │   ├── urls.py
 │   └── celery.py
 │
-├── apps/               # Django applications (12 apps)
+├── apps/               # Django applications (11 apps)
 │   ├── core/          # Shared utilities, credentials
 │   ├── accounts/      # Broker accounts
 │   ├── positions/     # Position tracking
-│   ├── orders/        # Order management
 │   ├── strategies/    # Trading strategies
 │   ├── risk/          # Risk management
 │   ├── data/          # Market data, Trendlyne
 │   ├── llm/           # LLM validation
 │   ├── analytics/     # P&L tracking
 │   ├── alerts/        # Telegram bot
-│   ├── brokers/       # Broker integrations
+│   ├── brokers/       # Broker integrations, orders
 │   └── trading/       # Trading workflows
 │
 ├── templates/          # HTML templates
@@ -85,13 +84,10 @@ mCube-ai/
 Shared utilities, CredentialStore model, trading state management, system test page.
 
 ### accounts
-BrokerAccount model with capital allocation and risk limits. APICredential for broker auth.
+BrokerAccount model with capital allocation and risk limits.
 
 ### positions
 Position tracking with entry/exit, P&L calculation, MonitorLog for position checks.
-
-### orders
-Order placement and execution tracking.
 
 ### strategies
 Kotak strangle and ICICI futures strategy implementations.
@@ -112,7 +108,7 @@ Daily/weekly P&L tracking, performance analysis.
 Telegram bot integration with 14 commands.
 
 ### brokers
-Broker API integrations (Kotak Neo, ICICI Breeze), order placement services.
+Broker API integrations (Kotak Neo, ICICI Breeze), order placement, Order and Execution models.
 
 ### trading
 Trading workflows, trade suggestions, approval system.
@@ -167,6 +163,26 @@ margin_used = DecimalField()
 # Averaging
 averaging_count = IntegerField()
 original_entry_price = DecimalField()
+```
+
+### Order (apps/brokers/models.py)
+```python
+account = ForeignKey(BrokerAccount)
+position = ForeignKey(Position)       # Optional
+order_type = CharField()              # MARKET, LIMIT, SL, SLM
+direction = CharField()               # LONG, SHORT
+instrument = CharField()
+quantity = IntegerField()
+price = DecimalField()                # For LIMIT orders
+status = CharField()                  # PENDING, PLACED, FILLED, CANCELLED
+broker_order_id = CharField()
+filled_quantity = IntegerField()
+average_price = DecimalField()
+
+# Methods
+mark_placed(broker_order_id)
+mark_filled(average_price)
+mark_cancelled(reason)
 ```
 
 ### CredentialStore (apps/core/models.py)
@@ -229,9 +245,8 @@ Tasks run via **Celery** and **Django background_task**:
 | `/admin/` | django | Admin interface |
 | `/system/` | core | System test page |
 | `/accounts/` | accounts | Account management |
-| `/brokers/` | brokers | Broker dashboard |
+| `/brokers/` | brokers | Broker dashboard, orders |
 | `/positions/` | positions | Position management |
-| `/orders/` | orders | Order management |
 | `/strategies/` | strategies | Strategy config |
 | `/risk/` | risk | Risk limits |
 | `/data/` | data | Market data |

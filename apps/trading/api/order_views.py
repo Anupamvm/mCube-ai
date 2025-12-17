@@ -20,7 +20,7 @@ from django.core.cache import cache
 from apps.brokers.integrations.breeze import get_breeze_client, get_nfo_margin
 from apps.brokers.utils.security_master import get_futures_instrument
 from apps.positions.models import Position
-from apps.orders.models import Order
+from apps.brokers.models import Order
 from apps.accounts.models import BrokerAccount
 from apps.core.constants import POSITION_STATUS_ACTIVE
 from apps.data.models import ContractData
