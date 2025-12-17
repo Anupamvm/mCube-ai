@@ -1,0 +1,251 @@
+{
+  "step": 10,
+  "total_steps": 10,
+  "message": "Complete! 15700 records in 251.8s",
+  "status": "completed",
+  "percent": 100,
+  "timestamp": "2025-12-15T20:22:36.433084",
+  "details": {
+    "elapsed_seconds": 251.8244960308075,
+    "total_records": 15700,
+    "parsed_models": [
+      "ContractData"
+    ]
+  },
+  "logs": [
+    {
+      "time": "20:18:24",
+      "step": 1,
+      "message": "Initializing...",
+      "status": "running",
+      "timestamp": "2025-12-15T20:18:24.607954"
+    },
+    {
+      "time": "20:18:24",
+      "message": "Starting Trendlyne data fetch cycle",
+      "level": "info",
+      "timestamp": "2025-12-15T20:18:24.608327"
+    },
+    {
+      "time": "20:18:24",
+      "message": "Browser mode: headless",
+      "level": "info",
+      "timestamp": "2025-12-15T20:18:24.608932"
+    },
+    {
+      "time": "20:18:24",
+      "step": 1,
+      "message": "Clearing previous files...",
+      "status": "running",
+      "timestamp": "2025-12-15T20:18:24.609179"
+    },
+    {
+      "time": "20:18:24",
+      "message": "Clearing previous downloaded files",
+      "level": "info",
+      "timestamp": "2025-12-15T20:18:24.609386"
+    },
+    {
+      "time": "20:18:24",
+      "message": "Previous files cleared",
+      "level": "success",
+      "timestamp": "2025-12-15T20:18:24.610082"
+    },
+    {
+      "time": "20:18:24",
+      "step": 2,
+      "message": "Opening Chrome browser...",
+      "status": "running",
+      "timestamp": "2025-12-15T20:18:24.610327"
+    },
+    {
+      "time": "20:18:24",
+      "message": "Initializing Chrome WebDriver",
+      "level": "info",
+      "timestamp": "2025-12-15T20:18:24.610515"
+    },
+    {
+      "time": "20:18:24",
+      "step": 3,
+      "message": "Logging in to Trendlyne...",
+      "status": "running",
+      "timestamp": "2025-12-15T20:18:24.610727"
+    },
+    {
+      "time": "20:18:24",
+      "message": "Connecting to trendlyne.com",
+      "level": "info",
+      "timestamp": "2025-12-15T20:18:24.610937"
+    },
+    {
+      "time": "20:18:24",
+      "step": 2,
+      "message": "Opening Chrome browser...",
+      "status": "running",
+      "timestamp": "2025-12-15T20:18:24.664235"
+    },
+    {
+      "time": "20:18:24",
+      "message": "Chrome browser started",
+      "level": "success",
+      "timestamp": "2025-12-15T20:18:24.664620"
+    },
+    {
+      "time": "20:18:25",
+      "message": "WebDriver initialized successfully",
+      "level": "success",
+      "timestamp": "2025-12-15T20:18:25.198672"
+    },
+    {
+      "time": "20:18:25",
+      "step": 3,
+      "message": "Logging in to Trendlyne...",
+      "status": "running",
+      "timestamp": "2025-12-15T20:18:25.199237"
+    },
+    {
+      "time": "20:18:25",
+      "message": "Navigating to Trendlyne features page...",
+      "level": "info",
+      "timestamp": "2025-12-15T20:18:25.199666"
+    },
+    {
+      "time": "20:18:36",
+      "message": "Login successful!",
+      "level": "success",
+      "timestamp": "2025-12-15T20:18:36.113726"
+    },
+    {
+      "time": "20:18:36",
+      "step": 4,
+      "message": "Navigating to download page...",
+      "status": "running",
+      "timestamp": "2025-12-15T20:18:36.114399"
+    },
+    {
+      "time": "20:18:36",
+      "message": "Navigating to F&O contracts download page...",
+      "level": "info",
+      "timestamp": "2025-12-15T20:18:36.114706"
+    },
+    {
+      "time": "20:18:36",
+      "step": 4,
+      "message": "Downloading... 2784 KB received",
+      "status": "running",
+      "timestamp": "2025-12-15T20:18:36.688331"
+    },
+    {
+      "time": "20:18:38",
+      "step": 4,
+      "message": "Downloading... 2784 KB received",
+      "status": "running",
+      "timestamp": "2025-12-15T20:18:38.694761"
+    },
+    {
+      "time": "20:18:40",
+      "step": 4,
+      "message": "Downloaded contracts_2025_12_15.xlsx (2784 KB)",
+      "status": "running",
+      "timestamp": "2025-12-15T20:18:40.701342"
+    },
+    {
+      "time": "20:22:31",
+      "step": 4,
+      "message": "Waiting for file download...",
+      "status": "running",
+      "timestamp": "2025-12-15T20:22:31.776433"
+    },
+    {
+      "time": "20:22:31",
+      "step": 4,
+      "message": "Download complete: contracts_2025_12_15.xlsx (2784 KB)",
+      "status": "running",
+      "timestamp": "2025-12-15T20:22:31.777011"
+    },
+    {
+      "time": "20:22:31",
+      "step": 6,
+      "message": "Downloaded: contracts_2025_12_15.xlsx",
+      "status": "running",
+      "timestamp": "2025-12-15T20:22:31.901805"
+    },
+    {
+      "time": "20:22:31",
+      "message": "F&O contracts file downloaded: contracts_2025_12_15.xlsx",
+      "level": "success",
+      "timestamp": "2025-12-15T20:22:31.902317"
+    },
+    {
+      "time": "20:22:31",
+      "step": 7,
+      "message": "Parsing contract data...",
+      "status": "running",
+      "timestamp": "2025-12-15T20:22:31.902710"
+    },
+    {
+      "time": "20:22:31",
+      "message": "Starting data parsing and database import",
+      "level": "info",
+      "timestamp": "2025-12-15T20:22:31.903030"
+    },
+    {
+      "time": "20:22:31",
+      "step": 6,
+      "message": "Parsing ContractData...",
+      "status": "running",
+      "timestamp": "2025-12-15T20:22:31.903645"
+    },
+    {
+      "time": "20:22:36",
+      "step": 8,
+      "message": "Imported 15700 records",
+      "status": "running",
+      "timestamp": "2025-12-15T20:22:36.430261"
+    },
+    {
+      "time": "20:22:36",
+      "message": "Database import complete: 15700 total records",
+      "level": "success",
+      "timestamp": "2025-12-15T20:22:36.430830"
+    },
+    {
+      "time": "20:22:36",
+      "message": "  - ContractData updated",
+      "level": "info",
+      "timestamp": "2025-12-15T20:22:36.431244"
+    },
+    {
+      "time": "20:22:36",
+      "step": 9,
+      "message": "Finalizing...",
+      "status": "running",
+      "timestamp": "2025-12-15T20:22:36.431616"
+    },
+    {
+      "time": "20:22:36",
+      "message": "Closing browser and cleaning up",
+      "level": "info",
+      "timestamp": "2025-12-15T20:22:36.431965"
+    },
+    {
+      "time": "20:22:36",
+      "step": 10,
+      "message": "Complete! 15700 records in 251.8s",
+      "status": "completed",
+      "timestamp": "2025-12-15T20:22:36.432349"
+    },
+    {
+      "time": "20:22:36",
+      "message": "Full cycle completed in 251.8 seconds",
+      "level": "success",
+      "timestamp": "2025-12-15T20:22:36.432695"
+    },
+    {
+      "time": "20:22:36",
+      "message": "Data is now fresh - you can verify trades",
+      "level": "success",
+      "timestamp": "2025-12-15T20:22:36.433084"
+    }
+  ]
+}

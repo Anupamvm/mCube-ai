@@ -1,485 +1,151 @@
-# mCube AI Trading System - Documentation Index
+# mCube AI Trading System - Documentation
 
-**Last Updated:** November 19, 2025
-
-Welcome to the mCube AI Trading System documentation! This guide helps you navigate all available documentation organized by category.
+**AI-Powered Multi-Strategy F&O Trading System for Indian Markets**
 
 ---
 
-## 📚 Quick Navigation
+## What is mCube?
 
-| Category | Description | Go To |
-|----------|-------------|-------|
-| 🚀 **Getting Started** | Setup, installation, credentials | [setup/](#-setup--configuration) |
-| 🏦 **Brokers** | Broker integrations (ICICI, Kotak) | [brokers/](#-broker-integration) |
-| 📊 **Trading** | Trade approval, validation, workflows | [trading/](#-trade-management) |
-| 🔄 **Celery Tasks** | Background tasks, schedules | [celery/](#-celery--background-tasks) |
-| 📈 **Trendlyne** | Data integration, parsing | [trendlyne/](#-trendlyne-integration) |
-| 💬 **Telegram** | Bot setup, commands | [telegram/](#-telegram-bot) |
-| 🤖 **LLM/AI** | AI models, embeddings | [llm/](#-llm-integration) |
-| 🏗️ **Architecture** | Code structure, design patterns | [architecture/](#-architecture--core-systems) |
-| 🧪 **Testing** | Test pages, monitoring | [testing/](#-testing) |
-| 🔧 **Troubleshooting** | Common issues, fixes | [troubleshooting/](#-troubleshooting) |
-| 📋 **Status Reports** | Implementation status, updates | [status-reports/](#-implementation-status) |
-| 📡 **API** | Authentication, endpoints | [api/](#-api--authentication) |
-| 🧮 **Algorithms** | Trading algorithms, formulas | [algorithms/](#-algorithms--trading-strategies) |
-| ✨ **Features** | Feature implementations | [features/](#-feature-implementations) |
-| 🐛 **Fixes** | Bug fixes and debugging | [fixes/](#-bug-fixes--debugging) |
-| 🔌 **Integrations** | Third-party integrations | [integrations/](#-third-party-integrations) |
-| 🎨 **Design** | System design documents | [design/](#-system-design) |
-| 📄 **Root Docs** | Main project documents | [root/](#-root-documents) |
+mCube is an automated trading system that manages two accounts with different strategies:
+
+| Account | Capital | Strategy | Target Return |
+|---------|---------|----------|---------------|
+| **Kotak** | Rs 6 Crores | Weekly Nifty Short Strangle | Rs 6-8L/month |
+| **ICICI** | Rs 1.2 Crores | LLM-Validated Futures Trading | Rs 4-6L/month |
+
+**Combined Target**: Rs 12-15L monthly (1.7-2.1% monthly, 20-25% annually)
 
 ---
 
-## 🚀 Getting Started
+## Documentation Reading Guide
 
-### New Users Start Here:
+### For First-Time Setup (Start Here)
 
-1. **📖 Read First:** [architecture/QUICK_START.md](architecture/QUICK_START.md)
-2. **⚙️ Setup System:** [setup/SETUP_GUIDE.md](setup/SETUP_GUIDE.md)
-3. **🔑 Configure Credentials:** [setup/CREDENTIAL_SETUP_GUIDE.md](setup/CREDENTIAL_SETUP_GUIDE.md)
-4. **🏦 Setup Brokers:** [brokers/QUICKSTART_BROKERS.md](brokers/QUICKSTART_BROKERS.md)
-5. **💬 Setup Telegram:** [telegram/TELEGRAM_BOT_SETUP.md](telegram/TELEGRAM_BOT_SETUP.md)
-6. **🧪 Test System:** [testing/TEST_PAGE_SETUP.md](testing/TEST_PAGE_SETUP.md)
+1. **[01-GETTING-STARTED.md](01-GETTING-STARTED.md)** - Installation, configuration, and first run
 
----
+### For Understanding the System
 
-## 📖 Documentation by Category
+2. **[02-ARCHITECTURE.md](02-ARCHITECTURE.md)** - How the system is built
+3. **[03-TRADING-STRATEGIES.md](03-TRADING-STRATEGIES.md)** - The trading logic
 
-### 🏗️ Architecture & Core Systems
-Located in: `docs/architecture/`
+### For Broker & Data Integration
 
-- **[QUICK_START.md](architecture/QUICK_START.md)** - Quick start guide
-- **[DOCS_1_CODE_STRUCTURE.md](architecture/DOCS_1_CODE_STRUCTURE.md)** - Code organization
-- **[URL_CONFIGURATION.md](architecture/URL_CONFIGURATION.md)** - URL routing
-- **[BACKGROUND_TASKS_INTEGRATION.md](architecture/BACKGROUND_TASKS_INTEGRATION.md)** - Task integration
-- **[GRACEFUL_ERROR_HANDLING.md](architecture/GRACEFUL_ERROR_HANDLING.md)** - Error handling
-- **[LOGGING_AND_ERROR_HANDLING.md](architecture/LOGGING_AND_ERROR_HANDLING.md)** - Logging setup
-- **[INDIAN_FORMATTING_IMPLEMENTATION.md](architecture/INDIAN_FORMATTING_IMPLEMENTATION.md)** - ₹ formatting
-- **[DOCUMENTATION_INDEX.md](architecture/DOCUMENTATION_INDEX.md)** - Docs index
-- **[DOCUMENTATION_ACCESS.md](architecture/DOCUMENTATION_ACCESS.md)** - Access control
-- **[VISUAL_GUIDE.md](architecture/VISUAL_GUIDE.md)** - Visual guides
-- **[URL_AUDIT_COMPLETE.md](architecture/URL_AUDIT_COMPLETE.md)** - URL audit
+4. **[04-BROKER-INTEGRATION.md](04-BROKER-INTEGRATION.md)** - Connecting to brokers
+5. **[05-DATA-SOURCES.md](05-DATA-SOURCES.md)** - Market data and LLM
+
+### For Daily Operations
+
+6. **[06-OPERATIONS.md](06-OPERATIONS.md)** - Running and monitoring
 
 ---
 
-### 🚀 Setup & Configuration
-Located in: `docs/setup/`
+## Quick Reference
 
-- **[SETUP_GUIDE.md](setup/SETUP_GUIDE.md)** - Complete setup guide
-- **[SETUP_COMPLETE.md](setup/SETUP_COMPLETE.md)** - Setup completion checklist
-- **[DOCS_2_SETUP_CONFIGURATION.md](setup/DOCS_2_SETUP_CONFIGURATION.md)** - Configuration guide
-- **[CREDENTIALS_REFERENCE.md](setup/CREDENTIALS_REFERENCE.md)** - Credentials overview
-- **[CREDENTIAL_SETUP_GUIDE.md](setup/CREDENTIAL_SETUP_GUIDE.md)** - Step-by-step credentials
-- **[CREDENTIALS_STATUS.md](setup/CREDENTIALS_STATUS.md)** - Credentials status
-- **[LIVE_CREDENTIALS.md](setup/LIVE_CREDENTIALS.md)** - Live credentials info
-- **[CELERY_SETUP.md](setup/CELERY_SETUP.md)** - Celery configuration
-
----
-
-### 🏦 Broker Integration
-Located in: `docs/brokers/`
-
-- **[README_BROKERS.md](brokers/README_BROKERS.md)** - Brokers overview
-- **[QUICKSTART_BROKERS.md](brokers/QUICKSTART_BROKERS.md)** - Quick start guide
-- **[BROKER_QUICK_REFERENCE.md](brokers/BROKER_QUICK_REFERENCE.md)** - Quick reference
-- **[BROKER_INTEGRATION_SUMMARY.md](brokers/BROKER_INTEGRATION_SUMMARY.md)** - Integration details
-- **[ORDER_PLACEMENT_IMPLEMENTATION.md](brokers/ORDER_PLACEMENT_IMPLEMENTATION.md)** - Order execution
-
----
-
-### 📊 Trade Management
-Located in: `docs/trading/`
-
-- **[README_TRADE_APPROVAL.md](trading/README_TRADE_APPROVAL.md)** - Trade approval system
-- **[TRADE_APPROVAL_SYSTEM.md](trading/TRADE_APPROVAL_SYSTEM.md)** - Approval workflow
-- **[FUTURE_TRADE_VALIDATION.md](trading/FUTURE_TRADE_VALIDATION.md)** - Futures validation
-- **[OPTIMIZED_STRANGLE_WORKFLOW.md](trading/OPTIMIZED_STRANGLE_WORKFLOW.md)** - Strangle workflow
-- **[RISK_REWARD_METRICS.md](trading/RISK_REWARD_METRICS.md)** - Risk calculations
-
----
-
-### 🔄 Celery & Background Tasks
-Located in: `docs/celery/`
-
-- **[CELERY_TASKS_REFERENCE.md](celery/CELERY_TASKS_REFERENCE.md)** ⭐ Complete task reference (19 tasks)
-- **[SCHEDULE_UPDATES_SUMMARY.md](celery/SCHEDULE_UPDATES_SUMMARY.md)** Recent schedule updates
-
----
-
-### 📈 Trendlyne Integration
-Located in: `docs/trendlyne/`
-
-- **[README_TRENDLYNE.md](trendlyne/README_TRENDLYNE.md)** - Overview
-- **[TRENDLYNE_INTEGRATION.md](trendlyne/TRENDLYNE_INTEGRATION.md)** - Integration guide
-- **[TRENDLYNE_SETUP_COMPLETE.md](trendlyne/TRENDLYNE_SETUP_COMPLETE.md)** - Setup checklist
-- **[TRENDLYNE_DATA_FIX.md](trendlyne/TRENDLYNE_DATA_FIX.md)** - Data fixes
-- **[TRENDLYNE_INTEGRATION_SUMMARY.md](trendlyne/TRENDLYNE_INTEGRATION_SUMMARY.md)** - Summary
-- **[TRENDLYNE_WORKFLOW_UPDATE.md](trendlyne/TRENDLYNE_WORKFLOW_UPDATE.md)** - Workflow updates
-- **[TRENDLYNE_DATA_TRIGGERS.md](trendlyne/TRENDLYNE_DATA_TRIGGERS.md)** - Data triggers
-- **[TRENDLYNE_TRADING_INTEGRATION.md](trendlyne/TRENDLYNE_TRADING_INTEGRATION.md)** - Trading integration
-- **[COMPREHENSIVE_TRENDLYNE_PARSER.md](trendlyne/COMPREHENSIVE_TRENDLYNE_PARSER.md)** - Parser details
-- **[TRENDLYNE_DATA_MANAGEMENT.md](trendlyne/TRENDLYNE_DATA_MANAGEMENT.md)** - Data management
-
----
-
-### 💬 Telegram Bot
-Located in: `docs/telegram/`
-
-- **[TELEGRAM_BOT_GUIDE.md](telegram/TELEGRAM_BOT_GUIDE.md)** - Complete guide
-- **[TELEGRAM_BOT_SETUP.md](telegram/TELEGRAM_BOT_SETUP.md)** - Setup instructions
-- **[TELEGRAM_BOT_WORKING.md](telegram/TELEGRAM_BOT_WORKING.md)** - How it works
-- **[TELEGRAM_INTEGRATION_EXAMPLES.md](telegram/TELEGRAM_INTEGRATION_EXAMPLES.md)** - Code examples
-
----
-
-### 🤖 LLM Integration
-Located in: `docs/llm/`
-
-- **[LLM_QUICKSTART.md](llm/LLM_QUICKSTART.md)** - Quick start
-- **[LLM_MODEL_SETUP.md](llm/LLM_MODEL_SETUP.md)** - Model setup
-- **[LLM_INTEGRATION.md](llm/LLM_INTEGRATION.md)** - Integration guide
-
----
-
-### 🧪 Testing
-Located in: `docs/testing/`
-
-- **[TEST_PAGE_SETUP.md](testing/TEST_PAGE_SETUP.md)** - Test page setup
-- **[TEST_PAGE_TRIGGER_BUTTONS.md](testing/TEST_PAGE_TRIGGER_BUTTONS.md)** - Trigger buttons
-- **[TEST_PAGE_UPDATE_SUMMARY.md](testing/TEST_PAGE_UPDATE_SUMMARY.md)** - Update summary
-- **[DOCS_3_RUN_TEST_MONITOR.md](testing/DOCS_3_RUN_TEST_MONITOR.md)** - Test monitoring
-- **[SYSTEM_TEST_DISPLAY_EXAMPLES.md](testing/SYSTEM_TEST_DISPLAY_EXAMPLES.md)** - Display examples
-
----
-
-### 🔧 Troubleshooting
-Located in: `docs/troubleshooting/`
-
-- **[NUMPY_COMPATIBILITY_FIX.md](troubleshooting/NUMPY_COMPATIBILITY_FIX.md)** - NumPy 2.0 compatibility fix
-- **[RESTART_REQUIRED.md](troubleshooting/RESTART_REQUIRED.md)** - Backend restart guide for code changes
-
----
-
-### 📋 Implementation Status
-Located in: `docs/status-reports/` and `docs/implementation/`
-
-**Status Reports:**
-- **[status-reports/IMPLEMENTATION_STATUS_REPORT.md](status-reports/IMPLEMENTATION_STATUS_REPORT.md)** - Implementation status
-- **[status-reports/UPDATED_STATUS_REPORT.md](status-reports/UPDATED_STATUS_REPORT.md)** - Latest updates
-
-**Implementation Guides:**
-- **[implementation/IMPLEMENTATION_CHECKLIST.md](implementation/IMPLEMENTATION_CHECKLIST.md)** - Checklist
-- **[implementation/IMPLEMENTATION_COMPLETE.md](implementation/IMPLEMENTATION_COMPLETE.md)** - Completion status
-- **[implementation/IMPLEMENTATION_GUIDE.md](implementation/IMPLEMENTATION_GUIDE.md)** - Guide
-- **[implementation/FIXES_SUMMARY.md](implementation/FIXES_SUMMARY.md)** - Bug fixes
-- **[implementation/TEMPLATE_FIXES_SUMMARY.md](implementation/TEMPLATE_FIXES_SUMMARY.md)** - Template fixes
-- **[implementation/ENHANCEMENT_SUMMARY.md](implementation/ENHANCEMENT_SUMMARY.md)** - Enhancements
-
----
-
-### 📡 API & Authentication
-Located in: `docs/api/`
-
-- **[API_ENDPOINTS_REFERENCE.md](api/API_ENDPOINTS_REFERENCE.md)** - Endpoint reference
-- **[AUTHENTICATION_GUIDE.md](api/AUTHENTICATION_GUIDE.md)** - Auth guide
-- **[AUTHENTICATION_FLOW_UPDATE.md](api/AUTHENTICATION_FLOW_UPDATE.md)** - Auth flow details
-
----
-
-### 🧮 Algorithms & Trading Strategies
-Located in: `docs/algorithms/`
-
-- **[ALGORITHM_IMPROVEMENTS_REAL_DATA.md](algorithms/ALGORITHM_IMPROVEMENTS_REAL_DATA.md)** - Real data improvements
-- **[FUTURES_ALGORITHM_50PERCENT_RULE.md](algorithms/FUTURES_ALGORITHM_50PERCENT_RULE.md)** - 50% margin rule
-- **[FUTURES_ALGORITHM_POSITION_SIZING.md](algorithms/FUTURES_ALGORITHM_POSITION_SIZING.md)** - Position sizing algorithm
-- **[TRADE_SUGGESTION_SYSTEM.md](algorithms/TRADE_SUGGESTION_SYSTEM.md)** - Trade suggestion system
-
----
-
-### ✨ Feature Implementations
-Located in: `docs/features/`
-
-#### 🌟 Strangle Order Flow (Complete System)
-**[📑 INDEX: Strangle Order Flow](features/strangle-order-flow/INDEX.md)** ⭐ NEW - Complete Nifty Strangle order execution system
-- **Dynamic Lot Size** - Fetches from Neo API (always accurate)
-- **Parallel Execution** - CALL + PUT orders simultaneously (16% faster)
-- **Single Session** - One auth for all orders (47% fewer API calls)
-- **Smart Batching** - 20 lots max per order, 20s delays
-- **22 Documents** - Full implementation, testing, troubleshooting guides
-
-#### Other Features
-- **[SECURITY_MASTER_INTEGRATION.md](features/SECURITY_MASTER_INTEGRATION.md)** ⭐ NEW - ICICI SecurityMaster integration for accurate order placement
-- **[SECURITY_MASTER_USAGE.md](features/SECURITY_MASTER_USAGE.md)** - SecurityMaster usage guide
-- **[BACKGROUND_TASK_LOGGING.md](features/BACKGROUND_TASK_LOGGING.md)** - Background task logging
-- **[FUTURES_50_PERCENT_MARGIN_FIX.md](features/FUTURES_50_PERCENT_MARGIN_FIX.md)** - Futures margin feature
-- **[FUTURES_ALGORITHM_FULL_UI.md](features/FUTURES_ALGORITHM_FULL_UI.md)** - Full position sizing UI for futures algorithm
-- **[FUTURES_COMPLETE_IMPLEMENTATION.md](features/FUTURES_COMPLETE_IMPLEMENTATION.md)** - Complete futures implementation
-- **[FUTURES_POSITION_SIZING.md](features/FUTURES_POSITION_SIZING.md)** - Futures position sizing
-- **[FUTURES_SUGGESTION_TRACKING.md](features/FUTURES_SUGGESTION_TRACKING.md)** - Suggestion tracking
-- **[LOT_CALCULATIONS_FEATURE.md](features/LOT_CALCULATIONS_FEATURE.md)** - Lot calculations
-- **[MARGINS_FEATURE_IMPLEMENTATION.md](features/MARGINS_FEATURE_IMPLEMENTATION.md)** - Margins feature
-- **[NIFTY_STRANGLE_ENHANCEMENTS_COMPLETE.md](features/NIFTY_STRANGLE_ENHANCEMENTS_COMPLETE.md)** - Strangle enhancements
-- **[NIFTY_STRANGLE_IMPLEMENTATION.md](features/NIFTY_STRANGLE_IMPLEMENTATION.md)** - Strangle implementation
-- **[NIFTY_STRANGLE_PHASE1_COMPLETE.md](features/NIFTY_STRANGLE_PHASE1_COMPLETE.md)** - Strangle Phase 1
-- **[POSITION_SIZING_COMPLETE.md](features/POSITION_SIZING_COMPLETE.md)** - Position sizing complete
-- **[POSITION_SIZING_IMPLEMENTATION.md](features/POSITION_SIZING_IMPLEMENTATION.md)** - Position sizing
-- **[POSITION_SIZING_REDESIGN.md](features/POSITION_SIZING_REDESIGN.md)** - Position sizing redesign
-- **[POSITION_SUMMARY_REFRESH.md](features/POSITION_SUMMARY_REFRESH.md)** - Position summary
-- **[SUPPORT_RESISTANCE_IMPLEMENTATION.md](features/SUPPORT_RESISTANCE_IMPLEMENTATION.md)** - Support/Resistance
-
----
-
-### 🐛 Bug Fixes & Debugging
-Located in: `docs/fixes/`
-
-- **[STRANGLE_MODAL_BROWSER_FREEZE_FIX.md](fixes/STRANGLE_MODAL_BROWSER_FREEZE_FIX.md)** - ✅ Fixed browser freeze when clicking "Take This Trade" (Nov 20, 2025)
-- **[COLLAPSIBLE_ACCORDION_FIX.md](fixes/COLLAPSIBLE_ACCORDION_FIX.md)** - Collapsible accordion suggestion ID fix
-- **[COLLAPSIBLE_UI_COMPLETE_FIX.md](fixes/COLLAPSIBLE_UI_COMPLETE_FIX.md)** - Complete collapsible UI fix
-- **[DEBUGGING_STRANGLE_BUTTON.md](fixes/DEBUGGING_STRANGLE_BUTTON.md)** - Strangle button debug
-- **[ERROR_VERIFICATION_REPORT.md](fixes/ERROR_VERIFICATION_REPORT.md)** - Error verification
-- **[FINAL_FIX_VERIFICATION.md](fixes/FINAL_FIX_VERIFICATION.md)** - Final fix verification report
-- **[IMPORT_FIX_CREDENTIALSTORE.md](fixes/IMPORT_FIX_CREDENTIALSTORE.md)** - Import fix
-- **[MODULE_IMPORT_FIX.md](fixes/MODULE_IMPORT_FIX.md)** - Module import fix
-- **[PSYCHOLOGICAL_LEVELS_FIX.md](fixes/PSYCHOLOGICAL_LEVELS_FIX.md)** - Psychological levels fix
-- **[QUICK_FIX_SUMMARY.md](fixes/QUICK_FIX_SUMMARY.md)** - Quick fixes summary
-- **[STRANGLE_UI_FIX_SUMMARY.md](fixes/STRANGLE_UI_FIX_SUMMARY.md)** - Strangle UI fixes
-- **[SUGGESTION_CREATION_FIX.md](fixes/SUGGESTION_CREATION_FIX.md)** - Suggestion creation KeyError fix
-- **[SYNTAX_ERROR_FIX_FINAL.md](fixes/SYNTAX_ERROR_FIX_FINAL.md)** - Syntax error fix
-- **[TAKE_TRADE_BUTTON_FIX.md](fixes/TAKE_TRADE_BUTTON_FIX.md)** - Take trade button fix
-- **[TAKE_TRADE_DEBUG.md](fixes/TAKE_TRADE_DEBUG.md)** - Take trade debugging
-- **[TEST_JS_FIX.md](fixes/TEST_JS_FIX.md)** - JavaScript fix
-- **[VIEW_DETAILS_FIX.md](fixes/VIEW_DETAILS_FIX.md)** - View details fix
-- **[VIX_FIX.md](fixes/VIX_FIX.md)** - VIX fix
-- **[ZERO_LOTS_FIX.md](fixes/ZERO_LOTS_FIX.md)** - Zero lots fix
-
----
-
-### 🔌 Third-Party Integrations
-Located in: `docs/integrations/`
-
-- **[BREEZE_MARGIN_FIX.md](integrations/BREEZE_MARGIN_FIX.md)** - Breeze margin integration
-- **[BREEZE_SESSION_TOKEN_RENEWAL.md](integrations/BREEZE_SESSION_TOKEN_RENEWAL.md)** - Breeze session renewal
-- **[HISTORICAL_DATA_AND_VIX_FIX.md](integrations/HISTORICAL_DATA_AND_VIX_FIX.md)** - Historical data & VIX
-
----
-
-### 🎨 System Design
-Located in: `docs/design/`
-
-- **[mcube-ai.design.md](design/mcube-ai.design.md)** - Complete system design document
-- **[COMPREHENSIVE_DATA_INTEGRATION_STATUS.md](design/COMPREHENSIVE_DATA_INTEGRATION_STATUS.md)** - Data integration status
-
----
-
-### 📄 Root Documents
-Located in: `docs/root/`
-
-- **[INSTALL.md](root/INSTALL.md)** - Installation guide
-- **[PROJECT_README.md](root/PROJECT_README.md)** - Main project README
-
----
-
-## 📊 Documentation by Role
-
-### For Traders
-
-**Essential Reading:**
-- [Trading System Overview](trading/README_TRADE_APPROVAL.md)
-- [Telegram Bot Guide](telegram/TELEGRAM_BOT_GUIDE.md)
-- [Risk/Reward Metrics](trading/RISK_REWARD_METRICS.md)
-- [Broker Quick Reference](brokers/BROKER_QUICK_REFERENCE.md)
-
-**Trading Workflows:**
-- [Strangle Strategy](trading/OPTIMIZED_STRANGLE_WORKFLOW.md)
-- [Futures Validation](trading/FUTURE_TRADE_VALIDATION.md)
-- [Trade Approval](trading/TRADE_APPROVAL_SYSTEM.md)
-
----
-
-### For Developers
-
-**Essential Reading:**
-- [Code Structure](architecture/DOCS_1_CODE_STRUCTURE.md)
-- [Quick Start Guide](architecture/QUICK_START.md)
-- [URL Configuration](architecture/URL_CONFIGURATION.md)
-- [Error Handling](architecture/GRACEFUL_ERROR_HANDLING.md)
-
-**Development Guides:**
-- [Celery Tasks Reference](celery/CELERY_TASKS_REFERENCE.md)
-- [LLM Integration](llm/LLM_INTEGRATION.md)
-- [API Endpoints](api/API_ENDPOINTS_REFERENCE.md)
-- [Background Tasks](architecture/BACKGROUND_TASKS_INTEGRATION.md)
-
----
-
-### For System Administrators
-
-**Essential Reading:**
-- [Setup Guide](setup/SETUP_GUIDE.md)
-- [Celery Setup](setup/CELERY_SETUP.md)
-- [Credentials Management](setup/CREDENTIALS_REFERENCE.md)
-
-**Operations:**
-- [Celery Tasks Reference](celery/CELERY_TASKS_REFERENCE.md)
-- [Schedule Updates](celery/SCHEDULE_UPDATES_SUMMARY.md)
-- [Test Monitoring](testing/DOCS_3_RUN_TEST_MONITOR.md)
-
----
-
-## 📊 Recent Updates
-
-### November 20, 2025 (Latest)
-- ⭐ **MAJOR: Nifty Strangle Order Flow - Complete Implementation**
-  - **Dynamic Lot Size:** Fetches from Neo API using `search_scrip()` - always accurate
-  - **Parallel Execution:** CALL + PUT orders placed simultaneously (16% faster)
-  - **Single Session:** One authentication for all orders (47% fewer API calls)
-  - **Neo API Limits:** 20 lots max per order, 20-second delays between batches
-  - **Simple UI:** Clean confirm() dialog matching Futures pattern
-  - **22 Documentation Files:** Complete implementation, testing, and troubleshooting guides
-  - [INDEX: Strangle Order Flow](features/strangle-order-flow/INDEX.md)
-
-- ⭐ **MAJOR: SecurityMaster Integration for Order Placement**
-  - Created comprehensive SecurityMaster utility module for ICICI Breeze API
-  - Updated all order placement endpoints to use correct instrument codes
-  - Enhanced UI to display SecurityMaster details and full Breeze API responses
-  - Added caching (6 hours) for performance optimization
-  - Created extensive documentation (Quick Start, Integration Guide, Usage Guide)
-  - Files: `apps/brokers/utils/security_master.py`, updated `breeze.py`, `api_views.py`, templates
-  - [Quick Start Guide](SECURITY_MASTER_QUICK_START.md) | [Integration Details](features/SECURITY_MASTER_INTEGRATION.md)
-
-- ✅ **Documentation Cleanup - 22 Strangle Order Flow Files Organized**
-  - Created `docs/features/strangle-order-flow/` folder with comprehensive INDEX
-  - Moved 5 feature docs (implementation, optimization, limits)
-  - Moved 10 fix docs (lot size, authentication, UI fixes)
-  - Moved 3 test docs (flow testing, verification)
-  - Moved 2 troubleshooting docs (authentication, debugging)
-  - All documentation properly categorized and cross-referenced
-  - Total documents now: 135+ (was 113)
-
-### November 19, 2025
-- ✅ **Major Documentation Reorganization**
-  - Created 7 new categories: algorithms, features, fixes, integrations, design, root
-  - Moved 38 root-level .md files to appropriate folders
-  - Updated documentation index with all new categories
-  - Improved documentation discoverability and organization
-
-### November 17, 2025
-- ✅ Reorganized documentation structure
-- ✅ Updated Celery task schedules
-- ✅ Fixed NumPy 2.0 compatibility
-- ✅ Added comprehensive Celery tasks reference
-- ✅ Created schedule updates summary
-
-### Latest Documents
-1. [Complete System Design](design/mcube-ai.design.md) - Comprehensive system design document
-2. [Futures Complete Implementation](features/FUTURES_COMPLETE_IMPLEMENTATION.md) - Full futures trading system
-3. [Algorithm Improvements](algorithms/ALGORITHM_IMPROVEMENTS_REAL_DATA.md) - Real data-based improvements
-
----
-
-## 🎯 Common Tasks
-
-### Setup Tasks
-- [ ] Initial system setup → [setup/SETUP_GUIDE.md](setup/SETUP_GUIDE.md)
-- [ ] Configure credentials → [setup/CREDENTIAL_SETUP_GUIDE.md](setup/CREDENTIAL_SETUP_GUIDE.md)
-- [ ] Setup Celery → [setup/CELERY_SETUP.md](setup/CELERY_SETUP.md)
-- [ ] Setup Telegram bot → [telegram/TELEGRAM_BOT_SETUP.md](telegram/TELEGRAM_BOT_SETUP.md)
-
-### Development Tasks
-- [ ] Understand code structure → [architecture/DOCS_1_CODE_STRUCTURE.md](architecture/DOCS_1_CODE_STRUCTURE.md)
-- [ ] Add new API endpoint → [api/API_ENDPOINTS_REFERENCE.md](api/API_ENDPOINTS_REFERENCE.md)
-- [ ] Create Celery task → [celery/CELERY_TASKS_REFERENCE.md](celery/CELERY_TASKS_REFERENCE.md)
-- [ ] Integrate LLM model → [llm/LLM_INTEGRATION.md](llm/LLM_INTEGRATION.md)
-
-### Operations Tasks
-- [ ] Monitor Celery tasks → [celery/CELERY_TASKS_REFERENCE.md](celery/CELERY_TASKS_REFERENCE.md)
-- [ ] Update task schedules → [celery/SCHEDULE_UPDATES_SUMMARY.md](celery/SCHEDULE_UPDATES_SUMMARY.md)
-- [ ] Troubleshoot issues → [troubleshooting/](troubleshooting/)
-- [ ] Run system tests → [testing/TEST_PAGE_SETUP.md](testing/TEST_PAGE_SETUP.md)
-
----
-
-## 📞 Quick Links
-
-| What You Need | Where To Find It |
-|---------------|-----------------|
-| Setup from scratch | [setup/SETUP_GUIDE.md](setup/SETUP_GUIDE.md) |
-| Quick start guide | [architecture/QUICK_START.md](architecture/QUICK_START.md) |
-| Broker integration | [brokers/QUICKSTART_BROKERS.md](brokers/QUICKSTART_BROKERS.md) |
-| Celery tasks | [celery/CELERY_TASKS_REFERENCE.md](celery/CELERY_TASKS_REFERENCE.md) |
-| Telegram bot | [telegram/TELEGRAM_BOT_GUIDE.md](telegram/TELEGRAM_BOT_GUIDE.md) |
-| Trade workflows | [trading/README_TRADE_APPROVAL.md](trading/README_TRADE_APPROVAL.md) |
-| API reference | [api/API_ENDPOINTS_REFERENCE.md](api/API_ENDPOINTS_REFERENCE.md) |
-| Troubleshooting | [troubleshooting/](troubleshooting/) |
-
----
-
-## 🔄 Contributing to Documentation
-
-When adding new documentation:
-
-1. **Choose the right folder:**
-   - **Algorithms & strategies** → `algorithms/`
-   - **API docs** → `api/`
-   - **Architecture docs** → `architecture/`
-   - **Broker integrations** → `brokers/`
-   - **Background tasks** → `celery/`
-   - **System design** → `design/`
-   - **Feature implementations** → `features/`
-   - **Bug fixes & debugging** → `fixes/`
-   - **Implementation guides** → `implementation/`
-   - **Third-party integrations** → `integrations/`
-   - **LLM/AI** → `llm/`
-   - **Main project docs** → `root/`
-   - **Setup guides** → `setup/`
-   - **Status reports** → `status-reports/`
-   - **Telegram bot** → `telegram/`
-   - **Testing** → `testing/`
-   - **Trading workflows** → `trading/`
-   - **Trendlyne data** → `trendlyne/`
-   - **Troubleshooting** → `troubleshooting/`
-
-2. **Follow naming convention:**
-   - Use `UPPERCASE_WITH_UNDERSCORES.md`
-   - Be descriptive
-
-3. **Update this index:**
-   - Add your document to the relevant category
-   - Update "Recent Updates" section
-
----
-
-## 📁 Documentation Folder Structure
+### Core Trading Rules
 
 ```
-docs/
-├── algorithms/          # Trading algorithms and strategies (4 docs)
-├── api/                 # API endpoints and authentication (3 docs)
-├── architecture/        # System architecture and design (11 docs)
-├── archive/             # Archived documentation (1 doc)
-├── brokers/             # Broker integrations (5 docs)
-├── celery/              # Background tasks and schedules (2 docs)
-├── design/              # System design documents (2 docs)
-├── features/            # Feature implementations (16 docs)
-├── fixes/               # Bug fixes and debugging (18 docs)
-├── implementation/      # Implementation guides (6 docs)
-├── integrations/        # Third-party integrations (3 docs)
-├── llm/                 # LLM/AI integration (3 docs)
-├── root/                # Main project documents (2 docs)
-├── setup/               # Setup and configuration (8 docs)
-├── status-reports/      # Status and progress reports (2 docs)
-├── telegram/            # Telegram bot (5 docs)
-├── testing/             # Testing documentation (5 docs)
-├── trading/             # Trading workflows (5 docs)
-├── trendlyne/           # Trendlyne integration (10 docs)
-└── troubleshooting/     # Troubleshooting guides (2 docs)
+1. ONE POSITION PER ACCOUNT AT ANY TIME
+2. 50% MARGIN FOR FIRST TRADE
+3. OPTIONS: Skip if < 1 day to expiry
+4. FUTURES: Skip if < 15 days to expiry
+5. EXIT EOD only if >= 50% target achieved
+```
+
+### Tech Stack
+
+| Component | Technology |
+|-----------|------------|
+| Framework | Django 4.2 |
+| Database | SQLite |
+| Tasks | Celery + Redis + background_task |
+| LLM | Ollama (local) |
+| Alerts | Telegram Bot |
+
+### Project Structure
+
+```
+mCube-ai/
+├── apps/               # 12 Django applications
+│   ├── core/          # Shared utilities, credentials
+│   ├── accounts/      # Broker accounts
+│   ├── positions/     # Position tracking
+│   ├── orders/        # Order management
+│   ├── strategies/    # Trading strategies
+│   ├── risk/          # Risk management
+│   ├── data/          # Market data, Trendlyne
+│   ├── llm/           # LLM integration
+│   ├── analytics/     # P&L tracking
+│   ├── alerts/        # Telegram bot
+│   ├── brokers/       # Broker integrations
+│   └── trading/       # Trading workflows
+├── templates/         # HTML templates
+├── static/            # CSS, JS assets
+├── logs/              # Application logs
+└── docs/              # This documentation
 ```
 
 ---
 
-**Documentation Version:** 3.1
-**Last Major Update:** November 20, 2025
-**Total Documents:** 110
-**Total Categories:** 20
-**Status:** ✅ Complete & Organized
+## Essential Commands
+
+```bash
+# Start Django
+python manage.py runserver
+
+# Start Celery worker
+celery -A mcube_ai worker -l info
+
+# Start Celery beat scheduler
+celery -A mcube_ai beat -l info
+
+# Start Telegram bot
+python manage.py run_telegram_bot
+
+# View logs
+tail -f logs/mcube_ai.log
+```
+
+### Telegram Commands
+
+| Command | Description |
+|---------|-------------|
+| `/start` | Welcome message |
+| `/help` | List all commands |
+| `/status` | System overview |
+| `/positions` | All active positions |
+| `/position <id>` | Specific position details |
+| `/accounts` | Account balances |
+| `/risk` | Risk limits status |
+| `/pnl` | Today's P&L |
+| `/pnl_week` | This week's P&L |
+| `/close <id>` | Close specific position |
+| `/closeall` | Emergency close all |
+| `/pause` | Pause trading |
+| `/resume` | Resume trading |
+| `/logs` | Recent system events |
+
+---
+
+## Master Design Document
+
+For complete system design with all formulas:
+- **[design/mcube-ai.design.md](design/mcube-ai.design.md)**
+
+---
+
+## Access Points
+
+| URL | Purpose |
+|-----|---------|
+| http://localhost:8000/ | Home page |
+| http://localhost:8000/admin/ | Django Admin |
+| http://localhost:8000/system/test/ | System Health Check |
+| http://localhost:8000/brokers/ | Broker dashboard |
+| http://localhost:8000/trading/ | Trading interface |
+| http://localhost:8000/positions/ | Positions management |
+| http://localhost:8000/analytics/ | Analytics dashboard |
+| http://localhost:8000/llm/ | LLM interface |
+
+---
+
+*Last Updated: December 2024*
