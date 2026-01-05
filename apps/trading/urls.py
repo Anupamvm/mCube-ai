@@ -14,6 +14,7 @@ urlpatterns = [
     path('view-trades/', views.view_trades, name='view_trades'),  # View active positions
     path('trigger/futures/', views.trigger_futures_algorithm, name='trigger_futures'),
     path('trigger/strangle/', views.trigger_nifty_strangle, name='trigger_strangle'),
+    path('trigger/iron-condor/', views.trigger_broken_iron_condor, name='trigger_iron_condor'),
     path('trigger/verify/', views.verify_future_trade, name='verify_trade'),
     path('trigger/get-contracts/', views.get_contracts, name='get_contracts'),
     path('trigger/start-trendlyne-fetch/', views.start_trendlyne_fetch, name='start_trendlyne_fetch'),
@@ -22,6 +23,9 @@ urlpatterns = [
     path('trigger/update-neo-session/', views.update_neo_session, name='update_neo_session'),
     path('trigger/calculate-position-sizing/', views.calculate_position_sizing, name='calculate_position_sizing'),
     path('trigger/execute-strangle/', views.execute_strangle_orders, name='execute_strangle'),
+    path('trigger/execute-iron-condor/', views.execute_iron_condor_orders, name='execute_iron_condor'),
+    path('api/iron-condor-progress/<int:suggestion_id>/', views.get_iron_condor_progress, name='api_iron_condor_progress'),
+    path('api/cancel-iron-condor/', views.cancel_iron_condor_execution, name='api_cancel_iron_condor'),
 
     # Position Sizing API Endpoints
     path('api/calculate-position/', api_views.calculate_position_sizing, name='api_calculate_position'),

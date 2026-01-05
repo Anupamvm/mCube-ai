@@ -1192,7 +1192,8 @@ def place_strangle_orders_in_batches(
     total_lots: int,
     batch_size: int = 20,
     delay_seconds: int = 20,
-    product: str = 'NRML'
+    product: str = 'NRML',
+    lot_size: int = None  # Optional: if provided, use this instead of fetching
 ):
     """
     Place strangle orders (Call SELL + Put SELL) in batches with delays.
@@ -1256,9 +1257,12 @@ def place_strangle_orders_in_batches(
             'put_orders': []
         }
 
-    # Get lot size dynamically from Neo API (using same client)
-    lot_size = get_lot_size_from_neo(call_symbol, client=client)
-    logger.info(f"Using lot size: {lot_size} for {call_symbol}")
+    # Use provided lot size or fetch dynamically from Neo API
+    if lot_size is None:
+        lot_size = get_lot_size_from_neo(call_symbol, client=client)
+        logger.info(f"Fetched lot size: {lot_size} for {call_symbol}")
+    else:
+        logger.info(f"Using provided lot size: {lot_size} for {call_symbol}")
 
     call_orders = []
     put_orders = []

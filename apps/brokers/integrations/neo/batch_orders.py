@@ -682,3 +682,340 @@ def close_strangle_positions_in_batches(
             'call_orders': call_orders,
             'put_orders': put_orders
         }
+
+
+def place_iron_condor_orders_in_batches(
+    call_symbol: str,
+    put_symbol: str,
+    insurance_symbol: str,
+    total_lots: int,
+    batch_size: int = 20,
+    delay_seconds: int = 20,
+    product: str = 'NRML',
+    lot_size: int = None,
+    cancellation_key: str = None,
+    progress_key: str = None
+):
+    """
+    Place broken iron condor orders (Call SELL + Put SELL + Insurance Put BUY) in batches.
+
+    This function places 3 orders per batch:
+    - SELL Call (naked)
+    - SELL Put
+    - BUY Insurance Put (protection)
+
+    Args:
+        call_symbol (str): Call option trading symbol (e.g., 'NIFTY25NOV24600CE')
+        put_symbol (str): Put option trading symbol (e.g., 'NIFTY25NOV24100PE')
+        insurance_symbol (str): Insurance put trading symbol (e.g., 'NIFTY25NOV24000PE')
+        total_lots (int): Total number of lots to trade
+        batch_size (int): Maximum lots per order (default: 20, Neo API limit)
+        delay_seconds (int): Delay between batches in seconds (default: 20)
+        product (str): Product type - 'NRML', 'MIS' (default: 'NRML')
+        cancellation_key (str): Cache key to check for user cancellation
+        progress_key (str): Cache key for progress tracking
+
+    Returns:
+        dict: Batch execution results with call_orders, put_orders, insurance_orders
+    """
+    logger.info(f"Starting Iron Condor batch placement: {total_lots} lots in batches of {batch_size}")
+    logger.info(f"  SELL Call: {call_symbol}")
+    logger.info(f"  SELL Put: {put_symbol}")
+    logger.info(f"  BUY Insurance: {insurance_symbol}")
+
+    # Get single authenticated session for all orders
+    try:
+        client = _get_authenticated_client()
+        logger.info("Single Neo API session established for Iron Condor orders")
+    except Exception as e:
+        logger.error(f"Failed to establish Neo session: {e}")
+        return {
+            'success': False,
+            'error': f'Authentication failed: {str(e)}',
+            'call_orders': [],
+            'put_orders': [],
+            'insurance_orders': []
+        }
+
+    # Use provided lot size or fetch from Neo API
+    if lot_size is None:
+        lot_size = get_lot_size_from_neo(call_symbol, client=client)
+    logger.info(f"Using lot size: {lot_size} for NIFTY options")
+
+    call_orders = []
+    put_orders = []
+    insurance_orders = []
+    batches_completed = 0
+
+    # Calculate number of batches
+    num_batches = (total_lots + batch_size - 1) // batch_size
+
+    # Initialize progress tracking
+    if progress_key:
+        cache.set(progress_key, {
+            'batches_completed': 0,
+            'total_batches': num_batches,
+            'call_orders': 0,
+            'put_orders': 0,
+            'insurance_orders': 0,
+            'current_batch': None,
+            'is_cancelled': False,
+            'is_complete': False,
+            'is_success': False,
+            'last_log_message': f'Starting {num_batches} batches for {total_lots} lots',
+            'last_log_type': 'info'
+        }, 600)
+
+    try:
+        for batch_num in range(1, num_batches + 1):
+            # Check for cancellation before processing batch
+            if cancellation_key and cache.get(cancellation_key):
+                logger.warning(f"Iron Condor cancelled at batch {batch_num}/{num_batches}")
+                if progress_key:
+                    cache.set(progress_key, {
+                        'batches_completed': batches_completed,
+                        'total_batches': num_batches,
+                        'call_orders': sum(1 for o in call_orders if o['result'].get('success')),
+                        'put_orders': sum(1 for o in put_orders if o['result'].get('success')),
+                        'insurance_orders': sum(1 for o in insurance_orders if o['result'].get('success')),
+                        'current_batch': None,
+                        'is_cancelled': True,
+                        'is_complete': True,
+                        'is_success': False,
+                        'last_log_message': f'Cancelled at batch {batch_num}/{num_batches}',
+                        'last_log_type': 'warning'
+                    }, 600)
+
+                return _build_ic_result(
+                    cancelled=True,
+                    batches_completed=batches_completed,
+                    num_batches=num_batches,
+                    total_lots=total_lots,
+                    call_orders=call_orders,
+                    put_orders=put_orders,
+                    insurance_orders=insurance_orders
+                )
+
+            # Calculate lots for this batch
+            remaining_lots = total_lots - (batch_num - 1) * batch_size
+            current_batch_lots = min(batch_size, remaining_lots)
+            current_batch_quantity = current_batch_lots * lot_size
+
+            logger.info(f"Batch {batch_num}/{num_batches}: Placing {current_batch_lots} lots ({current_batch_quantity} qty)")
+
+            # Update progress - starting batch
+            if progress_key:
+                cache.set(progress_key, {
+                    'batches_completed': batches_completed,
+                    'total_batches': num_batches,
+                    'call_orders': sum(1 for o in call_orders if o['result'].get('success')),
+                    'put_orders': sum(1 for o in put_orders if o['result'].get('success')),
+                    'insurance_orders': sum(1 for o in insurance_orders if o['result'].get('success')),
+                    'current_batch': {
+                        'batch_num': batch_num,
+                        'lots': current_batch_lots,
+                        'quantity': current_batch_quantity
+                    },
+                    'is_cancelled': False,
+                    'is_complete': False,
+                    'is_success': False,
+                    'last_log_message': f'Processing batch {batch_num}/{num_batches}: {current_batch_lots} lots',
+                    'last_log_type': 'info'
+                }, 600)
+
+            # Place all 3 orders in parallel using threads
+            call_result = {}
+            put_result = {}
+            insurance_result = {}
+
+            def place_call_order():
+                nonlocal call_result
+                call_result = place_option_order(
+                    trading_symbol=call_symbol,
+                    transaction_type='S',  # SELL
+                    quantity=current_batch_quantity,
+                    product=product,
+                    order_type='MKT',
+                    client=client
+                )
+
+            def place_put_order():
+                nonlocal put_result
+                put_result = place_option_order(
+                    trading_symbol=put_symbol,
+                    transaction_type='S',  # SELL
+                    quantity=current_batch_quantity,
+                    product=product,
+                    order_type='MKT',
+                    client=client
+                )
+
+            def place_insurance_order():
+                nonlocal insurance_result
+                insurance_result = place_option_order(
+                    trading_symbol=insurance_symbol,
+                    transaction_type='B',  # BUY (insurance)
+                    quantity=current_batch_quantity,
+                    product=product,
+                    order_type='MKT',
+                    client=client
+                )
+
+            # Execute all 3 orders in parallel
+            threads = [
+                threading.Thread(target=place_call_order),
+                threading.Thread(target=place_put_order),
+                threading.Thread(target=place_insurance_order)
+            ]
+
+            logger.info("Placing CALL, PUT, and INSURANCE orders in parallel...")
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+
+            # Record results
+            call_orders.append({
+                'batch': batch_num,
+                'lots': current_batch_lots,
+                'quantity': current_batch_quantity,
+                'result': call_result
+            })
+
+            put_orders.append({
+                'batch': batch_num,
+                'lots': current_batch_lots,
+                'quantity': current_batch_quantity,
+                'result': put_result
+            })
+
+            insurance_orders.append({
+                'batch': batch_num,
+                'lots': current_batch_lots,
+                'quantity': current_batch_quantity,
+                'result': insurance_result
+            })
+
+            # Log results
+            if call_result.get('success'):
+                logger.info(f"CALL SELL batch {batch_num}: Order ID {call_result['order_id']}")
+            else:
+                logger.error(f"CALL SELL batch {batch_num} failed: {call_result.get('error', 'Unknown error')}")
+
+            if put_result.get('success'):
+                logger.info(f"PUT SELL batch {batch_num}: Order ID {put_result['order_id']}")
+            else:
+                logger.error(f"PUT SELL batch {batch_num} failed: {put_result.get('error', 'Unknown error')}")
+
+            if insurance_result.get('success'):
+                logger.info(f"INSURANCE BUY batch {batch_num}: Order ID {insurance_result['order_id']}")
+            else:
+                logger.error(f"INSURANCE BUY batch {batch_num} failed: {insurance_result.get('error', 'Unknown error')}")
+
+            batches_completed += 1
+
+            # Update progress after batch
+            if progress_key:
+                cache.set(progress_key, {
+                    'batches_completed': batches_completed,
+                    'total_batches': num_batches,
+                    'call_orders': sum(1 for o in call_orders if o['result'].get('success')),
+                    'put_orders': sum(1 for o in put_orders if o['result'].get('success')),
+                    'insurance_orders': sum(1 for o in insurance_orders if o['result'].get('success')),
+                    'current_batch': None,
+                    'is_cancelled': False,
+                    'is_complete': False,
+                    'is_success': False,
+                    'last_log_message': f'Batch {batch_num}/{num_batches} completed',
+                    'last_log_type': 'success'
+                }, 600)
+
+            # Delay before next batch (except for last batch)
+            if batch_num < num_batches:
+                logger.info(f"Waiting {delay_seconds} seconds before next batch...")
+                time.sleep(delay_seconds)
+
+        # Build final result
+        return _build_ic_result(
+            cancelled=False,
+            batches_completed=batches_completed,
+            num_batches=num_batches,
+            total_lots=total_lots,
+            call_orders=call_orders,
+            put_orders=put_orders,
+            insurance_orders=insurance_orders,
+            progress_key=progress_key
+        )
+
+    except Exception as e:
+        logger.exception(f"Error in Iron Condor batch placement: {e}")
+        return {
+            'success': False,
+            'error': str(e),
+            'total_lots': total_lots,
+            'batches_completed': batches_completed,
+            'call_orders': call_orders,
+            'put_orders': put_orders,
+            'insurance_orders': insurance_orders
+        }
+
+
+def _build_ic_result(
+    cancelled: bool,
+    batches_completed: int,
+    num_batches: int,
+    total_lots: int,
+    call_orders: list,
+    put_orders: list,
+    insurance_orders: list,
+    progress_key: str = None
+):
+    """Helper to build Iron Condor result dictionary."""
+    call_success = sum(1 for o in call_orders if o['result'].get('success'))
+    put_success = sum(1 for o in put_orders if o['result'].get('success'))
+    insurance_success = sum(1 for o in insurance_orders if o['result'].get('success'))
+
+    call_failed = len(call_orders) - call_success
+    put_failed = len(put_orders) - put_success
+    insurance_failed = len(insurance_orders) - insurance_success
+
+    success = (call_failed == 0 and put_failed == 0 and insurance_failed == 0) and not cancelled
+
+    logger.info(f"Iron Condor batch execution {'cancelled' if cancelled else 'complete'}: {batches_completed}/{num_batches} batches")
+    logger.info(f"Summary: Call {call_success}/{len(call_orders)}, Put {put_success}/{len(put_orders)}, Insurance {insurance_success}/{len(insurance_orders)}")
+
+    # Final progress update
+    if progress_key:
+        cache.set(progress_key, {
+            'batches_completed': batches_completed,
+            'total_batches': num_batches,
+            'call_orders': call_success,
+            'put_orders': put_success,
+            'insurance_orders': insurance_success,
+            'current_batch': None,
+            'is_cancelled': cancelled,
+            'is_complete': True,
+            'is_success': success,
+            'last_log_message': 'Cancelled by user' if cancelled else ('All orders successful' if success else 'Completed with some failures'),
+            'last_log_type': 'warning' if cancelled else ('success' if success else 'error')
+        }, 600)
+
+    return {
+        'success': success,
+        'cancelled': cancelled,
+        'total_lots': total_lots,
+        'batches_completed': batches_completed,
+        'total_batches': num_batches,
+        'call_orders': call_orders,
+        'put_orders': put_orders,
+        'insurance_orders': insurance_orders,
+        'summary': {
+            'call_success_count': call_success,
+            'put_success_count': put_success,
+            'insurance_success_count': insurance_success,
+            'call_failed_count': call_failed,
+            'put_failed_count': put_failed,
+            'insurance_failed_count': insurance_failed,
+            'total_orders_placed': len(call_orders) + len(put_orders) + len(insurance_orders)
+        }
+    }

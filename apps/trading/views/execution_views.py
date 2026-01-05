@@ -573,7 +573,8 @@ def execute_strangle_orders(request):
         logger.info(f"[BREEZE SYMBOLS] Call: {breeze_call_symbol}, Put: {breeze_put_symbol}, Lots: {total_lots}")
 
         # CRITICAL: Map Breeze symbols to Neo symbols before placing orders
-        from apps.brokers.integrations.kotak_neo import map_breeze_symbol_to_neo
+        # Use the symbol_mapper module which has the correct pScripRefKey-based matching
+        from apps.brokers.integrations.neo.symbol_mapper import map_breeze_symbol_to_neo
 
         logger.info(f"[SYMBOL MAPPING] Mapping Breeze symbols to Neo format...")
 
@@ -609,7 +610,8 @@ def execute_strangle_orders(request):
             total_lots=total_lots,
             batch_size=20,
             delay_seconds=20,
-            product='NRML'
+            product='NRML',
+            lot_size=lot_size  # Pass lot size from symbol mapping (already validated)
         )
 
         # Create Position and Order records if successful
@@ -906,6 +908,278 @@ def calculate_position_sizing(request):
             })
 
         logger.error(f"Error calculating position sizing: {e}", exc_info=True)
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        })
+
+
+@login_required
+@require_POST
+def execute_iron_condor_orders(request):
+    """
+    Execute Broken Iron Condor orders (3 legs) in batches via Kotak Neo API.
+
+    Places orders for:
+    - SELL Call (naked)
+    - SELL Put
+    - BUY Insurance Put (protection)
+
+    Request Body (JSON):
+        suggestion_id (int): TradeSuggestion ID
+        total_lots (int): Number of lots to trade
+
+    Returns:
+        JsonResponse: {
+            'success': bool,
+            'message': str,
+            'batch_result': dict with batch execution details
+        }
+    """
+    import json
+    from decimal import Decimal
+    from datetime import timedelta
+    from django.db import transaction
+    from django.core.cache import cache
+    from apps.trading.models import TradeSuggestion
+    from apps.brokers.integrations.neo.batch_orders import place_iron_condor_orders_in_batches
+    from apps.brokers.integrations.neo.symbol_mapper import map_breeze_symbol_to_neo
+    from apps.accounts.models import BrokerAccount
+
+    try:
+        data = json.loads(request.body.decode('utf-8'))
+        suggestion_id = data.get('suggestion_id')
+        total_lots = int(data.get('total_lots', 0))
+
+        if not suggestion_id or total_lots <= 0:
+            return JsonResponse({
+                'success': False,
+                'error': 'Missing or invalid parameters. Need suggestion_id and total_lots > 0'
+            })
+
+        # Get fresh suggestion data
+        suggestion = TradeSuggestion.objects.filter(
+            id=suggestion_id,
+            user=request.user,
+            strategy='kotak_broken_iron_condor'
+        ).first()
+
+        if not suggestion:
+            return JsonResponse({
+                'success': False,
+                'error': 'Suggestion not found or does not belong to you'
+            })
+
+        # Refresh from database to get latest values (user may have edited lots)
+        suggestion.refresh_from_db()
+
+        # Get broker account
+        broker_account = BrokerAccount.objects.filter(
+            broker='KOTAK', is_active=True
+        ).first()
+
+        if not broker_account:
+            return JsonResponse({
+                'success': False,
+                'error': 'No active Kotak broker account found'
+            })
+
+        # Build symbols
+        expiry_date = suggestion.expiry_date
+        expiry_str = expiry_date.strftime('%d%b').upper()
+
+        call_strike = int(suggestion.call_strike)
+        put_strike = int(suggestion.put_strike)
+
+        # Get insurance strike from position_details
+        position_details = suggestion.position_details or {}
+        insurance_strike = int(position_details.get('insurance_strike', put_strike - 500))
+
+        # Breeze symbols
+        breeze_call = f"NIFTY{expiry_str}{call_strike}CE"
+        breeze_put = f"NIFTY{expiry_str}{put_strike}PE"
+        breeze_insurance = f"NIFTY{expiry_str}{insurance_strike}PE"
+
+        logger.info(f"Iron Condor execution: {breeze_call}, {breeze_put}, {breeze_insurance}")
+
+        # Map to Neo symbols
+        call_mapping = map_breeze_symbol_to_neo(breeze_call, expiry_date=expiry_date)
+        put_mapping = map_breeze_symbol_to_neo(breeze_put, expiry_date=expiry_date)
+        insurance_mapping = map_breeze_symbol_to_neo(breeze_insurance, expiry_date=expiry_date)
+
+        if not all([call_mapping.get('success'), put_mapping.get('success'), insurance_mapping.get('success')]):
+            failed_mappings = []
+            if not call_mapping.get('success'):
+                failed_mappings.append(f"Call: {call_mapping.get('error', 'Unknown')}")
+            if not put_mapping.get('success'):
+                failed_mappings.append(f"Put: {put_mapping.get('error', 'Unknown')}")
+            if not insurance_mapping.get('success'):
+                failed_mappings.append(f"Insurance: {insurance_mapping.get('error', 'Unknown')}")
+
+            return JsonResponse({
+                'success': False,
+                'error': f'Symbol mapping failed: {", ".join(failed_mappings)}'
+            })
+
+        # Progress tracking keys
+        progress_key = f'ic_progress_{suggestion_id}'
+        cancellation_key = f'ic_cancel_{suggestion_id}'
+
+        # Clear any previous cancellation
+        cache.delete(cancellation_key)
+
+        # Execute batch orders
+        # Get lot size from mapping (NIFTY lot size is 75 for weekly, 25 for monthly)
+        lot_size = call_mapping.get('lot_size', 75)
+        logger.info(f"Executing Iron Condor: {total_lots} lots x {lot_size} = {total_lots * lot_size} qty")
+        batch_result = place_iron_condor_orders_in_batches(
+            call_symbol=call_mapping['neo_symbol'],
+            put_symbol=put_mapping['neo_symbol'],
+            insurance_symbol=insurance_mapping['neo_symbol'],
+            total_lots=total_lots,
+            batch_size=20,
+            delay_seconds=20,
+            product='NRML',
+            lot_size=lot_size,
+            cancellation_key=cancellation_key,
+            progress_key=progress_key
+        )
+
+        # Update suggestion status based on result
+        if batch_result['success']:
+            with transaction.atomic():
+                # Create position record
+                pos_lot_size = call_mapping.get('lot_size', 75)
+                quantity = total_lots * pos_lot_size
+
+                # Get margin and pricing data from suggestion
+                margin_used = suggestion.margin_required or Decimal('0')
+                entry_price = suggestion.total_premium or Decimal('0')
+                entry_value = entry_price * Decimal(str(quantity))
+
+                position = Position.objects.create(
+                    account=broker_account,
+                    strategy_type='BROKEN_IRON_CONDOR',
+                    instrument='NIFTY',
+                    direction='NEUTRAL',
+                    quantity=quantity,
+                    lot_size=pos_lot_size,
+                    entry_price=entry_price,
+                    entry_value=entry_value,
+                    call_strike=call_strike,
+                    put_strike=put_strike,
+                    expiry_date=expiry_date,
+                    status='ACTIVE',
+                    margin_used=margin_used,
+                    notes=f"IC: CE {call_strike}, PE {put_strike}, Insurance {insurance_strike}"
+                )
+
+                # Update suggestion
+                suggestion.status = 'TAKEN'
+                suggestion.taken_timestamp = timezone.now()
+                suggestion.save()
+
+                logger.info(f"Iron Condor executed successfully: Position {position.id}")
+
+            return JsonResponse({
+                'success': True,
+                'message': f"Iron Condor executed: {batch_result['batches_completed']}/{batch_result['total_batches']} batches completed",
+                'position_id': position.id,
+                'batch_result': batch_result
+            })
+        else:
+            return JsonResponse({
+                'success': False,
+                'error': batch_result.get('error', 'Batch execution failed'),
+                'batch_result': batch_result
+            })
+
+    except Exception as e:
+        logger.error(f"Error executing Iron Condor: {e}", exc_info=True)
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        })
+
+
+@login_required
+def get_iron_condor_progress(request, suggestion_id):
+    """
+    Get progress of Iron Condor batch order execution.
+
+    URL: /trading/api/iron-condor-progress/<suggestion_id>/
+
+    Returns:
+        JsonResponse: {
+            'success': bool,
+            'progress': {
+                'batches_completed': int,
+                'total_batches': int,
+                'call_orders': int,
+                'put_orders': int,
+                'insurance_orders': int,
+                'is_complete': bool,
+                'is_cancelled': bool,
+                'last_log_message': str,
+                'last_log_type': str
+            }
+        }
+    """
+    from django.core.cache import cache
+
+    progress_key = f'ic_progress_{suggestion_id}'
+    progress = cache.get(progress_key)
+
+    if progress:
+        return JsonResponse({
+            'success': True,
+            'progress': progress
+        })
+    else:
+        return JsonResponse({
+            'success': False,
+            'error': 'No progress data found'
+        })
+
+
+@login_required
+@require_POST
+def cancel_iron_condor_execution(request):
+    """
+    Cancel ongoing Iron Condor batch order execution.
+
+    Request Body (JSON):
+        suggestion_id (int): TradeSuggestion ID
+
+    Returns:
+        JsonResponse: {'success': bool, 'message': str}
+    """
+    import json
+    from django.core.cache import cache
+
+    try:
+        data = json.loads(request.body.decode('utf-8'))
+        suggestion_id = data.get('suggestion_id')
+
+        if not suggestion_id:
+            return JsonResponse({
+                'success': False,
+                'error': 'Missing suggestion_id'
+            })
+
+        # Set cancellation flag
+        cancellation_key = f'ic_cancel_{suggestion_id}'
+        cache.set(cancellation_key, True, 600)
+
+        logger.info(f"Iron Condor cancellation requested for suggestion {suggestion_id}")
+
+        return JsonResponse({
+            'success': True,
+            'message': 'Cancellation signal sent. Current batch will complete before stopping.'
+        })
+
+    except Exception as e:
+        logger.error(f"Error cancelling Iron Condor: {e}", exc_info=True)
         return JsonResponse({
             'success': False,
             'error': str(e)

@@ -23,3 +23,19 @@ try:
     __all__.append('TradeApprovalHandler')
 except ImportError:
     pass
+
+try:
+    from .trade_suggestions import (
+        TradeSuggestionService,
+        OptionsSuggestionFormatter,
+        FuturesSuggestionFormatter
+    )
+    __all__.extend(['TradeSuggestionService', 'OptionsSuggestionFormatter', 'FuturesSuggestionFormatter'])
+except ImportError:
+    pass
+
+try:
+    from .iron_condor_position_sizer import IronCondorPositionSizer
+    __all__.append('IronCondorPositionSizer')
+except ImportError:
+    pass

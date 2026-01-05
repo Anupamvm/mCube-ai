@@ -35,6 +35,7 @@ from .suggestion_views import (
 from .algorithm_views import (
     trigger_futures_algorithm,
     trigger_nifty_strangle,
+    trigger_broken_iron_condor,
 )
 
 from .verification_views import (
@@ -49,6 +50,9 @@ from .execution_views import (
     confirm_manual_execution,
     execute_strangle_orders,
     calculate_position_sizing,
+    execute_iron_condor_orders,
+    get_iron_condor_progress,
+    cancel_iron_condor_execution,
 )
 
 from .session_views import (
@@ -78,6 +82,7 @@ __all__ = [
     # Algorithm views
     'trigger_futures_algorithm',
     'trigger_nifty_strangle',
+    'trigger_broken_iron_condor',
 
     # Verification views
     'verify_future_trade',
@@ -90,6 +95,9 @@ __all__ = [
     'confirm_manual_execution',
     'execute_strangle_orders',
     'calculate_position_sizing',
+    'execute_iron_condor_orders',
+    'get_iron_condor_progress',
+    'cancel_iron_condor_execution',
 
     # Session views
     'update_breeze_session',

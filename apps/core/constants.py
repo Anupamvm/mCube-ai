@@ -79,10 +79,12 @@ DIRECTION_CHOICES = [
 # ============================================================================
 
 STRATEGY_KOTAK_STRANGLE = 'WEEKLY_NIFTY_STRANGLE'
+STRATEGY_KOTAK_BROKEN_IRON_CONDOR = 'BROKEN_IRON_CONDOR'
 STRATEGY_ICICI_FUTURES = 'LLM_VALIDATED_FUTURES'
 
 STRATEGY_CHOICES = [
     (STRATEGY_KOTAK_STRANGLE, 'Weekly Nifty Strangle'),
+    (STRATEGY_KOTAK_BROKEN_IRON_CONDOR, 'Broken Iron Condor'),
     (STRATEGY_ICICI_FUTURES, 'LLM Validated Futures'),
 ]
 
@@ -106,6 +108,47 @@ KOTAK_STRANGLE_PARAMS = {
     'vix_elevated_threshold': 18,
     'vix_elevated_multiplier': Decimal('1.10'),
     'vix_high_multiplier': Decimal('1.20'),
+}
+
+# ============================================================================
+# KOTAK BROKEN IRON CONDOR STRATEGY PARAMETERS
+# ============================================================================
+
+KOTAK_BROKEN_IRON_CONDOR_PARAMS = {
+    'instrument': 'NIFTY',
+    'base_delta_pct': Decimal('0.50'),  # Same as strangle
+    'min_days_to_expiry': 1,  # Skip if < 1 day
+    'min_profit_pct_to_exit': Decimal('50.00'),  # 50% profit minimum for EOD exit
+    'exit_day': 'THURSDAY',
+    'exit_time': '15:15',  # 3:15 PM IST
+    'delta_rebalance_threshold': 300,  # Alert if |net_delta| > 300
+    'target_profit_pct': Decimal('70.00'),  # 70% of net premium
+    'stop_loss_pct': Decimal('100.00'),  # 100% of net premium
+
+    # Insurance (Protective Put) Parameters
+    'default_risk_multiplier': Decimal('2.00'),  # Risk = 2x max profit
+    'min_risk_multiplier': Decimal('1.50'),  # Conservative
+    'max_risk_multiplier': Decimal('3.00'),  # Aggressive
+    'risk_multiplier_options': [
+        Decimal('1.50'),  # Conservative
+        Decimal('2.00'),  # Moderate (default)
+        Decimal('2.50'),  # Slightly aggressive
+        Decimal('3.00'),  # Aggressive
+    ],
+
+    # VIX-based delta adjustments (same as strangle)
+    'vix_normal_threshold': 15,
+    'vix_elevated_threshold': 18,
+    'vix_elevated_multiplier': Decimal('1.10'),
+    'vix_high_multiplier': Decimal('1.20'),
+
+    # 3-leg order execution
+    'num_legs': 3,
+    'leg_descriptions': [
+        'Sell OTM Call',
+        'Sell OTM Put',
+        'Buy OTM Put (Insurance)',
+    ],
 }
 
 # ============================================================================

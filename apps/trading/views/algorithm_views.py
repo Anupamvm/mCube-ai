@@ -1551,3 +1551,187 @@ def trigger_nifty_strangle(request):
             'error': str(e),
             'execution_log': execution_log if 'execution_log' in locals() else []
         })
+
+
+@login_required
+@require_POST
+def trigger_broken_iron_condor(request):
+    """
+    Manually trigger the Broken Iron Condor strategy.
+    Similar to Nifty Strangle but with an additional protective put (insurance).
+    """
+    import json
+    from decimal import Decimal
+    from datetime import date
+
+    try:
+        from apps.brokers.integrations.breeze import (
+            fetch_and_save_nifty_option_chain_all_expiries,
+            get_nifty_quote,
+            get_india_vix
+        )
+        from apps.core.services.expiry_selector import select_expiry_for_options
+        from apps.accounts.models import BrokerAccount
+        from apps.data.models import OptionChain
+        from apps.strategies.strategies.kotak_broken_iron_condor import (
+            calculate_strikes,
+            get_insurance_strike_options,
+        )
+        from apps.trading.models import TradeSuggestion
+        from apps.trading.services.iron_condor_position_sizer import IronCondorPositionSizer
+
+        execution_log = []
+
+        # Parse request body
+        try:
+            body = json.loads(request.body) if request.body else {}
+            risk_multiplier = Decimal(str(body.get('risk_multiplier', 2.0)))
+        except (json.JSONDecodeError, ValueError):
+            risk_multiplier = Decimal('2.0')
+
+        # Get Kotak account
+        account = BrokerAccount.objects.filter(broker='KOTAK', is_active=True).first()
+        if not account:
+            return JsonResponse({'success': False, 'error': 'No active Kotak broker account found'})
+
+        logger.info(f"Manual trigger: Broken Iron Condor with risk multiplier {risk_multiplier}")
+
+        # Fetch option chain
+        try:
+            total_saved = fetch_and_save_nifty_option_chain_all_expiries()
+            execution_log.append({'step': 1, 'action': 'Option Chain Fetch', 'status': 'success', 'message': f'Fetched {total_saved} records'})
+        except Exception as e:
+            execution_log.append({'step': 1, 'action': 'Option Chain Fetch', 'status': 'warning', 'message': str(e)})
+
+        # Get market data
+        try:
+            nifty_data = get_nifty_quote()
+            current_price = Decimal(str(nifty_data.get('ltp', 24000)))
+        except:
+            current_price = Decimal('24000')
+
+        try:
+            vix_data = get_india_vix()
+            vix = Decimal(str(vix_data.get('ltp', 14.5)))
+        except:
+            vix = Decimal('14.5')
+
+        # Select expiry
+        selected_expiry, _ = select_expiry_for_options(instrument='NIFTY', min_days=1)
+        days_to_expiry = (selected_expiry - date.today()).days
+
+        # Calculate strikes
+        strikes = calculate_strikes(current_price, days_to_expiry, vix)
+
+        # Get premiums
+        call_option = OptionChain.objects.filter(underlying='NIFTY', strike=strikes['call_strike'], option_type='CE', expiry_date=selected_expiry).order_by('-created_at').first()
+        put_option = OptionChain.objects.filter(underlying='NIFTY', strike=strikes['put_strike'], option_type='PE', expiry_date=selected_expiry).order_by('-created_at').first()
+        call_premium = Decimal(str(call_option.ltp)) if call_option else Decimal('100.0')
+        put_premium = Decimal(str(put_option.ltp)) if put_option else Decimal('100.0')
+
+        # Calculate insurance options first (with default quantity for display)
+        lot_size = 75  # NIFTY lot size (updated from 50 to 75)
+        default_quantity = 75  # For initial insurance calculations
+        total_premium = call_premium + put_premium
+        max_profit_strangle = total_premium * default_quantity
+
+        insurance_options = get_insurance_strike_options(put_strike=strikes['put_strike'], max_profit=max_profit_strangle, quantity=default_quantity, spot_price=current_price)
+
+        for opt in insurance_options:
+            ins_option = OptionChain.objects.filter(underlying='NIFTY', strike=opt['insurance_strike'], option_type='PE', expiry_date=selected_expiry).order_by('-created_at').first()
+            ins_premium = Decimal(str(ins_option.ltp)) if ins_option else Decimal('50.0')
+            opt['insurance_premium'] = float(ins_premium)
+            opt['net_premium'] = float(total_premium - ins_premium)
+            opt['adjusted_max_profit'] = float((total_premium - ins_premium) * default_quantity)
+
+        selected_insurance = next((opt for opt in insurance_options if abs(Decimal(str(opt['risk_multiplier'])) - risk_multiplier) < Decimal('0.01')), insurance_options[1])
+        insurance_premium = Decimal(str(selected_insurance['insurance_premium']))
+        net_premium = Decimal(str(selected_insurance['net_premium']))
+
+        # Position sizing using IronCondorPositionSizer
+        try:
+            position_sizer = IronCondorPositionSizer(request.user)
+            position_sizing = position_sizer.calculate_iron_condor_position_size(
+                call_strike=strikes['call_strike'],
+                put_strike=strikes['put_strike'],
+                insurance_strike=selected_insurance['insurance_strike'],
+                call_premium=call_premium,
+                put_premium=put_premium,
+                insurance_premium=insurance_premium,
+                spot_price=current_price,
+                vix=vix
+            )
+            lots = position_sizing['recommended_lots']
+            quantity = position_sizing['position']['quantity']
+            margin_required = position_sizing['total_margin_required']
+            margin_per_lot = position_sizing['margin_per_lot']
+            max_lots_possible = position_sizing['max_lots_possible']
+            execution_log.append({'step': 2, 'action': 'Position Sizing', 'status': 'success', 'message': f'{lots} lots recommended'})
+        except Exception as e:
+            logger.warning(f"Position sizing failed, using default: {e}")
+            lots, quantity = 1, 50
+            margin_required = 80000
+            margin_per_lot = 80000
+            max_lots_possible = 10
+            position_sizing = None
+            execution_log.append({'step': 2, 'action': 'Position Sizing', 'status': 'warning', 'message': f'Using default: {e}'})
+
+        # Calculate adjusted values based on actual lots
+        adjusted_max_profit = float(net_premium) * quantity
+        spread_width = strikes['put_strike'] - selected_insurance['insurance_strike']
+        adjusted_max_loss = float((Decimal(str(spread_width)) - net_premium) * quantity)
+
+        # Create suggestion with margin data
+        suggestion = TradeSuggestion.objects.create(
+            user=request.user, strategy='kotak_broken_iron_condor', suggestion_type='OPTIONS', instrument='NIFTY', direction='NEUTRAL',
+            spot_price=current_price, vix=vix, expiry_date=selected_expiry, days_to_expiry=days_to_expiry,
+            call_strike=Decimal(str(strikes['call_strike'])), put_strike=Decimal(str(strikes['put_strike'])),
+            call_premium=call_premium, put_premium=put_premium, total_premium=net_premium, recommended_lots=lots,
+            margin_required=Decimal(str(margin_required)),
+            margin_per_lot=Decimal(str(margin_per_lot)),
+            max_profit=Decimal(str(adjusted_max_profit)), max_loss=Decimal(str(adjusted_max_loss)),
+            algorithm_reasoning={'strategy': 'Broken Iron Condor', 'risk_multiplier': float(risk_multiplier), 'insurance_strike': selected_insurance['insurance_strike']},
+            position_details={
+                'legs': [
+                    {'action': 'SELL', 'option_type': 'CE', 'strike': strikes['call_strike'], 'premium': float(call_premium)},
+                    {'action': 'SELL', 'option_type': 'PE', 'strike': strikes['put_strike'], 'premium': float(put_premium)},
+                    {'action': 'BUY', 'option_type': 'PE', 'strike': selected_insurance['insurance_strike'], 'premium': selected_insurance['insurance_premium']},
+                ],
+                'quantity': quantity,
+                'lot_size': lot_size,
+                'lots': lots,
+                'insurance_strike': selected_insurance['insurance_strike'],
+                'insurance_premium': selected_insurance['insurance_premium'],
+            }
+        )
+
+        return JsonResponse({
+            'success': True,
+            'iron_condor': {
+                'strategy': 'Broken Iron Condor', 'underlying': 'NIFTY', 'current_price': float(current_price),
+                'expiry_date': str(selected_expiry), 'days_to_expiry': days_to_expiry, 'vix': float(vix),
+                'call_strike': strikes['call_strike'], 'put_strike': strikes['put_strike'],
+                'call_premium': float(call_premium), 'put_premium': float(put_premium),
+                'insurance': {
+                    'insurance_strike': selected_insurance['insurance_strike'], 'insurance_premium': selected_insurance['insurance_premium'],
+                    'risk_multiplier': selected_insurance['risk_multiplier'], 'max_loss_on_put_side': adjusted_max_loss,
+                    'available_options': insurance_options,
+                },
+                'net_premium': float(net_premium),
+                'quantity': quantity,
+                'lots': lots,
+                'lot_size': lot_size,
+                'margin_required': margin_required,
+                'margin_per_lot': margin_per_lot,
+                'max_lots_possible': max_lots_possible,
+                'max_profit': adjusted_max_profit,
+                'max_loss': adjusted_max_loss,
+                'position_sizing': position_sizing,
+                'suggestion_id': suggestion.id,
+                'execution_log': execution_log,
+            }
+        })
+
+    except Exception as e:
+        logger.error(f"Error in trigger_broken_iron_condor: {e}", exc_info=True)
+        return JsonResponse({'success': False, 'error': str(e), 'execution_log': execution_log if 'execution_log' in locals() else []})

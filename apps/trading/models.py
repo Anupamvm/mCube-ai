@@ -20,6 +20,7 @@ class TradeSuggestion(models.Model):
 
     STRATEGY_CHOICES = [
         ('kotak_strangle', 'Kotak Strangle (Options)'),
+        ('kotak_broken_iron_condor', 'Kotak Broken Iron Condor (Options)'),
         ('icici_futures', 'ICICI Futures'),
     ]
 
@@ -43,7 +44,7 @@ class TradeSuggestion(models.Model):
 
     # Core Information
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='trade_suggestions')
-    strategy = models.CharField(max_length=20, choices=STRATEGY_CHOICES)
+    strategy = models.CharField(max_length=30, choices=STRATEGY_CHOICES)
     suggestion_type = models.CharField(max_length=10, choices=SUGGESTION_TYPE_CHOICES)
 
     # Trade Details
@@ -225,11 +226,12 @@ class AutoTradeConfig(models.Model):
 
     STRATEGY_CHOICES = [
         ('kotak_strangle', 'Kotak Strangle'),
+        ('kotak_broken_iron_condor', 'Kotak Broken Iron Condor'),
         ('icici_futures', 'ICICI Futures'),
     ]
 
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='auto_trade_configs')
-    strategy = models.CharField(max_length=20, choices=STRATEGY_CHOICES)
+    strategy = models.CharField(max_length=30, choices=STRATEGY_CHOICES)
 
     # Auto-Trade Settings
     is_enabled = models.BooleanField(default=False)
