@@ -475,6 +475,7 @@ class NewsArticle(TimeStampedModel):
     author = models.CharField(max_length=200, blank=True)
     published_at = models.DateTimeField(db_index=True)
     url = models.URLField(max_length=1000, unique=True)
+    image_url = models.URLField(max_length=1000, blank=True, help_text="Article image URL")
 
     # Content
     summary = models.TextField(help_text="Article summary/excerpt")

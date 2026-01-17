@@ -275,6 +275,24 @@ if created:
 else:
     print('✓ Telegram bot credentials already exist (@dmcube_bot)')
 
+# ============================================================================
+# GNews.io Credentials (News Data Provider)
+# ============================================================================
+gnewsio_creds, created = CredentialStore.objects.get_or_create(
+    service='gnewsio',
+    name='default',
+    defaults={
+        'api_key': 'd027318d9f16ac02e0487003402cab70',
+        'username': 'avmgp.in@gmail.com',
+        'password': 'Anupamvm1!',
+    }
+)
+
+if created:
+    print('✓ Created GNews.io credentials')
+else:
+    print('✓ GNews.io credentials already exist')
+
 print('\n✓ All broker accounts and credentials configured!')
 print(f'  - Kotak: {kotak_account.account_name} (₹{kotak_account.allocated_capital:,.0f})')
 print(f'  - ICICI: {icici_account.account_name} (₹{icici_account.allocated_capital:,.0f})')
@@ -282,6 +300,7 @@ print(f'  - Total Capital: ₹{kotak_account.allocated_capital + icici_account.a
 print(f'  - Kotak Neo API: CredentialStore configured (PAN: AAQHA1835B)')
 print(f'  - ICICI Breeze API: CredentialStore configured')
 print(f'  - Trendlyne: Market data access configured')
+print(f'  - GNews.io: News data provider configured')
 print(f'  - Telegram Bot: @dmcube_bot configured (Chat ID: 788423838)')
 EOF
 
@@ -311,6 +330,7 @@ echo "                PAN: AAQHA1835B"
 echo "  ICICI Breeze: ₹1.2 Cr (LLM-validated Futures)"
 echo "                Account: 52780531"
 echo "  Trendlyne:    Market data provider (configured)"
+echo "  GNews.io:     News data provider (configured)"
 echo "  Telegram Bot: @dmcube_bot (Chat ID: 788423838)"
 echo "  Total Capital: ₹7.2 Cr"
 echo ""

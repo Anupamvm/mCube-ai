@@ -211,6 +211,7 @@ const ApiClient = (function() {
         getSuggestion: (id) => `/trading/api/suggestions/${id}/`,
         listSuggestions: '/trading/api/suggestions/',
         updateSuggestion: '/trading/api/suggestions/update/',
+        fetchTradeNews: '/trading/trigger/fetch-news/',
 
         // Calculation endpoints
         calculatePosition: '/trading/api/calculate-position/',

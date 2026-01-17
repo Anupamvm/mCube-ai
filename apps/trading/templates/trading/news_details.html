@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ title }} - News Details</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 20px;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 1000px;
+            margin: 0 auto;
+        }
+
+        .header {
+            background: white;
+            border-radius: 12px;
+            padding: 25px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+
+        .header h1 {
+            color: #1f2937;
+            font-size: 1.75rem;
+            margin-bottom: 10px;
+        }
+
+        .header .meta {
+            color: #6b7280;
+            font-size: 0.875rem;
+            display: flex;
+            gap: 20px;
+            align-items: center;
+        }
+
+        .category-badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+
+        .category-stock {
+            background: #d1fae5;
+            color: #065f46;
+        }
+
+        .category-industry {
+            background: #dbeafe;
+            color: #1e40af;
+        }
+
+        .category-competitor {
+            background: #fef3c7;
+            color: #92400e;
+        }
+
+        .articles-grid {
+            display: grid;
+            gap: 20px;
+        }
+
+        .article-card {
+            background: white;
+            border-radius: 12px;
+            padding: 25px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        .article-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        }
+
+        .article-content {
+            display: flex;
+            gap: 20px;
+            align-items: start;
+        }
+
+        .article-image {
+            width: 200px;
+            height: 140px;
+            object-fit: cover;
+            border-radius: 8px;
+            flex-shrink: 0;
+        }
+
+        .article-text {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .article-title {
+            color: #1f2937;
+            font-size: 1.25rem;
+            font-weight: 600;
+            margin-bottom: 12px;
+            line-height: 1.4;
+        }
+
+        .article-title a {
+            color: inherit;
+            text-decoration: none;
+        }
+
+        .article-title a:hover {
+            color: #3b82f6;
+        }
+
+        .article-description {
+            color: #6b7280;
+            font-size: 0.95rem;
+            line-height: 1.6;
+            margin-bottom: 15px;
+        }
+
+        .article-meta {
+            display: flex;
+            gap: 20px;
+            align-items: center;
+            flex-wrap: wrap;
+            font-size: 0.875rem;
+            color: #9ca3af;
+            padding-top: 12px;
+            border-top: 1px solid #e5e7eb;
+        }
+
+        .article-meta span {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .read-more {
+            color: #3b82f6;
+            text-decoration: none;
+            font-weight: 600;
+        }
+
+        .read-more:hover {
+            color: #2563eb;
+        }
+
+        .no-articles {
+            background: white;
+            border-radius: 12px;
+            padding: 60px;
+            text-align: center;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .no-articles-icon {
+            font-size: 4rem;
+            margin-bottom: 20px;
+        }
+
+        .no-articles-text {
+            color: #6b7280;
+            font-size: 1.125rem;
+        }
+
+        .close-btn {
+            background: #6b7280;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 6px;
+            font-weight: 600;
+            cursor: pointer;
+            font-size: 0.875rem;
+            transition: background 0.2s;
+        }
+
+        .close-btn:hover {
+            background: #4b5563;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📰 {{ title }}</h1>
+            <div class="meta">
+                <span class="category-badge category-{{ category }}">
+                    {% if category == 'stock' %}
+                        Company News
+                    {% elif category == 'industry' %}
+                        Industry News
+                    {% elif category == 'competitor' %}
+                        Competitor News
+                    {% endif %}
+                </span>
+                <span>{{ total_count }} article{{ total_count|pluralize }}</span>
+                <button class="close-btn" onclick="window.close()">Close Window</button>
+            </div>
+        </div>
+
+        {% if articles %}
+            <div class="articles-grid">
+                {% for article in articles %}
+                <div class="article-card">
+                    <div class="article-content">
+                        {% if article.image_url %}
+                        <img src="{{ article.image_url }}" alt="{{ article.title }}" class="article-image" onerror="this.style.display='none'">
+                        {% endif %}
+                        <div class="article-text">
+                            <h2 class="article-title">
+                                <a href="{{ article.url }}" target="_blank">{{ article.title }}</a>
+                            </h2>
+                            <p class="article-description">{{ article.summary }}</p>
+                            <div class="article-meta">
+                                <span>📅 {{ article.published_at|date:"M d, Y" }} at {{ article.published_at|time:"g:i A" }}</span>
+                                <span>📰 {{ article.source }}</span>
+                                <a href="{{ article.url }}" target="_blank" class="read-more">Read full article →</a>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        {% else %}
+            <div class="no-articles">
+                <div class="no-articles-icon">📭</div>
+                <div class="no-articles-text">No news articles found for this category</div>
+            </div>
+        {% endif %}
+    </div>
+</body>
+</html>

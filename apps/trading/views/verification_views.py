@@ -17,6 +17,7 @@ from functools import wraps
 from django.contrib.auth.decorators import login_required
 from django.views.decorators.http import require_POST
 from django.http import JsonResponse, StreamingHttpResponse
+from django.shortcuts import render
 
 logger = logging.getLogger(__name__)
 
@@ -852,3 +853,422 @@ def verify_future_trade(request):
             'success': False,
             'error': str(e)
         })
+
+
+@login_required
+@require_POST
+def fetch_trade_news(request):
+    """
+    Fetch news related to a stock, its industry, and competitors.
+
+    This endpoint fetches news from GNews.io API for:
+    1. The stock itself
+    2. The industry/sector the stock belongs to
+    3. Competitor companies in the same sector
+
+    Request Body (POST form data):
+        stock_symbol: "SYMBOL"  # Example: "RELIANCE"
+
+    Returns:
+        JsonResponse: {
+            'success': bool,
+            'stock_news': {
+                'articles': [...],  # List of news articles for the stock
+                'totalArticles': int
+            },
+            'industry_news': {
+                'articles': [...],  # List of news articles for the industry
+                'totalArticles': int,
+                'industry_name': str
+            },
+            'competitor_news': {
+                'articles': [...],  # List of news articles for competitors
+                'totalArticles': int,
+                'competitors': [str]  # List of competitor names
+            },
+            'error': str (only if success=False)
+        }
+
+    Article structure:
+        {
+            'title': str,
+            'description': str,
+            'content': str,
+            'url': str,
+            'image': str,
+            'publishedAt': str,  # ISO format datetime
+            'source': {'name': str, 'url': str}
+        }
+
+    Error Responses:
+        - 400: Missing stock_symbol parameter
+        - 404: Stock not found in database
+        - 500: News fetch error
+
+    Example:
+        POST /trading/trigger/fetch-news/
+        Body: stock_symbol=RELIANCE
+
+        Response:
+        {
+            'success': true,
+            'stock_news': {
+                'articles': [...],
+                'totalArticles': 3
+            },
+            'industry_news': {
+                'articles': [...],
+                'totalArticles': 3,
+                'industry_name': 'Oil and Gas'
+            },
+            'competitor_news': {
+                'articles': [...],
+                'totalArticles': 3,
+                'competitors': ['BPCL', 'IOCL', 'ONGC']
+            }
+        }
+    """
+    try:
+        from apps.data.services.gnews_client import get_gnews_client
+        from apps.data.models import TLStockData, ContractStockData
+        import json
+
+        # Parse JSON body
+        try:
+            body = json.loads(request.body)
+            stock_symbol = body.get('stock_symbol', '').strip().upper()
+        except (ValueError, json.JSONDecodeError):
+            return JsonResponse({
+                'success': False,
+                'error': 'Invalid request format'
+            })
+
+        if not stock_symbol:
+            return JsonResponse({
+                'success': False,
+                'error': 'Stock symbol is required'
+            })
+
+        logger.info(f"[Trade News] Fetching news for {stock_symbol}")
+
+        # Initialize GNews client
+        gnews = get_gnews_client()
+
+        # Step 1: Fetch stock details from Trendlyne data
+        stock_data = TLStockData.objects.filter(nsecode=stock_symbol).first()
+
+        if not stock_data:
+            # Try ContractStockData as fallback
+            contract_stock = ContractStockData.objects.filter(nse_code=stock_symbol).first()
+            if contract_stock:
+                stock_name = contract_stock.stock_name
+                industry_name = contract_stock.industry_name
+            else:
+                # If not found, use symbol as name
+                stock_name = stock_symbol
+                industry_name = None
+                logger.warning(f"[Trade News] Stock data not found for {stock_symbol}, using symbol as name")
+        else:
+            stock_name = stock_data.stock_name
+            industry_name = stock_data.industry_name
+            logger.info(f"[Trade News] Found stock: {stock_name}, Industry: {industry_name}")
+
+        # Step 2: Fetch news for the stock
+        logger.info(f"[Trade News] Fetching stock news for {stock_symbol}")
+        stock_news_result = gnews.fetch_stock_news(
+            stock_symbol=stock_symbol,
+            stock_name=stock_name,
+            max_results=10  # Fetch more for database
+        )
+
+        # Step 3: Fetch news for the industry
+        industry_news_result = {'articles': [], 'totalArticles': 0}
+        if industry_name:
+            logger.info(f"[Trade News] Fetching industry news for {industry_name}")
+            industry_news_result = gnews.fetch_industry_news(
+                industry_name=industry_name,
+                max_results=10  # Fetch more for database
+            )
+            industry_news_result['industry_name'] = industry_name
+        else:
+            logger.warning(f"[Trade News] No industry name found for {stock_symbol}")
+
+        # Step 4: Fetch competitors in the same industry AND sector
+        competitors = []
+        competitor_names = []
+        if industry_name and stock_data and stock_data.sector_name:
+            sector_name = stock_data.sector_name
+            current_market_cap = stock_data.market_capitalization or 0
+
+            # Find other stocks in the same industry AND sector
+            competitor_stocks = TLStockData.objects.filter(
+                industry_name=industry_name,
+                sector_name=sector_name,
+                market_capitalization__isnull=False
+            ).exclude(
+                nsecode=stock_symbol
+            )
+
+            # If more than 5, filter by closest market cap
+            if competitor_stocks.count() > 5:
+                # Calculate market cap difference and sort by absolute difference
+                competitors_with_diff = []
+                for comp in competitor_stocks:
+                    diff = abs((comp.market_capitalization or 0) - current_market_cap)
+                    competitors_with_diff.append((comp, diff))
+
+                # Sort by difference and take top 5
+                competitors_with_diff.sort(key=lambda x: x[1])
+                competitor_stocks = [comp for comp, diff in competitors_with_diff[:5]]
+            else:
+                # If 5 or fewer, just order by market cap descending
+                competitor_stocks = list(competitor_stocks.order_by('-market_capitalization')[:5])
+
+            competitors = competitor_stocks
+            competitor_names = [stock.stock_name for stock in competitors if stock.stock_name]
+            logger.info(f"[Trade News] Found {len(competitor_names)} competitors in {sector_name} sector: {competitor_names}")
+        elif industry_name and stock_data:
+            # Fallback: just industry if no sector
+            competitor_stocks = TLStockData.objects.filter(
+                industry_name=industry_name
+            ).exclude(
+                nsecode=stock_symbol
+            ).order_by('-market_capitalization')[:5]
+
+            competitors = list(competitor_stocks)
+            competitor_names = [stock.stock_name for stock in competitors if stock.stock_name]
+            logger.info(f"[Trade News] Found {len(competitor_names)} competitors (industry only): {competitor_names}")
+
+        # Step 5: Fetch news for competitors
+        competitor_news_result = {'articles': [], 'totalArticles': 0}
+        if competitor_names:
+            logger.info(f"[Trade News] Fetching competitor news")
+            competitor_news_result = gnews.fetch_competitor_news(
+                competitors=competitor_names,
+                max_results=10  # Fetch more for database
+            )
+            competitor_news_result['competitors'] = competitor_names[:3]  # Return top 3 names
+        else:
+            competitor_news_result['competitors'] = []
+            logger.warning(f"[Trade News] No competitors found for {stock_symbol}")
+
+        # Step 6: Save articles to database
+        from apps.data.models import NewsArticle
+        from datetime import datetime
+        from django.utils import timezone as django_timezone
+
+        def save_articles_to_db(articles, category, symbols=None, sectors=None):
+            """Save articles to NewsArticle model"""
+            saved_count = 0
+            for article in articles:
+                try:
+                    # Parse published date
+                    published_at = article.get('publishedAt')
+                    if published_at:
+                        # GNews returns ISO format
+                        published_dt = datetime.fromisoformat(published_at.replace('Z', '+00:00'))
+                    else:
+                        published_dt = django_timezone.now()
+
+                    # Check if article already exists
+                    if NewsArticle.objects.filter(url=article['url']).exists():
+                        logger.debug(f"[Trade News] Article already exists: {article['url']}")
+                        continue
+
+                    # Create article
+                    NewsArticle.objects.create(
+                        title=article.get('title', '')[:500],
+                        source=article.get('source', {}).get('name', 'GNews')[:100],
+                        author='',
+                        published_at=published_dt,
+                        url=article['url'],
+                        image_url=article.get('image', ''),
+                        summary=article.get('description', '')[:1000],
+                        content=article.get('content', ''),
+                        category=category,
+                        tags=[],
+                        symbols_mentioned=symbols or [],
+                        sectors_mentioned=sectors or [],
+                        processed=False
+                    )
+                    saved_count += 1
+                except Exception as e:
+                    logger.error(f"[Trade News] Error saving article: {e}")
+                    continue
+
+            return saved_count
+
+        # Save stock news
+        stock_articles_saved = save_articles_to_db(
+            stock_news_result.get('articles', []),
+            category='Stock',
+            symbols=[stock_symbol],
+            sectors=[industry_name] if industry_name else []
+        )
+        logger.info(f"[Trade News] Saved {stock_articles_saved} stock articles to database")
+
+        # Save industry news
+        industry_articles_saved = save_articles_to_db(
+            industry_news_result.get('articles', []),
+            category='Industry',
+            symbols=[],
+            sectors=[industry_name] if industry_name else []
+        )
+        logger.info(f"[Trade News] Saved {industry_articles_saved} industry articles to database")
+
+        # Save competitor news
+        competitor_articles_saved = save_articles_to_db(
+            competitor_news_result.get('articles', []),
+            category='Competitor',
+            symbols=[comp.nsecode for comp in competitors if hasattr(comp, 'nsecode')],
+            sectors=[industry_name] if industry_name else []
+        )
+        logger.info(f"[Trade News] Saved {competitor_articles_saved} competitor articles to database")
+
+        # Step 7: Retrieve saved articles from database (to ensure consistency)
+        # Note: SQLite doesn't support __contains on JSONField, so we filter by category
+        # and then do additional filtering in Python if needed
+
+        # Get stock news from DB - filter by category, then filter in Python
+        all_stock_articles = NewsArticle.objects.filter(
+            category='Stock'
+        ).order_by('-published_at')[:50]  # Get more, then filter
+
+        # Filter for this specific stock symbol
+        stock_articles_db = [
+            article for article in all_stock_articles
+            if stock_symbol in (article.symbols_mentioned or [])
+        ][:10]
+
+        # Get industry news from DB
+        all_industry_articles = NewsArticle.objects.filter(
+            category='Industry'
+        ).order_by('-published_at')[:50] if industry_name else []
+
+        # Filter for this specific industry
+        industry_articles_db = [
+            article for article in all_industry_articles
+            if industry_name in (article.sectors_mentioned or [])
+        ][:10] if industry_name else []
+
+        # Get competitor news from DB
+        all_competitor_articles = NewsArticle.objects.filter(
+            category='Competitor'
+        ).order_by('-published_at')[:50] if industry_name else []
+
+        # Filter for this industry's competitors
+        competitor_articles_db = [
+            article for article in all_competitor_articles
+            if industry_name in (article.sectors_mentioned or [])
+        ][:10] if industry_name else []
+
+        # Build articles list from DB
+        def db_articles_to_dict(articles):
+            return [{
+                'title': article.title,
+                'description': article.summary,
+                'content': article.content,
+                'url': article.url,
+                'image': article.image_url,  # Include image from DB
+                'publishedAt': article.published_at.isoformat(),
+                'source': {'name': article.source, 'url': ''}
+            } for article in articles]
+
+        # Build response from database
+        response_data = {
+            'success': True,
+            'stock_news': {
+                'articles': db_articles_to_dict(stock_articles_db),
+                'totalArticles': len(stock_articles_db),
+                'stock_name': stock_name,
+                'stock_symbol': stock_symbol
+            },
+            'industry_news': {
+                'articles': db_articles_to_dict(industry_articles_db),
+                'totalArticles': len(industry_articles_db),
+                'industry_name': industry_name or 'Unknown'
+            },
+            'competitor_news': {
+                'articles': db_articles_to_dict(competitor_articles_db),
+                'totalArticles': len(competitor_articles_db),
+                'competitors': competitor_news_result.get('competitors', [])
+            }
+        }
+
+        logger.info(f"[Trade News] Successfully fetched news for {stock_symbol}")
+        logger.info(f"[Trade News] Stock: {len(response_data['stock_news']['articles'])} articles")
+        logger.info(f"[Trade News] Industry: {len(response_data['industry_news']['articles'])} articles")
+        logger.info(f"[Trade News] Competitors: {len(response_data['competitor_news']['articles'])} articles")
+
+        return JsonResponse(response_data)
+
+    except Exception as e:
+        logger.error(f"[Trade News] Error fetching news: {e}", exc_info=True)
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        })
+
+
+@login_required
+def news_details_page(request):
+    """
+    Display detailed news page in a new window.
+
+    Shows all news articles for a specific category (stock/industry/competitor).
+
+    Query Parameters:
+        category: 'stock', 'industry', or 'competitor'
+        identifier: Stock symbol, industry name, or competitor names
+        title: Display title
+
+    Returns:
+        Rendered HTML page with all news articles
+    """
+    from apps.data.models import NewsArticle
+
+    category = request.GET.get('category', '')
+    identifier = request.GET.get('identifier', '')
+    title = request.GET.get('title', '')
+
+    # Fetch articles from database based on category
+    # SQLite-compatible approach: filter by category, then filter in Python
+    articles = []
+
+    if category == 'stock':
+        # Stock news - filter by symbol
+        all_articles = NewsArticle.objects.filter(
+            category='Stock'
+        ).order_by('-published_at')
+
+        # Filter for this specific stock symbol
+        articles = [
+            article for article in all_articles
+            if identifier in (article.symbols_mentioned or [])
+        ]
+    elif category == 'industry':
+        # Industry news - filter by sector
+        all_articles = NewsArticle.objects.filter(
+            category='Industry'
+        ).order_by('-published_at')
+
+        # Filter for this specific industry
+        articles = [
+            article for article in all_articles
+            if identifier in (article.sectors_mentioned or [])
+        ]
+    elif category == 'competitor':
+        # Competitor news - all competitor articles
+        articles = list(NewsArticle.objects.filter(
+            category='Competitor'
+        ).order_by('-published_at'))
+
+    context = {
+        'category': category,
+        'identifier': identifier,
+        'title': title,
+        'articles': articles,
+        'total_count': len(articles)
+    }
+
+    return render(request, 'trading/news_details.html', context)

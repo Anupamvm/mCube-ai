@@ -410,7 +410,7 @@
 
 <!-- JavaScript Section -->
 <!-- Core Modules -->
-<script src="{% static 'js/trading/core/api-client.js' %}"></script>
+<script src="{% static 'js/trading/core/api-client.js' %}?v=1.3"></script>
 <script src="{% static 'js/trading/core/broker-auth.js' %}"></script>
 <script src="{% static 'js/trading/core/state.js' %}"></script>
 <script src="{% static 'js/trading/core/utils.js' %}"></script>
@@ -3341,6 +3341,11 @@ const TradeVerification = {
             html += this.buildPositionSizingCard(positionSizing, analysis);
         }
 
+        // News Section - Add news related to stock, industry, and competitors
+        if (data.passed) {
+            html += this.buildNewsSection(data.symbol);
+        }
+
         // Execution Buttons
         if (data.passed) {
             html += this.buildExecutionButtons();
@@ -3357,6 +3362,11 @@ const TradeVerification = {
 
         html += '</div>';
         resultsDiv.innerHTML = html;
+
+        // After rendering, fetch news if contract passed
+        if (data.passed && data.symbol) {
+            this.fetchAndDisplayNews(data.symbol);
+        }
     },
 
     buildScoreBar(label, score, maxScore, description) {
@@ -3496,6 +3506,260 @@ const TradeVerification = {
                         ${marginUtilization > 60 ? '⚠️ High' : '✅ Safe'}
                     </div>
                 </div>
+            </div>
+        `;
+    },
+
+    buildNewsSection(stockSymbol) {
+        return `
+            <div id="newsSection" style="background: white; border-radius: 12px; padding: 25px; margin-bottom: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
+                <h3 style="color: #1f2937; margin-bottom: 20px; font-size: 1.3rem; display: flex; align-items: center; gap: 10px;">
+                    📰 Latest News & Market Intelligence
+                    <span style="font-size: 0.75rem; color: #6b7280; font-weight: normal;">Powered by GNews.io</span>
+                </h3>
+
+                <div id="newsContent" style="text-align: center; padding: 40px; color: #6b7280;">
+                    <div style="font-size: 2rem; margin-bottom: 10px;">⏳</div>
+                    <div>Loading news...</div>
+                </div>
+            </div>
+        `;
+    },
+
+    async fetchAndDisplayNews(stockSymbol) {
+        try {
+            console.log('[News] Fetching news for', stockSymbol);
+
+            const response = await ApiClient.post(ApiClient.endpoints.fetchTradeNews, {
+                stock_symbol: stockSymbol
+            });
+
+            if (response && response.success) {
+                this.displayNews(response);
+            } else {
+                this.displayNewsError(response?.error || 'Failed to fetch news');
+            }
+        } catch (error) {
+            console.error('[News] Error fetching news:', error);
+            this.displayNewsError(error.message);
+        }
+    },
+
+    displayNews(newsData) {
+        const newsContent = document.getElementById('newsContent');
+        if (!newsContent) return;
+
+        const stockNews = newsData.stock_news || {};
+        const industryNews = newsData.industry_news || {};
+        const competitorNews = newsData.competitor_news || {};
+
+        let html = '';
+
+        // Header for all three sections
+        html += `
+            <div style="margin-bottom: 30px; padding: 25px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 12px; color: white; box-shadow: 0 6px 16px rgba(102, 126, 234, 0.4); border: 2px solid rgba(255,255,255,0.2);">
+                <div style="text-align: center;">
+                    <div style="font-size: 2.5rem; margin-bottom: 10px;">📰</div>
+                    <h3 style="margin: 0; font-size: 1.5rem; font-weight: 800; text-shadow: 0 2px 4px rgba(0,0,0,0.2);">Market Intelligence Dashboard</h3>
+                    <p style="margin: 12px 0 0 0; font-size: 1rem; opacity: 0.95; font-weight: 500;">Three Critical Perspectives for Informed Trading</p>
+                    <div style="margin-top: 15px; display: flex; justify-content: center; gap: 20px; flex-wrap: wrap; font-size: 0.875rem;">
+                        <span style="background: rgba(255,255,255,0.2); padding: 6px 16px; border-radius: 20px; font-weight: 600;">1️⃣ Company News</span>
+                        <span style="background: rgba(255,255,255,0.2); padding: 6px 16px; border-radius: 20px; font-weight: 600;">2️⃣ Sector Trends</span>
+                        <span style="background: rgba(255,255,255,0.2); padding: 6px 16px; border-radius: 20px; font-weight: 600;">3️⃣ Competition Analysis</span>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        // 1. Company News Section (FIRST - ALWAYS SHOW)
+        html += this.buildNewsCategory(
+            '1️⃣ Company News',
+            stockNews.stock_name || 'Stock',
+            stockNews.articles || [],
+            stockNews.totalArticles || 0,
+            '#10b981',
+            'stock',
+            stockNews.stock_symbol || '',
+            true  // Always show
+        );
+
+        // 2. Industry/Sector News Section (SECOND - ALWAYS SHOW)
+        html += this.buildNewsCategory(
+            '2️⃣ Sector/Industry News',
+            industryNews.industry_name || 'Industry',
+            industryNews.articles || [],
+            industryNews.totalArticles || 0,
+            '#3b82f6',
+            'industry',
+            industryNews.industry_name || '',
+            true  // Always show
+        );
+
+        // 3. Competitor News Section (THIRD - ALWAYS SHOW)
+        html += this.buildNewsCategory(
+            '3️⃣ Competitor News',
+            competitorNews.competitors && competitorNews.competitors.length > 0
+                ? competitorNews.competitors.join(', ')
+                : 'Competitors',
+            competitorNews.articles || [],
+            competitorNews.totalArticles || 0,
+            '#f59e0b',
+            'competitor',
+            competitorNews.competitors ? competitorNews.competitors.join(',') : '',
+            true  // Always show
+        );
+
+        newsContent.innerHTML = html;
+    },
+
+    buildNewsCategory(title, subtitle, articles, totalArticles, color, categoryType, identifier, alwaysShow = false) {
+        // If no articles and not set to always show, return empty
+        if ((!articles || articles.length === 0) && !alwaysShow) {
+            return '';
+        }
+
+        const displayArticles = articles ? articles.slice(0, 3) : [];  // Show only first 3
+        const hasMore = totalArticles > 3;
+        const hasArticles = articles && articles.length > 0;
+
+        let html = `
+            <div style="margin-bottom: 30px; border: 4px solid ${color}; border-radius: 16px; overflow: hidden; box-shadow: 0 8px 20px rgba(0,0,0,0.12); background: white;">
+                <div style="background: linear-gradient(135deg, ${color} 0%, ${color}dd 100%); padding: 25px; border-bottom: 4px solid ${color};">
+                    <h4 style="color: white; margin: 0; font-size: 1.4rem; font-weight: 800; display: flex; align-items: center; justify-content: space-between; text-shadow: 0 2px 4px rgba(0,0,0,0.2);">
+                        <span style="display: flex; align-items: center; gap: 12px;">
+                            <span style="background: rgba(255,255,255,0.2); padding: 8px 12px; border-radius: 8px; font-size: 1.3rem;">${title.split(' ')[0]}</span>
+                            <span>${title.substring(title.indexOf(' ') + 1)}</span>
+                        </span>
+                    </h4>
+                    <div style="color: rgba(255,255,255,0.95); margin-top: 10px; font-size: 0.95rem; display: flex; align-items: center; justify-content: space-between;">
+                        <span style="font-weight: 500;">📍 ${subtitle}</span>
+                        <span style="background: rgba(255,255,255,0.25); padding: 6px 16px; border-radius: 20px; font-size: 0.875rem; font-weight: 600;">
+                            ${totalArticles} ${totalArticles === 1 ? 'article' : 'articles'}
+                        </span>
+                    </div>
+                </div>
+                <div style="padding: 25px; background: white;">
+        `;
+
+        // If no articles, show placeholder
+        if (!hasArticles) {
+            html += `
+                <div style="text-align: center; padding: 40px; color: #9ca3af;">
+                    <div style="font-size: 2.5rem; margin-bottom: 15px;">📭</div>
+                    <div style="font-size: 1rem; font-weight: 500;">No news articles available</div>
+                    <div style="font-size: 0.875rem; margin-top: 8px;">Check back later for updates</div>
+                </div>
+            `;
+        } else {
+            // Display articles
+            displayArticles.forEach((article, index) => {
+                const publishedDate = this.formatNewsDate(article.publishedAt);
+
+            html += `
+                <div style="padding: 15px; border-bottom: ${index < displayArticles.length - 1 ? '1px solid #e5e7eb' : 'none'};">
+                    <div style="display: flex; gap: 15px; align-items: start;">
+                        ${article.image ? `
+                        <img src="${article.image}"
+                             alt="${article.title}"
+                             style="width: 100px; height: 70px; object-fit: cover; border-radius: 6px; flex-shrink: 0;"
+                             onerror="this.style.display='none'">
+                        ` : ''}
+                        <div style="flex: 1; min-width: 0;">
+                            <a href="${article.url}"
+                               target="_blank"
+                               style="color: #1f2937; text-decoration: none; font-weight: 600; font-size: 0.95rem; display: block; margin-bottom: 8px; line-height: 1.4; cursor: pointer;">
+                                ${article.title}
+                            </a>
+                            <p style="color: #6b7280; font-size: 0.85rem; margin: 0 0 8px 0; line-height: 1.5;">
+                                ${article.description || ''}
+                            </p>
+                            <div style="display: flex; gap: 15px; align-items: center; flex-wrap: wrap; font-size: 0.75rem; color: #9ca3af;">
+                                <span>📅 ${publishedDate}</span>
+                                ${article.source?.name ? `<span>📰 ${article.source.name}</span>` : ''}
+                                <a href="${article.url}"
+                                   target="_blank"
+                                   style="color: ${color}; text-decoration: none; font-weight: 500;">
+                                    Read more →
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+            });
+        }  // End of else block
+
+        // Add "View More News" button if there are more than 3 articles
+        if (hasArticles && hasMore) {
+            html += `
+                <div style="padding: 15px; text-align: center; border-top: 1px solid #e5e7eb;">
+                    <button onclick="TradeVerification.viewMoreNews('${categoryType}', '${identifier}', '${subtitle}')"
+                            style="background: ${color}; color: white; padding: 10px 24px; border: none; border-radius: 6px; font-weight: 600; cursor: pointer; font-size: 0.875rem; transition: opacity 0.2s;">
+                        📰 View All ${totalArticles} Articles
+                    </button>
+                </div>
+            `;
+        }
+
+        html += `
+                </div>
+            </div>
+        `;
+
+        return html;
+    },
+
+    viewMoreNews(categoryType, identifier, subtitle) {
+        // Build URL parameters
+        const params = new URLSearchParams({
+            category: categoryType,
+            identifier: identifier,
+            title: subtitle
+        });
+
+        // Open news details page in new window
+        const newsUrl = `/trading/news-details/?${params.toString()}`;
+        window.open(newsUrl, '_blank', 'width=1000,height=800,scrollbars=yes');
+    },
+
+    formatNewsDate(dateString) {
+        if (!dateString) return 'Unknown';
+
+        try {
+            const date = new Date(dateString);
+            const now = new Date();
+            const diffMs = now - date;
+            const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+            const diffDays = Math.floor(diffHours / 24);
+
+            if (diffHours < 1) {
+                const diffMinutes = Math.floor(diffMs / (1000 * 60));
+                return `${diffMinutes} minute${diffMinutes !== 1 ? 's' : ''} ago`;
+            } else if (diffHours < 24) {
+                return `${diffHours} hour${diffHours !== 1 ? 's' : ''} ago`;
+            } else if (diffDays < 7) {
+                return `${diffDays} day${diffDays !== 1 ? 's' : ''} ago`;
+            } else {
+                return date.toLocaleDateString('en-IN', {
+                    day: '2-digit',
+                    month: 'short',
+                    year: 'numeric'
+                });
+            }
+        } catch (e) {
+            return dateString;
+        }
+    },
+
+    displayNewsError(error) {
+        const newsContent = document.getElementById('newsContent');
+        if (!newsContent) return;
+
+        newsContent.innerHTML = `
+            <div style="text-align: center; padding: 40px; color: #ef4444;">
+                <div style="font-size: 2rem; margin-bottom: 10px;">⚠️</div>
+                <div style="font-weight: 600; margin-bottom: 8px;">Failed to load news</div>
+                <div style="font-size: 0.875rem; color: #6b7280;">${error}</div>
             </div>
         `;
     },

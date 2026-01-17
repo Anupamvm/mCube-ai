@@ -49,10 +49,16 @@ class Command(BaseCommand):
         )
 
         parser.add_argument(
+            '--setup-gnewsio',
+            action='store_true',
+            help='Setup GNews.io credentials'
+        )
+
+        parser.add_argument(
             '--delete',
             type=str,
             metavar='SERVICE',
-            help='Delete credentials for a service (breeze, kotakneo, trendlyne)'
+            help='Delete credentials for a service (breeze, kotakneo, trendlyne, gnewsio)'
         )
 
         parser.add_argument(
@@ -82,6 +88,8 @@ class Command(BaseCommand):
             self.setup_kotakneo()
         elif options['setup_trendlyne']:
             self.setup_trendlyne()
+        elif options['setup_gnewsio']:
+            self.setup_gnewsio()
         elif options['delete']:
             self.delete_credentials(options['delete'])
         elif options['status']:
@@ -237,6 +245,40 @@ class Command(BaseCommand):
         else:
             self.stdout.write(self.style.SUCCESS(f'\n✅ Trendlyne credentials updated for "{name}"'))
 
+    def setup_gnewsio(self):
+        """Setup GNews.io credentials"""
+        self.stdout.write(self.style.SUCCESS('\n=== GNews.io Setup ===\n'))
+
+        name = input("Credential name (default: default): ").strip() or "default"
+
+        self.stdout.write('\nYou need:')
+        self.stdout.write('1. API Key (from gnews.io dashboard)')
+        self.stdout.write('2. Email/Username (optional, for reference)')
+        self.stdout.write('3. Password (optional, for reference)')
+
+        api_key = input("\nEnter API Key: ").strip()
+        if not api_key:
+            raise CommandError("API Key is required")
+
+        username = input("Enter Email/Username (optional): ").strip()
+        password = getpass.getpass("Enter Password (optional): ").strip() if username else ""
+
+        # Create or update credentials
+        cred, created = CredentialStore.objects.update_or_create(
+            service='gnewsio',
+            name=name,
+            defaults={
+                'api_key': api_key,
+                'username': username or None,
+                'password': password or None,
+            }
+        )
+
+        if created:
+            self.stdout.write(self.style.SUCCESS(f'\n✅ GNews.io credentials created for "{name}"'))
+        else:
+            self.stdout.write(self.style.SUCCESS(f'\n✅ GNews.io credentials updated for "{name}"'))
+
     def delete_credentials(self, service):
         """Delete credentials for a service"""
         try:
@@ -249,7 +291,7 @@ class Command(BaseCommand):
         """Check status of all credentials"""
         self.stdout.write(self.style.SUCCESS('\n=== Credentials Status ===\n'))
 
-        services = ['breeze', 'kotakneo', 'trendlyne']
+        services = ['breeze', 'kotakneo', 'trendlyne', 'gnewsio']
 
         for service in services:
             cred = CredentialStore.objects.filter(service=service).first()

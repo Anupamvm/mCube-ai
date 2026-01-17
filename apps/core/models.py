@@ -61,6 +61,7 @@ class CredentialStore(models.Model):
         ('trendlyne', 'Trendlyne'),
         ('kotakneo', 'Kotak Neo'),
         ('telegram', 'Telegram Bot'),
+        ('gnewsio', 'GNews.io'),
         ('other', 'Other'),
     ]
 
