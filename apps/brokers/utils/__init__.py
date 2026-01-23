@@ -5,7 +5,9 @@ from .security_master import (
     get_futures_instrument,
     get_option_instrument,
     validate_security_master_file,
-    clear_security_master_cache
+    clear_security_master_cache,
+    update_security_master,
+    ensure_security_master_current
 )
 
 __all__ = [
@@ -13,4 +15,6 @@ __all__ = [
     'get_option_instrument',
     'validate_security_master_file',
     'clear_security_master_cache',
+    'update_security_master',
+    'ensure_security_master_current',
 ]

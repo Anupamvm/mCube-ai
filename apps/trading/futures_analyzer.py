@@ -76,7 +76,14 @@ def resolve_breeze_symbol(stock_symbol: str, expiry_date: str) -> Dict:
                 stock_code=stock_symbol
             )
 
-            logger.info(f"Breeze get_names response: {names_resp}")
+            # Log the first few results for debugging
+            if names_resp and names_resp.get("Status") == 200 and names_resp.get("Success"):
+                results_sample = names_resp["Success"][:3] if names_resp["Success"] else []
+                logger.info(f"Breeze get_names for {stock_symbol}: found {len(names_resp['Success'])} contracts")
+                for r in results_sample:
+                    logger.info(f"  Sample: stock_code={r.get('stock_code')}, short_name={r.get('short_name')}, expiry={r.get('expiry_date')}")
+            else:
+                logger.warning(f"Breeze get_names response: {names_resp}")
 
             if names_resp and names_resp.get("Status") == 200 and names_resp.get("Success"):
                 results = names_resp["Success"]
@@ -97,8 +104,8 @@ def resolve_breeze_symbol(stock_symbol: str, expiry_date: str) -> Dict:
                                 'lot_size': item.get('lot_size', 0)
                             }
 
-                            # Cache for 1 hour
-                            cache.set(cache_key, result, 3600)
+                            # Cache for 5 minutes (reduced for debugging)
+                            cache.set(cache_key, result, 300)
                             logger.info(f"Resolved Breeze symbol: {result}")
                             return result
 
@@ -115,7 +122,7 @@ def resolve_breeze_symbol(stock_symbol: str, expiry_date: str) -> Dict:
                         'note': 'Expiry not exact match - using first available'
                     }
 
-                    cache.set(cache_key, result, 3600)
+                    cache.set(cache_key, result, 300)  # 5 minutes for debugging
                     logger.warning(f"Using first available contract: {result}")
                     return result
 
@@ -235,52 +242,70 @@ def comprehensive_futures_analysis(
 
     try:
         # ============================================================================
-        # STEP 0: Resolve Breeze Symbol using get_names API
+        # STEP 0: Resolve Breeze Symbol using SecurityMaster (preferred) or get_names API
         # ============================================================================
         logger.info("\n" + "=" * 80)
         logger.info("STEP 0: Resolving Breeze Symbol")
         logger.info("=" * 80)
 
-        symbol_resolution = resolve_breeze_symbol(stock_symbol, expiry_date)
+        from apps.brokers.utils.security_master import get_futures_instrument
 
-        if not symbol_resolution.get('success'):
-            execution_log.append({
-                'step': 0,
-                'action': 'Symbol Resolution',
-                'status': 'FAIL',
-                'message': f"Failed to resolve symbol: {symbol_resolution.get('error')}",
-                'details': symbol_resolution
-            })
-            return {
-                'success': False,
-                'execution_log': execution_log,
-                'metrics': metrics,
-                'verdict': 'FAIL',
-                'direction': 'NEUTRAL',
-                'composite_score': 0,
-                'error': f"Symbol resolution failed: {symbol_resolution.get('error')}"
+        # Format expiry for SecurityMaster lookup: DD-MMM-YYYY
+        expiry_dt = datetime.strptime(expiry_date, '%Y-%m-%d')
+        expiry_formatted_sm = expiry_dt.strftime('%d-%b-%Y')
+
+        logger.info(f"Looking up SecurityMaster for {stock_symbol} expiry {expiry_formatted_sm}")
+
+        # Try SecurityMaster first (most reliable source for Breeze codes)
+        instrument_info = get_futures_instrument(stock_symbol, expiry_formatted_sm)
+        symbol_resolution = None
+        breeze_symbol = stock_symbol
+        lot_size = 0
+
+        if instrument_info and instrument_info.get('short_name'):
+            breeze_symbol = instrument_info['short_name']
+            lot_size = instrument_info.get('lot_size', 0)
+            logger.info(f"SecurityMaster: {stock_symbol} -> {breeze_symbol} (lot_size: {lot_size})")
+            symbol_resolution = {
+                'success': True,
+                'short_name': breeze_symbol,
+                'stock_code': instrument_info.get('exchange_code', stock_symbol),
+                'lot_size': lot_size,
+                'expiry_date': instrument_info.get('expiry_date', ''),
+                'source': instrument_info.get('source', 'security_master')
             }
+        else:
+            # Fallback to get_names API
+            logger.warning(f"SecurityMaster lookup failed, trying get_names API...")
+            symbol_resolution = resolve_breeze_symbol(stock_symbol, expiry_date)
 
-        breeze_symbol = symbol_resolution.get('stock_code', stock_symbol)
-        short_name = symbol_resolution.get('short_name', stock_symbol)
+            if symbol_resolution.get('success'):
+                breeze_symbol = symbol_resolution.get('short_name', stock_symbol)
+                lot_size = symbol_resolution.get('lot_size', 0)
+                logger.info(f"get_names API: {stock_symbol} -> {breeze_symbol}")
+            else:
+                logger.warning(f"All resolution methods failed, using original symbol: {stock_symbol}")
+                symbol_resolution = {'success': True, 'short_name': stock_symbol, 'note': 'Fallback to original'}
+
         resolved_expiry = symbol_resolution.get('expiry_date', '')
 
         execution_log.append({
             'step': 0,
             'action': 'Symbol Resolution',
             'status': 'PASS',
-            'message': f"Resolved to: {breeze_symbol} ({short_name})",
+            'message': f"Resolved to Breeze code: {breeze_symbol}",
             'details': {
                 'original_symbol': stock_symbol,
                 'breeze_symbol': breeze_symbol,
-                'short_name': short_name,
+                'stock_code': symbol_resolution.get('stock_code', ''),
+                'short_name': symbol_resolution.get('short_name', ''),
                 'resolved_expiry': resolved_expiry,
                 'lot_size': symbol_resolution.get('lot_size', 0),
                 'note': symbol_resolution.get('note', 'Exact match found')
             }
         })
 
-        logger.info(f"✅ Resolved symbol: {stock_symbol} → {breeze_symbol}")
+        logger.info(f"Resolved symbol: {stock_symbol} -> {breeze_symbol} (short_name for Breeze API)")
 
         # ============================================================================
         # STEP 1: Real-Time Price Fetch from Breeze API
@@ -1404,5 +1429,1475 @@ def comprehensive_futures_analysis(
             'verdict': 'FAIL',
             'direction': 'NEUTRAL',
             'composite_score': 0,
+            'error': str(e)
+        }
+
+
+# ============================================================================
+# HISTORICAL DATA COLLECTION FOR RELATED INSTRUMENTS
+# ============================================================================
+
+def get_related_instruments(stock_symbol: str, expiry_date: str) -> Dict:
+    """
+    Discover all related instruments for a given stock/token.
+
+    For a futures contract, this includes:
+    - The underlying equity (NSE cash)
+    - Current expiry futures
+    - Next expiry futures
+    - Current expiry options chain (all strikes, CE/PE)
+    - Next expiry options chain (all strikes, CE/PE)
+
+    For an options contract, this includes:
+    - The underlying equity
+    - All futures contracts (current + next expiry)
+    - Full options chain for current + next expiry
+
+    Args:
+        stock_symbol: Stock symbol (e.g., 'HDFCBANK', 'RELIANCE')
+        expiry_date: Primary expiry date in YYYY-MM-DD format
+
+    Returns:
+        dict: {
+            'success': bool,
+            'equity': {...},  # Underlying stock info
+            'futures': [...],  # List of futures contracts
+            'options': [...],  # List of options contracts
+            'expiries': [...],  # List of expiry dates used
+            'total_instruments': int,
+            'error': str (if failed)
+        }
+    """
+    logger.info(f"Discovering instruments for: {stock_symbol}")
+
+    try:
+        breeze = get_breeze_client()
+
+        # ===== RESOLVE BREEZE SYMBOL USING SECURITY MASTER =====
+        # SecurityMaster has the correct short_name for Breeze API
+        # Examples: RELIANCE -> RELIND, HDFCBANK -> HDFCBAN, SBIN -> STABAN
+        from apps.brokers.utils.security_master import get_futures_instrument
+
+        # Format expiry for SecurityMaster lookup: DD-MMM-YYYY
+        expiry_dt = datetime.strptime(expiry_date, '%Y-%m-%d')
+        expiry_formatted_sm = expiry_dt.strftime('%d-%b-%Y')  # e.g., "24-Feb-2026"
+
+        logger.info(f"Looking up SecurityMaster for {stock_symbol} expiry {expiry_formatted_sm}")
+
+        instrument_info = get_futures_instrument(stock_symbol, expiry_formatted_sm)
+
+        if instrument_info and instrument_info.get('short_name'):
+            breeze_stock_code = instrument_info['short_name']
+            logger.info(f"SecurityMaster lookup: {stock_symbol} -> {breeze_stock_code}")
+            logger.info(f"  Source: {instrument_info.get('source', 'unknown')}, Lot size: {instrument_info.get('lot_size', 'N/A')}")
+        else:
+            # Fallback to resolve_breeze_symbol
+            logger.warning(f"SecurityMaster lookup failed for {stock_symbol}, trying get_names API...")
+            symbol_resolution = resolve_breeze_symbol(stock_symbol, expiry_date)
+
+            if symbol_resolution.get('success'):
+                breeze_stock_code = symbol_resolution.get('short_name', stock_symbol)
+                logger.info(f"get_names resolution: {stock_symbol} -> {breeze_stock_code}")
+            else:
+                # Last resort: use original symbol
+                breeze_stock_code = stock_symbol
+                logger.warning(f"All resolution methods failed, using original: {stock_symbol}")
+
+        instruments = {
+            'success': True,
+            'stock_symbol': stock_symbol,
+            'breeze_stock_code': breeze_stock_code,
+            'primary_expiry': expiry_date,
+            'equity': None,
+            'futures': [],
+            'options': [],
+            'expiries': [expiry_date],
+            'total_instruments': 0
+        }
+
+        # ===== 1. EQUITY (Underlying Stock) =====
+        # Use the resolved Breeze stock code for API calls
+        logger.info(f"Adding equity: {breeze_stock_code} NSE (original: {stock_symbol})")
+        instruments['equity'] = {
+            'stock_code': breeze_stock_code,  # Use resolved Breeze code
+            'exchange_code': 'NSE',
+            'product_type': 'cash',
+            'instrument_type': 'EQUITY',
+            'original_symbol': stock_symbol  # Keep original for reference
+        }
+        instruments['total_instruments'] += 1
+
+        # ===== 2. GET EXPIRY DATES =====
+        # Use Breeze get_names to find available expiries
+        try:
+            names_resp = breeze.get_names(
+                exchange_code="NFO",
+                stock_code=stock_symbol
+            )
+
+            expiry_dates_found = set()
+            if names_resp and names_resp.get("Status") == 200 and names_resp.get("Success"):
+                for item in names_resp["Success"]:
+                    exp_date = item.get('expiry_date', '')
+                    if exp_date:
+                        # Parse various date formats from Breeze
+                        try:
+                            # Try DD-MMM-YYYY format
+                            exp_dt = datetime.strptime(exp_date[:11], '%d-%b-%Y')
+                            expiry_dates_found.add(exp_dt.strftime('%Y-%m-%d'))
+                        except ValueError:
+                            try:
+                                # Try YYYY-MM-DD format
+                                exp_dt = datetime.strptime(exp_date[:10], '%Y-%m-%d')
+                                expiry_dates_found.add(exp_dt.strftime('%Y-%m-%d'))
+                            except ValueError:
+                                pass
+
+            # Sort expiries and get current + next
+            sorted_expiries = sorted(expiry_dates_found)
+            today = datetime.now().date()
+
+            # Filter to future expiries only
+            future_expiries = [e for e in sorted_expiries if datetime.strptime(e, '%Y-%m-%d').date() >= today]
+
+            if future_expiries:
+                # Use current and next expiry
+                instruments['expiries'] = future_expiries[:2]
+                logger.info(f"Found expiries: {instruments['expiries']}")
+            else:
+                # Fallback: calculate next monthly expiry
+                instruments['expiries'] = [expiry_date]
+                logger.warning(f"No future expiries found, using provided: {expiry_date}")
+
+        except Exception as e:
+            logger.warning(f"Could not fetch expiries from Breeze: {e}")
+            instruments['expiries'] = [expiry_date]
+
+        # ===== 3. FUTURES CONTRACTS =====
+        for exp_date in instruments['expiries']:
+            exp_formatted = datetime.strptime(exp_date, '%Y-%m-%d').strftime('%d-%b-%Y').upper()
+            logger.info(f"Adding futures: {breeze_stock_code} FUT {exp_date}")
+
+            instruments['futures'].append({
+                'stock_code': breeze_stock_code,  # Use resolved Breeze code
+                'exchange_code': 'NFO',
+                'product_type': 'futures',
+                'expiry_date': exp_date,
+                'expiry_formatted': exp_formatted,
+                'instrument_type': 'FUTURES',
+                'original_symbol': stock_symbol
+            })
+            instruments['total_instruments'] += 1
+
+        # ===== 4. OPTIONS CHAIN =====
+        # Fetch option chain quotes to discover available strikes
+        for exp_date in instruments['expiries']:
+            exp_formatted = datetime.strptime(exp_date, '%Y-%m-%d').strftime('%d-%b-%Y').upper()
+
+            try:
+                # Fetch calls using resolved Breeze symbol
+                calls_resp = breeze.get_option_chain_quotes(
+                    stock_code=breeze_stock_code,
+                    exchange_code="NFO",
+                    product_type="options",
+                    expiry_date=exp_formatted,
+                    right="call",
+                )
+
+                if calls_resp and calls_resp.get("Status") == 200 and calls_resp.get("Success"):
+                    for call in calls_resp["Success"]:
+                        strike = call.get('strike_price')
+                        if strike:
+                            instruments['options'].append({
+                                'stock_code': breeze_stock_code,  # Use resolved Breeze code
+                                'exchange_code': 'NFO',
+                                'product_type': 'options',
+                                'expiry_date': exp_date,
+                                'expiry_formatted': exp_formatted,
+                                'strike_price': float(strike),
+                                'right': 'call',
+                                'instrument_type': 'OPTION_CE',
+                                'original_symbol': stock_symbol
+                            })
+                            instruments['total_instruments'] += 1
+
+                # Fetch puts using resolved Breeze symbol
+                puts_resp = breeze.get_option_chain_quotes(
+                    stock_code=breeze_stock_code,
+                    exchange_code="NFO",
+                    product_type="options",
+                    expiry_date=exp_formatted,
+                    right="put",
+                )
+
+                if puts_resp and puts_resp.get("Status") == 200 and puts_resp.get("Success"):
+                    for put in puts_resp["Success"]:
+                        strike = put.get('strike_price')
+                        if strike:
+                            instruments['options'].append({
+                                'stock_code': breeze_stock_code,  # Use resolved Breeze code
+                                'exchange_code': 'NFO',
+                                'product_type': 'options',
+                                'expiry_date': exp_date,
+                                'expiry_formatted': exp_formatted,
+                                'strike_price': float(strike),
+                                'right': 'put',
+                                'instrument_type': 'OPTION_PE',
+                                'original_symbol': stock_symbol
+                            })
+                            instruments['total_instruments'] += 1
+
+
+            except Exception as e:
+                logger.warning(f"Could not fetch options chain for {exp_date}: {e}")
+
+        logger.debug(f"Discovered {instruments['total_instruments']} instruments")
+
+        return instruments
+
+    except Exception as e:
+        logger.error(f"Error discovering related instruments: {e}", exc_info=True)
+        return {
+            'success': False,
+            'error': str(e),
+            'stock_symbol': stock_symbol
+        }
+
+
+def fetch_and_save_historical_data_for_instrument(
+    instrument: Dict,
+    lookback_days: int = 365
+) -> Dict:
+    """
+    Fetch historical OHLC data for a single instrument and save to database.
+
+    Args:
+        instrument: Dict containing instrument details:
+            - stock_code: str
+            - exchange_code: str
+            - product_type: str ('cash', 'futures', 'options')
+            - expiry_date: str (for F&O)
+            - strike_price: float (for options)
+            - right: str (for options - 'call', 'put')
+        lookback_days: Number of days of historical data to fetch
+
+    Returns:
+        dict: {
+            'success': bool,
+            'instrument': str (description),
+            'records_saved': int,
+            'records_deleted': int,
+            'error': str (if failed)
+        }
+    """
+    from apps.brokers.models import HistoricalPrice
+
+    stock_code = instrument['stock_code']
+    exchange_code = instrument['exchange_code']
+    product_type = instrument['product_type']
+
+    # Build instrument description
+    if product_type == 'options':
+        instrument_desc = f"{stock_code} {instrument.get('expiry_date')} {instrument.get('strike_price')} {instrument.get('right', '').upper()}"
+    elif product_type == 'futures':
+        instrument_desc = f"{stock_code} FUT {instrument.get('expiry_date')}"
+    else:
+        instrument_desc = f"{stock_code} {exchange_code}"
+
+    logger.debug(f"Fetching: {instrument_desc}")
+
+    try:
+        breeze = get_breeze_client()
+
+        # Calculate date range
+        to_date = datetime.now().date()
+        from_date = to_date - timedelta(days=lookback_days)
+
+        # Convert dates to ISO format for Breeze API
+        from_date_iso = from_date.strftime('%Y-%m-%dT09:15:00.000Z')
+        to_date_iso = to_date.strftime('%Y-%m-%dT15:30:00.000Z')
+
+        # Prepare API parameters - base params for all product types
+        api_params = {
+            'interval': '1day',
+            'from_date': from_date_iso,
+            'to_date': to_date_iso,
+            'stock_code': stock_code,
+            'exchange_code': exchange_code,
+            'product_type': product_type,
+        }
+
+        # Add F&O parameters ONLY for futures/options (not for cash)
+        expiry_date_obj = None
+        strike_price = None
+        right = ''
+
+        if product_type == 'futures':
+            expiry_date_str = instrument.get('expiry_date')
+            if expiry_date_str:
+                expiry_date_obj = datetime.strptime(expiry_date_str, '%Y-%m-%d').date()
+                api_params['expiry_date'] = expiry_date_obj.strftime('%Y-%m-%dT00:00:00.000Z')
+            api_params['right'] = 'others'
+            api_params['strike_price'] = ''
+
+        elif product_type == 'options':
+            expiry_date_str = instrument.get('expiry_date')
+            if expiry_date_str:
+                expiry_date_obj = datetime.strptime(expiry_date_str, '%Y-%m-%d').date()
+                api_params['expiry_date'] = expiry_date_obj.strftime('%Y-%m-%dT00:00:00.000Z')
+            strike_price = instrument.get('strike_price')
+            right = instrument.get('right', '')
+            api_params['right'] = right
+            api_params['strike_price'] = str(int(strike_price)) if strike_price else ''
+
+        else:
+            # For cash products, add empty strings for F&O params
+            api_params['expiry_date'] = ''
+            api_params['right'] = ''
+            api_params['strike_price'] = ''
+
+        # Call Breeze API
+        # Note: get_historical_data (v1) doesn't support 'cash' product type
+        # Must use get_historical_data_v2 for equity/cash data
+        logger.info(f"Breeze API call: {instrument_desc} (params: stock_code={api_params.get('stock_code')}, "
+                   f"exchange={api_params.get('exchange_code')}, product={api_params.get('product_type')})")
+        if product_type == 'cash':
+            response = breeze.get_historical_data_v2(**api_params)
+        else:
+            response = breeze.get_historical_data(**api_params)
+
+        # Handle None response or None Success value
+        candles_count = 0
+        api_status = None
+        api_error = None
+        if response:
+            api_status = response.get('Status')
+            api_error = response.get('Error')
+            success_data = response.get('Success')
+            if success_data is not None:
+                candles_count = len(success_data)
+        logger.info(f"Breeze API response for {instrument_desc}: status={api_status}, candles={candles_count}"
+                   + (f", error={api_error}" if api_error else ""))
+
+        # Check API response
+        if not response:
+            return {
+                'success': False,
+                'instrument': instrument_desc,
+                'records_saved': 0,
+                'records_deleted': 0,
+                'error': 'Empty response from Breeze API'
+            }
+
+        if response.get('Status') != 200:
+            error_msg = response.get('Error', 'Unknown error')
+            logger.error(f"API error for {instrument_desc}: {error_msg}")
+            return {
+                'success': False,
+                'instrument': instrument_desc,
+                'records_saved': 0,
+                'records_deleted': 0,
+                'error': f'Breeze API error: {error_msg}'
+            }
+
+        # Extract data
+        candles = response.get('Success', [])
+
+        if not candles:
+            logger.error(f"Breeze API returned no data for {instrument_desc}. "
+                        f"Check: stock code validity, API authentication, or Breeze service status.")
+            return {
+                'success': False,
+                'instrument': instrument_desc,
+                'records_saved': 0,
+                'records_deleted': 0,
+                'error': f'Breeze API returned no historical data for {instrument_desc}'
+            }
+
+        # Save to database
+        from decimal import Decimal as D
+        from django.db import connection
+
+        # Check if table exists before attempting to save
+        table_names = connection.introspection.table_names()
+        if 'historical_prices' not in table_names:
+            logger.error("HistoricalPrice table missing - run: python manage.py migrate brokers")
+            return {
+                'success': False,
+                'instrument': instrument_desc,
+                'records_saved': 0,
+                'records_deleted': 0,
+                'error': 'HistoricalPrice table does not exist. Run migrations.'
+            }
+
+        try:
+            deleted_count, created_count = HistoricalPrice.replace_data(
+                stock_code=stock_code,
+                exchange_code=exchange_code,
+                product_type=product_type,
+                interval='1day',
+                data_points=candles,
+                expiry_date=expiry_date_obj,
+                strike_price=D(str(strike_price)) if strike_price else None,
+                right=right
+            )
+            logger.debug(f"Saved {created_count} records for {instrument_desc}")
+        except Exception as db_error:
+            logger.error(f"Database error for {instrument_desc}: {db_error}")
+            return {
+                'success': False,
+                'instrument': instrument_desc,
+                'records_saved': 0,
+                'records_deleted': 0,
+                'error': f'Database error: {str(db_error)}'
+            }
+
+        # ===== FETCH CURRENT LIVE QUOTE =====
+        # Historical data only has completed candles (yesterday's close at best)
+        # We need today's live price for real-time analysis
+        current_quote = None
+        try:
+            # Format expiry for get_quotes API
+            expiry_formatted = ''
+            if product_type in ['futures', 'options'] and expiry_date_obj:
+                expiry_formatted = expiry_date_obj.strftime('%d-%b-%Y').upper()
+
+            quote_params = {
+                'stock_code': stock_code,
+                'exchange_code': exchange_code,
+                'product_type': product_type,
+                'expiry_date': expiry_formatted,
+                'right': right if product_type == 'options' else ('others' if product_type == 'futures' else ''),
+                'strike_price': str(int(strike_price)) if strike_price else ''
+            }
+
+            quote_resp = breeze.get_quotes(**quote_params)
+
+            if quote_resp and quote_resp.get("Status") == 200 and quote_resp.get("Success"):
+                quote_data = quote_resp["Success"][0] if quote_resp["Success"] else {}
+                current_quote = {
+                    'ltp': float(quote_data.get('ltp', 0)),
+                    'open': float(quote_data.get('open', 0)),
+                    'high': float(quote_data.get('high', 0)),
+                    'low': float(quote_data.get('low', 0)),
+                    'close': float(quote_data.get('previous_close', 0)),
+                    'volume': int(quote_data.get('total_quantity_traded', 0) or 0),
+                    'open_interest': int(quote_data.get('open_interest', 0) or 0),
+                    'change': float(quote_data.get('ltp', 0)) - float(quote_data.get('previous_close', 0)),
+                    'change_pct': (
+                        ((float(quote_data.get('ltp', 0)) - float(quote_data.get('previous_close', 0))) /
+                         float(quote_data.get('previous_close', 1))) * 100
+                    ) if quote_data.get('previous_close') else 0,
+                    'bid': float(quote_data.get('best_bid_price', 0) or 0),
+                    'ask': float(quote_data.get('best_offer_price', 0) or 0),
+                    'timestamp': datetime.now().isoformat()
+                }
+                logger.info(f"Current LTP for {instrument_desc}: ₹{current_quote['ltp']:.2f}")
+
+                # ===== SAVE TODAY'S LIVE DATA TO DATABASE =====
+                # Save current quote as today's record so queries include latest data
+                if current_quote.get('ltp', 0) > 0:
+                    try:
+                        today_datetime = datetime.now().replace(hour=15, minute=30, second=0, microsecond=0)
+
+                        # Check if today's record already exists (avoid duplicates)
+                        today_filter = {
+                            'stock_code': stock_code,
+                            'exchange_code': exchange_code,
+                            'product_type': product_type,
+                            'interval': '1day',
+                            'datetime__date': today_datetime.date()
+                        }
+                        if product_type in ['futures', 'options']:
+                            today_filter['expiry_date'] = expiry_date_obj
+                        if product_type == 'options':
+                            today_filter['strike_price'] = D(str(strike_price)) if strike_price else None
+                            today_filter['right'] = right
+
+                        # Delete any existing today's record and create fresh one
+                        HistoricalPrice.objects.filter(**today_filter).delete()
+
+                        # Create today's record with live data
+                        today_record = HistoricalPrice(
+                            stock_code=stock_code,
+                            exchange_code=exchange_code,
+                            product_type=product_type,
+                            interval='1day',
+                            expiry_date=expiry_date_obj,
+                            strike_price=D(str(strike_price)) if strike_price else None,
+                            right=right,
+                            datetime=today_datetime,
+                            open=D(str(current_quote['open'])),
+                            high=D(str(current_quote['high'])),
+                            low=D(str(current_quote['low'])),
+                            close=D(str(current_quote['ltp'])),  # Use LTP as current "close"
+                            volume=current_quote['volume'],
+                            open_interest=current_quote['open_interest'] or 0
+                        )
+                        today_record.save()
+                        created_count += 1  # Increment saved count
+
+                    except Exception as save_error:
+                        logger.warning(f"Could not save today's live data for {instrument_desc}: {save_error}")
+
+            else:
+                logger.warning(f"Could not fetch live quote for {instrument_desc}: {quote_resp.get('Error', 'Unknown')}")
+
+        except Exception as quote_error:
+            logger.warning(f"Error fetching live quote for {instrument_desc}: {quote_error}")
+
+        return {
+            'success': True,
+            'instrument': instrument_desc,
+            'records_saved': created_count,
+            'records_deleted': deleted_count,
+            'date_range': {
+                'from': from_date.strftime('%Y-%m-%d'),
+                'to': to_date.strftime('%Y-%m-%d')
+            },
+            'current_quote': current_quote,
+            'last_historical_close': float(candles[-1]['close']) if candles else None,
+            'last_historical_date': candles[-1]['datetime'] if candles else None
+        }
+
+    except Exception as e:
+        logger.error(f"Error fetching historical data for {instrument_desc}: {e}", exc_info=True)
+        return {
+            'success': False,
+            'instrument': instrument_desc,
+            'records_saved': 0,
+            'records_deleted': 0,
+            'error': str(e)
+        }
+
+
+def collect_historical_data_for_token(
+    stock_symbol: str,
+    expiry_date: str,
+    lookback_days: int = 365,
+    include_options: bool = True,
+    max_options_per_expiry: int = 50
+) -> Dict:
+    """
+    Collect and save 365 days of historical data for all instruments
+    related to a given token (stock/future/option).
+
+    This is the main entry point for historical data collection before
+    running Verify Trade or Futures Algorithm.
+
+    Args:
+        stock_symbol: Stock symbol (e.g., 'HDFCBANK', 'RELIANCE')
+        expiry_date: Primary expiry date in YYYY-MM-DD format
+        lookback_days: Number of days of historical data to fetch (default 365)
+        include_options: Whether to include options chain (default True)
+        max_options_per_expiry: Maximum options to fetch per expiry (default 50)
+            Set to 0 for unlimited, or reduce for faster execution
+
+    Returns:
+        dict: {
+            'success': bool,
+            'stock_symbol': str,
+            'summary': {
+                'total_instruments': int,
+                'successful': int,
+                'failed': int,
+                'total_records_saved': int
+            },
+            'equity_result': {...},
+            'futures_results': [...],
+            'options_results': [...],
+            'current_quotes': {
+                'timestamp': str (ISO format),
+                'equity': {ltp, open, high, low, close, volume, oi, change, change_pct, bid, ask},
+                'futures': {instrument_key: {ltp, ...}, ...},
+                'options': {
+                    'calls': {strike: {ltp, ...}, ...},
+                    'puts': {strike: {ltp, ...}, ...}
+                }
+            },
+            'execution_time_seconds': float,
+            'error': str (if failed)
+        }
+    """
+    import time
+    start_time = time.time()
+
+    logger.info(f"Collecting historical data: {stock_symbol} ({lookback_days} days)")
+
+    result = {
+        'success': True,
+        'stock_symbol': stock_symbol,
+        'expiry_date': expiry_date,
+        'summary': {
+            'total_instruments': 0,
+            'successful': 0,
+            'failed': 0,
+            'total_records_saved': 0
+        },
+        'equity_result': None,
+        'futures_results': [],
+        'options_results': []
+    }
+
+    try:
+        # Step 1: Discover all related instruments
+        instruments = get_related_instruments(stock_symbol, expiry_date)
+
+        if not instruments.get('success'):
+            return {
+                'success': False,
+                'stock_symbol': stock_symbol,
+                'error': instruments.get('error', 'Failed to discover instruments')
+            }
+
+        result['expiries'] = instruments.get('expiries', [])
+
+        # Step 2: Fetch historical data for equity
+        if instruments.get('equity'):
+            equity_result = fetch_and_save_historical_data_for_instrument(
+                instruments['equity'],
+                lookback_days=lookback_days
+            )
+            result['equity_result'] = equity_result
+            result['summary']['total_instruments'] += 1
+
+            if equity_result.get('success'):
+                result['summary']['successful'] += 1
+                result['summary']['total_records_saved'] += equity_result.get('records_saved', 0)
+            else:
+                result['summary']['failed'] += 1
+
+        # Step 3: Fetch historical data for futures
+        for futures_instrument in instruments.get('futures', []):
+            futures_result = fetch_and_save_historical_data_for_instrument(
+                futures_instrument,
+                lookback_days=lookback_days
+            )
+            result['futures_results'].append(futures_result)
+            result['summary']['total_instruments'] += 1
+
+            if futures_result.get('success'):
+                result['summary']['successful'] += 1
+                result['summary']['total_records_saved'] += futures_result.get('records_saved', 0)
+            else:
+                result['summary']['failed'] += 1
+
+        # Step 4: Fetch historical data for options (if enabled)
+        if include_options:
+
+            options_list = instruments.get('options', [])
+
+            # Limit options per expiry if specified
+            if max_options_per_expiry > 0:
+                # Group by expiry and limit
+                limited_options = []
+                expiry_counts = {}
+
+                for opt in options_list:
+                    exp = opt.get('expiry_date')
+                    if exp not in expiry_counts:
+                        expiry_counts[exp] = 0
+
+                    if expiry_counts[exp] < max_options_per_expiry:
+                        limited_options.append(opt)
+                        expiry_counts[exp] += 1
+
+                options_list = limited_options
+                logger.info(f"Limited to {len(options_list)} options (max {max_options_per_expiry} per expiry)")
+
+            for options_instrument in options_list:
+                options_result = fetch_and_save_historical_data_for_instrument(
+                    options_instrument,
+                    lookback_days=lookback_days
+                )
+                result['options_results'].append(options_result)
+                result['summary']['total_instruments'] += 1
+
+                if options_result.get('success'):
+                    result['summary']['successful'] += 1
+                    result['summary']['total_records_saved'] += options_result.get('records_saved', 0)
+                else:
+                    result['summary']['failed'] += 1
+        else:
+            pass  # Options skipped
+
+        # Calculate execution time
+        end_time = time.time()
+        result['execution_time_seconds'] = round(end_time - start_time, 2)
+
+        # ===== AGGREGATE CURRENT QUOTES (TODAY'S LIVE DATA) =====
+        # Consolidate all current quotes for easy access
+        current_quotes = {
+            'timestamp': datetime.now().isoformat(),
+            'equity': None,
+            'futures': {},
+            'options': {
+                'calls': {},
+                'puts': {}
+            }
+        }
+
+        # Extract equity current quote
+        if result.get('equity_result') and result['equity_result'].get('current_quote'):
+            current_quotes['equity'] = {
+                'instrument': result['equity_result'].get('instrument'),
+                **result['equity_result']['current_quote']
+            }
+
+        # Extract futures current quotes
+        for fut_result in result.get('futures_results', []):
+            if fut_result.get('current_quote'):
+                instrument_key = fut_result.get('instrument', 'unknown')
+                current_quotes['futures'][instrument_key] = {
+                    'instrument': instrument_key,
+                    **fut_result['current_quote']
+                }
+
+        # Extract options current quotes (organized by strike)
+        for opt_result in result.get('options_results', []):
+            if opt_result.get('current_quote'):
+                instrument = opt_result.get('instrument', '')
+                # Parse instrument string to extract strike and type
+                # Format: "HDFCBANK 2025-01-30 1700.0 CALL"
+                parts = instrument.split()
+                if len(parts) >= 4:
+                    strike = parts[2]
+                    opt_type = parts[3].upper()
+
+                    if opt_type == 'CALL':
+                        current_quotes['options']['calls'][strike] = {
+                            'instrument': instrument,
+                            **opt_result['current_quote']
+                        }
+                    elif opt_type == 'PUT':
+                        current_quotes['options']['puts'][strike] = {
+                            'instrument': instrument,
+                            **opt_result['current_quote']
+                        }
+
+        result['current_quotes'] = current_quotes
+
+        # Log summary
+        logger.info(f"Collection done: {result['summary']['successful']}/{result['summary']['total_instruments']} instruments, {result['summary']['total_records_saved']} records ({result['execution_time_seconds']}s)")
+
+        return result
+
+    except Exception as e:
+        logger.error(f"Error in historical data collection: {e}", exc_info=True)
+        return {
+            'success': False,
+            'stock_symbol': stock_symbol,
+            'error': str(e)
+        }
+
+
+def verify_historical_data(
+    stock_symbol: str,
+    expiry_date: str
+) -> Dict:
+    """
+    Verify historical data and perform risk assessment before suggesting a futures trade.
+
+    Risk Checks (any failure blocks the trade):
+    1. 5-Day Loss Check: Stock lost more than 3% in last 5 days
+    2. 15-Day Loss Check: Stock lost more than 5% in last 15 days
+    3. 30-Day Loss Check: Stock lost more than 10% in last 30 days
+    4. Single Day Drop Check: Stock lost more than 2% on any single day in last 5 days
+    5. Volatility Check: High volatility regime detection
+    6. Volume Decline Check: Declining volume trend
+    7. Support Breach Check: Price broke below key support levels
+    8. Trend Reversal Check: Recent trend reversal signals
+
+    Args:
+        stock_symbol: Stock symbol (e.g., 'HDFCBANK')
+        expiry_date: Expiry date in YYYY-MM-DD format
+
+    Returns:
+        dict: {
+            'success': bool,
+            'trade_allowed': bool,  # False if any risk check fails
+            'risk_checks': [...],   # List of all checks with results
+            'risk_summary': {...},  # Summary statistics
+            'analysis': {...},      # Detailed analysis data
+            'recommendations': [...],
+            'error': str (if failed)
+        }
+    """
+    from apps.brokers.models import HistoricalPrice
+    from django.db import OperationalError
+
+    logger.debug(f"Verifying historical data: {stock_symbol}")
+
+    result = {
+        'success': True,
+        'stock_symbol': stock_symbol,
+        'expiry_date': expiry_date,
+        'trade_allowed': True,
+        'risk_checks': [],
+        'risk_summary': {
+            'total_checks': 0,
+            'passed': 0,
+            'failed': 0,
+            'warnings': 0
+        },
+        'analysis': {},
+        'recommendations': []
+    }
+
+    try:
+        # ===== RESOLVE BREEZE STOCK CODE =====
+        # Historical data is saved with Breeze stock code (e.g., HDFBAN), not original symbol (HDFCBANK)
+        # We need to use the same code for lookup
+        from apps.brokers.utils.security_master import get_futures_instrument
+
+        expiry_dt = datetime.strptime(expiry_date, '%Y-%m-%d')
+        expiry_formatted_sm = expiry_dt.strftime('%d-%b-%Y')
+
+        instrument_info = get_futures_instrument(stock_symbol, expiry_formatted_sm)
+        if instrument_info and instrument_info.get('short_name'):
+            breeze_stock_code = instrument_info['short_name']
+            logger.debug(f"Verification lookup: {stock_symbol} -> {breeze_stock_code}")
+        else:
+            # Fallback to original symbol
+            breeze_stock_code = stock_symbol
+            logger.warning(f"Could not resolve Breeze code for {stock_symbol}, using original")
+
+        # Fetch historical data for equity from database
+        try:
+            historical_data = HistoricalPrice.objects.filter(
+                stock_code=breeze_stock_code,  # Use Breeze stock code, not original symbol
+                exchange_code='NSE',
+                product_type='cash',
+                interval='1day'
+            ).order_by('-datetime')[:365]  # Get up to 1 year
+
+            data_exists = historical_data.exists()
+        except OperationalError as db_error:
+            # Table doesn't exist yet - need to run migrations
+            logger.warning(f"HistoricalPrice table not found: {db_error}")
+            result['success'] = True
+            result['trade_allowed'] = False  # Block trade - cannot verify without database
+            result['verdict'] = 'BLOCKED'
+            result['verdict_message'] = 'Historical data verification blocked - database table not created yet. Run: python manage.py migrate brokers'
+            result['risk_checks'] = [{
+                'id': 'database_missing',
+                'name': 'Database Setup Required',
+                'description': 'HistoricalPrice table needs to be created',
+                'status': 'FAIL',
+                'severity': 'HIGH',
+                'value': 'Table Missing',
+                'threshold': 'Table Required',
+                'message': 'Run "python manage.py migrate brokers" to enable historical verification'
+            }]
+            result['risk_summary'] = {
+                'total_checks': 1,
+                'passed': 0,
+                'failed': 1,
+                'warnings': 0,
+                'skipped': 0,
+                'pass_rate': 0
+            }
+            result['recommendations'].append('Run migrations to enable historical data verification: python manage.py migrate brokers')
+            return result
+
+        if not data_exists:
+            logger.error(f"No historical data found for {stock_symbol} after download attempt - this is an error")
+            result['success'] = False  # This is an error condition
+            result['trade_allowed'] = False  # Block trade - cannot verify without data
+            result['verdict'] = 'ERROR'
+            result['verdict_message'] = f'Failed to download historical data for {stock_symbol}. Check Breeze API authentication and connectivity.'
+            result['risk_checks'] = [{
+                'id': 'data_download_failed',
+                'name': 'Historical Data Download Failed',
+                'description': f'Failed to download historical price data for {stock_symbol}',
+                'status': 'FAIL',
+                'severity': 'HIGH',
+                'value': 'Download Failed',
+                'threshold': 'Data Required',
+                'message': f'Breeze API did not return data for {stock_symbol}. Check API authentication or try again.'
+            }]
+            result['risk_summary'] = {
+                'total_checks': 1,
+                'passed': 0,
+                'failed': 1,
+                'warnings': 0,
+                'skipped': 0,
+                'pass_rate': 0
+            }
+            result['recommendations'].append(f'Check Breeze API authentication and retry. If issue persists, verify stock code {stock_symbol} is valid.')
+            return result
+
+        # Convert to list for easier processing
+        data_list = list(historical_data)
+        logger.info(f"Found {len(data_list)} historical records for {stock_symbol}")
+
+        if len(data_list) < 5:
+            result['success'] = False
+            result['error'] = f'Insufficient historical data for {stock_symbol}. Need at least 5 days.'
+            return result
+
+        # Extract prices (most recent first)
+        closes = [float(d.close) for d in data_list]
+        highs = [float(d.high) for d in data_list]
+        lows = [float(d.low) for d in data_list]
+        opens = [float(d.open) for d in data_list]
+        volumes = [d.volume for d in data_list]
+        dates = [d.datetime for d in data_list]
+
+        current_price = closes[0]
+        result['analysis']['current_price'] = current_price
+        result['analysis']['data_points'] = len(closes)
+        result['analysis']['date_range'] = {
+            'from': dates[-1].strftime('%Y-%m-%d') if dates else None,
+            'to': dates[0].strftime('%Y-%m-%d') if dates else None
+        }
+
+        # ============================================================================
+        # RISK CHECK 1: 5-Day Loss Check (> 3% loss)
+        # ============================================================================
+        check_1 = {
+            'id': 'five_day_loss',
+            'name': '5-Day Price Drop',
+            'description': 'Stock should not have lost more than 3% in last 5 trading days',
+            'threshold': '-3%',
+            'status': 'PASS',
+            'severity': 'HIGH',
+            'value': None,
+            'details': {}
+        }
+
+        if len(closes) >= 5:
+            price_5_days_ago = closes[4]  # Index 4 = 5th day back
+            change_5d = ((current_price - price_5_days_ago) / price_5_days_ago) * 100
+            check_1['value'] = f"{change_5d:+.2f}%"
+            check_1['details'] = {
+                'current_price': current_price,
+                'price_5_days_ago': price_5_days_ago,
+                'change_pct': round(change_5d, 2)
+            }
+
+            if change_5d < -3:
+                check_1['status'] = 'FAIL'
+                check_1['message'] = f'Stock dropped {abs(change_5d):.2f}% in last 5 days (threshold: 3%)'
+                result['trade_allowed'] = False
+                result['recommendations'].append(f'⚠️ Avoid trade: {abs(change_5d):.2f}% loss in 5 days indicates weakness')
+            else:
+                check_1['status'] = 'PASS'
+                check_1['message'] = f'5-day change: {change_5d:+.2f}% (within acceptable range)'
+
+        result['risk_checks'].append(check_1)
+
+        # ============================================================================
+        # RISK CHECK 2: 15-Day Loss Check (> 5% loss)
+        # ============================================================================
+        check_2 = {
+            'id': 'fifteen_day_loss',
+            'name': '15-Day Price Drop',
+            'description': 'Stock should not have lost more than 5% in last 15 trading days',
+            'threshold': '-5%',
+            'status': 'PASS',
+            'severity': 'HIGH',
+            'value': None,
+            'details': {}
+        }
+
+        if len(closes) >= 15:
+            price_15_days_ago = closes[14]
+            change_15d = ((current_price - price_15_days_ago) / price_15_days_ago) * 100
+            check_2['value'] = f"{change_15d:+.2f}%"
+            check_2['details'] = {
+                'current_price': current_price,
+                'price_15_days_ago': price_15_days_ago,
+                'change_pct': round(change_15d, 2)
+            }
+
+            if change_15d < -5:
+                check_2['status'] = 'FAIL'
+                check_2['message'] = f'Stock dropped {abs(change_15d):.2f}% in last 15 days (threshold: 5%)'
+                result['trade_allowed'] = False
+                result['recommendations'].append(f'⚠️ Avoid trade: {abs(change_15d):.2f}% loss in 15 days shows sustained weakness')
+            else:
+                check_2['status'] = 'PASS'
+                check_2['message'] = f'15-day change: {change_15d:+.2f}% (within acceptable range)'
+        else:
+            check_2['status'] = 'SKIP'
+            check_2['message'] = 'Insufficient data for 15-day check'
+
+        result['risk_checks'].append(check_2)
+
+        # ============================================================================
+        # RISK CHECK 3: 30-Day Loss Check (> 10% loss)
+        # ============================================================================
+        check_3 = {
+            'id': 'thirty_day_loss',
+            'name': '30-Day Price Drop',
+            'description': 'Stock should not have lost more than 10% in last 30 trading days',
+            'threshold': '-10%',
+            'status': 'PASS',
+            'severity': 'HIGH',
+            'value': None,
+            'details': {}
+        }
+
+        if len(closes) >= 30:
+            price_30_days_ago = closes[29]
+            change_30d = ((current_price - price_30_days_ago) / price_30_days_ago) * 100
+            check_3['value'] = f"{change_30d:+.2f}%"
+            check_3['details'] = {
+                'current_price': current_price,
+                'price_30_days_ago': price_30_days_ago,
+                'change_pct': round(change_30d, 2)
+            }
+
+            if change_30d < -10:
+                check_3['status'] = 'FAIL'
+                check_3['message'] = f'Stock dropped {abs(change_30d):.2f}% in last 30 days (threshold: 10%)'
+                result['trade_allowed'] = False
+                result['recommendations'].append(f'⚠️ Avoid trade: {abs(change_30d):.2f}% loss in 30 days indicates major correction')
+            else:
+                check_3['status'] = 'PASS'
+                check_3['message'] = f'30-day change: {change_30d:+.2f}% (within acceptable range)'
+        else:
+            check_3['status'] = 'SKIP'
+            check_3['message'] = 'Insufficient data for 30-day check'
+
+        result['risk_checks'].append(check_3)
+
+        # ============================================================================
+        # RISK CHECK 4: Single Day Drop Check (> 2% on any day in last 5 days)
+        # ============================================================================
+        check_4 = {
+            'id': 'single_day_drop',
+            'name': 'Single Day Drop',
+            'description': 'No single day should have more than 2% loss in last 5 trading days',
+            'threshold': '-2% per day',
+            'status': 'PASS',
+            'severity': 'HIGH',
+            'value': None,
+            'details': {'daily_changes': []}
+        }
+
+        if len(closes) >= 5:
+            daily_changes = []
+            worst_day = {'date': None, 'change': 0}
+
+            for i in range(min(5, len(closes) - 1)):
+                # Calculate daily change (close to close)
+                prev_close = closes[i + 1]
+                curr_close = closes[i]
+                daily_change = ((curr_close - prev_close) / prev_close) * 100
+
+                daily_changes.append({
+                    'date': dates[i].strftime('%Y-%m-%d'),
+                    'change_pct': round(daily_change, 2),
+                    'close': curr_close
+                })
+
+                if daily_change < worst_day['change']:
+                    worst_day = {'date': dates[i].strftime('%Y-%m-%d'), 'change': daily_change}
+
+            check_4['details']['daily_changes'] = daily_changes
+            check_4['value'] = f"Worst: {worst_day['change']:+.2f}%"
+            check_4['details']['worst_day'] = worst_day
+
+            if worst_day['change'] < -2:
+                check_4['status'] = 'FAIL'
+                check_4['message'] = f'Stock dropped {abs(worst_day["change"]):.2f}% on {worst_day["date"]} (threshold: 2%)'
+                result['trade_allowed'] = False
+                result['recommendations'].append(f'⚠️ Avoid trade: Sharp {abs(worst_day["change"]):.2f}% single-day drop on {worst_day["date"]}')
+            else:
+                check_4['status'] = 'PASS'
+                check_4['message'] = f'No single day drop exceeded 2% (worst: {worst_day["change"]:+.2f}%)'
+
+        result['risk_checks'].append(check_4)
+
+        # ============================================================================
+        # RISK CHECK 5: Volatility Check (High volatility regime)
+        # ============================================================================
+        check_5 = {
+            'id': 'volatility_regime',
+            'name': 'Volatility Assessment',
+            'description': 'Check if stock is in high volatility regime',
+            'threshold': '> 3% daily range (warning)',
+            'status': 'PASS',
+            'severity': 'MEDIUM',
+            'value': None,
+            'details': {}
+        }
+
+        if len(closes) >= 20:
+            # Calculate average true range (ATR) proxy
+            daily_ranges = []
+            for i in range(min(20, len(highs))):
+                daily_range = ((highs[i] - lows[i]) / lows[i]) * 100 if lows[i] > 0 else 0
+                daily_ranges.append(daily_range)
+
+            avg_range = sum(daily_ranges) / len(daily_ranges) if daily_ranges else 0
+            max_range = max(daily_ranges) if daily_ranges else 0
+
+            # Calculate daily returns volatility
+            returns = []
+            for i in range(min(20, len(closes) - 1)):
+                ret = (closes[i] - closes[i + 1]) / closes[i + 1] if closes[i + 1] > 0 else 0
+                returns.append(ret)
+
+            volatility = (sum([r ** 2 for r in returns]) / len(returns)) ** 0.5 * 100 if returns else 0
+
+            check_5['value'] = f"Avg Range: {avg_range:.2f}%, Vol: {volatility:.2f}%"
+            check_5['details'] = {
+                'avg_daily_range_pct': round(avg_range, 2),
+                'max_daily_range_pct': round(max_range, 2),
+                'daily_volatility_pct': round(volatility, 2),
+                'annualized_volatility_pct': round(volatility * (252 ** 0.5), 2)
+            }
+
+            if avg_range > 4:
+                check_5['status'] = 'FAIL'
+                check_5['message'] = f'Extremely high volatility (avg daily range: {avg_range:.2f}%)'
+                result['trade_allowed'] = False
+                result['recommendations'].append(f'⚠️ Avoid trade: Extreme volatility with {avg_range:.2f}% average daily range')
+            elif avg_range > 3:
+                check_5['status'] = 'WARNING'
+                check_5['message'] = f'High volatility detected (avg daily range: {avg_range:.2f}%)'
+                result['recommendations'].append(f'⚡ Caution: High volatility - consider smaller position size')
+            else:
+                check_5['status'] = 'PASS'
+                check_5['message'] = f'Volatility within normal range (avg daily range: {avg_range:.2f}%)'
+
+        result['risk_checks'].append(check_5)
+
+        # ============================================================================
+        # RISK CHECK 6: Volume Decline Check
+        # ============================================================================
+        check_6 = {
+            'id': 'volume_trend',
+            'name': 'Volume Trend',
+            'description': 'Check for declining volume trend (bearish signal)',
+            'threshold': '< 50% of 20-day avg',
+            'status': 'PASS',
+            'severity': 'MEDIUM',
+            'value': None,
+            'details': {}
+        }
+
+        if len(volumes) >= 20 and all(v > 0 for v in volumes[:20]):
+            recent_avg_vol = sum(volumes[:5]) / 5
+            longer_avg_vol = sum(volumes[:20]) / 20
+
+            vol_ratio = (recent_avg_vol / longer_avg_vol) * 100 if longer_avg_vol > 0 else 100
+
+            check_6['value'] = f"{vol_ratio:.0f}% of avg"
+            check_6['details'] = {
+                'recent_5d_avg_volume': int(recent_avg_vol),
+                'longer_20d_avg_volume': int(longer_avg_vol),
+                'volume_ratio_pct': round(vol_ratio, 2)
+            }
+
+            if vol_ratio < 50:
+                check_6['status'] = 'WARNING'
+                check_6['message'] = f'Volume significantly below average ({vol_ratio:.0f}% of 20-day avg)'
+                result['recommendations'].append(f'⚡ Note: Low volume may indicate lack of interest')
+            else:
+                check_6['status'] = 'PASS'
+                check_6['message'] = f'Volume healthy ({vol_ratio:.0f}% of 20-day average)'
+
+        result['risk_checks'].append(check_6)
+
+        # ============================================================================
+        # RISK CHECK 7: Support Level Breach Check
+        # ============================================================================
+        check_7 = {
+            'id': 'support_breach',
+            'name': 'Support Level Check',
+            'description': 'Check if price has broken below key support levels',
+            'threshold': 'Below 20-day low',
+            'status': 'PASS',
+            'severity': 'HIGH',
+            'value': None,
+            'details': {}
+        }
+
+        if len(lows) >= 20:
+            # Calculate support levels
+            low_20d = min(lows[:20])
+            low_50d = min(lows[:50]) if len(lows) >= 50 else low_20d
+
+            # Calculate moving averages as dynamic support
+            sma_20 = sum(closes[:20]) / 20
+            sma_50 = sum(closes[:50]) / 50 if len(closes) >= 50 else sma_20
+
+            check_7['details'] = {
+                'current_price': current_price,
+                '20_day_low': round(low_20d, 2),
+                '50_day_low': round(low_50d, 2),
+                'sma_20': round(sma_20, 2),
+                'sma_50': round(sma_50, 2),
+                'below_sma_20': current_price < sma_20,
+                'below_sma_50': current_price < sma_50
+            }
+
+            # Check if current price is at or near 20-day low
+            proximity_to_low = ((current_price - low_20d) / low_20d) * 100 if low_20d > 0 else 0
+            check_7['value'] = f"{proximity_to_low:.1f}% above 20d low"
+
+            if current_price <= low_20d:
+                check_7['status'] = 'FAIL'
+                check_7['message'] = f'Price at/below 20-day low (₹{low_20d:.2f}) - major support broken'
+                result['trade_allowed'] = False
+                result['recommendations'].append(f'⚠️ Avoid trade: Price broke 20-day support at ₹{low_20d:.2f}')
+            elif proximity_to_low < 1:
+                check_7['status'] = 'WARNING'
+                check_7['message'] = f'Price very close to 20-day low ({proximity_to_low:.1f}% above)'
+                result['recommendations'].append(f'⚡ Caution: Price near support - wait for confirmation')
+            elif current_price < sma_20 and current_price < sma_50:
+                check_7['status'] = 'WARNING'
+                check_7['message'] = f'Price below both 20-day and 50-day moving averages'
+                result['recommendations'].append(f'⚡ Note: Price below key moving averages - bearish signal')
+            else:
+                check_7['status'] = 'PASS'
+                check_7['message'] = f'Price {proximity_to_low:.1f}% above 20-day low - support intact'
+
+        result['risk_checks'].append(check_7)
+
+        # ============================================================================
+        # RISK CHECK 8: Trend Reversal Check (Lower Highs Pattern)
+        # ============================================================================
+        check_8 = {
+            'id': 'trend_reversal',
+            'name': 'Trend Analysis',
+            'description': 'Check for trend reversal signals (lower highs/lower lows)',
+            'threshold': '3+ consecutive lower highs',
+            'status': 'PASS',
+            'severity': 'MEDIUM',
+            'value': None,
+            'details': {}
+        }
+
+        if len(highs) >= 10:
+            # Check for lower highs pattern (last 5 days)
+            lower_highs_count = 0
+            lower_lows_count = 0
+
+            for i in range(min(4, len(highs) - 1)):
+                if highs[i] < highs[i + 1]:
+                    lower_highs_count += 1
+                if lows[i] < lows[i + 1]:
+                    lower_lows_count += 1
+
+            # Calculate trend direction
+            if len(closes) >= 10:
+                recent_trend = closes[0] - closes[9]  # Last 10 days
+                trend_direction = 'UP' if recent_trend > 0 else 'DOWN' if recent_trend < 0 else 'FLAT'
+            else:
+                trend_direction = 'UNKNOWN'
+
+            check_8['value'] = f"{lower_highs_count} lower highs"
+            check_8['details'] = {
+                'lower_highs_count': lower_highs_count,
+                'lower_lows_count': lower_lows_count,
+                'trend_direction': trend_direction,
+                '10_day_change': round(((closes[0] - closes[min(9, len(closes) - 1)]) / closes[min(9, len(closes) - 1)]) * 100, 2) if len(closes) >= 2 else 0
+            }
+
+            if lower_highs_count >= 4 and lower_lows_count >= 3:
+                check_8['status'] = 'FAIL'
+                check_8['message'] = f'Strong downtrend pattern: {lower_highs_count} lower highs, {lower_lows_count} lower lows'
+                result['trade_allowed'] = False
+                result['recommendations'].append(f'⚠️ Avoid trade: Clear downtrend with consecutive lower highs and lows')
+            elif lower_highs_count >= 3:
+                check_8['status'] = 'WARNING'
+                check_8['message'] = f'Potential trend weakness: {lower_highs_count} consecutive lower highs'
+                result['recommendations'].append(f'⚡ Caution: {lower_highs_count} lower highs - trend may be weakening')
+            else:
+                check_8['status'] = 'PASS'
+                check_8['message'] = f'Trend structure intact (trend: {trend_direction})'
+
+        result['risk_checks'].append(check_8)
+
+        # ============================================================================
+        # CALCULATE SUMMARY
+        # ============================================================================
+        passed_count = sum(1 for c in result['risk_checks'] if c['status'] == 'PASS')
+        failed_count = sum(1 for c in result['risk_checks'] if c['status'] == 'FAIL')
+        warning_count = sum(1 for c in result['risk_checks'] if c['status'] == 'WARNING')
+        skipped_count = sum(1 for c in result['risk_checks'] if c['status'] == 'SKIP')
+
+        result['risk_summary'] = {
+            'total_checks': len(result['risk_checks']),
+            'passed': passed_count,
+            'failed': failed_count,
+            'warnings': warning_count,
+            'skipped': skipped_count,
+            'pass_rate': round((passed_count / (len(result['risk_checks']) - skipped_count)) * 100, 1) if (len(result['risk_checks']) - skipped_count) > 0 else 0
+        }
+
+        # Add price history for chart
+        result['analysis']['price_history'] = [
+            {
+                'date': dates[i].strftime('%Y-%m-%d'),
+                'close': closes[i],
+                'high': highs[i],
+                'low': lows[i],
+                'open': opens[i],
+                'volume': volumes[i]
+            }
+            for i in range(min(30, len(closes)))  # Last 30 days for chart
+        ]
+
+        # Final verdict
+        if result['trade_allowed']:
+            result['verdict'] = 'APPROVED'
+            result['verdict_message'] = f'Historical data verification passed ({passed_count}/{len(result["risk_checks"])} checks passed)'
+            if warning_count > 0:
+                result['verdict_message'] += f' with {warning_count} warning(s)'
+        else:
+            result['verdict'] = 'BLOCKED'
+            result['verdict_message'] = f'Trade blocked due to {failed_count} failed risk check(s)'
+
+        logger.info(f"Historical verification complete: {result['verdict']}")
+        logger.info(f"Summary: {passed_count} passed, {failed_count} failed, {warning_count} warnings")
+
+        return result
+
+    except Exception as e:
+        logger.error(f"Error in verify_historical_data: {e}", exc_info=True)
+        return {
+            'success': False,
+            'stock_symbol': stock_symbol,
+            'error': str(e),
+            'trade_allowed': True,  # Don't block trade on error
+            'risk_checks': [],
+            'risk_summary': {}
+        }
+
+
+def prepare_data_for_analysis(
+    stock_symbol: str,
+    expiry_date: str,
+    force_refresh: bool = False,
+    include_options: bool = True
+) -> Dict:
+    """
+    Main entry point for preparing historical data before Verify Trade
+    or Futures Algorithm analysis.
+
+    This function:
+    1. Collects 365 days of historical data for all related instruments
+    2. Saves data to the database
+    3. (Future) Runs verification analysis on the data
+
+    Use this before calling comprehensive_futures_analysis() to ensure
+    you have complete historical data for analysis.
+
+    Args:
+        stock_symbol: Stock symbol (e.g., 'HDFCBANK', 'RELIANCE')
+        expiry_date: Primary expiry date in YYYY-MM-DD format
+        force_refresh: Force re-fetch even if recent data exists (default False)
+        include_options: Include options chain data (default True)
+
+    Returns:
+        dict: {
+            'success': bool,
+            'data_collection': {...},  # Results from collect_historical_data_for_token
+            'verification': {...},  # Results from verify_historical_data (placeholder)
+            'ready_for_analysis': bool,
+            'error': str (if failed)
+        }
+    """
+    logger.info("=" * 80)
+    logger.info(f"PREPARING DATA FOR ANALYSIS: {stock_symbol}")
+    logger.info("=" * 80)
+
+    result = {
+        'success': True,
+        'stock_symbol': stock_symbol,
+        'expiry_date': expiry_date,
+        'data_collection': None,
+        'verification': None,
+        'ready_for_analysis': False
+    }
+
+    try:
+        # ===== RESOLVE BREEZE STOCK CODE =====
+        # Historical data is saved with Breeze stock code, not original symbol
+        from apps.brokers.utils.security_master import get_futures_instrument
+
+        expiry_dt = datetime.strptime(expiry_date, '%Y-%m-%d')
+        expiry_formatted_sm = expiry_dt.strftime('%d-%b-%Y')
+
+        instrument_info = get_futures_instrument(stock_symbol, expiry_formatted_sm)
+        if instrument_info and instrument_info.get('short_name'):
+            breeze_stock_code = instrument_info['short_name']
+            logger.info(f"Resolved Breeze code: {stock_symbol} -> {breeze_stock_code}")
+        else:
+            breeze_stock_code = stock_symbol
+            logger.warning(f"Could not resolve Breeze code for {stock_symbol}, using original")
+
+        # Step 1: Check if we have recent data (skip if force_refresh)
+        if not force_refresh:
+            from apps.brokers.models import HistoricalPrice
+            from django.utils import timezone
+
+            # Check when equity data was last updated (use Breeze stock code)
+            recent_data = HistoricalPrice.objects.filter(
+                stock_code=breeze_stock_code,  # Use Breeze stock code
+                exchange_code='NSE',
+                product_type='cash',
+                interval='1day'
+            ).order_by('-created_at').first()
+
+            if recent_data:
+                data_age = timezone.now() - recent_data.created_at
+                minutes_old = data_age.total_seconds() / 60
+
+                if minutes_old < 5:  # Data less than 5 minutes old
+                    logger.info(f"Recent data exists (age: {minutes_old:.1f} minutes). Skipping refresh.")
+                    result['data_collection'] = {
+                        'success': True,
+                        'skipped': True,
+                        'reason': f'Data is only {minutes_old:.1f} minutes old',
+                        'last_updated': recent_data.created_at.isoformat()
+                    }
+                    result['ready_for_analysis'] = True
+
+                    # Run verification on existing data
+                    result['verification'] = verify_historical_data(stock_symbol, expiry_date)
+                    return result
+
+        # Step 2: Collect historical data
+        logger.info("\nCollecting historical data for all instruments...")
+        collection_result = collect_historical_data_for_token(
+            stock_symbol=stock_symbol,
+            expiry_date=expiry_date,
+            lookback_days=365,
+            include_options=include_options,
+            max_options_per_expiry=50  # Limit to nearest 50 strikes
+        )
+
+        result['data_collection'] = collection_result
+
+        if not collection_result.get('success'):
+            result['success'] = False
+            result['error'] = collection_result.get('error', 'Data collection failed')
+            return result
+
+        # Step 3: Verify the collected data
+        logger.info("\nVerifying collected data...")
+        result['verification'] = verify_historical_data(stock_symbol, expiry_date)
+
+        # Determine if ready for analysis
+        result['ready_for_analysis'] = (
+            collection_result.get('summary', {}).get('successful', 0) > 0 and
+            collection_result.get('summary', {}).get('total_records_saved', 0) > 0
+        )
+
+        logger.info(f"\nData preparation complete. Ready for analysis: {result['ready_for_analysis']}")
+        return result
+
+    except Exception as e:
+        logger.error(f"Error in prepare_data_for_analysis: {e}", exc_info=True)
+        return {
+            'success': False,
+            'stock_symbol': stock_symbol,
             'error': str(e)
         }

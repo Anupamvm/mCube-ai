@@ -12,6 +12,7 @@ Modules:
 - position_management_views: Position viewing and closing
 - contract_views: Contract and option data
 - execution_views: Order execution control
+- historical_data_views: Historical OHLC data from Breeze API
 """
 
 # Position Sizing & P&L
@@ -64,6 +65,15 @@ from apps.trading.api.execution_views import (
     get_execution_progress,
 )
 
+# Historical Data
+from apps.trading.api.historical_data_views import (
+    get_breeze_historical_data,
+    get_stored_historical_data,
+    prepare_historical_data,
+    get_related_instruments,
+    verify_historical_data,
+)
+
 
 # Export all views for easy importing
 __all__ = [
@@ -96,4 +106,10 @@ __all__ = [
     'create_execution_control',
     'cancel_execution',
     'get_execution_progress',
+    # Historical Data
+    'get_breeze_historical_data',
+    'get_stored_historical_data',
+    'prepare_historical_data',
+    'get_related_instruments',
+    'verify_historical_data',
 ]

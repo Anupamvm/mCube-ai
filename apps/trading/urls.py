@@ -79,4 +79,11 @@ urlpatterns = [
     # History and Export
     path('history/', views.suggestion_history, name='suggestion_history'),
     path('history/export/', views.export_suggestions_csv, name='export_csv'),
+
+    # Historical Data (Breeze API)
+    path('api/get-breeze-historical-data/', api_views.get_breeze_historical_data, name='api_get_breeze_historical_data'),
+    path('api/get-stored-historical-data/', api_views.get_stored_historical_data, name='api_get_stored_historical_data'),
+    path('api/prepare-historical-data/', api_views.prepare_historical_data, name='api_prepare_historical_data'),
+    path('api/get-related-instruments/', api_views.get_related_instruments, name='api_get_related_instruments'),
+    path('api/verify-historical-data/', api_views.verify_historical_data, name='api_verify_historical_data'),
 ]

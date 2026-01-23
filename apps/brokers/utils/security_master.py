@@ -27,6 +27,7 @@ Usage:
 import os
 import csv
 import logging
+from datetime import datetime, timedelta
 from typing import Optional, Dict
 from pathlib import Path
 from django.conf import settings
@@ -433,9 +434,143 @@ def clear_security_master_cache():
     Use this after downloading a new SecurityMaster file.
     """
     logger.info("Clearing SecurityMaster cache")
-    # Django doesn't have cache.delete_pattern, so we'd need to track keys
-    # For now, cache will expire automatically after 6 hours
-    pass
+    # Clear all security_master cache keys by pattern
+    # Since Django doesn't have delete_pattern, we'll clear common patterns
+    try:
+        from django.core.cache import cache
+        # The cache keys follow pattern: security_master:futures:SYMBOL:EXPIRY
+        # We can't easily clear by pattern, but we can set a version flag
+        cache.set('security_master:version', datetime.now().isoformat(), CACHE_TIMEOUT)
+        logger.info("SecurityMaster cache version updated")
+    except Exception as e:
+        logger.warning(f"Could not update cache version: {e}")
+
+
+def update_security_master(force: bool = False) -> Dict:
+    """
+    Download and update the SecurityMaster file from ICICI Direct.
+
+    The SecurityMaster file is updated daily at 8:00 AM IST by ICICI.
+    This function checks if the local file is outdated and downloads a fresh copy.
+
+    Args:
+        force: If True, always download regardless of file age
+
+    Returns:
+        dict: {
+            'success': bool,
+            'updated': bool,  # True if file was downloaded
+            'message': str,
+            'file_date': str,  # Date of the file
+            'error': str (if failed)
+        }
+    """
+    import requests
+    import zipfile
+    import tempfile
+    import shutil
+
+    SECURITY_MASTER_URL = "https://directlink.icicidirect.com/NewSecurityMaster/SecurityMaster.zip"
+    security_master_dir = Path(get_security_master_path()).parent
+
+    result = {
+        'success': False,
+        'updated': False,
+        'message': '',
+        'file_date': None,
+        'error': None
+    }
+
+    try:
+        # Check if file exists and its age
+        fo_nse_path = security_master_dir / 'FONSEScripMaster.txt'
+
+        if fo_nse_path.exists() and not force:
+            file_mtime = datetime.fromtimestamp(fo_nse_path.stat().st_mtime)
+            file_age = datetime.now() - file_mtime
+
+            # If file is less than 12 hours old, skip update
+            if file_age < timedelta(hours=12):
+                result['success'] = True
+                result['updated'] = False
+                result['message'] = f"SecurityMaster is recent ({file_age.seconds // 3600}h old), skipping update"
+                result['file_date'] = file_mtime.strftime('%Y-%m-%d %H:%M')
+                logger.info(result['message'])
+                return result
+
+        logger.info("Downloading fresh SecurityMaster from ICICI Direct...")
+
+        # Download to temp file
+        with tempfile.NamedTemporaryFile(suffix='.zip', delete=False) as tmp_file:
+            tmp_zip_path = tmp_file.name
+
+        response = requests.get(SECURITY_MASTER_URL, timeout=60)
+        response.raise_for_status()
+
+        with open(tmp_zip_path, 'wb') as f:
+            f.write(response.content)
+
+        logger.info(f"Downloaded {len(response.content) / 1024 / 1024:.2f} MB")
+
+        # Extract to temp directory first
+        with tempfile.TemporaryDirectory() as tmp_extract_dir:
+            with zipfile.ZipFile(tmp_zip_path, 'r') as zip_ref:
+                zip_ref.extractall(tmp_extract_dir)
+
+            # Ensure target directory exists
+            security_master_dir.mkdir(parents=True, exist_ok=True)
+
+            # Copy files to target directory
+            for file_name in os.listdir(tmp_extract_dir):
+                src = Path(tmp_extract_dir) / file_name
+                dst = security_master_dir / file_name
+                shutil.copy2(src, dst)
+                logger.info(f"Updated: {file_name}")
+
+        # Clean up temp zip
+        os.unlink(tmp_zip_path)
+
+        # Clear cache after update
+        clear_security_master_cache()
+
+        result['success'] = True
+        result['updated'] = True
+        result['message'] = "SecurityMaster updated successfully"
+        result['file_date'] = datetime.now().strftime('%Y-%m-%d %H:%M')
+
+        logger.info(f"✅ SecurityMaster updated successfully at {result['file_date']}")
+
+    except requests.exceptions.RequestException as e:
+        result['error'] = f"Download failed: {str(e)}"
+        logger.error(result['error'])
+    except zipfile.BadZipFile as e:
+        result['error'] = f"Invalid zip file: {str(e)}"
+        logger.error(result['error'])
+    except Exception as e:
+        result['error'] = f"Update failed: {str(e)}"
+        logger.error(result['error'], exc_info=True)
+
+    return result
+
+
+def ensure_security_master_current() -> bool:
+    """
+    Ensure SecurityMaster is current before lookups.
+
+    This is a convenience function that updates SecurityMaster if needed
+    and returns True if the file is available and current.
+
+    Returns:
+        bool: True if SecurityMaster is available and current
+    """
+    result = update_security_master(force=False)
+
+    if result['success']:
+        return True
+
+    # If update failed, check if existing file is still usable
+    validation = validate_security_master_file()
+    return validation['valid']
 
 
 def validate_security_master_file(security_master_path: Optional[str] = None) -> Dict:

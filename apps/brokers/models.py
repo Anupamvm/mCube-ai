@@ -655,6 +655,13 @@ class HistoricalPrice(TimeStampedModel):
         help_text="Product type (cash, futures, options)"
     )
 
+    # Data interval
+    interval = models.CharField(
+        max_length=10,
+        default='1day',
+        help_text="Candle interval (1minute, 5minute, 30minute, 1day)"
+    )
+
     # Optional fields for derivatives
     expiry_date = models.DateField(
         null=True,
@@ -717,11 +724,12 @@ class HistoricalPrice(TimeStampedModel):
         verbose_name_plural = 'Historical Prices'
         ordering = ['-datetime']
         indexes = [
-            models.Index(fields=['stock_code', 'product_type', '-datetime']),
+            models.Index(fields=['stock_code', 'exchange_code', 'product_type', 'interval', '-datetime']),
+            models.Index(fields=['stock_code', 'expiry_date', 'strike_price']),
             models.Index(fields=['datetime']),
         ]
         unique_together = [
-            ['datetime', 'stock_code', 'exchange_code', 'product_type',
+            ['datetime', 'stock_code', 'exchange_code', 'product_type', 'interval',
              'expiry_date', 'right', 'strike_price']
         ]
 
@@ -732,6 +740,126 @@ class HistoricalPrice(TimeStampedModel):
         elif self.product_type == 'futures' and self.expiry_date:
             return f"{base} FUT {self.expiry_date}"
         return base
+
+    @classmethod
+    def replace_data(cls, stock_code, exchange_code, product_type, interval,
+                     data_points, expiry_date=None, strike_price=None, right=''):
+        """
+        Delete existing data for the instrument and save fresh data.
+
+        Args:
+            stock_code: Stock code (e.g., 'RELIND', 'ITC')
+            exchange_code: Exchange code (e.g., 'NSE', 'NFO')
+            product_type: 'cash', 'futures', 'options', 'btst', 'margin'
+            interval: '1minute', '5minute', '30minute', '1day'
+            data_points: List of dicts from Breeze API Success response
+            expiry_date: For F&O instruments (datetime.date object)
+            strike_price: For options (Decimal)
+            right: 'call', 'put', 'others' for options
+
+        Returns:
+            Tuple: (deleted_count, created_count)
+
+        Example:
+            HistoricalPrice.replace_data(
+                stock_code='ITC',
+                exchange_code='NSE',
+                product_type='cash',
+                interval='1minute',
+                data_points=response['Success']
+            )
+        """
+        from decimal import Decimal
+        from datetime import datetime
+        import pytz
+
+        # IST timezone for Breeze API data
+        ist = pytz.timezone('Asia/Kolkata')
+
+        # Build filter for existing data
+        filter_params = {
+            'stock_code': stock_code,
+            'exchange_code': exchange_code,
+            'product_type': product_type,
+            'interval': interval,
+        }
+
+        # Add F&O specific filters
+        if product_type in ['futures', 'options']:
+            filter_params['expiry_date'] = expiry_date
+
+        if product_type == 'options':
+            filter_params['strike_price'] = strike_price
+            filter_params['right'] = right
+
+        # Delete existing data for this instrument
+        deleted_count = cls.objects.filter(**filter_params).delete()[0]
+
+        # Create new records
+        new_records = []
+        for point in data_points:
+            # Parse datetime string from API and make timezone-aware (IST)
+            dt = datetime.strptime(point['datetime'], '%Y-%m-%d %H:%M:%S')
+            # Breeze API returns IST times, make them timezone-aware
+            dt = ist.localize(dt)
+
+            record = cls(
+                stock_code=stock_code,
+                exchange_code=exchange_code,
+                product_type=product_type,
+                interval=interval,
+                expiry_date=expiry_date,
+                strike_price=Decimal(strike_price) if strike_price else None,
+                right=right,
+                datetime=dt,
+                open=Decimal(point['open']),
+                high=Decimal(point['high']),
+                low=Decimal(point['low']),
+                close=Decimal(point['close']),
+                volume=int(point['volume']),
+                open_interest=int(point['open_interest']) if point.get('open_interest') else 0,
+            )
+            new_records.append(record)
+
+        # Bulk create for efficiency
+        created = cls.objects.bulk_create(new_records, ignore_conflicts=True)
+
+        return (deleted_count, len(created))
+
+    @classmethod
+    def get_latest_data(cls, stock_code, exchange_code, product_type, interval,
+                        expiry_date=None, strike_price=None, right='', limit=100):
+        """
+        Retrieve latest historical data for an instrument.
+
+        Args:
+            stock_code: Stock code
+            exchange_code: Exchange code
+            product_type: Product type
+            interval: Candle interval
+            expiry_date: For F&O
+            strike_price: For options
+            right: For options
+            limit: Number of latest candles to retrieve
+
+        Returns:
+            QuerySet of HistoricalPrice ordered by datetime descending
+        """
+        filter_params = {
+            'stock_code': stock_code,
+            'exchange_code': exchange_code,
+            'product_type': product_type,
+            'interval': interval,
+        }
+
+        if product_type in ['futures', 'options']:
+            filter_params['expiry_date'] = expiry_date
+
+        if product_type == 'options':
+            filter_params['strike_price'] = strike_price
+            filter_params['right'] = right
+
+        return cls.objects.filter(**filter_params).order_by('-datetime')[:limit]
 
 
 # =============================================================================
@@ -891,8 +1019,8 @@ class Order(TimeStampedModel):
         verbose_name_plural = 'Orders'
         ordering = ['-created_at']
         indexes = [
-            models.Index(fields=['account', 'status']),
-            models.Index(fields=['broker_order_id']),
+            models.Index(fields=['account', 'status'], name='orders_account_ca00e7_idx'),
+            models.Index(fields=['broker_order_id'], name='orders_broker__a04e54_idx'),
         ]
 
     def __str__(self):
@@ -1031,7 +1159,7 @@ class Execution(TimeStampedModel):
         verbose_name_plural = 'Executions'
         ordering = ['-exchange_timestamp']
         indexes = [
-            models.Index(fields=['order', 'exchange_timestamp']),
+            models.Index(fields=['order', 'exchange_timestamp'], name='executions_order_i_5ef1c4_idx'),
         ]
 
     def __str__(self):

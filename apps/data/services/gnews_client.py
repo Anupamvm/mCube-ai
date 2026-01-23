@@ -223,11 +223,20 @@ class GNewsClient:
             >>> client = GNewsClient()
             >>> news = client.fetch_stock_news("RELIANCE", "Reliance Industries", max_results=3)
         """
-        # Build search query
+        # Build search query with improved company name matching
         if stock_name:
-            query = f"{stock_name} stock India"
+            # Clean up stock name for better matching
+            # Remove common suffixes that news articles often omit
+            clean_name = stock_name
+            suffixes = [' Ltd', ' Limited', ' Inc', ' Corporation', ' Corp', ' Pvt', ' Private']
+            for suffix in suffixes:
+                clean_name = clean_name.replace(suffix, '')
+
+            # Use OR operator to search for both cleaned name and symbol
+            # This increases chances of finding relevant articles
+            query = f'("{clean_name}" OR {stock_symbol}) India'
         else:
-            query = f"{stock_symbol} stock India"
+            query = f"{stock_symbol} India"
 
         return self.fetch_news(query, max_results=max_results)
 
@@ -282,7 +291,25 @@ class GNewsClient:
         # Build query with competitor names
         # Limit to top 3 competitors to avoid overly long queries
         top_competitors = competitors[:3]
-        query = " OR ".join(top_competitors) + " India"
+
+        # Clean up competitor names for better matching
+        suffixes = [' Ltd', ' Limited', ' Inc', ' Corporation', ' Corp', ' Pvt', ' Private']
+        cleaned_competitors = []
+
+        for competitor in top_competitors:
+            # Remove common suffixes
+            clean_name = competitor
+            for suffix in suffixes:
+                clean_name = clean_name.replace(suffix, '')
+
+            # Wrap in quotes if name has spaces for exact phrase matching
+            if ' ' in clean_name:
+                cleaned_competitors.append(f'"{clean_name}"')
+            else:
+                cleaned_competitors.append(clean_name)
+
+        # Build OR query with cleaned names
+        query = " OR ".join(cleaned_competitors) + " India"
 
         return self.fetch_news(query, max_results=max_results)
 

@@ -456,3 +456,5 @@ class PositionSize(models.Model):
             'max_profit': float(self.max_profit),
             'risk_reward': float(self.risk_reward_ratio),
         }
+
+

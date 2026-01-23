@@ -3267,3 +3267,16 @@ def analyze_position_averaging(request):
             'success': False,
             'error': str(e)
         })
+
+
+# ============================================================================
+# HISTORICAL DATA API VIEWS
+# Import from the dedicated historical_data_views module
+# ============================================================================
+from apps.trading.api.historical_data_views import (
+    get_breeze_historical_data,
+    get_stored_historical_data,
+    prepare_historical_data,
+    get_related_instruments,
+    verify_historical_data,
+)

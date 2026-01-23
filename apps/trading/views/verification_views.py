@@ -421,6 +421,14 @@ def verify_future_trade(request):
         from decimal import Decimal
         from apps.trading.futures_analyzer import comprehensive_futures_analysis
         from apps.data.models import ContractData
+        from apps.brokers.utils.security_master import update_security_master
+
+        # Ensure SecurityMaster is current before verification
+        sm_update = update_security_master(force=False)
+        if sm_update.get('updated'):
+            logger.info(f"SecurityMaster updated before verification: {sm_update.get('message')}")
+        elif sm_update.get('error'):
+            logger.warning(f"SecurityMaster update failed: {sm_update.get('error')} - continuing with existing file")
 
         contract_value = request.POST.get('contract', '').strip()
 
@@ -463,6 +471,89 @@ def verify_future_trade(request):
                 'execution_log': analysis_result.get('execution_log', [])
             })
 
+        # ===== HISTORICAL DATA COLLECTION & VERIFICATION =====
+        # Use prepare_data_for_analysis which handles the complete flow:
+        # 1. Check if recent data exists (< 5 minutes old)
+        # 2. If not, discover related instruments and fetch historical data
+        # 3. Save data to HistoricalPrice model
+        # 4. Run verification/risk checks on the data
+        from apps.trading.futures_analyzer import prepare_data_for_analysis
+
+        logger.info(f"Preparing historical data for {stock_symbol} (expiry: {expiry_date})")
+
+        try:
+            data_prep_result = prepare_data_for_analysis(
+                stock_symbol=stock_symbol,
+                expiry_date=expiry_date,
+                force_refresh=False,  # Use cached data if < 5 minutes old
+                include_options=False  # Skip options for faster verification
+            )
+
+            if data_prep_result.get('success'):
+                # Log collection summary
+                data_collection = data_prep_result.get('data_collection', {})
+                if data_collection.get('skipped'):
+                    logger.info(f"Historical data: Using cached data ({data_collection.get('reason', 'recent')})")
+                else:
+                    summary = data_collection.get('summary', {})
+                    logger.info(f"Historical data collected: {summary.get('total_records_saved', 0)} records "
+                               f"({summary.get('successful', 0)}/{summary.get('total_instruments', 0)} instruments)")
+
+                    # Log equity result for debugging
+                    equity_result = data_collection.get('equity_result', {})
+                    if equity_result:
+                        if equity_result.get('success'):
+                            logger.info(f"Equity: {equity_result.get('records_saved', 0)} records")
+                        else:
+                            logger.warning(f"Equity failed: {equity_result.get('error', equity_result.get('note', 'Unknown'))}")
+
+                # Get verification result
+                historical_verification = data_prep_result.get('verification', {})
+                logger.info(f"Historical verification: {historical_verification.get('verdict', 'N/A')} "
+                           f"(ready_for_analysis={data_prep_result.get('ready_for_analysis', False)})")
+            else:
+                logger.error(f"Data preparation failed: {data_prep_result.get('error')}")
+                # Create a blocked verification result
+                historical_verification = {
+                    'success': False,
+                    'trade_allowed': False,
+                    'verdict': 'BLOCKED',
+                    'verdict_message': f"Data preparation failed: {data_prep_result.get('error', 'Unknown error')}",
+                    'risk_checks': [{
+                        'id': 'data_prep_failed',
+                        'name': 'Data Preparation Failed',
+                        'description': 'Failed to prepare historical data for analysis',
+                        'status': 'FAIL',
+                        'severity': 'HIGH',
+                        'value': 'Failed',
+                        'threshold': 'Success Required',
+                        'message': data_prep_result.get('error', 'Unknown error')
+                    }],
+                    'risk_summary': {'total_checks': 1, 'passed': 0, 'failed': 1, 'warnings': 0, 'pass_rate': 0},
+                    'recommendations': ['Check Breeze API connectivity and try again']
+                }
+
+        except Exception as prep_error:
+            logger.error(f"Error in data preparation: {prep_error}", exc_info=True)
+            historical_verification = {
+                'success': False,
+                'trade_allowed': False,
+                'verdict': 'BLOCKED',
+                'verdict_message': f"Data preparation error: {str(prep_error)}",
+                'risk_checks': [{
+                    'id': 'data_prep_error',
+                    'name': 'Data Preparation Error',
+                    'description': 'Exception during historical data preparation',
+                    'status': 'FAIL',
+                    'severity': 'HIGH',
+                    'value': 'Error',
+                    'threshold': 'No Errors',
+                    'message': str(prep_error)
+                }],
+                'risk_summary': {'total_checks': 1, 'passed': 0, 'failed': 1, 'warnings': 0, 'pass_rate': 0},
+                'recommendations': ['Check server logs for details']
+            }
+
         # Extract metrics and prepare response
         metrics = analysis_result.get('metrics', {})
         execution_log = analysis_result.get('execution_log', [])
@@ -476,10 +567,19 @@ def verify_future_trade(request):
         expiry_dt = datetime.strptime(expiry_date, '%Y-%m-%d')
         expiry_formatted = expiry_dt.strftime('%d-%b-%Y')
 
-        # Determine pass/fail based on analysis verdict
-        passed = analysis_result.get('verdict') == 'PASS'
+        # Determine pass/fail based on analysis verdict AND historical verification
+        analysis_passed = analysis_result.get('verdict') == 'PASS'
+        historical_passed = historical_verification.get('trade_allowed', True)
+
+        # Trade only passes if both analysis and historical checks pass
+        passed = analysis_passed and historical_passed
+
         direction = analysis_result.get('direction', 'NEUTRAL')
         composite_score = analysis_result.get('composite_score', 0)
+
+        # Log if historical verification blocked the trade
+        if analysis_passed and not historical_passed:
+            logger.warning(f"Trade blocked by historical verification for {stock_symbol}")
 
         # Calculate position sizing with 50% margin rule (like options)
         position_details = {}
@@ -688,6 +788,27 @@ def verify_future_trade(request):
             'score_breakdown': analysis_result.get('scores', {})  # Add component scores breakdown
         }
 
+        # Build verdict message considering both analysis and historical verification
+        if passed:
+            verdict_text = f'PASS - Score: {composite_score}/100'
+            reason_text = f'Composite score: {composite_score}/100. Direction: {direction}'
+        elif not analysis_passed:
+            verdict_text = f'FAIL - Score: {composite_score}/100'
+            reason_text = f'Analysis failed: Composite score {composite_score}/100 below threshold'
+        else:
+            # Analysis passed but historical verification failed
+            hist_verdict = historical_verification.get('verdict', 'BLOCKED')
+            hist_failures = [c['name'] for c in historical_verification.get('risk_checks', []) if c.get('status') == 'FAIL']
+
+            if hist_verdict == 'ERROR':
+                # Data download error
+                verdict_text = f'ERROR - Historical Data Download Failed'
+                reason_text = f'Analysis passed (score: {composite_score}) but historical data could not be downloaded. Check Breeze API.'
+            else:
+                # Risk check failure
+                verdict_text = f'BLOCKED - Historical Risk Check Failed'
+                reason_text = f'Analysis passed (score: {composite_score}) but blocked by: {", ".join(hist_failures)}'
+
         response_data = {
             'success': True,
             'symbol': stock_symbol,
@@ -697,9 +818,20 @@ def verify_future_trade(request):
             'analysis': analysis_summary,
             'execution_log': execution_log,
             'llm_validation': {'approved': False, 'confidence': 0, 'reasoning': 'LLM validation skipped (Phase 2)'},
-            'verdict': f'{"PASS" if passed else "FAIL"} - Score: {composite_score}/100',
-            'reason': f'Composite score: {composite_score}/100. Direction: {direction}',
-            'position_sizing': position_sizing  # Add comprehensive position sizing data
+            'verdict': verdict_text,
+            'reason': reason_text,
+            'position_sizing': position_sizing,  # Add comprehensive position sizing data
+            # Historical Data Verification Results
+            'historical_verification': {
+                'success': historical_verification.get('success', False),
+                'trade_allowed': historical_verification.get('trade_allowed', True),
+                'verdict': historical_verification.get('verdict', 'N/A'),
+                'verdict_message': historical_verification.get('verdict_message', ''),
+                'risk_checks': historical_verification.get('risk_checks', []),
+                'risk_summary': historical_verification.get('risk_summary', {}),
+                'recommendations': historical_verification.get('recommendations', []),
+                'analysis': historical_verification.get('analysis', {})
+            }
         }
 
         # Save trade suggestion to database (only if PASS)

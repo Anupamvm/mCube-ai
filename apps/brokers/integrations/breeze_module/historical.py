@@ -104,7 +104,8 @@ def get_nifty50_historical_days(days=3000, interval="1day"):
         to_date = (today - timedelta(days=batch_start)).strftime('%Y-%m-%dT15:30:00.000Z')
 
         try:
-            resp = breeze.get_historical_data(
+            # Use v2 API for cash/equity data (v1 doesn't support 'cash' product type)
+            resp = breeze.get_historical_data_v2(
                 interval=interval,
                 from_date=from_date,
                 to_date=to_date,
