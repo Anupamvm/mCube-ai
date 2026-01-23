@@ -249,7 +249,7 @@ class GNewsClient:
         Fetch news for a specific industry
 
         Args:
-            industry_name: Industry name (e.g., "Oil and Gas")
+            industry_name: Industry name (e.g., "Oil and Gas", "IT Consulting & Software")
             max_results: Maximum number of articles
 
         Returns:
@@ -259,7 +259,38 @@ class GNewsClient:
             >>> client = GNewsClient()
             >>> news = client.fetch_industry_news("Oil and Gas", max_results=3)
         """
-        query = f"{industry_name} India"
+        # Map specific industry names to broader, more searchable terms
+        industry_mappings = {
+            'IT Consulting & Software': 'IT software technology',
+            'IT - Software': 'IT software technology',
+            'Banks - Private Sector': 'private banks banking',
+            'Banks - Public Sector': 'public sector banks PSU banking',
+            'Refineries': 'oil refinery petroleum',
+            'Oil Exploration': 'oil gas exploration ONGC',
+            'Automobile - Cars & SUVs': 'automobile cars automotive',
+            'Automobile - Two Wheelers': 'two wheeler motorcycle scooter',
+            'Pharmaceuticals': 'pharma pharmaceutical drugs',
+            'Telecom Services': 'telecom telecommunications 5G',
+            'Steel - Large': 'steel industry manufacturing',
+            'Power Generation & Distribution': 'power electricity energy',
+            'Cement': 'cement construction infrastructure',
+            'FMCG': 'FMCG consumer goods retail',
+            'Insurance': 'insurance sector LIC',
+            'Real Estate': 'real estate property housing',
+        }
+
+        # Get mapped query or use original with cleanup
+        if industry_name in industry_mappings:
+            search_terms = industry_mappings[industry_name]
+        else:
+            # Clean up industry name - remove special chars, use key words
+            search_terms = industry_name.replace('&', '').replace('-', ' ').strip()
+            # Take first 2-3 significant words
+            words = [w for w in search_terms.split() if len(w) > 2]
+            search_terms = ' '.join(words[:3])
+
+        query = f"{search_terms} India industry sector"
+        logger.info(f"[GNews] Industry query: '{industry_name}' -> '{query}'")
         return self.fetch_news(query, max_results=max_results)
 
     def fetch_competitor_news(
@@ -293,24 +324,37 @@ class GNewsClient:
         top_competitors = competitors[:3]
 
         # Clean up competitor names for better matching
-        suffixes = [' Ltd', ' Limited', ' Inc', ' Corporation', ' Corp', ' Pvt', ' Private']
+        suffixes = [' Ltd.', ' Ltd', ' Limited', ' Inc.', ' Inc', ' Corporation', ' Corp.', ' Corp', ' Pvt.', ' Pvt', ' Private']
         cleaned_competitors = []
 
         for competitor in top_competitors:
             # Remove common suffixes
-            clean_name = competitor
+            clean_name = competitor.strip()
             for suffix in suffixes:
                 clean_name = clean_name.replace(suffix, '')
+            clean_name = clean_name.strip()
 
-            # Wrap in quotes if name has spaces for exact phrase matching
+            # Skip if name is too short after cleaning
+            if len(clean_name) < 2:
+                continue
+
+            # For single word names, use as-is
+            # For multi-word names, use quotes for exact phrase
             if ' ' in clean_name:
                 cleaned_competitors.append(f'"{clean_name}"')
             else:
                 cleaned_competitors.append(clean_name)
 
-        # Build OR query with cleaned names
-        query = " OR ".join(cleaned_competitors) + " India"
+        if not cleaned_competitors:
+            return {
+                'success': True,
+                'articles': [],
+                'totalArticles': 0
+            }
 
+        # Build OR query with cleaned names
+        query = " OR ".join(cleaned_competitors)
+        logger.info(f"[GNews] Competitor query: {top_competitors} -> '{query}'")
         return self.fetch_news(query, max_results=max_results)
 
 

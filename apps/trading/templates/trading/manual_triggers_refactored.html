@@ -121,6 +121,25 @@
                     </div>
                 </div>
 
+                <!-- Historical Validation Section -->
+                <div class="trigger-content" style="background: #e0f2fe; padding: 15px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #0284c7;">
+                    <h4 style="color: #1f2937; margin-bottom: 15px;">📈 Historical Data Validation</h4>
+                    <div style="display: flex; align-items: center; gap: 10px;">
+                        <input type="checkbox"
+                               id="validateHistorical"
+                               name="validateHistorical"
+                               checked
+                               style="width: 18px; height: 18px; cursor: pointer;">
+                        <label for="validateHistorical" style="cursor: pointer; font-weight: 500;">
+                            Enable Historical Verification
+                        </label>
+                    </div>
+                    <p style="margin-top: 10px; color: #6b7280; font-size: 0.875rem;">
+                        When enabled, each contract will be validated against historical price data for risk assessment.
+                        Checks include: 5-day/15-day/30-day loss, single-day drops, volatility, and support breach detection.
+                    </p>
+                </div>
+
                 <button class="btn btn-primary" onclick="FuturesAlgorithm.run()" id="futuresButton">
                     🎯 Find Top 3 Opportunities
                 </button>
@@ -508,8 +527,9 @@ const FuturesAlgorithm = {
 
         const thisMonthVolume = parseInt(document.getElementById('thisMonthVolume').value) || 1000;
         const nextMonthVolume = parseInt(document.getElementById('nextMonthVolume').value) || 800;
+        const validateHistorical = document.getElementById('validateHistorical').checked;
 
-        console.log('[Futures] Running with filters:', { thisMonthVolume, nextMonthVolume, confirmed, contractCount: this.filteredContracts.length });
+        console.log('[Futures] Running with filters:', { thisMonthVolume, nextMonthVolume, confirmed, validateHistorical, contractCount: this.filteredContracts.length });
 
         TradingState.setLoading('futures', true);
 
@@ -519,6 +539,7 @@ const FuturesAlgorithm = {
                 this_month_volume: thisMonthVolume,
                 next_month_volume: nextMonthVolume,
                 confirmed: confirmed,  // Add confirmation flag
+                validate_historical: validateHistorical,  // Historical validation flag
                 filtered_symbols: this.filteredContracts.map(c => c.symbol)
             }, {
                 onAuthError: (data) => ApiClient.handleAuthError(data, 'futures')
@@ -585,12 +606,18 @@ const FuturesAlgorithm = {
         const allContracts = response.all_contracts || [];
         const totalAnalyzed = response.total_analyzed || 0;
         const totalPassed = response.total_passed || 0;
+        const totalHistFail = response.total_hist_fail || 0;  // Technical passed but historical failed
         const totalFailed = response.total_failed || 0;
+        const totalErrors = response.total_errors || 0;
+        const histValidationEnabled = response.historical_validation_enabled || false;
 
         console.log('[Futures] Statistics:', {
             total: totalAnalyzed,
             passed: totalPassed,
-            failed: totalFailed
+            histFail: totalHistFail,
+            failed: totalFailed,
+            errors: totalErrors,
+            histValidation: histValidationEnabled
         });
 
         // Build results HTML
@@ -602,8 +629,9 @@ const FuturesAlgorithm = {
                 <h2 style="color: #1e40af; margin: 0 0 15px 0; display: flex; align-items: center; gap: 10px;">
                     <span style="font-size: 2rem;">📊</span>
                     Futures Analysis Complete
+                    ${histValidationEnabled ? '<span style="font-size: 0.75rem; background: #dbeafe; color: #1e40af; padding: 4px 8px; border-radius: 4px;">📈 Historical Validation ON</span>' : ''}
                 </h2>
-                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 15px;">
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 15px;">
                     <div style="text-align: center;">
                         <div style="font-size: 2rem; font-weight: 700; color: #1f2937;">${totalAnalyzed}</div>
                         <div style="color: #6b7280; font-size: 0.875rem;">Total Analyzed</div>
@@ -612,6 +640,12 @@ const FuturesAlgorithm = {
                         <div style="font-size: 2rem; font-weight: 700; color: #10b981;">${totalPassed}</div>
                         <div style="color: #6b7280; font-size: 0.875rem;">✅ Passed</div>
                     </div>
+                    ${histValidationEnabled ? `
+                    <div style="text-align: center;">
+                        <div style="font-size: 2rem; font-weight: 700; color: #f59e0b;">${totalHistFail}</div>
+                        <div style="color: #6b7280; font-size: 0.875rem;">⚠️ Hist. Fail</div>
+                    </div>
+                    ` : ''}
                     <div style="text-align: center;">
                         <div style="font-size: 2rem; font-weight: 700; color: #ef4444;">${totalFailed}</div>
                         <div style="color: #6b7280; font-size: 0.875rem;">❌ Failed</div>
@@ -623,20 +657,52 @@ const FuturesAlgorithm = {
         // Display contracts
         if (allContracts.length > 0) {
             allContracts.forEach((contract, index) => {
-                const verdictColor = contract.verdict === 'PASS' ? '#10b981' : '#ef4444';
-                const verdictBg = contract.verdict === 'PASS' ? '#d1fae5' : '#fee2e2';
-                const verdictIcon = contract.verdict === 'PASS' ? '✅' : '❌';
+                // Determine colors and icons based on verdict
+                let verdictColor, verdictBg, verdictIcon, borderColor;
+                switch(contract.verdict) {
+                    case 'PASS':
+                        verdictColor = '#10b981';
+                        verdictBg = '#d1fae5';
+                        verdictIcon = '✅';
+                        borderColor = '#10b981';
+                        break;
+                    case 'HIST_FAIL':
+                        verdictColor = '#f59e0b';
+                        verdictBg = '#fef3c7';
+                        verdictIcon = '⚠️';
+                        borderColor = '#f59e0b';
+                        break;
+                    case 'FAIL':
+                        verdictColor = '#ef4444';
+                        verdictBg = '#fee2e2';
+                        verdictIcon = '❌';
+                        borderColor = '#e5e7eb';
+                        break;
+                    default:
+                        verdictColor = '#6b7280';
+                        verdictBg = '#f3f4f6';
+                        verdictIcon = '⚪';
+                        borderColor = '#e5e7eb';
+                }
+
+                // Historical validation badge
+                const histBadge = histValidationEnabled && contract.historical_passed !== undefined
+                    ? `<span style="background: ${contract.historical_passed ? '#d1fae5' : '#fee2e2'}; color: ${contract.historical_passed ? '#10b981' : '#ef4444'}; padding: 2px 8px; border-radius: 12px; font-size: 0.75rem; margin-left: 5px;">
+                        ${contract.historical_passed ? '📈 Hist OK' : '📉 Hist Fail'}
+                       </span>`
+                    : '';
 
                 html += `
-                    <div style="background: white; border: 2px solid ${contract.verdict === 'PASS' ? '#10b981' : '#e5e7eb'}; border-radius: 12px; padding: 20px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                    <div style="background: white; border: 2px solid ${borderColor}; border-radius: 12px; padding: 20px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
                         <!-- Header -->
                         <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 15px;">
                             <div>
-                                <h3 style="color: #1f2937; margin: 0 0 5px 0; font-size: 1.5rem; display: flex; align-items: center; gap: 10px;">
+                                <h3 style="color: #1f2937; margin: 0 0 5px 0; font-size: 1.5rem; display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
                                     ${contract.symbol}
                                     <span style="background: ${verdictBg}; color: ${verdictColor}; padding: 4px 12px; border-radius: 20px; font-size: 0.875rem; font-weight: 600;">
-                                        ${verdictIcon} ${contract.verdict}
+                                        ${verdictIcon} ${contract.verdict === 'HIST_FAIL' ? 'HIST FAIL' : contract.verdict}
                                     </span>
+                                    ${histBadge}
                                 </h3>
                                 <div style="color: #6b7280; font-size: 0.875rem;">Expiry: ${contract.expiry}</div>
                             </div>
@@ -654,11 +720,11 @@ const FuturesAlgorithm = {
                             </div>
                             <div style="background: #f9fafb; padding: 10px; border-radius: 6px;">
                                 <div style="color: #6b7280; font-size: 0.75rem;">Spot Price</div>
-                                <div style="font-weight: 700;">₹${contract.spot_price.toFixed(2)}</div>
+                                <div style="font-weight: 700;">₹${contract.spot_price ? contract.spot_price.toFixed(2) : 'N/A'}</div>
                             </div>
                             <div style="background: #f9fafb; padding: 10px; border-radius: 6px;">
                                 <div style="color: #6b7280; font-size: 0.75rem;">Futures Price</div>
-                                <div style="font-weight: 700;">₹${contract.futures_price.toFixed(2)}</div>
+                                <div style="font-weight: 700;">₹${contract.futures_price ? contract.futures_price.toFixed(2) : 'N/A'}</div>
                             </div>
                             <div style="background: #f9fafb; padding: 10px; border-radius: 6px;">
                                 <div style="color: #6b7280; font-size: 0.75rem;">Lot Size</div>
@@ -672,6 +738,14 @@ const FuturesAlgorithm = {
                                 style="width: 100%; padding: 12px; background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%); color: white; border: none; border-radius: 8px; font-weight: 600; cursor: pointer; font-size: 1rem;">
                             📊 View Details & Place Order
                         </button>
+                        ` : contract.verdict === 'HIST_FAIL' ? `
+                        <!-- Warning for HIST_FAIL contracts -->
+                        <div style="background: #fef3c7; border: 1px solid #f59e0b; border-radius: 8px; padding: 12px; margin-top: 10px;">
+                            <strong style="color: #92400e;">⚠️ Technical analysis passed but historical verification failed.</strong>
+                            <p style="color: #78350f; margin: 5px 0 0 0; font-size: 0.875rem;">
+                                Risk checks detected potential issues in price history. Review carefully before trading.
+                            </p>
+                        </div>
                         ` : ''}
                     </div>
                 `;

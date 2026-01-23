@@ -610,10 +610,17 @@ def trigger_futures_algorithm(request):
     """
     Manually trigger the futures screening algorithm with volume filtering
     Returns top 3 analyzed contracts with detailed explanations
+
+    Enhanced with historical data validation:
+    1. Updates SecurityMaster before analysis
+    2. Fetches historical data for each contract
+    3. Runs risk verification checks
+    4. Only passes contracts that pass both technical AND historical verification
     """
     import json
-    from apps.trading.futures_analyzer import comprehensive_futures_analysis
+    from apps.trading.futures_analyzer import comprehensive_futures_analysis, prepare_data_for_analysis
     from apps.data.models import ContractData
+    from apps.brokers.utils.security_master import update_security_master
     from django.db.models import Q
     from datetime import datetime, timedelta
 
@@ -623,8 +630,18 @@ def trigger_futures_algorithm(request):
         this_month_volume = int(body.get('this_month_volume', 1000))
         next_month_volume = int(body.get('next_month_volume', 800))
         confirmed = body.get('confirmed', False)
+        validate_historical = body.get('validate_historical', True)  # Enable historical validation by default
 
         logger.info(f"Manual trigger: Futures algorithm with volume filters (this_month≥{this_month_volume}, next_month≥{next_month_volume})")
+        logger.info(f"Historical validation: {'ENABLED' if validate_historical else 'DISABLED'}")
+
+        # ===== UPDATE SECURITY MASTER =====
+        # Ensure we have latest instrument codes before analysis
+        sm_result = update_security_master(force=False)
+        if sm_result.get('updated'):
+            logger.info(f"SecurityMaster updated: {sm_result.get('message')}")
+        elif sm_result.get('error'):
+            logger.warning(f"SecurityMaster update failed: {sm_result.get('error')} - continuing with existing file")
 
         # Get filtered contracts based on volume criteria
         today = datetime.now().date()
@@ -668,6 +685,33 @@ def trigger_futures_algorithm(request):
             try:
                 logger.info(f"Analyzing {contract.symbol} (expiry: {contract.expiry})")
 
+                # ===== STEP 1: HISTORICAL DATA COLLECTION & VALIDATION =====
+                historical_verification = None
+                historical_passed = True  # Default to pass if validation disabled
+
+                if validate_historical:
+                    logger.info(f"  → Fetching historical data for {contract.symbol}...")
+                    try:
+                        data_result = prepare_data_for_analysis(
+                            stock_symbol=contract.symbol,
+                            expiry_date=contract.expiry,
+                            force_refresh=False,  # Use cached if < 5 min old
+                            include_options=False  # Skip options for faster processing
+                        )
+
+                        if data_result.get('verification'):
+                            historical_verification = data_result['verification']
+                            historical_passed = historical_verification.get('trade_allowed', False)
+                            logger.info(f"  → Historical verification: {'PASS' if historical_passed else 'FAIL'}")
+                        else:
+                            logger.warning(f"  → No historical verification data for {contract.symbol}")
+                            historical_passed = True  # Allow if no verification data
+
+                    except Exception as hist_error:
+                        logger.error(f"  → Historical data error for {contract.symbol}: {hist_error}")
+                        historical_passed = True  # Don't block on errors
+
+                # ===== STEP 2: TECHNICAL ANALYSIS =====
                 analysis_result = comprehensive_futures_analysis(
                     stock_symbol=contract.symbol,
                     expiry_date=contract.expiry,
@@ -678,8 +722,20 @@ def trigger_futures_algorithm(request):
                 metrics = analysis_result.get('metrics', {})
                 composite_score = analysis_result.get('composite_score', 0)
                 direction = analysis_result.get('direction', 'NEUTRAL')
-                verdict = analysis_result.get('verdict', 'FAIL')
+                technical_verdict = analysis_result.get('verdict', 'FAIL')
                 success = analysis_result.get('success', False)
+
+                # ===== STEP 3: COMBINED VERDICT =====
+                # Contract must pass BOTH technical AND historical verification
+                if validate_historical:
+                    if technical_verdict == 'PASS' and historical_passed:
+                        verdict = 'PASS'
+                    elif technical_verdict == 'PASS' and not historical_passed:
+                        verdict = 'HIST_FAIL'  # Technical passed but historical failed
+                    else:
+                        verdict = technical_verdict
+                else:
+                    verdict = technical_verdict
 
                 # Format expiry
                 expiry_dt = datetime.strptime(contract.expiry, '%Y-%m-%d')
@@ -688,6 +744,16 @@ def trigger_futures_algorithm(request):
                 # Build explanation using execution log
                 explanation_parts = []
                 execution_log = analysis_result.get('execution_log', [])
+
+                # Add historical verification summary to explanation
+                if validate_historical and historical_verification:
+                    risk_summary = historical_verification.get('risk_summary', {})
+                    failed_checks = risk_summary.get('failed', 0)
+                    total_checks = risk_summary.get('total_checks', 0)
+                    if historical_passed:
+                        explanation_parts.append(f"Historical: PASS ({total_checks - failed_checks}/{total_checks} checks)")
+                    else:
+                        explanation_parts.append(f"Historical: FAIL ({failed_checks}/{total_checks} checks failed)")
 
                 # Extract key analysis points (both pass and fail)
                 for log in execution_log:
@@ -710,6 +776,8 @@ def trigger_futures_algorithm(request):
                     'composite_score': composite_score,
                     'direction': direction,
                     'verdict': verdict,
+                    'technical_verdict': technical_verdict,  # Original technical verdict
+                    'historical_passed': historical_passed,  # Historical verification result
                     'success': success,
                     'spot_price': metrics.get('spot_price', 0),
                     'futures_price': metrics.get('futures_price', 0),
@@ -723,12 +791,15 @@ def trigger_futures_algorithm(request):
                     'scores': analysis_result.get('scores', {}),
                     'sr_data': metrics.get('sr_details', None),  # Support/Resistance data
                     'breach_risks': analysis_result.get('breach_risks', None),  # Breach risk calculations
+                    'historical_verification': historical_verification,  # Full historical verification data
                     'error': analysis_result.get('error', None) if not success else None
                 })
 
                 execution_summary.append({
                     'symbol': contract.symbol,
                     'status': verdict,
+                    'technical_verdict': technical_verdict,
+                    'historical_passed': historical_passed,
                     'score': composite_score,
                     'success': success
                 })
@@ -761,33 +832,45 @@ def trigger_futures_algorithm(request):
                     'execution_log': [],
                     'metrics': {},
                     'scores': {},
+                    'technical_verdict': 'ERROR',
+                    'historical_passed': False,
+                    'historical_verification': None,
                     'error': str(e)
                 })
 
                 execution_summary.append({
                     'symbol': contract.symbol,
                     'status': 'ERROR',
+                    'technical_verdict': 'ERROR',
+                    'historical_passed': False,
                     'error': str(e),
                     'score': 0,
                     'success': False
                 })
                 continue
 
-        # Sort by verdict priority (PASS first, then FAIL, then ERROR) and then by score
+        # Sort by verdict priority and then by score
+        # Priority: PASS=0, HIST_FAIL=1, FAIL=2, ERROR=3 (lower is better)
         def sort_key(contract):
             verdict = contract['verdict']
             score = contract['composite_score']
 
-            # Priority: PASS=0, FAIL=1, ERROR=2 (lower is better)
-            priority = 0 if verdict == 'PASS' else (1 if verdict == 'FAIL' else 2)
+            verdict_priority = {
+                'PASS': 0,       # Best: passed both technical and historical
+                'HIST_FAIL': 1,  # Technical passed but historical failed
+                'FAIL': 2,       # Technical failed
+                'ERROR': 3       # Analysis error
+            }
+            priority = verdict_priority.get(verdict, 3)
 
             # Return tuple: (priority, negative_score) so PASS comes first, then sorted by score descending
             return (priority, -score)
 
         analyzed_results.sort(key=sort_key)
 
-        # Count passed contracts
+        # Count passed contracts (only those passing BOTH technical AND historical)
         passed_results = [r for r in analyzed_results if r['verdict'] == 'PASS']
+        hist_fail_results = [r for r in analyzed_results if r['verdict'] == 'HIST_FAIL']
 
         if not analyzed_results:
             return JsonResponse({
@@ -1031,6 +1114,7 @@ def trigger_futures_algorithm(request):
             'all_contracts': analyzed_results,  # All contracts sorted by score
             'total_analyzed': len(analyzed_results),
             'total_passed': len(passed_results),
+            'total_hist_fail': len(hist_fail_results),  # Technical passed but historical failed
             'total_failed': len([r for r in analyzed_results if r['verdict'] == 'FAIL']),
             'total_errors': len([r for r in analyzed_results if r['verdict'] == 'ERROR']),
             'execution_summary': execution_summary,
@@ -1038,8 +1122,12 @@ def trigger_futures_algorithm(request):
                 'this_month': this_month_volume,
                 'next_month': next_month_volume
             },
+            'historical_validation_enabled': validate_historical,
             'suggestion_ids': suggestion_ids  # IDs of saved suggestions
         }
+
+        logger.info(f"Results: {len(passed_results)} PASS, {len(hist_fail_results)} HIST_FAIL, "
+                   f"{response_data['total_failed']} FAIL, {response_data['total_errors']} ERROR")
 
         return JsonResponse(response_data)
 
