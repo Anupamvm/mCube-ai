@@ -1167,3 +1167,286 @@ class Execution(TimeStampedModel):
             f"Execution {self.execution_id} - "
             f"{self.quantity} @ {self.price}"
         )
+
+
+class BrokerTradeHistory(TimeStampedModel):
+    """
+    Historical trade records from broker APIs with deduplication.
+
+    Stores executed trades synced from Kotak Neo and ICICI Breeze APIs.
+    Used for reconciliation, reporting, and FY performance analysis.
+    """
+
+    BROKER_CHOICES = [
+        ('KOTAK', 'Kotak Neo'),
+        ('ICICI', 'ICICI Breeze'),
+    ]
+
+    TRADE_TYPE_CHOICES = [
+        ('BUY', 'Buy'),
+        ('SELL', 'Sell'),
+    ]
+
+    SEGMENT_CHOICES = [
+        ('NFO', 'NSE F&O'),
+        ('NSE', 'NSE Cash'),
+        ('BSE', 'BSE Cash'),
+        ('BFO', 'BSE F&O'),
+    ]
+
+    PRODUCT_TYPE_CHOICES = [
+        ('NRML', 'Normal'),
+        ('MIS', 'Intraday'),
+        ('CNC', 'Delivery'),
+    ]
+
+    # Broker Reference
+    broker = models.CharField(
+        max_length=10,
+        choices=BROKER_CHOICES,
+        help_text="Broker name"
+    )
+    account = models.ForeignKey(
+        'accounts.BrokerAccount',
+        on_delete=models.CASCADE,
+        related_name='trade_history',
+        help_text="Associated broker account"
+    )
+
+    # Unique Identifiers from Broker
+    trade_id = models.CharField(
+        max_length=100,
+        help_text="Trade ID from broker"
+    )
+    order_id = models.CharField(
+        max_length=100,
+        blank=True,
+        help_text="Order ID from broker"
+    )
+
+    # Trade Details
+    symbol = models.CharField(
+        max_length=50,
+        help_text="Base symbol (e.g., NIFTY, RELIANCE)"
+    )
+    trading_symbol = models.CharField(
+        max_length=100,
+        help_text="Full trading symbol (e.g., NIFTY25JAN23500CE)"
+    )
+    segment = models.CharField(
+        max_length=10,
+        choices=SEGMENT_CHOICES,
+        default='NFO',
+        help_text="Exchange segment"
+    )
+
+    # Transaction Details
+    trade_type = models.CharField(
+        max_length=10,
+        choices=TRADE_TYPE_CHOICES,
+        help_text="Buy or Sell"
+    )
+    product_type = models.CharField(
+        max_length=10,
+        choices=PRODUCT_TYPE_CHOICES,
+        default='NRML',
+        help_text="Product type"
+    )
+
+    # Quantity and Price
+    quantity = models.IntegerField(
+        help_text="Trade quantity"
+    )
+    price = models.DecimalField(
+        max_digits=15,
+        decimal_places=2,
+        help_text="Trade price"
+    )
+    trade_value = models.DecimalField(
+        max_digits=15,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Total trade value (quantity * price)"
+    )
+
+    # Timing
+    trade_date = models.DateField(
+        help_text="Trade execution date"
+    )
+    trade_time = models.TimeField(
+        null=True,
+        blank=True,
+        help_text="Trade execution time"
+    )
+    trade_datetime = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Combined trade datetime"
+    )
+
+    # Options/Futures specific
+    expiry_date = models.DateField(
+        null=True,
+        blank=True,
+        help_text="Expiry date for F&O"
+    )
+    strike_price = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Strike price for options"
+    )
+    option_type = models.CharField(
+        max_length=5,
+        blank=True,
+        help_text="CE or PE for options"
+    )
+
+    # Charges
+    brokerage = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text="Brokerage charges"
+    )
+    stt = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text="Securities Transaction Tax"
+    )
+    exchange_charges = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text="Exchange transaction charges"
+    )
+    gst = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text="GST on brokerage"
+    )
+    stamp_duty = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text="Stamp duty"
+    )
+    total_charges = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text="Total of all charges"
+    )
+
+    # Raw data from API
+    raw_data = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Raw response data from broker API"
+    )
+
+    # Reconciliation
+    is_reconciled = models.BooleanField(
+        default=False,
+        help_text="Whether matched with TakenTrade"
+    )
+    taken_trade = models.ForeignKey(
+        'trading.TakenTrade',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='broker_trades',
+        help_text="Linked TakenTrade if reconciled"
+    )
+
+    class Meta:
+        db_table = 'broker_trade_history'
+        verbose_name = 'Broker Trade History'
+        verbose_name_plural = 'Broker Trade Histories'
+        ordering = ['-trade_date', '-trade_time']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['broker', 'trade_id', 'trade_date'],
+                name='unique_broker_trade'
+            )
+        ]
+        indexes = [
+            models.Index(fields=['account', 'trade_date']),
+            models.Index(fields=['broker', 'trade_date']),
+            models.Index(fields=['symbol', 'trade_date']),
+            models.Index(fields=['is_reconciled']),
+        ]
+
+    def __str__(self):
+        return f"{self.broker} {self.trade_type} {self.trading_symbol} x{self.quantity} @ {self.price}"
+
+    def save(self, *args, **kwargs):
+        # Auto-calculate trade value if not set
+        if self.trade_value is None and self.quantity and self.price:
+            self.trade_value = self.quantity * self.price
+
+        # Auto-calculate total charges
+        self.total_charges = (
+            self.brokerage +
+            self.stt +
+            self.exchange_charges +
+            self.gst +
+            self.stamp_duty
+        )
+        super().save(*args, **kwargs)
+
+    @classmethod
+    def sync_from_api(cls, account, trade_data, broker):
+        """
+        Create or update trade history from API data.
+        Uses get_or_create pattern for deduplication.
+
+        Args:
+            account: BrokerAccount instance
+            trade_data: Dict with trade details from broker API
+            broker: 'KOTAK' or 'ICICI'
+
+        Returns:
+            Tuple: (BrokerTradeHistory instance, created: bool)
+        """
+        trade_id = trade_data.get('trade_id') or trade_data.get('tradeId')
+        trade_date = trade_data.get('trade_date')
+
+        if isinstance(trade_date, str):
+            from datetime import datetime
+            trade_date = datetime.strptime(trade_date, '%Y-%m-%d').date()
+
+        defaults = {
+            'account': account,
+            'order_id': trade_data.get('order_id', ''),
+            'symbol': trade_data.get('symbol', ''),
+            'trading_symbol': trade_data.get('trading_symbol', ''),
+            'segment': trade_data.get('segment', 'NFO'),
+            'trade_type': trade_data.get('trade_type', 'BUY'),
+            'product_type': trade_data.get('product_type', 'NRML'),
+            'quantity': trade_data.get('quantity', 0),
+            'price': Decimal(str(trade_data.get('price', 0))),
+            'trade_value': Decimal(str(trade_data.get('trade_value', 0))) if trade_data.get('trade_value') else None,
+            'trade_time': trade_data.get('trade_time'),
+            'trade_datetime': trade_data.get('trade_datetime'),
+            'expiry_date': trade_data.get('expiry_date'),
+            'strike_price': Decimal(str(trade_data.get('strike_price'))) if trade_data.get('strike_price') else None,
+            'option_type': trade_data.get('option_type', ''),
+            'brokerage': Decimal(str(trade_data.get('brokerage', 0))),
+            'stt': Decimal(str(trade_data.get('stt', 0))),
+            'exchange_charges': Decimal(str(trade_data.get('exchange_charges', 0))),
+            'gst': Decimal(str(trade_data.get('gst', 0))),
+            'stamp_duty': Decimal(str(trade_data.get('stamp_duty', 0))),
+            'raw_data': trade_data,
+        }
+
+        return cls.objects.get_or_create(
+            broker=broker,
+            trade_id=trade_id,
+            trade_date=trade_date,
+            defaults=defaults
+        )

@@ -1,0 +1,609 @@
+{% extends "core/master_base.html" %}
+{% load static %}
+
+{% block title %}Trade History - mCube AI{% endblock %}
+
+{% block extra_css %}
+<style>
+    .trade-tabs {
+        border-bottom: 2px solid #e0e0e0;
+        margin-bottom: 1.5rem;
+    }
+    .trade-tabs .nav-link {
+        border: none;
+        color: #666;
+        padding: 0.75rem 1.5rem;
+        font-weight: 500;
+        border-bottom: 3px solid transparent;
+        margin-bottom: -2px;
+    }
+    .trade-tabs .nav-link:hover {
+        color: #333;
+        border-bottom-color: #ccc;
+    }
+    .trade-tabs .nav-link.active {
+        color: var(--primary-color, #2563eb);
+        border-bottom-color: var(--primary-color, #2563eb);
+        background: transparent;
+    }
+    .stat-card {
+        padding: 1.25rem;
+        border-radius: 8px;
+        background: white;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+        margin-bottom: 1rem;
+    }
+    .stat-card .stat-value {
+        font-size: 1.75rem;
+        font-weight: 700;
+        margin-bottom: 0.25rem;
+    }
+    .stat-card .stat-label {
+        font-size: 0.875rem;
+        color: #666;
+    }
+    .stat-card.profit .stat-value { color: #16a34a; }
+    .stat-card.loss .stat-value { color: #dc2626; }
+    .badge-status {
+        padding: 0.35em 0.75em;
+        border-radius: 4px;
+        font-size: 0.75rem;
+        font-weight: 600;
+        text-transform: uppercase;
+    }
+    .badge-yellow { background: #fef3c7; color: #92400e; }
+    .badge-blue { background: #dbeafe; color: #1e40af; }
+    .badge-orange { background: #fed7aa; color: #9a3412; }
+    .badge-green { background: #dcfce7; color: #166534; }
+    .badge-red { background: #fee2e2; color: #991b1b; }
+    .badge-gray { background: #f3f4f6; color: #374151; }
+    .trade-row:hover {
+        background: #f8fafc;
+    }
+    .pnl-positive { color: #16a34a; font-weight: 600; }
+    .pnl-negative { color: #dc2626; font-weight: 600; }
+    .sync-status {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.75rem;
+        background: #f8fafc;
+        border-radius: 6px;
+        margin-bottom: 1rem;
+    }
+    .sync-status.syncing {
+        background: #fef3c7;
+    }
+    .filter-section {
+        background: #f8fafc;
+        padding: 1rem;
+        border-radius: 8px;
+        margin-bottom: 1rem;
+    }
+    .trade-card {
+        background: white;
+        border-radius: 8px;
+        padding: 1rem;
+        margin-bottom: 0.75rem;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+        border-left: 4px solid #e0e0e0;
+    }
+    .trade-card.active { border-left-color: #2563eb; }
+    .trade-card.profit { border-left-color: #16a34a; }
+    .trade-card.loss { border-left-color: #dc2626; }
+
+    /* Quick Date Picker Buttons */
+    .date-quick-select {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        margin-bottom: 1rem;
+        padding-bottom: 1rem;
+        border-bottom: 1px solid #e0e0e0;
+    }
+    .date-quick-select .btn {
+        padding: 0.35rem 0.75rem;
+        font-size: 0.8rem;
+        border-radius: 20px;
+    }
+    .date-quick-select .btn.active {
+        background: #2563eb;
+        color: white;
+        border-color: #2563eb;
+    }
+    .date-range-label {
+        font-size: 0.75rem;
+        color: #666;
+        margin-bottom: 0.5rem;
+        display: block;
+    }
+    .date-range-display {
+        font-size: 0.85rem;
+        color: #333;
+        font-weight: 500;
+        padding: 0.5rem 0;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <!-- Header -->
+    <div class="row mb-4">
+        <div class="col-md-8">
+            <h1 class="h3 d-inline-block">Trade History</h1>
+            <p class="text-muted">Track your taken trades and performance</p>
+        </div>
+        <div class="col-md-4 text-end">
+            <a href="{% url 'trading:performance' %}" class="btn btn-outline-primary btn-sm">
+                View Performance Report
+            </a>
+        </div>
+    </div>
+
+    <!-- Summary Stats -->
+    <div class="row mb-4">
+        <div class="col-md-3">
+            <div class="stat-card">
+                <div class="stat-value" id="stat-total">{{ summary.total_trades }}</div>
+                <div class="stat-label">Total Trades</div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stat-card">
+                <div class="stat-value" id="stat-active">{{ summary.active_trades }}</div>
+                <div class="stat-label">Active Trades</div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stat-card profit">
+                <div class="stat-value" id="stat-winrate">{{ summary.win_rate }}%</div>
+                <div class="stat-label">Win Rate</div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stat-card {% if summary.total_pnl >= 0 %}profit{% else %}loss{% endif %}">
+                <div class="stat-value" id="stat-pnl">{{ summary.total_pnl|floatformat:0 }}</div>
+                <div class="stat-label">Total P&L</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Tabs -->
+    <ul class="nav trade-tabs" id="tradeTabs" role="tablist">
+        <li class="nav-item" role="presentation">
+            <button class="nav-link active" id="active-tab" data-bs-toggle="tab" data-bs-target="#active-trades" type="button" role="tab">
+                Active Trades <span class="badge bg-primary ms-1">{{ active_count }}</span>
+            </button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" id="closed-tab" data-bs-toggle="tab" data-bs-target="#closed-trades" type="button" role="tab">
+                Closed Trades <span class="badge bg-secondary ms-1">{{ closed_count }}</span>
+            </button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" id="sync-tab" data-bs-toggle="tab" data-bs-target="#broker-sync" type="button" role="tab">
+                Broker Sync
+            </button>
+        </li>
+    </ul>
+
+    <div class="tab-content" id="tradeTabsContent">
+        <!-- Active Trades Tab -->
+        <div class="tab-pane fade show active" id="active-trades" role="tabpanel">
+            {% if active_trades %}
+                {% for trade in active_trades %}
+                <div class="trade-card active">
+                    <div class="row align-items-center">
+                        <div class="col-md-3">
+                            <div class="fw-bold">{{ trade.instrument }}</div>
+                            <small class="text-muted">{{ trade.strategy }} | {{ trade.direction }}</small>
+                        </div>
+                        <div class="col-md-2">
+                            <div class="text-muted small">Entry</div>
+                            <div class="fw-semibold">{{ trade.entry_price|floatformat:2 }}</div>
+                        </div>
+                        <div class="col-md-2">
+                            <div class="text-muted small">Quantity</div>
+                            <div>{{ trade.quantity }} lots</div>
+                        </div>
+                        <div class="col-md-2">
+                            <span class="badge-status badge-{{ trade.status_color }}">{{ trade.status_display }}</span>
+                        </div>
+                        <div class="col-md-3 text-end">
+                            <small class="text-muted d-block">Taken {{ trade.taken_at|timesince }} ago</small>
+                            <a href="{% url 'trading:trade_detail' trade.id %}" class="btn btn-sm btn-outline-primary mt-1">View Details</a>
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            {% else %}
+                <div class="text-center py-5">
+                    <div class="text-muted mb-3">No active trades</div>
+                    <a href="{% url 'trading:suggestions_list' %}" class="btn btn-primary">View Suggestions</a>
+                </div>
+            {% endif %}
+        </div>
+
+        <!-- Closed Trades Tab -->
+        <div class="tab-pane fade" id="closed-trades" role="tabpanel">
+            <!-- Filters -->
+            <div class="filter-section">
+                <!-- Quick Date Picker Buttons -->
+                <div class="date-quick-select">
+                    <span class="date-range-label me-2 align-self-center">Quick Select:</span>
+                    <button type="button" class="btn btn-outline-secondary btn-sm" onclick="setDateRange('today')">Today</button>
+                    <button type="button" class="btn btn-outline-secondary btn-sm" onclick="setDateRange('week')">This Week</button>
+                    <button type="button" class="btn btn-outline-secondary btn-sm" onclick="setDateRange('month')">This Month</button>
+                    <button type="button" class="btn btn-outline-secondary btn-sm" onclick="setDateRange('quarter')">This Quarter</button>
+                    <button type="button" class="btn btn-outline-secondary btn-sm" onclick="setDateRange('fy')">This FY</button>
+                    <button type="button" class="btn btn-outline-secondary btn-sm" onclick="setDateRange('pastYear')">Past Year</button>
+                    <button type="button" class="btn btn-outline-secondary btn-sm" onclick="setDateRange('all')">All Time</button>
+                </div>
+
+                <form method="get" class="row g-3 align-items-end" id="filterForm">
+                    <div class="col-md-2">
+                        <label class="form-label small">From Date</label>
+                        <input type="date" name="from_date" id="fromDate" class="form-control form-control-sm" value="{{ from_date }}">
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label small">To Date</label>
+                        <input type="date" name="to_date" id="toDate" class="form-control form-control-sm" value="{{ to_date }}">
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label small">Strategy</label>
+                        <select name="strategy" class="form-select form-select-sm">
+                            <option value="">All Strategies</option>
+                            <option value="kotak_strangle" {% if strategy == 'kotak_strangle' %}selected{% endif %}>Kotak Strangle</option>
+                            <option value="kotak_broken_iron_condor" {% if strategy == 'kotak_broken_iron_condor' %}selected{% endif %}>Iron Condor</option>
+                            <option value="icici_futures" {% if strategy == 'icici_futures' %}selected{% endif %}>ICICI Futures</option>
+                        </select>
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label small">Outcome</label>
+                        <select name="outcome" class="form-select form-select-sm">
+                            <option value="">All</option>
+                            <option value="PROFIT" {% if outcome == 'PROFIT' %}selected{% endif %}>Profit</option>
+                            <option value="LOSS" {% if outcome == 'LOSS' %}selected{% endif %}>Loss</option>
+                            <option value="BREAKEVEN" {% if outcome == 'BREAKEVEN' %}selected{% endif %}>Breakeven</option>
+                        </select>
+                    </div>
+                    <div class="col-md-2">
+                        <button type="submit" class="btn btn-primary btn-sm">Filter</button>
+                        <a href="{% url 'trading:trade_history' %}" class="btn btn-outline-secondary btn-sm">Reset</a>
+                    </div>
+                    <div class="col-md-2 text-end">
+                        <button type="button" class="btn btn-outline-success btn-sm" onclick="exportToCSV()">Export CSV</button>
+                    </div>
+                </form>
+            </div>
+
+            <!-- Closed Trades Table -->
+            <div class="table-responsive">
+                <table class="table table-hover">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Date</th>
+                            <th>Instrument</th>
+                            <th>Strategy</th>
+                            <th>Direction</th>
+                            <th class="text-end">Entry</th>
+                            <th class="text-end">Exit</th>
+                            <th class="text-end">P&L</th>
+                            <th>Outcome</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for trade in closed_trades %}
+                        <tr class="trade-row">
+                            <td>{{ trade.closed_at|date:"d M Y" }}</td>
+                            <td>
+                                <span class="fw-semibold">{{ trade.instrument }}</span>
+                                <br><small class="text-muted">{{ trade.quantity }} lots</small>
+                            </td>
+                            <td>{{ trade.get_strategy_display }}</td>
+                            <td>{{ trade.direction }}</td>
+                            <td class="text-end">{{ trade.entry_price|floatformat:2 }}</td>
+                            <td class="text-end">{{ trade.exit_price|floatformat:2 }}</td>
+                            <td class="text-end {% if trade.net_pnl >= 0 %}pnl-positive{% else %}pnl-negative{% endif %}">
+                                {{ trade.net_pnl|floatformat:0 }}
+                            </td>
+                            <td>
+                                <span class="badge-status badge-{{ trade.outcome_color }}">{{ trade.outcome }}</span>
+                            </td>
+                            <td>
+                                <a href="{% url 'trading:trade_detail' trade.id %}" class="btn btn-sm btn-link">Details</a>
+                            </td>
+                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="9" class="text-center py-4 text-muted">No closed trades found</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Pagination -->
+            {% if is_paginated %}
+            <nav class="mt-3">
+                <ul class="pagination justify-content-center">
+                    {% if page_obj.has_previous %}
+                    <li class="page-item"><a class="page-link" href="?page={{ page_obj.previous_page_number }}">Previous</a></li>
+                    {% endif %}
+                    <li class="page-item active"><span class="page-link">{{ page_obj.number }} of {{ page_obj.paginator.num_pages }}</span></li>
+                    {% if page_obj.has_next %}
+                    <li class="page-item"><a class="page-link" href="?page={{ page_obj.next_page_number }}">Next</a></li>
+                    {% endif %}
+                </ul>
+            </nav>
+            {% endif %}
+        </div>
+
+        <!-- Broker Sync Tab -->
+        <div class="tab-pane fade" id="broker-sync" role="tabpanel">
+            <div class="row">
+                <div class="col-md-6">
+                    <div class="card">
+                        <div class="card-header">
+                            <h6 class="mb-0">Sync Trades from Broker</h6>
+                        </div>
+                        <div class="card-body">
+                            <p class="text-muted small">
+                                Fetch trade history from your broker accounts and store them for reconciliation and reporting.
+                            </p>
+
+                            <form id="syncForm">
+                                <div class="mb-3">
+                                    <label class="form-label">Account</label>
+                                    <select name="account_id" id="syncAccountId" class="form-select" required>
+                                        {% for account in accounts %}
+                                        <option value="{{ account.id }}">{{ account.account_name }} ({{ account.broker }})</option>
+                                        {% endfor %}
+                                    </select>
+                                </div>
+                                <div class="row">
+                                    <div class="col-6">
+                                        <label class="form-label">From Date</label>
+                                        <input type="date" name="from_date" id="syncFromDate" class="form-control" value="{{ today }}">
+                                    </div>
+                                    <div class="col-6">
+                                        <label class="form-label">To Date</label>
+                                        <input type="date" name="to_date" id="syncToDate" class="form-control" value="{{ today }}">
+                                    </div>
+                                </div>
+                                <button type="submit" class="btn btn-primary mt-3" id="syncBtn">
+                                    Sync Trades
+                                </button>
+                            </form>
+
+                            <div id="syncResult" class="mt-3" style="display: none;">
+                                <div class="alert" role="alert"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="col-md-6">
+                    <div class="card">
+                        <div class="card-header">
+                            <h6 class="mb-0">Sync Status</h6>
+                        </div>
+                        <div class="card-body">
+                            <div id="syncStatusContent">
+                                <p class="text-muted">Select an account to view sync status</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card mt-3">
+                        <div class="card-header">
+                            <h6 class="mb-0">Recent Broker Trades</h6>
+                        </div>
+                        <div class="card-body">
+                            {% if broker_trades %}
+                            <div class="table-responsive">
+                                <table class="table table-sm">
+                                    <thead>
+                                        <tr>
+                                            <th>Date</th>
+                                            <th>Symbol</th>
+                                            <th>Type</th>
+                                            <th class="text-end">Qty</th>
+                                            <th class="text-end">Price</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {% for bt in broker_trades %}
+                                        <tr>
+                                            <td>{{ bt.trade_date|date:"d M" }}</td>
+                                            <td>{{ bt.trading_symbol|truncatechars:15 }}</td>
+                                            <td>{{ bt.trade_type }}</td>
+                                            <td class="text-end">{{ bt.quantity }}</td>
+                                            <td class="text-end">{{ bt.price|floatformat:2 }}</td>
+                                        </tr>
+                                        {% endfor %}
+                                    </tbody>
+                                </table>
+                            </div>
+                            {% else %}
+                            <p class="text-muted text-center">No broker trades synced yet</p>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// Quick Date Range Selection
+function setDateRange(range) {
+    const today = new Date();
+    let fromDate, toDate;
+
+    // Format date as YYYY-MM-DD
+    const formatDate = (date) => {
+        return date.toISOString().split('T')[0];
+    };
+
+    // Get Monday of current week
+    const getMonday = (date) => {
+        const d = new Date(date);
+        const day = d.getDay();
+        const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+        return new Date(d.setDate(diff));
+    };
+
+    // Get first day of current month
+    const getFirstOfMonth = (date) => {
+        return new Date(date.getFullYear(), date.getMonth(), 1);
+    };
+
+    // Get first day of current quarter
+    const getFirstOfQuarter = (date) => {
+        const quarter = Math.floor(date.getMonth() / 3);
+        return new Date(date.getFullYear(), quarter * 3, 1);
+    };
+
+    // Get first day of Indian Financial Year (April 1)
+    const getFirstOfFY = (date) => {
+        const year = date.getMonth() >= 3 ? date.getFullYear() : date.getFullYear() - 1;
+        return new Date(year, 3, 1); // April 1
+    };
+
+    switch(range) {
+        case 'today':
+            fromDate = today;
+            toDate = today;
+            break;
+        case 'week':
+            fromDate = getMonday(today);
+            toDate = today;
+            break;
+        case 'month':
+            fromDate = getFirstOfMonth(today);
+            toDate = today;
+            break;
+        case 'quarter':
+            fromDate = getFirstOfQuarter(today);
+            toDate = today;
+            break;
+        case 'fy':
+            fromDate = getFirstOfFY(today);
+            toDate = today;
+            break;
+        case 'pastYear':
+            fromDate = new Date(today.getFullYear() - 1, today.getMonth(), today.getDate());
+            toDate = today;
+            break;
+        case 'all':
+            fromDate = null;
+            toDate = null;
+            break;
+        default:
+            return;
+    }
+
+    // Set form values
+    document.getElementById('fromDate').value = fromDate ? formatDate(fromDate) : '';
+    document.getElementById('toDate').value = toDate ? formatDate(toDate) : '';
+
+    // Highlight active button
+    document.querySelectorAll('.date-quick-select .btn').forEach(btn => {
+        btn.classList.remove('active');
+    });
+    event.target.classList.add('active');
+
+    // Auto-submit the form
+    document.getElementById('filterForm').submit();
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    // Handle sync form submission
+    document.getElementById('syncForm').addEventListener('submit', async function(e) {
+        e.preventDefault();
+
+        const btn = document.getElementById('syncBtn');
+        const resultDiv = document.getElementById('syncResult');
+        const alertDiv = resultDiv.querySelector('.alert');
+
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Syncing...';
+
+        try {
+            const response = await fetch('{% url "trading:sync_trades" %}', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': '{{ csrf_token }}'
+                },
+                body: JSON.stringify({
+                    account_id: document.getElementById('syncAccountId').value,
+                    from_date: document.getElementById('syncFromDate').value,
+                    to_date: document.getElementById('syncToDate').value
+                })
+            });
+
+            const data = await response.json();
+
+            resultDiv.style.display = 'block';
+            if (data.success) {
+                alertDiv.className = 'alert alert-success';
+                alertDiv.innerHTML = `<strong>Sync Complete!</strong> ${data.new_count} new trades, ${data.updated_count} existing.`;
+                // Refresh page after 2 seconds
+                setTimeout(() => location.reload(), 2000);
+            } else {
+                alertDiv.className = 'alert alert-danger';
+                alertDiv.innerHTML = `<strong>Error:</strong> ${data.error}`;
+            }
+        } catch (error) {
+            resultDiv.style.display = 'block';
+            alertDiv.className = 'alert alert-danger';
+            alertDiv.innerHTML = `<strong>Error:</strong> ${error.message}`;
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = 'Sync Trades';
+        }
+    });
+
+    // Load sync status when account changes
+    document.getElementById('syncAccountId').addEventListener('change', loadSyncStatus);
+    loadSyncStatus(); // Initial load
+});
+
+async function loadSyncStatus() {
+    const accountId = document.getElementById('syncAccountId').value;
+    const statusDiv = document.getElementById('syncStatusContent');
+
+    try {
+        const response = await fetch(`/trading/api/sync/status/${accountId}/`);
+        const data = await response.json();
+
+        if (data.success) {
+            statusDiv.innerHTML = `
+                <table class="table table-sm mb-0">
+                    <tr><td>Last Sync:</td><td class="text-end">${data.last_sync ? new Date(data.last_sync).toLocaleString() : 'Never'}</td></tr>
+                    <tr><td>Total Records:</td><td class="text-end">${data.total_records}</td></tr>
+                    <tr><td>Unreconciled:</td><td class="text-end">${data.unreconciled_count}</td></tr>
+                    <tr><td>Status:</td><td class="text-end">${data.is_syncing ? '<span class="badge bg-warning">Syncing...</span>' : '<span class="badge bg-success">Ready</span>'}</td></tr>
+                </table>
+            `;
+        }
+    } catch (error) {
+        statusDiv.innerHTML = '<p class="text-danger">Failed to load status</p>';
+    }
+}
+
+function exportToCSV() {
+    // Build URL with current filters
+    const params = new URLSearchParams(window.location.search);
+    params.set('export', 'csv');
+    window.location.href = '{% url "trading:trade_history" %}?' + params.toString();
+}
+</script>
+{% endblock %}

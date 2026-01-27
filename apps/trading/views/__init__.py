@@ -68,6 +68,12 @@ from .template_views import (
     view_trades,
 )
 
+from .trade_tracking_views import (
+    trade_history,
+    performance,
+    trade_detail,
+)
+
 # Re-export everything for backward compatibility
 __all__ = [
     # Suggestion views
@@ -111,4 +117,9 @@ __all__ = [
     'manual_triggers',
     'manual_triggers_refactored',
     'view_trades',
+
+    # Trade tracking views
+    'trade_history',
+    'performance',
+    'trade_detail',
 ]

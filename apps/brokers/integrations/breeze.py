@@ -472,6 +472,10 @@ def get_breeze_client():
             session_token=creds.session_token
         )
 
+        # Workaround for breeze-connect v1.0.62 bug where get_names() expects error_exception attribute
+        if not hasattr(breeze, 'error_exception'):
+            breeze.error_exception = None
+
         logger.info("✅ Breeze authentication successful")
         return breeze
     except BreezeAuthenticationError:
@@ -1455,3 +1459,196 @@ def get_breeze_api():
         BreezeAPIClient: Initialized Breeze API client
     """
     return BreezeAPIClient()
+
+
+# ============================================================================
+# ORDER AND TRADE HISTORY FUNCTIONS
+# ============================================================================
+
+def get_order_list(from_date: str = None, to_date: str = None, exchange_code: str = 'NFO') -> dict:
+    """
+    Fetch orders from ICICI Breeze API for a date range.
+
+    Args:
+        from_date: Start date in 'YYYY-MM-DD' format (default: today)
+        to_date: End date in 'YYYY-MM-DD' format (default: today)
+        exchange_code: Exchange segment - 'NFO', 'NSE', etc. (default: 'NFO')
+
+    Returns:
+        dict: {
+            'success': bool,
+            'orders': list of order dicts,
+            'error': str (if failed)
+        }
+
+    Each order dict contains:
+        - order_id: Breeze order ID
+        - trading_symbol: Symbol traded
+        - transaction_type: BUY or SELL
+        - quantity: Order quantity
+        - price: Order price
+        - status: Order status
+        - order_datetime: Time of order
+        - filled_quantity: Quantity filled
+        - average_price: Average execution price
+    """
+    try:
+        breeze = get_breeze_client()
+
+        # Set default dates to today
+        if not from_date or not to_date:
+            today = date.today()
+            from_date = from_date or today.strftime('%Y-%m-%d')
+            to_date = to_date or today.strftime('%Y-%m-%d')
+
+        # Format dates for Breeze API: 'YYYY-MM-DDTHH:MM:SS.000Z'
+        from_datetime = f"{from_date}T00:00:00.000Z"
+        to_datetime = f"{to_date}T23:59:59.000Z"
+
+        logger.info(f"Fetching Breeze orders: {from_date} to {to_date}, exchange: {exchange_code}")
+
+        response = breeze.get_order_list(
+            exchange_code=exchange_code,
+            from_date=from_datetime,
+            to_date=to_datetime
+        )
+
+        logger.info(f"Breeze order list response status: {response.get('Status')}")
+
+        if not response:
+            return {'success': True, 'orders': [], 'message': 'No orders found'}
+
+        if response.get('Status') != 200:
+            error_msg = response.get('Error', 'Unknown error')
+            # "No data" is not an error
+            if 'no data' in str(error_msg).lower() or 'no record' in str(error_msg).lower():
+                return {'success': True, 'orders': [], 'message': 'No orders for period'}
+            return {'success': False, 'error': error_msg, 'orders': []}
+
+        orders_data = response.get('Success', [])
+
+        # Parse orders
+        orders = []
+        for order in orders_data:
+            # Parse order datetime
+            order_datetime = None
+            order_datetime_str = order.get('order_datetime', '')
+            if order_datetime_str:
+                try:
+                    # Breeze format: '2025-01-27T10:30:00.000Z'
+                    order_datetime = datetime.strptime(order_datetime_str[:19], '%Y-%m-%dT%H:%M:%S')
+                except ValueError:
+                    pass
+
+            parsed_order = {
+                'order_id': order.get('order_id', ''),
+                'trading_symbol': order.get('stock_code', ''),
+                'exchange': order.get('exchange_code', 'NFO'),
+                'transaction_type': order.get('action', '').upper(),  # 'buy' -> 'BUY'
+                'quantity': int(order.get('quantity', 0)),
+                'price': float(order.get('price', 0)),
+                'status': order.get('order_status', ''),
+                'order_datetime': order_datetime,
+                'order_date': order_datetime.date() if order_datetime else None,
+                'filled_quantity': int(order.get('pending_quantity', 0)),
+                'average_price': float(order.get('average_price', 0)),
+                'product': order.get('product', ''),
+                'order_type': order.get('order_type', ''),
+                'validity': order.get('validity', ''),
+                'expiry_date': order.get('expiry_date', ''),
+                'strike_price': order.get('strike_price', ''),
+                'right': order.get('right', ''),  # 'call', 'put', or 'others'
+                'rejection_reason': order.get('rejection_reason', ''),
+                'raw_data': order
+            }
+            orders.append(parsed_order)
+
+        logger.info(f"Fetched {len(orders)} orders from Breeze")
+        return {'success': True, 'orders': orders}
+
+    except BreezeAuthenticationError as e:
+        logger.error(f"Authentication error fetching order list: {e}")
+        return {'success': False, 'error': str(e), 'orders': []}
+    except Exception as e:
+        logger.exception(f"Error fetching Breeze order list: {e}")
+        return {'success': False, 'error': str(e), 'orders': []}
+
+
+def get_trade_list(from_date: str = None, to_date: str = None, exchange_code: str = 'NFO') -> dict:
+    """
+    Fetch executed trades from ICICI Breeze API for a date range.
+
+    Breeze doesn't have a separate trade report API. Instead, we filter
+    the order list for executed/filled orders to get trade details.
+
+    Args:
+        from_date: Start date in 'YYYY-MM-DD' format (default: today)
+        to_date: End date in 'YYYY-MM-DD' format (default: today)
+        exchange_code: Exchange segment - 'NFO', 'NSE', etc. (default: 'NFO')
+
+    Returns:
+        dict: {
+            'success': bool,
+            'trades': list of trade dicts,
+            'error': str (if failed)
+        }
+
+    Each trade dict contains:
+        - trade_id: Generated from order_id
+        - order_id: Associated order ID
+        - trading_symbol: Symbol traded
+        - transaction_type: BUY or SELL
+        - quantity: Trade quantity
+        - price: Trade price
+        - trade_datetime: Time of trade
+        - exchange: Exchange (NFO, NSE, etc.)
+    """
+    try:
+        # Get all orders first
+        order_result = get_order_list(from_date, to_date, exchange_code)
+
+        if not order_result.get('success'):
+            return {
+                'success': False,
+                'error': order_result.get('error', 'Failed to fetch orders'),
+                'trades': []
+            }
+
+        orders = order_result.get('orders', [])
+
+        # Filter for executed/filled orders
+        executed_statuses = ['executed', 'filled', 'complete', 'traded']
+        trades = []
+
+        for order in orders:
+            status = str(order.get('status', '')).lower()
+            if any(s in status for s in executed_statuses):
+                # This is an executed order, treat as a trade
+                trade = {
+                    'trade_id': f"{order.get('order_id', '')}_{order.get('order_datetime', '')}",
+                    'order_id': order.get('order_id', ''),
+                    'trading_symbol': order.get('trading_symbol', ''),
+                    'symbol': order.get('trading_symbol', ''),
+                    'exchange': order.get('exchange', 'NFO'),
+                    'transaction_type': order.get('transaction_type', ''),
+                    'quantity': order.get('filled_quantity') or order.get('quantity', 0),
+                    'price': order.get('average_price') or order.get('price', 0),
+                    'trade_datetime': order.get('order_datetime'),
+                    'trade_date': order.get('order_date'),
+                    'trade_time': order.get('order_datetime').time() if order.get('order_datetime') else None,
+                    'product': order.get('product', ''),
+                    'expiry_date': order.get('expiry_date', ''),
+                    'strike_price': order.get('strike_price', ''),
+                    'option_type': 'CE' if order.get('right', '').lower() == 'call' else (
+                        'PE' if order.get('right', '').lower() == 'put' else ''
+                    ),
+                    'raw_data': order.get('raw_data', {})
+                }
+                trades.append(trade)
+
+        logger.info(f"Found {len(trades)} executed trades from {len(orders)} orders")
+        return {'success': True, 'trades': trades}
+
+    except Exception as e:
+        logger.exception(f"Error fetching Breeze trade list: {e}")
+        return {'success': False, 'error': str(e), 'trades': []}

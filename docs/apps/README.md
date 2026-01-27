@@ -19,6 +19,7 @@ This directory contains detailed documentation for each Django app in the mCube 
 | [Risk](risk.md) | Circuit breakers, loss limits | `risk_manager.py` |
 | [Analytics](analytics.md) | P&L tracking, learning engine | `learning_engine.py` |
 | [LLM](llm.md) | AI validation, RAG system | `trade_validator.py`, `rag_system.py` |
+| [Algo Test](algo_test.md) | Algorithm testing, scenario logging | `models.py`, `services.py` |
 
 ---
 

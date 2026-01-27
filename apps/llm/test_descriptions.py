@@ -19,7 +19,16 @@ TEST_DESCRIPTIONS = {
             <br>
             <strong>What success means:</strong> Your 70B parameter Llama model is accessible and ready to process requests.
             <br><br>
-            <strong>If it fails:</strong> Check if the vLLM server is running, network connectivity, or firewall settings.
+            <strong>If it fails:</strong> The vLLM server needs to be started manually.
+            <br><br>
+            <strong>How to start the LLM server:</strong>
+            <ol>
+                <li>SSH into the GPU server: <code>ssh anupamvm@27.107.134.179</code></li>
+                <li>Navigate to the vLLM directory: <code>cd /home/anupamvm/vllm</code></li>
+                <li>Start the container: <code>docker compose up -d</code></li>
+                <li>Check logs: <code>docker logs -f vllm-70b</code></li>
+                <li>Wait for the model to load (may take 2-3 minutes for the 70B model)</li>
+            </ol>
         ''',
         'expected_output': 'Server URL and model name (hugging-quants/Meta-Llama-3.1-70B-Instruct-AWQ-INT4)'
     },

@@ -458,3 +458,380 @@ class PositionSize(models.Model):
         }
 
 
+class TakenTrade(models.Model):
+    """
+    Dedicated model for user-accepted trades with full lifecycle tracking.
+    Links trade suggestions to actual positions and tracks P&L outcomes.
+    """
+
+    STATUS_CHOICES = [
+        ('PENDING_EXECUTION', 'Pending Execution'),
+        ('EXECUTED', 'Executed'),
+        ('ACTIVE', 'Active'),
+        ('CLOSED', 'Closed'),
+        ('CANCELLED', 'Cancelled'),
+        ('FAILED', 'Failed'),
+    ]
+
+    OUTCOME_CHOICES = [
+        ('PROFIT', 'Profit'),
+        ('LOSS', 'Loss'),
+        ('BREAKEVEN', 'Breakeven'),
+        ('PENDING', 'Pending'),
+    ]
+
+    STRATEGY_CHOICES = [
+        ('kotak_strangle', 'Kotak Strangle'),
+        ('kotak_broken_iron_condor', 'Kotak Broken Iron Condor'),
+        ('icici_futures', 'ICICI Futures'),
+    ]
+
+    TRADE_TYPE_CHOICES = [
+        ('OPTIONS', 'Options'),
+        ('FUTURES', 'Futures'),
+    ]
+
+    DIRECTION_CHOICES = [
+        ('LONG', 'Long'),
+        ('SHORT', 'Short'),
+        ('NEUTRAL', 'Neutral'),
+    ]
+
+    # Core References
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='taken_trades'
+    )
+    suggestion = models.OneToOneField(
+        TradeSuggestion,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='taken_trade',
+        help_text="Link to original trade suggestion"
+    )
+    position = models.OneToOneField(
+        'positions.Position',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='taken_trade',
+        help_text="Link to executed position"
+    )
+    account = models.ForeignKey(
+        'accounts.BrokerAccount',
+        on_delete=models.CASCADE,
+        related_name='taken_trades'
+    )
+
+    # Trade Details
+    strategy = models.CharField(max_length=30, choices=STRATEGY_CHOICES)
+    trade_type = models.CharField(max_length=10, choices=TRADE_TYPE_CHOICES)
+    instrument = models.CharField(max_length=50)  # NIFTY, RELIANCE, etc.
+    direction = models.CharField(max_length=10, choices=DIRECTION_CHOICES)
+
+    # Pricing
+    entry_price = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Entry price or premium collected"
+    )
+    exit_price = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Exit price or premium paid to close"
+    )
+    quantity = models.IntegerField(
+        default=1,
+        help_text="Number of lots"
+    )
+    lot_size = models.IntegerField(
+        default=25,
+        help_text="Lot size for the instrument"
+    )
+
+    # Options-specific fields
+    call_strike = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        null=True,
+        blank=True
+    )
+    put_strike = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        null=True,
+        blank=True
+    )
+    call_order_id = models.CharField(
+        max_length=100,
+        blank=True,
+        help_text="Broker order ID for call leg"
+    )
+    put_order_id = models.CharField(
+        max_length=100,
+        blank=True,
+        help_text="Broker order ID for put leg"
+    )
+    expiry_date = models.DateField(null=True, blank=True)
+
+    # Futures-specific fields
+    broker_order_id = models.CharField(
+        max_length=100,
+        blank=True,
+        help_text="Broker order ID for futures"
+    )
+
+    # Status & Timing
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default='PENDING_EXECUTION'
+    )
+    outcome = models.CharField(
+        max_length=15,
+        choices=OUTCOME_CHOICES,
+        default='PENDING'
+    )
+    taken_at = models.DateTimeField(
+        auto_now_add=True,
+        help_text="When user accepted the trade"
+    )
+    executed_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When trade was executed with broker"
+    )
+    closed_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When trade was closed"
+    )
+
+    # P&L Tracking
+    realized_pnl = models.DecimalField(
+        max_digits=15,
+        decimal_places=2,
+        null=True,
+        blank=True
+    )
+    charges = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text="Total brokerage and other charges"
+    )
+    net_pnl = models.DecimalField(
+        max_digits=15,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="P&L after charges"
+    )
+    return_on_margin = models.DecimalField(
+        max_digits=8,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Return on margin percentage"
+    )
+    margin_used = models.DecimalField(
+        max_digits=15,
+        decimal_places=2,
+        null=True,
+        blank=True
+    )
+
+    # User Notes
+    notes = models.TextField(
+        blank=True,
+        help_text="User notes about the trade"
+    )
+
+    # Timestamps
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-taken_at']
+        verbose_name = 'Taken Trade'
+        verbose_name_plural = 'Taken Trades'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['user', 'suggestion'],
+                name='unique_user_suggestion',
+                condition=models.Q(suggestion__isnull=False)
+            )
+        ]
+        indexes = [
+            models.Index(fields=['user', 'status']),
+            models.Index(fields=['account', 'status']),
+            models.Index(fields=['strategy', 'outcome']),
+            models.Index(fields=['taken_at']),
+            models.Index(fields=['closed_at']),
+        ]
+
+    def __str__(self):
+        return f"{self.instrument} {self.direction} - {self.status} ({self.outcome})"
+
+    @property
+    def is_pending(self):
+        """Check if trade is pending execution"""
+        return self.status == 'PENDING_EXECUTION'
+
+    @property
+    def is_active(self):
+        """Check if trade is currently active"""
+        return self.status in ['EXECUTED', 'ACTIVE']
+
+    @property
+    def is_closed(self):
+        """Check if trade is closed"""
+        return self.status == 'CLOSED'
+
+    @property
+    def total_quantity(self):
+        """Total quantity in units"""
+        return self.quantity * self.lot_size
+
+    def mark_executed(self, position=None, executed_at=None):
+        """Mark trade as executed"""
+        self.status = 'EXECUTED'
+        self.executed_at = executed_at or timezone.now()
+        if position:
+            self.position = position
+        self.save()
+
+    def mark_active(self):
+        """Mark trade as actively being monitored"""
+        self.status = 'ACTIVE'
+        self.save()
+
+    def mark_closed(self, exit_price=None, realized_pnl=None, charges=None):
+        """Close the trade with final P&L"""
+        self.status = 'CLOSED'
+        self.closed_at = timezone.now()
+
+        if exit_price is not None:
+            self.exit_price = exit_price
+
+        if realized_pnl is not None:
+            self.realized_pnl = realized_pnl
+
+        if charges is not None:
+            self.charges = charges
+
+        # Calculate net P&L
+        if self.realized_pnl is not None:
+            self.net_pnl = self.realized_pnl - (self.charges or Decimal('0.00'))
+
+            # Determine outcome
+            if self.net_pnl > Decimal('100'):  # Small buffer for breakeven
+                self.outcome = 'PROFIT'
+            elif self.net_pnl < Decimal('-100'):
+                self.outcome = 'LOSS'
+            else:
+                self.outcome = 'BREAKEVEN'
+
+            # Calculate ROM if margin available
+            if self.margin_used and self.margin_used > 0:
+                self.return_on_margin = (self.net_pnl / self.margin_used) * 100
+
+        self.save()
+
+    def mark_cancelled(self, reason=''):
+        """Cancel the trade"""
+        self.status = 'CANCELLED'
+        self.outcome = 'PENDING'
+        if reason:
+            self.notes = f"{self.notes}\nCancelled: {reason}".strip()
+        self.save()
+
+    def mark_failed(self, reason=''):
+        """Mark trade as failed"""
+        self.status = 'FAILED'
+        self.outcome = 'PENDING'
+        if reason:
+            self.notes = f"{self.notes}\nFailed: {reason}".strip()
+        self.save()
+
+    def sync_from_position(self):
+        """Sync status and P&L from linked Position"""
+        if not self.position:
+            return False
+
+        position = self.position
+
+        # Update status based on position status
+        if position.status == 'ACTIVE':
+            self.status = 'ACTIVE'
+        elif position.status == 'CLOSED':
+            self.status = 'CLOSED'
+            self.closed_at = position.closed_at
+
+            # Sync P&L
+            self.realized_pnl = position.realized_pnl
+            self.exit_price = position.exit_price
+
+            # Determine outcome
+            if position.realized_pnl and position.realized_pnl > Decimal('100'):
+                self.outcome = 'PROFIT'
+            elif position.realized_pnl and position.realized_pnl < Decimal('-100'):
+                self.outcome = 'LOSS'
+            else:
+                self.outcome = 'BREAKEVEN'
+
+        self.save()
+        return True
+
+    def sync_suggestion_status(self):
+        """Sync status back to linked TradeSuggestion"""
+        if not self.suggestion:
+            return False
+
+        suggestion = self.suggestion
+
+        if self.status == 'ACTIVE':
+            suggestion.status = 'ACTIVE'
+        elif self.status == 'CLOSED':
+            if self.outcome == 'PROFIT':
+                suggestion.status = 'SUCCESSFUL'
+            elif self.outcome == 'LOSS':
+                suggestion.status = 'LOSS'
+            else:
+                suggestion.status = 'BREAKEVEN'
+
+            suggestion.realized_pnl = self.realized_pnl
+            suggestion.exit_value = self.exit_price
+            suggestion.closed_timestamp = self.closed_at
+
+        suggestion.save()
+        return True
+
+    def get_status_color(self):
+        """Get color for status badge in UI"""
+        colors = {
+            'PENDING_EXECUTION': 'yellow',
+            'EXECUTED': 'blue',
+            'ACTIVE': 'orange',
+            'CLOSED': 'gray',
+            'CANCELLED': 'gray',
+            'FAILED': 'red',
+        }
+        return colors.get(self.status, 'gray')
+
+    def get_outcome_color(self):
+        """Get color for outcome badge in UI"""
+        colors = {
+            'PROFIT': 'green',
+            'LOSS': 'red',
+            'BREAKEVEN': 'yellow',
+            'PENDING': 'gray',
+        }
+        return colors.get(self.outcome, 'gray')
+

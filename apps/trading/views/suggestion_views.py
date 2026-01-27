@@ -60,6 +60,7 @@ def pending_suggestions(request):
         'suggestions': suggestions,
         'total_pending': suggestions.filter(status='PENDING').count(),
         'total_approved': suggestions.filter(status__in=['APPROVED', 'AUTO_APPROVED']).count(),
+        'total_auto_approved': suggestions.filter(status='AUTO_APPROVED').count(),
     }
 
     return render(request, 'trading/suggestions_list.html', context)

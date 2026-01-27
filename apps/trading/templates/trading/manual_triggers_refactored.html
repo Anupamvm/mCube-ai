@@ -3634,8 +3634,54 @@ const TradeVerification = {
         const stockNews = newsData.stock_news || {};
         const industryNews = newsData.industry_news || {};
         const competitorNews = newsData.competitor_news || {};
+        const newsVerification = newsData.news_verification || {};
 
         let html = '';
+
+        // News Blocking Alert Banner (if trade is blocked by negative news)
+        if (newsVerification.trade_allowed === false && newsVerification.blocking_articles && newsVerification.blocking_articles.length > 0) {
+            html += `
+                <div style="margin-bottom: 25px; padding: 20px; background: linear-gradient(135deg, #dc2626 0%, #991b1b 100%); border-radius: 12px; color: white; box-shadow: 0 6px 20px rgba(220, 38, 38, 0.4); border: 3px solid #fca5a5;">
+                    <div style="display: flex; align-items: flex-start; gap: 15px;">
+                        <div style="font-size: 2.5rem; flex-shrink: 0;">🚫</div>
+                        <div style="flex: 1;">
+                            <h3 style="margin: 0 0 10px 0; font-size: 1.3rem; font-weight: 800;">Trade Blocked: Highly Negative News Detected</h3>
+                            <p style="margin: 0 0 12px 0; font-size: 0.95rem; opacity: 0.95;">
+                                ${newsVerification.blocking_articles.length} article(s) with highly negative impact found. Trade cannot proceed.
+                            </p>
+                            <div style="background: rgba(0,0,0,0.2); border-radius: 8px; padding: 12px;">
+                                ${newsVerification.blocking_articles.slice(0, 3).map(article => `
+                                    <div style="margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px solid rgba(255,255,255,0.2);">
+                                        <div style="font-weight: 600; font-size: 0.9rem;">📰 ${article.title || 'Unknown Article'}</div>
+                                        <div style="font-size: 0.8rem; opacity: 0.9; margin-top: 4px;">
+                                            Impact: ${article.impact_label || 'HIGHLY_NEGATIVE'} (${(article.impact_score || -0.8).toFixed(2)})
+                                            ${article.impact_reasoning ? ` - ${article.impact_reasoning}` : ''}
+                                        </div>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        // Warning Banner (if there are warning articles but trade is allowed)
+        if (newsVerification.trade_allowed !== false && newsVerification.warning_articles && newsVerification.warning_articles.length > 0) {
+            html += `
+                <div style="margin-bottom: 25px; padding: 16px; background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); border-radius: 12px; color: white; box-shadow: 0 4px 12px rgba(245, 158, 11, 0.3); border: 2px solid #fde68a;">
+                    <div style="display: flex; align-items: center; gap: 12px;">
+                        <div style="font-size: 1.8rem;">⚠️</div>
+                        <div>
+                            <h4 style="margin: 0; font-size: 1rem; font-weight: 700;">Caution: ${newsVerification.warning_articles.length} Negative News Article(s)</h4>
+                            <p style="margin: 4px 0 0 0; font-size: 0.85rem; opacity: 0.95;">
+                                Some negative news detected. Review carefully before proceeding.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
 
         // Header for all three sections
         html += `
@@ -3649,6 +3695,12 @@ const TradeVerification = {
                         <span style="background: rgba(255,255,255,0.2); padding: 6px 16px; border-radius: 20px; font-weight: 600;">2️⃣ Sector Trends</span>
                         <span style="background: rgba(255,255,255,0.2); padding: 6px 16px; border-radius: 20px; font-weight: 600;">3️⃣ Competition Analysis</span>
                     </div>
+                    ${newsVerification.summary ? `
+                        <div style="margin-top: 15px; font-size: 0.8rem; opacity: 0.85;">
+                            Analyzed: ${newsVerification.summary.total_analyzed || 0} articles |
+                            Sentiment: ${newsVerification.summary.overall_sentiment || 'N/A'}
+                        </div>
+                    ` : ''}
                 </div>
             </div>
         `;
@@ -3733,12 +3785,17 @@ const TradeVerification = {
                 </div>
             `;
         } else {
-            // Display articles
+            // Display articles (already sorted by impact from backend)
             displayArticles.forEach((article, index) => {
                 const publishedDate = this.formatNewsDate(article.publishedAt);
 
+                // Get impact badge styling based on impact_label
+                const impactBadge = this.getImpactBadge(article.impact_label, article.impact_score);
+                const hasImpact = article.impact_label && article.impact_label !== 'NEUTRAL';
+                const isBlocking = article.blocks_trade === true;
+
             html += `
-                <div style="padding: 15px; border-bottom: ${index < displayArticles.length - 1 ? '1px solid #e5e7eb' : 'none'};">
+                <div style="padding: 15px; border-bottom: ${index < displayArticles.length - 1 ? '1px solid #e5e7eb' : 'none'}; ${isBlocking ? 'background: #fef2f2; border-left: 4px solid #ef4444;' : ''}">
                     <div style="display: flex; gap: 15px; align-items: start;">
                         ${article.image ? `
                         <img src="${article.image}"
@@ -3747,6 +3804,10 @@ const TradeVerification = {
                              onerror="this.style.display='none'">
                         ` : ''}
                         <div style="flex: 1; min-width: 0;">
+                            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px; flex-wrap: wrap;">
+                                ${impactBadge}
+                                ${isBlocking ? '<span style="background: #dc2626; color: white; font-size: 0.7rem; padding: 2px 8px; border-radius: 4px; font-weight: 600;">BLOCKS TRADE</span>' : ''}
+                            </div>
                             <a href="${article.url}"
                                target="_blank"
                                style="color: #1f2937; text-decoration: none; font-weight: 600; font-size: 0.95rem; display: block; margin-bottom: 8px; line-height: 1.4; cursor: pointer;">
@@ -3755,9 +3816,15 @@ const TradeVerification = {
                             <p style="color: #6b7280; font-size: 0.85rem; margin: 0 0 8px 0; line-height: 1.5;">
                                 ${article.description || ''}
                             </p>
+                            ${article.impact_reasoning ? `
+                            <div style="background: #f3f4f6; padding: 8px 12px; border-radius: 6px; margin-bottom: 8px; font-size: 0.8rem; color: #4b5563; border-left: 3px solid ${this.getImpactBorderColor(article.impact_label)};">
+                                <strong>Impact Analysis:</strong> ${article.impact_reasoning}
+                            </div>
+                            ` : ''}
                             <div style="display: flex; gap: 15px; align-items: center; flex-wrap: wrap; font-size: 0.75rem; color: #9ca3af;">
                                 <span>📅 ${publishedDate}</span>
                                 ${article.source?.name ? `<span>📰 ${article.source.name}</span>` : ''}
+                                ${article.impact_score !== undefined ? `<span style="font-weight: 500;">Score: ${article.impact_score.toFixed(2)}</span>` : ''}
                                 <a href="${article.url}"
                                    target="_blank"
                                    style="color: ${color}; text-decoration: none; font-weight: 500;">
@@ -3831,6 +3898,69 @@ const TradeVerification = {
         } catch (e) {
             return dateString;
         }
+    },
+
+    getImpactBadge(impactLabel, impactScore) {
+        // Returns HTML for impact badge based on label
+        // Impact Labels: HIGHLY_NEGATIVE, NEGATIVE, NEUTRAL, POSITIVE, HIGHLY_POSITIVE
+        const badges = {
+            'HIGHLY_NEGATIVE': {
+                icon: '🔴',
+                bg: '#fef2f2',
+                border: '#fecaca',
+                text: '#dc2626',
+                label: 'Highly Negative'
+            },
+            'NEGATIVE': {
+                icon: '🟠',
+                bg: '#fffbeb',
+                border: '#fde68a',
+                text: '#d97706',
+                label: 'Negative'
+            },
+            'NEUTRAL': {
+                icon: '⚪',
+                bg: '#f3f4f6',
+                border: '#d1d5db',
+                text: '#6b7280',
+                label: 'Neutral'
+            },
+            'POSITIVE': {
+                icon: '🟡',
+                bg: '#fefce8',
+                border: '#fef08a',
+                text: '#ca8a04',
+                label: 'Positive'
+            },
+            'HIGHLY_POSITIVE': {
+                icon: '🟢',
+                bg: '#f0fdf4',
+                border: '#bbf7d0',
+                text: '#16a34a',
+                label: 'Highly Positive'
+            }
+        };
+
+        const badge = badges[impactLabel] || badges['NEUTRAL'];
+        const scoreText = impactScore !== undefined ? ` (${impactScore >= 0 ? '+' : ''}${impactScore.toFixed(2)})` : '';
+
+        return `
+            <span style="display: inline-flex; align-items: center; gap: 4px; background: ${badge.bg}; border: 1px solid ${badge.border}; color: ${badge.text}; font-size: 0.7rem; padding: 3px 8px; border-radius: 12px; font-weight: 600;">
+                ${badge.icon} ${badge.label}${scoreText}
+            </span>
+        `;
+    },
+
+    getImpactBorderColor(impactLabel) {
+        // Returns border color for impact reasoning box
+        const colors = {
+            'HIGHLY_NEGATIVE': '#ef4444',
+            'NEGATIVE': '#f59e0b',
+            'NEUTRAL': '#9ca3af',
+            'POSITIVE': '#84cc16',
+            'HIGHLY_POSITIVE': '#10b981'
+        };
+        return colors[impactLabel] || '#9ca3af';
     },
 
     displayNewsError(error) {

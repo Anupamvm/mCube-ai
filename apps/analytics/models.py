@@ -476,3 +476,343 @@ class PerformanceMetric(TimeStampedModel):
 
     def __str__(self):
         return f"{self.metric_type}: {self.metric_value}"
+
+
+class FinancialYearSummary(TimeStampedModel):
+    """
+    Pre-computed financial year analytics for performance reporting.
+
+    Stores aggregated trading performance metrics for each financial year
+    (April 1 to March 31) with optional filters by strategy and trade type.
+    """
+
+    STRATEGY_CHOICES = [
+        ('', 'All Strategies'),
+        ('kotak_strangle', 'Kotak Strangle'),
+        ('kotak_broken_iron_condor', 'Kotak Broken Iron Condor'),
+        ('icici_futures', 'ICICI Futures'),
+    ]
+
+    TRADE_TYPE_CHOICES = [
+        ('', 'All Types'),
+        ('OPTIONS', 'Options'),
+        ('FUTURES', 'Futures'),
+    ]
+
+    # User and Account
+    user = models.ForeignKey(
+        'auth.User',
+        on_delete=models.CASCADE,
+        related_name='fy_summaries'
+    )
+    account = models.ForeignKey(
+        'accounts.BrokerAccount',
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='fy_summaries',
+        help_text="Specific account or NULL for all accounts"
+    )
+
+    # Financial Year Period (April 1 to March 31)
+    fy_start = models.DateField(
+        help_text="FY start date (April 1)"
+    )
+    fy_end = models.DateField(
+        help_text="FY end date (March 31)"
+    )
+    fy_label = models.CharField(
+        max_length=20,
+        help_text="Display label like 'FY2024-25'"
+    )
+
+    # Filters
+    strategy = models.CharField(
+        max_length=30,
+        choices=STRATEGY_CHOICES,
+        blank=True,
+        default='',
+        help_text="Filter by strategy or empty for all"
+    )
+    trade_type = models.CharField(
+        max_length=10,
+        choices=TRADE_TYPE_CHOICES,
+        blank=True,
+        default='',
+        help_text="Filter by trade type or empty for all"
+    )
+
+    # Trade Counts
+    total_trades = models.IntegerField(
+        default=0,
+        help_text="Total number of closed trades"
+    )
+    winning_trades = models.IntegerField(
+        default=0,
+        help_text="Number of profitable trades"
+    )
+    losing_trades = models.IntegerField(
+        default=0,
+        help_text="Number of losing trades"
+    )
+    breakeven_trades = models.IntegerField(
+        default=0,
+        help_text="Number of breakeven trades"
+    )
+
+    # P&L Metrics
+    gross_profit = models.DecimalField(
+        max_digits=15,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text="Sum of all profits"
+    )
+    gross_loss = models.DecimalField(
+        max_digits=15,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text="Sum of all losses (positive number)"
+    )
+    net_pnl = models.DecimalField(
+        max_digits=15,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text="Net profit/loss"
+    )
+    total_charges = models.DecimalField(
+        max_digits=15,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text="Total brokerage and other charges"
+    )
+
+    # Performance Ratios
+    win_rate = models.DecimalField(
+        max_digits=6,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text="Win rate percentage"
+    )
+    profit_factor = models.DecimalField(
+        max_digits=8,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text="Gross profit / Gross loss"
+    )
+    average_win = models.DecimalField(
+        max_digits=15,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text="Average profit per winning trade"
+    )
+    average_loss = models.DecimalField(
+        max_digits=15,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text="Average loss per losing trade"
+    )
+
+    # Extremes
+    largest_win = models.DecimalField(
+        max_digits=15,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text="Largest single winning trade"
+    )
+    largest_loss = models.DecimalField(
+        max_digits=15,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text="Largest single losing trade"
+    )
+
+    # Drawdown
+    max_drawdown = models.DecimalField(
+        max_digits=15,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text="Maximum drawdown in absolute terms"
+    )
+    max_drawdown_pct = models.DecimalField(
+        max_digits=8,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text="Maximum drawdown as percentage"
+    )
+
+    # Monthly Breakdown (JSON for flexibility)
+    monthly_pnl = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Monthly P&L breakdown: {'Apr': 1000, 'May': -500, ...}"
+    )
+
+    # Best/Worst periods
+    best_month = models.CharField(
+        max_length=20,
+        blank=True,
+        help_text="Best performing month"
+    )
+    best_month_pnl = models.DecimalField(
+        max_digits=15,
+        decimal_places=2,
+        null=True,
+        blank=True
+    )
+    worst_month = models.CharField(
+        max_length=20,
+        blank=True,
+        help_text="Worst performing month"
+    )
+    worst_month_pnl = models.DecimalField(
+        max_digits=15,
+        decimal_places=2,
+        null=True,
+        blank=True
+    )
+
+    # Average metrics
+    avg_trade_duration_hours = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Average trade duration in hours"
+    )
+    avg_margin_used = models.DecimalField(
+        max_digits=15,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Average margin deployed per trade"
+    )
+    avg_return_on_margin = models.DecimalField(
+        max_digits=8,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Average ROM percentage"
+    )
+
+    # Metadata
+    last_computed_at = models.DateTimeField(
+        auto_now=True,
+        help_text="When summary was last computed"
+    )
+    trades_included_until = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Last trade included in this summary"
+    )
+
+    class Meta:
+        db_table = 'financial_year_summary'
+        verbose_name = 'Financial Year Summary'
+        verbose_name_plural = 'Financial Year Summaries'
+        ordering = ['-fy_start']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['user', 'account', 'fy_start', 'strategy', 'trade_type'],
+                name='unique_fy_summary'
+            )
+        ]
+        indexes = [
+            models.Index(fields=['user', 'fy_start']),
+            models.Index(fields=['account', 'fy_start']),
+            models.Index(fields=['fy_label']),
+        ]
+
+    def __str__(self):
+        parts = [self.fy_label]
+        if self.account:
+            parts.append(self.account.account_name)
+        if self.strategy:
+            parts.append(self.strategy)
+        if self.trade_type:
+            parts.append(self.trade_type)
+        return ' - '.join(parts)
+
+    @classmethod
+    def get_fy_dates(cls, fy_year):
+        """
+        Get FY start and end dates for a given FY year.
+
+        Args:
+            fy_year: Start year of FY (e.g., 2024 for FY2024-25)
+
+        Returns:
+            Tuple: (fy_start, fy_end, fy_label)
+        """
+        from datetime import date
+        fy_start = date(fy_year, 4, 1)  # April 1
+        fy_end = date(fy_year + 1, 3, 31)  # March 31
+        fy_label = f"FY{fy_year}-{str(fy_year + 1)[-2:]}"
+        return fy_start, fy_end, fy_label
+
+    @classmethod
+    def get_current_fy_year(cls):
+        """
+        Get the current financial year's start year.
+
+        Returns:
+            int: FY start year (e.g., 2024 if current date is in FY2024-25)
+        """
+        from datetime import date
+        today = date.today()
+        if today.month >= 4:  # April onwards is current FY
+            return today.year
+        else:  # Jan-Mar belongs to previous FY
+            return today.year - 1
+
+    def get_monthly_chart_data(self):
+        """
+        Get monthly P&L formatted for chart display.
+
+        Returns:
+            Dict with labels and data arrays
+        """
+        months = ['Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep',
+                  'Oct', 'Nov', 'Dec', 'Jan', 'Feb', 'Mar']
+
+        data = []
+        for month in months:
+            value = self.monthly_pnl.get(month, 0)
+            data.append(float(value))
+
+        return {
+            'labels': months,
+            'data': data,
+            'colors': ['green' if v >= 0 else 'red' for v in data]
+        }
+
+    def get_summary_dict(self):
+        """
+        Get summary data as dictionary for API/template use.
+
+        Returns:
+            Dict with all summary metrics
+        """
+        return {
+            'fy_label': self.fy_label,
+            'total_trades': self.total_trades,
+            'winning_trades': self.winning_trades,
+            'losing_trades': self.losing_trades,
+            'breakeven_trades': self.breakeven_trades,
+            'net_pnl': float(self.net_pnl),
+            'gross_profit': float(self.gross_profit),
+            'gross_loss': float(self.gross_loss),
+            'total_charges': float(self.total_charges),
+            'win_rate': float(self.win_rate),
+            'profit_factor': float(self.profit_factor),
+            'average_win': float(self.average_win),
+            'average_loss': float(self.average_loss),
+            'largest_win': float(self.largest_win),
+            'largest_loss': float(self.largest_loss),
+            'max_drawdown': float(self.max_drawdown),
+            'max_drawdown_pct': float(self.max_drawdown_pct),
+            'monthly_pnl': self.monthly_pnl,
+            'best_month': self.best_month,
+            'best_month_pnl': float(self.best_month_pnl) if self.best_month_pnl else None,
+            'worst_month': self.worst_month,
+            'worst_month_pnl': float(self.worst_month_pnl) if self.worst_month_pnl else None,
+        }

@@ -34,4 +34,21 @@ urlpatterns = [
     path('test/trigger-telegram-circuit-breaker/', views.trigger_telegram_circuit_breaker, name='trigger_telegram_circuit_breaker'),
     path('test/trigger-telegram-summary/', views.trigger_telegram_summary, name='trigger_telegram_summary'),
     path('docs/<str:doc_name>/', views.view_documentation, name='view_documentation'),
+
+    # Background Tasks Control (Celery + Django Background Tasks)
+    # Note: Using celery_task_control as background_tasks_control is not yet implemented
+    path('background-tasks/', views.celery_task_control, name='background_tasks_control'),
+
+    # Celery Task Control
+    path('celery/', views.celery_task_control, name='celery_task_control'),
+    path('celery/toggle/<int:task_id>/', views.toggle_celery_task, name='toggle_celery_task'),
+    path('celery/toggle-static/', views.toggle_static_task, name='toggle_static_task'),
+    path('celery/control-all/', views.celery_control_all, name='celery_control_all'),
+    path('celery/control-all-static/', views.control_all_static_tasks, name='control_all_static_tasks'),
+    path('celery/reload/', views.reload_celery_schedule, name='reload_celery_schedule'),
+
+    # Django Background Tasks Control
+    path('bg-tasks/toggle/<int:task_id>/', views.toggle_bg_task, name='toggle_bg_task'),
+    path('bg-tasks/control-all/', views.control_all_bg_tasks, name='control_all_bg_tasks'),
+    path('bg-tasks/delete/<int:task_id>/', views.delete_bg_task, name='delete_bg_task'),
 ]

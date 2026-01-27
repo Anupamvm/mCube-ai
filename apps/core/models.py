@@ -739,3 +739,84 @@ class SystemSettings(TimeStampedModel):
         """Override save to ensure singleton pattern"""
         self.singleton_id = 1
         super().save(*args, **kwargs)
+
+
+class CeleryTaskState(TimeStampedModel):
+    """
+    Tracks enabled/disabled state for individual Celery tasks.
+
+    Used to control static tasks defined in code (celery.py beat_schedule).
+    Tasks not in this table are considered enabled by default.
+    """
+
+    task_key = models.CharField(
+        max_length=100,
+        unique=True,
+        db_index=True,
+        help_text="Task key from beat_schedule (e.g., 'fetch-trendlyne-data-daily')"
+    )
+    task_path = models.CharField(
+        max_length=200,
+        blank=True,
+        help_text="Full task path (e.g., 'apps.data.tasks.fetch_trendlyne_data')"
+    )
+    display_name = models.CharField(
+        max_length=150,
+        blank=True,
+        help_text="Human-readable task name"
+    )
+    is_enabled = models.BooleanField(
+        default=True,
+        help_text="Whether this task should run"
+    )
+    last_toggled_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When the task was last enabled/disabled"
+    )
+    last_toggled_by = models.CharField(
+        max_length=100,
+        blank=True,
+        help_text="User who last toggled this task"
+    )
+
+    class Meta:
+        db_table = 'celery_task_state'
+        ordering = ['task_key']
+        verbose_name = 'Celery Task State'
+        verbose_name_plural = 'Celery Task States'
+
+    def __str__(self):
+        status = "Enabled" if self.is_enabled else "Disabled"
+        return f"{self.task_key} - {status}"
+
+    @classmethod
+    def is_task_enabled(cls, task_key: str) -> bool:
+        """Check if a task is enabled (defaults to True if not in DB)"""
+        try:
+            state = cls.objects.get(task_key=task_key)
+            return state.is_enabled
+        except cls.DoesNotExist:
+            return True  # Default to enabled if not tracked
+
+    @classmethod
+    def set_task_state(cls, task_key: str, enabled: bool, task_path: str = '',
+                       display_name: str = '', user: str = ''):
+        """Set or create task state"""
+        from django.utils import timezone
+        state, created = cls.objects.update_or_create(
+            task_key=task_key,
+            defaults={
+                'is_enabled': enabled,
+                'task_path': task_path,
+                'display_name': display_name or task_key,
+                'last_toggled_at': timezone.now(),
+                'last_toggled_by': user,
+            }
+        )
+        return state
+
+    @classmethod
+    def get_all_states(cls) -> dict:
+        """Get all task states as a dict {task_key: is_enabled}"""
+        return {s.task_key: s.is_enabled for s in cls.objects.all()}

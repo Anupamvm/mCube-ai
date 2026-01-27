@@ -264,7 +264,7 @@ def trigger_futures_algorithm(request):
             from apps.trading.models import TradeSuggestion
             from django.utils import timezone
             from apps.trading.position_sizer import PositionSizer
-            from apps.brokers.integrations.breeze import get_breeze_client
+            from apps.brokers.integrations.breeze import get_breeze_client, get_india_vix
             from apps.data.models import ContractData
             import json
             from datetime import date, datetime, timedelta
@@ -284,6 +284,14 @@ def trigger_futures_algorithm(request):
             except Exception as e:
                 logger.warning(f"Could not initialize Breeze client for position sizing: {e}")
                 breeze = None
+
+            # Fetch VIX once for all suggestions
+            vix_value = None
+            try:
+                vix_value = get_india_vix()
+                logger.info(f"Fetched VIX for futures suggestions: {vix_value}")
+            except Exception as vix_err:
+                logger.warning(f"Could not fetch VIX for suggestions: {vix_err}")
 
             # Fetch available F&O margin from Breeze API (same logic as verify_future_trade)
             available_margin = 5000000  # Default 50 lakh
@@ -430,6 +438,11 @@ def trigger_futures_algorithm(request):
                     max_loss_value = abs(futures_price - stop_loss_price) * lot_size * recommended_lots
                     max_profit_value = abs(target_price - futures_price) * lot_size * recommended_lots
 
+                    # Calculate risk/reward ratio
+                    risk_reward_ratio_value = Decimal('0')
+                    if max_loss_value > 0:
+                        risk_reward_ratio_value = max_profit_value / max_loss_value
+
                     # Convert data to JSON-safe format
                     # Use .get() for all keys to avoid KeyError
                     algorithm_reasoning_safe = json.loads(
@@ -454,6 +467,7 @@ def trigger_futures_algorithm(request):
                         direction=direction.upper(),
                         # Market Data
                         spot_price=spot_price,
+                        vix=vix_value,
                         expiry_date=expiry_dt.date(),
                         days_to_expiry=(expiry_dt.date() - datetime.now().date()).days,
                         # Position Sizing (with real Breeze margin - 50% rule)
@@ -465,6 +479,7 @@ def trigger_futures_algorithm(request):
                         # Risk Metrics
                         max_profit=max_profit_value,
                         max_loss=max_loss_value,
+                        risk_reward_ratio=risk_reward_ratio_value,
                         breakeven_upper=target_price if direction == 'LONG' else None,
                         breakeven_lower=stop_loss_price if direction == 'LONG' else None,
                         # Complete Data (includes real position sizing with 50% rule)
@@ -1649,6 +1664,8 @@ def trigger_broken_iron_condor(request):
         net_premium = Decimal(str(selected_insurance['net_premium']))
 
         # Position sizing using IronCondorPositionSizer
+        margin_available = Decimal('0')
+        margin_utilization = Decimal('0')
         try:
             position_sizer = IronCondorPositionSizer(request.user)
             position_sizing = position_sizer.calculate_iron_condor_position_size(
@@ -1666,6 +1683,11 @@ def trigger_broken_iron_condor(request):
             margin_required = position_sizing['total_margin_required']
             margin_per_lot = position_sizing['margin_per_lot']
             max_lots_possible = position_sizing['max_lots_possible']
+            # Extract margin_available and margin_utilization from position_sizing
+            margin_data = position_sizing.get('margin_data', {})
+            margin_available = Decimal(str(margin_data.get('available_margin', 0)))
+            if margin_available > 0:
+                margin_utilization = (Decimal(str(margin_required)) / margin_available) * 100
             execution_log.append({'step': 2, 'action': 'Position Sizing', 'status': 'success', 'message': f'{lots} lots recommended'})
         except Exception as e:
             logger.warning(f"Position sizing failed, using default: {e}")
@@ -1681,6 +1703,11 @@ def trigger_broken_iron_condor(request):
         spread_width = strikes['put_strike'] - selected_insurance['insurance_strike']
         adjusted_max_loss = float((Decimal(str(spread_width)) - net_premium) * quantity)
 
+        # Calculate risk/reward ratio
+        risk_reward_ratio = Decimal('0')
+        if adjusted_max_loss > 0:
+            risk_reward_ratio = Decimal(str(adjusted_max_profit)) / Decimal(str(adjusted_max_loss))
+
         # Create suggestion with margin data
         suggestion = TradeSuggestion.objects.create(
             user=request.user, strategy='kotak_broken_iron_condor', suggestion_type='OPTIONS', instrument='NIFTY', direction='NEUTRAL',
@@ -1688,8 +1715,11 @@ def trigger_broken_iron_condor(request):
             call_strike=Decimal(str(strikes['call_strike'])), put_strike=Decimal(str(strikes['put_strike'])),
             call_premium=call_premium, put_premium=put_premium, total_premium=net_premium, recommended_lots=lots,
             margin_required=Decimal(str(margin_required)),
+            margin_available=margin_available,
             margin_per_lot=Decimal(str(margin_per_lot)),
+            margin_utilization=margin_utilization,
             max_profit=Decimal(str(adjusted_max_profit)), max_loss=Decimal(str(adjusted_max_loss)),
+            risk_reward_ratio=risk_reward_ratio,
             algorithm_reasoning={'strategy': 'Broken Iron Condor', 'risk_multiplier': float(risk_multiplier), 'insurance_strike': selected_insurance['insurance_strike']},
             position_details={
                 'legs': [

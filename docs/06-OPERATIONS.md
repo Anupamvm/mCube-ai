@@ -100,6 +100,79 @@ pkill -f run_telegram_bot
 
 ---
 
+## Management Commands
+
+Django management commands for system administration and testing.
+
+### Core Commands
+
+| Command | Description |
+|---------|-------------|
+| `python manage.py enable_trading` | Enable/disable trading system |
+| `python manage.py trading_status` | View current trading system status |
+| `python manage.py install_scheduler` | Install and start background task scheduler |
+| `python manage.py stop_scheduler` | Stop all scheduled background tasks |
+| `python manage.py setup_credentials` | Setup broker API credentials |
+
+### Testing Commands
+
+| Command | Description |
+|---------|-------------|
+| `python manage.py test_services` | Test all system services (brokers, data, etc.) |
+| `python manage.py test_telegram` | Test Telegram bot connectivity |
+| `python manage.py test_llm` | Test LLM (Ollama) connectivity |
+| `python manage.py test_vllm` | Test vLLM service |
+
+### Data Commands
+
+| Command | Description |
+|---------|-------------|
+| `python manage.py trendlyne_data_manager` | Manage Trendlyne data imports |
+| `python manage.py populate_trendlyne` | Populate Trendlyne data from files |
+| `python manage.py import_trendlyne_data` | Import Trendlyne CSV data |
+| `python manage.py convert_trendlyne_xlsx` | Convert Trendlyne XLSX to CSV |
+| `python manage.py scrape_trendlyne` | Scrape data from Trendlyne website |
+| `python manage.py update_market_data` | Update market data cache |
+| `python manage.py generate_signals` | Generate trading signals |
+| `python manage.py fetch_news` | Fetch latest market news |
+| `python manage.py validate_trade` | Validate a trade setup |
+
+### Strategy Commands
+
+| Command | Description |
+|---------|-------------|
+| `python manage.py setup_trading_schedule` | Configure trading schedule |
+| `python manage.py update_schedule_configs` | Update schedule configurations |
+
+### User Commands
+
+| Command | Description |
+|---------|-------------|
+| `python manage.py setup_users` | Setup user accounts |
+| `python manage.py manage_models` | Manage ML models |
+| `python manage.py run_telegram_bot` | Start the Telegram bot |
+
+### Usage Examples
+
+```bash
+# Check system status
+python manage.py trading_status
+
+# Setup credentials interactively
+python manage.py setup_credentials --setup-breeze
+python manage.py setup_credentials --setup-kotakneo
+python manage.py setup_credentials --list
+
+# Test services
+python manage.py test_services
+
+# Import Trendlyne data
+python manage.py trendlyne_data_manager --import-latest
+python manage.py populate_trendlyne --file trendlyne_data/fno_data_2026-01-23.xlsx
+```
+
+---
+
 ## Background Tasks (Celery)
 
 ### Task Categories

@@ -227,15 +227,18 @@ def view_documentation(request, doc_name):
     import os
     from django.http import Http404, HttpResponse
 
-    # Define allowed documentation files
+    # Define allowed documentation files (mapping to docs/ directory)
     allowed_docs = {
-        'quick_start': 'QUICK_START.md',
-        'setup_guide': 'SETUP_GUIDE.md',
-        'celery_setup': 'CELERY_SETUP.md',
-        'telegram_bot': 'TELEGRAM_BOT_GUIDE.md',
-        'url_config': 'URL_CONFIGURATION.md',
-        'auth_guide': 'AUTHENTICATION_GUIDE.md',
-        'fixes_summary': 'FIXES_SUMMARY.md',
+        'quick_start': 'docs/01-GETTING-STARTED.md',
+        'setup_guide': 'docs/01-GETTING-STARTED.md',
+        'celery_setup': 'docs/06-OPERATIONS.md',
+        'telegram_bot': 'docs/06-OPERATIONS.md',
+        'architecture': 'docs/02-ARCHITECTURE.md',
+        'trading_strategies': 'docs/03-TRADING-STRATEGIES.md',
+        'broker_integration': 'docs/04-BROKER-INTEGRATION.md',
+        'data_sources': 'docs/05-DATA-SOURCES.md',
+        'operations': 'docs/06-OPERATIONS.md',
+        'algorithms': 'docs/ALGORITHMS.md',
     }
 
     if doc_name not in allowed_docs:
@@ -2004,8 +2007,8 @@ def test_llm():
             tests.append({
                 'name': '🔌 vLLM Server Connection',
                 'status': 'fail',
-                'message': f'✗ Cannot connect to {client.base_url}',
-                'description': '<b>Tests:</b> Connection to vLLM server. <b>Failure:</b> Check if vLLM server is running.',
+                'message': '✗ LLM not running on the server',
+                'description': '<b>Start LLM:</b> <code>cd /home/anupamvm/vllm && docker compose up -d && docker logs -f vllm-70b</code>',
                 'trigger_url': reverse('llm:test_connection'),
                 'trigger_label': '🔄 Retry Connection',
             })
@@ -2014,7 +2017,7 @@ def test_llm():
             'name': '🔌 vLLM Server Connection',
             'status': 'fail',
             'message': f'✗ Error: {str(e)}',
-            'description': '<b>Tests:</b> Connection to vLLM server. <b>Error:</b> Check server configuration.',
+            'description': '<b>Start LLM:</b> <code>cd /home/anupamvm/vllm && docker compose up -d && docker logs -f vllm-70b</code>',
         })
 
     # Test 2: Text Generation
@@ -3497,3 +3500,488 @@ def refresh_dashboard_stat(request, stat_type):
             'success': False,
             'error': str(e)
         }, status=500)
+
+
+# =============================================================================
+# CELERY TASK CONTROL
+# =============================================================================
+
+@login_required
+@user_passes_test(is_admin_user)
+def celery_task_control(request):
+    """
+    Celery task control page - View and manage scheduled Celery tasks.
+    Shows both static (code-defined) and dynamic (database-configured) tasks.
+    """
+    from apps.strategies.models import TradingScheduleConfig
+    from apps.core.models import CeleryTaskState
+    from mcube_ai.celery import load_beat_schedule
+    import redis
+
+    # Get dynamic tasks from database
+    dynamic_tasks = list(TradingScheduleConfig.objects.all().order_by('scheduled_time'))
+
+    # Get static tasks from celery config
+    static_schedule = load_beat_schedule()
+
+    # Get all task states from database (handle missing table gracefully)
+    try:
+        task_states = CeleryTaskState.get_all_states()
+    except Exception:
+        task_states = {}  # Default to empty if table doesn't exist yet
+
+    # Build static tasks list (excluding dynamic ones)
+    static_tasks = []
+    for key, config in static_schedule.items():
+        # Skip if it's a dynamic task
+        if any(d in key.lower() for d in ['premarket', 'market_open', 'trade_start', 'trade_monitor', 'trade_stop', 'day_close', 'analyze_day']):
+            continue
+
+        # Get enabled state (default to True if not in DB)
+        is_enabled = task_states.get(key, True)
+
+        static_tasks.append({
+            'key': key,
+            'task': config.get('task', 'Unknown'),
+            'schedule': str(config.get('schedule', 'Unknown')),
+            'queue': config.get('options', {}).get('queue', 'default'),
+            'is_enabled': is_enabled,
+        })
+
+    # Check Celery worker status
+    worker_status = {'active': False, 'workers': [], 'error': None}
+    try:
+        from mcube_ai.celery import app as celery_app
+        inspect = celery_app.control.inspect()
+        active_workers = inspect.active_queues()
+        if active_workers:
+            worker_status['active'] = True
+            worker_status['workers'] = list(active_workers.keys())
+    except Exception as e:
+        worker_status['error'] = str(e)
+
+    # Check Redis status
+    redis_status = {'connected': False, 'error': None}
+    try:
+        r = redis.Redis(host='localhost', port=6379, db=0)
+        r.ping()
+        redis_status['connected'] = True
+    except Exception as e:
+        redis_status['error'] = str(e)
+
+    # Count enabled/disabled for dynamic tasks
+    dynamic_enabled = TradingScheduleConfig.objects.filter(is_enabled=True).count()
+    dynamic_total = TradingScheduleConfig.objects.count()
+
+    # Count enabled/disabled for static tasks
+    static_enabled = sum(1 for t in static_tasks if t['is_enabled'])
+    static_total = len(static_tasks)
+
+    # Total counts
+    enabled_count = dynamic_enabled + static_enabled
+    total_count = dynamic_total + static_total
+    disabled_count = total_count - enabled_count
+
+    context = {
+        'dynamic_tasks': dynamic_tasks,
+        'static_tasks': static_tasks,
+        'worker_status': worker_status,
+        'redis_status': redis_status,
+        'enabled_count': enabled_count,
+        'disabled_count': disabled_count,
+        'total_count': total_count,
+        'timestamp': datetime.now(),
+    }
+
+    return render(request, 'core/celery_tasks.html', context)
+
+
+@login_required
+@user_passes_test(is_admin_user)
+def toggle_celery_task(request, task_id):
+    """Toggle a dynamic Celery task on/off."""
+    from apps.strategies.models import TradingScheduleConfig
+    from django.contrib import messages
+
+    if request.method != 'POST':
+        return JsonResponse({'success': False, 'error': 'POST required'}, status=405)
+
+    try:
+        task = TradingScheduleConfig.objects.get(id=task_id)
+        task.is_enabled = not task.is_enabled
+        task.save()
+
+        status = 'enabled' if task.is_enabled else 'disabled'
+        messages.success(request, f"Task '{task.display_name}' {status} successfully.")
+
+        return JsonResponse({
+            'success': True,
+            'task_id': task_id,
+            'is_enabled': task.is_enabled,
+            'message': f"Task '{task.display_name}' {status}"
+        })
+    except TradingScheduleConfig.DoesNotExist:
+        return JsonResponse({'success': False, 'error': 'Task not found'}, status=404)
+    except Exception as e:
+        logger.error(f"Error toggling task {task_id}: {e}")
+        return JsonResponse({'success': False, 'error': str(e)}, status=500)
+
+
+@login_required
+@user_passes_test(is_admin_user)
+def celery_control_all(request):
+    """Enable or disable all dynamic Celery tasks."""
+    from apps.strategies.models import TradingScheduleConfig
+    from django.contrib import messages
+
+    if request.method != 'POST':
+        return JsonResponse({'success': False, 'error': 'POST required'}, status=405)
+
+    action = request.POST.get('action', 'stop')
+
+    try:
+        if action == 'start':
+            TradingScheduleConfig.objects.all().update(is_enabled=True)
+            messages.success(request, "All tasks enabled successfully.")
+            return JsonResponse({'success': True, 'message': 'All tasks enabled'})
+        elif action == 'stop':
+            TradingScheduleConfig.objects.all().update(is_enabled=False)
+            messages.warning(request, "All tasks disabled.")
+            return JsonResponse({'success': True, 'message': 'All tasks disabled'})
+        else:
+            return JsonResponse({'success': False, 'error': 'Invalid action'}, status=400)
+    except Exception as e:
+        logger.error(f"Error controlling all tasks: {e}")
+        return JsonResponse({'success': False, 'error': str(e)}, status=500)
+
+
+@login_required
+@user_passes_test(is_admin_user)
+def reload_celery_schedule(request):
+    """Reload Celery beat schedule from database."""
+    from django.contrib import messages
+
+    if request.method != 'POST':
+        return JsonResponse({'success': False, 'error': 'POST required'}, status=405)
+
+    try:
+        # Note: This requires celery beat to be restarted to pick up changes
+        # For live reload, you'd need django-celery-beat with database scheduler
+        messages.info(request, "Schedule changes saved. Restart Celery Beat to apply changes.")
+        return JsonResponse({
+            'success': True,
+            'message': 'Schedule updated. Restart Celery Beat to apply changes.'
+        })
+    except Exception as e:
+        logger.error(f"Error reloading schedule: {e}")
+        return JsonResponse({'success': False, 'error': str(e)}, status=500)
+
+
+@login_required
+@user_passes_test(is_admin_user)
+def toggle_static_task(request):
+    """Toggle a static Celery task on/off."""
+    from apps.core.models import CeleryTaskState
+    from django.contrib import messages
+
+    if request.method != 'POST':
+        return JsonResponse({'success': False, 'error': 'POST required'}, status=405)
+
+    task_key = request.POST.get('task_key', '')
+    task_path = request.POST.get('task_path', '')
+
+    if not task_key:
+        return JsonResponse({'success': False, 'error': 'task_key required'}, status=400)
+
+    try:
+        # Get current state (default to enabled if not in DB)
+        current_state = CeleryTaskState.is_task_enabled(task_key)
+        new_state = not current_state
+
+        # Update or create the state
+        CeleryTaskState.set_task_state(
+            task_key=task_key,
+            enabled=new_state,
+            task_path=task_path,
+            display_name=task_key.replace('-', ' ').title(),
+            user=request.user.username
+        )
+
+        status = 'started' if new_state else 'stopped'
+        messages.success(request, f"Task '{task_key}' {status} successfully.")
+
+        return JsonResponse({
+            'success': True,
+            'task_key': task_key,
+            'is_enabled': new_state,
+            'message': f"Task '{task_key}' {status}"
+        })
+    except Exception as e:
+        logger.error(f"Error toggling static task {task_key}: {e}")
+        return JsonResponse({'success': False, 'error': str(e)}, status=500)
+
+
+@login_required
+@user_passes_test(is_admin_user)
+def control_all_static_tasks(request):
+    """Enable or disable all static Celery tasks."""
+    from apps.core.models import CeleryTaskState
+    from mcube_ai.celery import load_beat_schedule
+    from django.contrib import messages
+
+    if request.method != 'POST':
+        return JsonResponse({'success': False, 'error': 'POST required'}, status=405)
+
+    action = request.POST.get('action', 'stop')
+
+    try:
+        # Get all static tasks from schedule
+        static_schedule = load_beat_schedule()
+        enabled = action == 'start'
+
+        for key, config in static_schedule.items():
+            # Skip dynamic tasks
+            if any(d in key.lower() for d in ['premarket', 'market_open', 'trade_start', 'trade_monitor', 'trade_stop', 'day_close', 'analyze_day']):
+                continue
+
+            CeleryTaskState.set_task_state(
+                task_key=key,
+                enabled=enabled,
+                task_path=config.get('task', ''),
+                display_name=key.replace('-', ' ').title(),
+                user=request.user.username
+            )
+
+        status = 'started' if enabled else 'stopped'
+        messages.success(request, f"All static tasks {status} successfully.")
+        return JsonResponse({'success': True, 'message': f'All static tasks {status}'})
+    except Exception as e:
+        logger.error(f"Error controlling all static tasks: {e}")
+        return JsonResponse({'success': False, 'error': str(e)}, status=500)
+
+
+# =============================================================================
+# UNIFIED BACKGROUND TASKS CONTROL (Celery + Django Background Tasks)
+# =============================================================================
+
+@login_required
+@user_passes_test(is_admin_user)
+def background_tasks_control(request):
+    """
+    Unified background tasks control page.
+    Shows both Celery tasks and Django Background Tasks.
+    """
+    from apps.strategies.models import TradingScheduleConfig
+    from apps.core.models import CeleryTaskState
+    from mcube_ai.celery import load_beat_schedule
+    import redis
+
+    # =========================================================================
+    # CELERY TASKS
+    # =========================================================================
+
+    # Get dynamic tasks from database
+    dynamic_tasks = list(TradingScheduleConfig.objects.all().order_by('scheduled_time'))
+
+    # Get static tasks from celery config
+    static_schedule = load_beat_schedule()
+
+    # Get all task states from database (handle missing table gracefully)
+    try:
+        task_states = CeleryTaskState.get_all_states()
+    except Exception:
+        task_states = {}
+
+    # Build static tasks list (excluding dynamic ones)
+    celery_static_tasks = []
+    for key, config in static_schedule.items():
+        if any(d in key.lower() for d in ['premarket', 'market_open', 'trade_start', 'trade_monitor', 'trade_stop', 'day_close', 'analyze_day']):
+            continue
+        is_enabled = task_states.get(key, True)
+        celery_static_tasks.append({
+            'key': key,
+            'task': config.get('task', 'Unknown'),
+            'schedule': str(config.get('schedule', 'Unknown')),
+            'queue': config.get('options', {}).get('queue', 'default'),
+            'is_enabled': is_enabled,
+        })
+
+    # Check Celery worker status
+    celery_worker_status = {'active': False, 'workers': [], 'error': None}
+    try:
+        from mcube_ai.celery import app as celery_app
+        inspect = celery_app.control.inspect()
+        active_workers = inspect.active_queues()
+        if active_workers:
+            celery_worker_status['active'] = True
+            celery_worker_status['workers'] = list(active_workers.keys())
+    except Exception as e:
+        celery_worker_status['error'] = str(e)
+
+    # Check Redis status
+    redis_status = {'connected': False, 'error': None}
+    try:
+        r = redis.Redis(host='localhost', port=6379, db=0)
+        r.ping()
+        redis_status['connected'] = True
+    except Exception as e:
+        redis_status['error'] = str(e)
+
+    # Celery task counts
+    celery_dynamic_enabled = TradingScheduleConfig.objects.filter(is_enabled=True).count()
+    celery_dynamic_total = TradingScheduleConfig.objects.count()
+    celery_static_enabled = sum(1 for t in celery_static_tasks if t['is_enabled'])
+    celery_static_total = len(celery_static_tasks)
+
+    # =========================================================================
+    # DJANGO BACKGROUND TASKS
+    # =========================================================================
+
+    bg_tasks = []
+    bg_task_stats = {'pending': 0, 'running': 0, 'failed': 0}
+
+    try:
+        from background_task.models import Task
+        from django.utils import timezone
+
+        # Get all background tasks
+        all_bg_tasks = Task.objects.all().order_by('run_at')
+
+        for task in all_bg_tasks:
+            # Determine status
+            if task.locked_by:
+                status = 'running'
+                bg_task_stats['running'] += 1
+            elif task.failed_at:
+                status = 'failed'
+                bg_task_stats['failed'] += 1
+            else:
+                status = 'pending'
+                bg_task_stats['pending'] += 1
+
+            bg_tasks.append({
+                'id': task.id,
+                'task_name': task.task_name,
+                'task_params': task.task_params,
+                'run_at': task.run_at,
+                'repeat': task.repeat,
+                'repeat_until': task.repeat_until,
+                'attempts': task.attempts,
+                'failed_at': task.failed_at,
+                'last_error': task.last_error,
+                'locked_by': task.locked_by,
+                'locked_at': task.locked_at,
+                'status': status,
+            })
+
+    except Exception as e:
+        logger.warning(f"Could not fetch background tasks: {e}")
+
+    # Total counts for all tasks
+    total_enabled = celery_dynamic_enabled + celery_static_enabled + bg_task_stats['pending'] + bg_task_stats['running']
+    total_tasks = celery_dynamic_total + celery_static_total + len(bg_tasks)
+
+    context = {
+        # Celery data
+        'celery_dynamic_tasks': dynamic_tasks,
+        'celery_static_tasks': celery_static_tasks,
+        'celery_worker_status': celery_worker_status,
+        'redis_status': redis_status,
+        'celery_enabled_count': celery_dynamic_enabled + celery_static_enabled,
+        'celery_total_count': celery_dynamic_total + celery_static_total,
+
+        # Background tasks data
+        'bg_tasks': bg_tasks,
+        'bg_task_stats': bg_task_stats,
+
+        # Overall stats
+        'total_enabled': total_enabled,
+        'total_tasks': total_tasks,
+        'timestamp': datetime.now(),
+    }
+
+    return render(request, 'core/background_tasks.html', context)
+
+
+@login_required
+@user_passes_test(is_admin_user)
+def toggle_bg_task(request, task_id):
+    """Toggle a Django background task (delete to stop, cannot restart once stopped)."""
+    from django.contrib import messages
+
+    if request.method != 'POST':
+        return JsonResponse({'success': False, 'error': 'POST required'}, status=405)
+
+    try:
+        from background_task.models import Task
+
+        task = Task.objects.get(id=task_id)
+        task_name = task.task_name
+
+        # Delete the task to stop it
+        task.delete()
+
+        messages.success(request, f"Task '{task_name}' stopped and removed.")
+        return JsonResponse({
+            'success': True,
+            'task_id': task_id,
+            'message': f"Task '{task_name}' stopped"
+        })
+    except Task.DoesNotExist:
+        return JsonResponse({'success': False, 'error': 'Task not found'}, status=404)
+    except Exception as e:
+        logger.error(f"Error stopping bg task {task_id}: {e}")
+        return JsonResponse({'success': False, 'error': str(e)}, status=500)
+
+
+@login_required
+@user_passes_test(is_admin_user)
+def delete_bg_task(request, task_id):
+    """Delete a Django background task."""
+    return toggle_bg_task(request, task_id)  # Same as toggle for bg tasks
+
+
+@login_required
+@user_passes_test(is_admin_user)
+def control_all_bg_tasks(request):
+    """Control all Django background tasks."""
+    from django.contrib import messages
+
+    if request.method != 'POST':
+        return JsonResponse({'success': False, 'error': 'POST required'}, status=405)
+
+    action = request.POST.get('action', 'stop')
+
+    try:
+        from background_task.models import Task
+
+        if action == 'stop':
+            # Delete all pending/scheduled tasks
+            deleted_count, _ = Task.objects.all().delete()
+            messages.warning(request, f"All background tasks stopped ({deleted_count} removed).")
+            return JsonResponse({
+                'success': True,
+                'message': f'All background tasks stopped ({deleted_count} removed)'
+            })
+        elif action == 'start':
+            # Re-install the scheduler
+            from apps.core.background_tasks import install_daily_task_scheduler
+            result = install_daily_task_scheduler()
+            if result.get('status') == 'success':
+                messages.success(request, "Background task scheduler installed.")
+                return JsonResponse({
+                    'success': True,
+                    'message': 'Background task scheduler installed',
+                    'first_run': result.get('first_run')
+                })
+            else:
+                return JsonResponse({
+                    'success': False,
+                    'error': result.get('error', 'Unknown error')
+                }, status=500)
+        else:
+            return JsonResponse({'success': False, 'error': 'Invalid action'}, status=400)
+
+    except Exception as e:
+        logger.error(f"Error controlling all bg tasks: {e}")
+        return JsonResponse({'success': False, 'error': str(e)}, status=500)

@@ -9,9 +9,7 @@
                 <a href="/" class="logo-link">
                     <img src="{% static 'core/images/avmgplogo.png' %}" alt="AVM Group" class="logo-image">
                     <div class="logo-content">
-                        <h1>
-                            <span class="logo-text">mCube</span>
-                        </h1>
+                        <h1><span class="logo-text">mCube</span></h1>
                         <p class="tagline">An AVM Group Product</p>
                     </div>
                 </a>
@@ -28,36 +26,33 @@
             <nav class="main-nav">
                 <ul>
                     {% if user.is_authenticated %}
-                        <!-- Dashboard Dropdown -->
+                        <!-- Dashboard - Single Link -->
+                        <li>
+                            <a href="/" class="nav-link">Dashboard</a>
+                        </li>
+
+                        <!-- Trade Dropdown - Core Actions -->
                         <li class="dropdown">
-                            <a href="#" class="dropdown-toggle">Dashboard ▾</a>
+                            <a href="#" class="dropdown-toggle">Trade ▾</a>
                             <ul class="dropdown-menu">
-                                <li><a href="/">Trading Overview</a></li>
-                                <li><a href="/#pnl">P&L Summary</a></li>
-                                <li><a href="/#actions">Quick Actions</a></li>
+                                <li><a href="{% url 'trading:manual_triggers' %}" class="highlight-link">🎯 Execute Trade</a></li>
+                                <li class="dropdown-divider"></li>
+                                <li><a href="{% url 'trading:view_trades' %}">📋 Active Positions</a></li>
+                                <li><a href="{% url 'trading:pending_suggestions' %}">⏳ Pending Approvals</a></li>
+                                <li class="dropdown-divider"></li>
+                                <li><a href="{% url 'trading:trade_history' %}">📜 Trade History</a></li>
+                                <li><a href="{% url 'trading:performance' %}">📈 Performance</a></li>
                             </ul>
                         </li>
 
-                        <!-- Market Data Dropdown -->
+                        <!-- Market Dropdown - Market Data -->
                         <li class="dropdown">
-                            <a href="#" class="dropdown-toggle">Market Data ▾</a>
+                            <a href="#" class="dropdown-toggle">Market ▾</a>
                             <ul class="dropdown-menu">
-                                <li><a href="{% url 'brokers:option_chain' %}">📊 Option Chain (NIFTY)</a></li>
-                                <li><a href="{% url 'brokers:nifty_quote' %}">📈 Nifty Quote</a></li>
-                            </ul>
-                        </li>
-
-                        <!-- Trading Dropdown -->
-                        <li class="dropdown">
-                            <a href="#" class="dropdown-toggle">Trading ▾</a>
-                            <ul class="dropdown-menu">
-                                <li><a href="{% url 'trading:view_trades' %}">📊 View Trades</a></li>
+                                <li><a href="{% url 'brokers:nifty_quote' %}">📈 NIFTY Quote</a></li>
+                                <li><a href="{% url 'brokers:option_chain' %}">📊 Option Chain</a></li>
                                 <li class="dropdown-divider"></li>
-                                <li><a href="{% url 'trading:manual_triggers' %}" class="highlight-link">🎯 Manual Trade Triggers</a></li>
-                                <li class="dropdown-divider"></li>
-                                <li><a href="/trading/suggestions/">Trade Suggestions</a></li>
-                                <li><a href="/trading/history/">Suggestion History</a></li>
-                                <li><a href="/trading/config/auto-trade/">Auto-Trade Config</a></li>
+                                <li><a href="{% url 'trading:news_details' %}">📰 Market News</a></li>
                             </ul>
                         </li>
 
@@ -65,21 +60,25 @@
                         <li class="dropdown">
                             <a href="#" class="dropdown-toggle">Analytics ▾</a>
                             <ul class="dropdown-menu">
-                                <li><a href="/analytics/learning/">Learning Dashboard</a></li>
-                                <li><a href="/analytics/patterns/">Performance Patterns</a></li>
-                                <li><a href="/analytics/suggestions/">Trade Analysis</a></li>
+                                <li><a href="/analytics/learning/">📊 Learning Dashboard</a></li>
+                                <li><a href="/analytics/patterns/">📈 Performance Patterns</a></li>
+                                <li><a href="/analytics/suggestions/">🔍 Trade Analysis</a></li>
                             </ul>
                         </li>
 
-                        <!-- Testing Dropdown (Admin Only) -->
+                        <!-- Admin Dropdown (Admin Only) -->
                         {% if user.is_superuser or user.groups.all.0.name == 'Admin' %}
                         <li class="dropdown">
-                            <a href="#" class="dropdown-toggle">Testing ▾</a>
+                            <a href="#" class="dropdown-toggle">Admin ▾</a>
                             <ul class="dropdown-menu">
-                                <li><a href="/algo_test/options/">Options Testing</a></li>
-                                <li><a href="/algo_test/futures/">Futures Testing</a></li>
+                                <li><a href="/system/test/">🧪 System Test</a></li>
+                                <li><a href="/system/background-tasks/">⏱️ Background Tasks</a></li>
+                                <li><a href="/admin/">⚙️ Admin Panel</a></li>
+                                <li class="dropdown-divider"></li>
+                                <li class="dropdown-header">Algorithm Testing</li>
+                                <li><a href="/algo_test/options/">Options Strategy</a></li>
+                                <li><a href="/algo_test/futures/">Futures Strategy</a></li>
                                 <li><a href="/algo_test/monitor/">Position Monitor</a></li>
-                                <li><a href="/algo_test/risk/">Risk Dashboard</a></li>
                             </ul>
                         </li>
                         {% endif %}
@@ -87,15 +86,9 @@
                 </ul>
             </nav>
 
-            <!-- User Info & Actions -->
+            <!-- User Actions -->
             <div class="header-actions">
                 {% if user.is_authenticated %}
-                    <!-- Notifications Icon (placeholder) -->
-                    <a href="#" class="notification-icon" title="Notifications">
-                        <span class="icon">🔔</span>
-                        <span class="badge">0</span>
-                    </a>
-
                     <!-- User Dropdown -->
                     <div class="dropdown user-dropdown">
                         <a href="#" class="dropdown-toggle user-info">
@@ -103,21 +96,14 @@
                             <span class="user-name">{{ user.get_full_name|default:user.username }}</span>
                             {% if user.is_superuser %}
                             <span class="user-badge admin">Admin</span>
-                            {% elif user.groups.all.0 %}
-                            <span class="user-badge">{{ user.groups.all.0.name }}</span>
                             {% endif %}
                             <span class="dropdown-arrow">▾</span>
                         </a>
                         <ul class="dropdown-menu dropdown-menu-right">
-                            <li><a href="#profile"><span class="menu-icon">👤</span> Profile</a></li>
-                            <li class="dropdown-divider"></li>
-                            {% if user.is_superuser or user.groups.all.0.name == 'Admin' %}
-                            <li><a href="/admin/"><span class="menu-icon">⚙️</span> Admin Panel</a></li>
-                            <li><a href="/test/"><span class="menu-icon">🧪</span> System Test</a></li>
-                            <li class="dropdown-divider"></li>
-                            {% endif %}
+                            <li class="dropdown-header">Settings</li>
                             <li><a href="{% url 'core:broker_settings' %}"><span class="menu-icon">🔌</span> Broker Settings</a></li>
-                            <li><a href="{% url 'core:task_settings' %}"><span class="menu-icon">⏰</span> Background Task Settings</a></li>
+                            <li><a href="{% url 'trading:auto_trade_config' %}"><span class="menu-icon">🤖</span> Auto-Trade Config</a></li>
+                            <li><a href="{% url 'core:task_settings' %}"><span class="menu-icon">⏰</span> Task Settings</a></li>
                             <li class="dropdown-divider"></li>
                             <li><a href="{% url 'brokers:logout' %}" class="logout-link"><span class="menu-icon">🚪</span> Logout</a></li>
                         </ul>
@@ -211,13 +197,14 @@
         margin: 0;
         padding: 0;
         display: flex;
-        gap: 0.5rem;
+        gap: 0.25rem;
     }
 
     .main-nav > ul > li {
         position: relative;
     }
 
+    .nav-link,
     .dropdown-toggle {
         display: block;
         padding: 0.75rem 1rem;
@@ -229,20 +216,21 @@
         white-space: nowrap;
     }
 
+    .nav-link:hover,
     .dropdown-toggle:hover {
         background: rgba(255, 255, 255, 0.1);
     }
 
     /* Dropdown Menus */
     .dropdown-menu {
-        display: none !important; /* Force hidden by default */
+        display: none !important;
         position: absolute;
         top: 100%;
         left: 0;
         background: var(--white);
         border-radius: var(--radius-md);
         box-shadow: var(--shadow-xl);
-        min-width: 240px;
+        min-width: 220px;
         margin-top: 0.5rem;
         padding: 0.5rem 0;
         z-index: 1000;
@@ -251,7 +239,7 @@
     }
 
     .dropdown.active .dropdown-menu {
-        display: block !important; /* Show when active */
+        display: block !important;
         animation: fadeInDown 0.2s ease;
     }
 
@@ -272,10 +260,11 @@
 
     .dropdown-menu a {
         display: block;
-        padding: 0.75rem 1.25rem;
+        padding: 0.625rem 1.25rem;
         color: var(--dark);
         text-decoration: none;
         transition: all 0.2s ease;
+        font-size: 0.9375rem;
     }
 
     .dropdown-menu a:hover {
@@ -285,7 +274,6 @@
 
     .dropdown-menu .menu-icon {
         margin-right: 0.5rem;
-        font-size: 16px;
     }
 
     .dropdown-divider {
@@ -296,7 +284,7 @@
 
     .dropdown-header {
         padding: 0.5rem 1.25rem;
-        font-size: 0.75rem;
+        font-size: 0.6875rem;
         font-weight: 700;
         color: var(--gray);
         text-transform: uppercase;
@@ -306,16 +294,22 @@
     .highlight-link {
         color: var(--success) !important;
         font-weight: 600;
+        background: rgba(16, 185, 129, 0.08);
     }
 
-    /* User Dropdown Specific */
+    .highlight-link:hover {
+        background: rgba(16, 185, 129, 0.15) !important;
+        color: var(--success) !important;
+    }
+
+    /* User Dropdown */
     .dropdown-menu-right {
         left: auto;
         right: 0;
     }
 
     .user-dropdown .dropdown-menu {
-        min-width: 240px;
+        min-width: 220px;
     }
 
     /* Header Actions */
@@ -323,34 +317,6 @@
         display: flex;
         align-items: center;
         gap: 1rem;
-    }
-
-    .notification-icon {
-        position: relative;
-        color: var(--white);
-        text-decoration: none;
-        font-size: 20px;
-        padding: 0.5rem;
-        border-radius: var(--radius-md);
-        transition: all 0.2s ease;
-    }
-
-    .notification-icon:hover {
-        background: rgba(255, 255, 255, 0.1);
-    }
-
-    .notification-icon .badge {
-        position: absolute;
-        top: 4px;
-        right: 4px;
-        background: var(--danger);
-        color: var(--white);
-        font-size: 10px;
-        font-weight: 600;
-        padding: 2px 5px;
-        border-radius: var(--radius-full);
-        min-width: 18px;
-        text-align: center;
     }
 
     .user-info {
@@ -418,16 +384,6 @@
         background: var(--primary-hover);
         transform: translateY(-1px);
         box-shadow: var(--shadow-md);
-    }
-
-    .btn-secondary {
-        background: rgba(255, 255, 255, 0.1);
-        color: var(--white);
-        border: 1px solid rgba(255, 255, 255, 0.2);
-    }
-
-    .btn-secondary:hover {
-        background: rgba(255, 255, 255, 0.2);
     }
 
     /* Responsive Design */
@@ -506,7 +462,6 @@
     (function() {
         'use strict';
 
-        // Wait for DOM to be ready
         if (document.readyState === 'loading') {
             document.addEventListener('DOMContentLoaded', initDropdowns);
         } else {
@@ -520,7 +475,6 @@
                 const toggle = dropdown.querySelector('.dropdown-toggle');
 
                 if (toggle) {
-                    // Click on dropdown toggle
                     toggle.addEventListener('click', function(e) {
                         e.preventDefault();
                         e.stopPropagation();

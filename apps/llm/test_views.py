@@ -30,7 +30,7 @@ def trigger_vllm_connection_test(request):
             return JsonResponse({
                 'success': False,
                 'status': 'fail',
-                'message': f'Cannot connect to {client.base_url}',
+                'message': 'LLM not running on the server. Start: cd /home/anupamvm/vllm && docker compose up -d && docker logs -f vllm-70b',
             })
     except Exception as e:
         return JsonResponse({

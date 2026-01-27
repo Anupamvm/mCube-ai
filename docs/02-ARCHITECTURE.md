@@ -255,6 +255,41 @@ Tasks run via **Celery** and **Django background_task**:
 | `/alerts/` | alerts | Alert config |
 | `/trading/` | trading | Trading interface |
 
+### Trading API Endpoints
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/trading/api/calculate-position/` | POST | Calculate position sizing |
+| `/trading/api/calculate-pnl/` | POST | Calculate P&L scenarios |
+| `/trading/api/place-futures-order/` | POST | Place futures order |
+| `/trading/api/order-status/<id>/` | GET | Check order status |
+| `/trading/api/get-margins/` | GET | Get margin data |
+| `/trading/api/suggestions/` | GET | List trade suggestions |
+| `/trading/api/suggestions/<id>/` | GET | Get suggestion details |
+| `/trading/api/get-positions/` | GET | Get active positions |
+| `/trading/api/close-position/` | POST | Close a position |
+| `/trading/api/get-option-premiums/` | GET | Get option chain premiums |
+| `/trading/api/get-lot-size/` | GET | Get lot size for instrument |
+| `/trading/api/get-contract-details/` | GET | Get contract details |
+| `/trading/api/get-breeze-historical-data/` | POST | Fetch historical OHLC data |
+| `/trading/api/get-stored-historical-data/` | GET | Retrieve stored historical data |
+| `/trading/api/prepare-historical-data/` | POST | Prepare data for analysis |
+| `/trading/api/get-related-instruments/` | GET | Get related instruments |
+| `/trading/api/verify-historical-data/` | POST | Verify historical data |
+
+### Trading Trigger Endpoints
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/trading/trigger/futures/` | POST | Trigger futures algorithm |
+| `/trading/trigger/strangle/` | POST | Trigger strangle algorithm |
+| `/trading/trigger/iron-condor/` | POST | Trigger iron condor |
+| `/trading/trigger/verify/` | POST | Verify trade setup |
+| `/trading/trigger/start-trendlyne-fetch/` | POST | Start Trendlyne data fetch |
+| `/trading/trigger/fetch-news/` | POST | Fetch market news |
+| `/trading/trigger/update-breeze-session/` | POST | Refresh Breeze session |
+| `/trading/trigger/update-neo-session/` | POST | Refresh Neo session |
+
 ---
 
 ## Security

@@ -1,0 +1,798 @@
+{% extends "core/master_base.html" %}
+{% load static %}
+
+{% block title %}Performance Report - mCube AI{% endblock %}
+
+{% block extra_css %}
+<style>
+    .fy-selector {
+        background: white;
+        padding: 1rem;
+        border-radius: 8px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+        margin-bottom: 1.5rem;
+    }
+    .kpi-card {
+        background: white;
+        padding: 1.5rem;
+        border-radius: 12px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+        text-align: center;
+        height: 100%;
+    }
+    .kpi-card .kpi-value {
+        font-size: 2rem;
+        font-weight: 700;
+        margin-bottom: 0.5rem;
+    }
+    .kpi-card .kpi-label {
+        font-size: 0.875rem;
+        color: #666;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+    .kpi-card.profit .kpi-value { color: #16a34a; }
+    .kpi-card.loss .kpi-value { color: #dc2626; }
+    .kpi-card.neutral .kpi-value { color: #2563eb; }
+    .chart-container {
+        background: white;
+        padding: 1.5rem;
+        border-radius: 12px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+        margin-bottom: 1.5rem;
+    }
+    .chart-title {
+        font-size: 1rem;
+        font-weight: 600;
+        margin-bottom: 1rem;
+        color: #333;
+    }
+    .stats-card {
+        background: white;
+        border-radius: 12px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+        overflow: hidden;
+    }
+    .stats-card .card-header {
+        background: #f8fafc;
+        padding: 1rem 1.25rem;
+        border-bottom: 1px solid #e0e0e0;
+        font-weight: 600;
+    }
+    .stats-table {
+        margin: 0;
+    }
+    .stats-table td {
+        padding: 0.75rem 1.25rem;
+        border-bottom: 1px solid #f0f0f0;
+    }
+    .stats-table tr:last-child td {
+        border-bottom: none;
+    }
+    .stats-table .label {
+        color: #666;
+    }
+    .stats-table .value {
+        text-align: right;
+        font-weight: 600;
+    }
+    .pnl-positive { color: #16a34a; }
+    .pnl-negative { color: #dc2626; }
+    .strategy-row {
+        display: flex;
+        align-items: center;
+        padding: 0.75rem 0;
+        border-bottom: 1px solid #f0f0f0;
+    }
+    .strategy-row:last-child {
+        border-bottom: none;
+    }
+    .strategy-name {
+        flex: 1;
+    }
+    .strategy-stats {
+        display: flex;
+        gap: 1.5rem;
+        align-items: center;
+    }
+    .strategy-pnl {
+        min-width: 100px;
+        text-align: right;
+        font-weight: 600;
+    }
+    .strategy-winrate {
+        min-width: 60px;
+        text-align: right;
+    }
+    .widget-compact {
+        background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+        color: white;
+        border-radius: 12px;
+        padding: 1.25rem;
+    }
+    .widget-compact .widget-title {
+        font-size: 0.875rem;
+        opacity: 0.9;
+        margin-bottom: 1rem;
+    }
+    .widget-compact .widget-row {
+        display: flex;
+        justify-content: space-between;
+        margin-bottom: 0.5rem;
+    }
+    .widget-compact .widget-value {
+        font-weight: 600;
+    }
+    .widget-compact a {
+        color: white;
+        opacity: 0.9;
+    }
+    .widget-compact a:hover {
+        opacity: 1;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <!-- Header -->
+    <div class="row mb-4">
+        <div class="col-md-8">
+            <h1 class="h3 d-inline-block">Performance Report</h1>
+            <p class="text-muted">Financial year trading performance analysis</p>
+        </div>
+        <div class="col-md-4 text-end">
+            <a href="{% url 'trading:trade_history' %}" class="btn btn-outline-secondary btn-sm">
+                View Trade History
+            </a>
+        </div>
+    </div>
+
+    <!-- FY Selector -->
+    <div class="fy-selector">
+        <form method="get" class="row g-3 align-items-end">
+            <div class="col-md-3">
+                <label class="form-label">Financial Year</label>
+                <select name="fy_year" class="form-select" onchange="this.form.submit()">
+                    {% for year in available_years %}
+                    <option value="{{ year }}" {% if year == current_fy_year %}selected{% endif %}>
+                        FY{{ year }}-{{ year|add:1|stringformat:"d"|slice:"-2:" }}
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">Account</label>
+                <select name="account_id" class="form-select" onchange="this.form.submit()">
+                    <option value="">All Accounts</option>
+                    {% for account in accounts %}
+                    <option value="{{ account.id }}" {% if account.id == selected_account_id %}selected{% endif %}>
+                        {{ account.account_name }}
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-6 text-end">
+                <span class="text-muted">
+                    {{ report.fy_label }} | {{ report.total_trades }} trades (TakenTrade)
+                </span>
+            </div>
+        </form>
+    </div>
+
+    <!-- Sync Trades Section -->
+    <div class="stats-card mb-4">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <span>Sync Trade Data from Brokers</span>
+            <span class="badge bg-info">{{ taken_trade_count }} tracked trades in FY</span>
+        </div>
+        <div class="p-3">
+            <div class="row g-3">
+                {% for account in accounts %}
+                <div class="col-md-6">
+                    <div class="border rounded p-3">
+                        <div class="d-flex justify-content-between align-items-start mb-2">
+                            <div>
+                                <strong>{{ account.account_name }}</strong>
+                                <br><small class="text-muted">{{ account.broker }}</small>
+                            </div>
+                            <span class="badge bg-secondary" id="sync-count-{{ account.id }}">
+                                -- synced trades
+                            </span>
+                        </div>
+                        <div class="row g-2 mb-3">
+                            <div class="col-6">
+                                <label class="form-label small">From Date</label>
+                                <input type="date" class="form-control form-control-sm sync-from-date"
+                                       data-account="{{ account.id }}" value="{{ fy_start }}">
+                            </div>
+                            <div class="col-6">
+                                <label class="form-label small">To Date</label>
+                                <input type="date" class="form-control form-control-sm sync-to-date"
+                                       data-account="{{ account.id }}" value="{{ today }}">
+                            </div>
+                        </div>
+                        <div class="d-flex gap-2">
+                            <button type="button" class="btn btn-primary btn-sm flex-grow-1 sync-btn"
+                                    data-account-id="{{ account.id }}" data-account-name="{{ account.account_name }}">
+                                <span class="btn-text">Sync Trades</span>
+                                <span class="spinner-border spinner-border-sm d-none" role="status"></span>
+                            </button>
+                            <button type="button" class="btn btn-outline-secondary btn-sm sync-today-btn"
+                                    data-account-id="{{ account.id }}" title="Sync Today's Trades">
+                                Today
+                            </button>
+                        </div>
+                        <div class="sync-result mt-2 small" data-account="{{ account.id }}"></div>
+                    </div>
+                </div>
+                {% empty %}
+                <div class="col-12">
+                    <p class="text-muted text-center mb-0">No broker accounts configured</p>
+                </div>
+                {% endfor %}
+            </div>
+
+            <hr class="my-3">
+
+            <!-- Create TakenTrades from Broker Data -->
+            <div class="row g-3 align-items-end">
+                <div class="col-md-4">
+                    <label class="form-label">Create Performance Records From</label>
+                    <select id="create-trades-account" class="form-select">
+                        <option value="">Select Account</option>
+                        {% for account in accounts %}
+                        <option value="{{ account.id }}">{{ account.account_name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">From Date</label>
+                    <input type="date" id="create-trades-from" class="form-control" value="{{ fy_start }}">
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">To Date</label>
+                    <input type="date" id="create-trades-to" class="form-control" value="{{ today }}">
+                </div>
+                <div class="col-md-2">
+                    <button type="button" id="create-trades-btn" class="btn btn-success w-100">
+                        <span class="btn-text">Create Trades</span>
+                        <span class="spinner-border spinner-border-sm d-none" role="status"></span>
+                    </button>
+                </div>
+            </div>
+            <div id="create-trades-result" class="mt-2"></div>
+
+            <div class="alert alert-info mt-3 mb-0 small">
+                <strong>How it works:</strong>
+                <ol class="mb-0 ps-3">
+                    <li><strong>Sync:</strong> Fetch raw trades from broker APIs (buy/sell transactions)</li>
+                    <li><strong>Create Trades:</strong> Match buy/sell pairs to calculate P&L and create performance records</li>
+                </ol>
+                <br>
+                <strong>Note:</strong> For Kotak Neo, only today's trades are available. For ICICI Breeze, you can sync historical dates.
+                <br>After creating trades, refresh this page to see updated performance metrics.
+            </div>
+        </div>
+    </div>
+
+    <!-- KPI Cards -->
+    <div class="row mb-4">
+        <div class="col-md-3 mb-3">
+            <div class="kpi-card neutral">
+                <div class="kpi-value">{{ report.total_trades }}</div>
+                <div class="kpi-label">Total Trades</div>
+            </div>
+        </div>
+        <div class="col-md-3 mb-3">
+            <div class="kpi-card {% if report.win_rate >= 50 %}profit{% else %}loss{% endif %}">
+                <div class="kpi-value">{{ report.win_rate|floatformat:1 }}%</div>
+                <div class="kpi-label">Win Rate</div>
+            </div>
+        </div>
+        <div class="col-md-3 mb-3">
+            <div class="kpi-card {% if report.net_pnl >= 0 %}profit{% else %}loss{% endif %}">
+                <div class="kpi-value">{{ report.net_pnl|floatformat:0 }}</div>
+                <div class="kpi-label">Net P&L</div>
+            </div>
+        </div>
+        <div class="col-md-3 mb-3">
+            <div class="kpi-card {% if report.profit_factor >= 1 %}profit{% else %}loss{% endif %}">
+                <div class="kpi-value">{{ report.profit_factor|floatformat:2 }}</div>
+                <div class="kpi-label">Profit Factor</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Charts Row -->
+    <div class="row mb-4">
+        <!-- Monthly P&L Chart -->
+        <div class="col-md-8 mb-3">
+            <div class="chart-container">
+                <h6 class="chart-title">Monthly P&L</h6>
+                <canvas id="monthlyPnlChart" height="250"></canvas>
+            </div>
+        </div>
+
+        <!-- Win/Loss Pie -->
+        <div class="col-md-4 mb-3">
+            <div class="chart-container">
+                <h6 class="chart-title">Trade Outcomes</h6>
+                <canvas id="outcomeChart" height="250"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <!-- Stats and Strategy Breakdown -->
+    <div class="row">
+        <!-- Detailed Stats -->
+        <div class="col-md-4 mb-3">
+            <div class="stats-card">
+                <div class="card-header">P&L Summary</div>
+                <table class="stats-table">
+                    <tr>
+                        <td class="label">Gross Profit</td>
+                        <td class="value pnl-positive">{{ report.gross_profit|floatformat:0 }}</td>
+                    </tr>
+                    <tr>
+                        <td class="label">Gross Loss</td>
+                        <td class="value pnl-negative">{{ report.gross_loss|floatformat:0 }}</td>
+                    </tr>
+                    <tr>
+                        <td class="label">Total Charges</td>
+                        <td class="value">{{ report.total_charges|floatformat:0 }}</td>
+                    </tr>
+                    <tr>
+                        <td class="label"><strong>Net P&L</strong></td>
+                        <td class="value {% if report.net_pnl >= 0 %}pnl-positive{% else %}pnl-negative{% endif %}">
+                            <strong>{{ report.net_pnl|floatformat:0 }}</strong>
+                        </td>
+                    </tr>
+                </table>
+            </div>
+        </div>
+
+        <div class="col-md-4 mb-3">
+            <div class="stats-card">
+                <div class="card-header">Trade Statistics</div>
+                <table class="stats-table">
+                    <tr>
+                        <td class="label">Winning Trades</td>
+                        <td class="value pnl-positive">{{ report.winning_trades }}</td>
+                    </tr>
+                    <tr>
+                        <td class="label">Losing Trades</td>
+                        <td class="value pnl-negative">{{ report.losing_trades }}</td>
+                    </tr>
+                    <tr>
+                        <td class="label">Average Win</td>
+                        <td class="value pnl-positive">{{ report.average_win|floatformat:0 }}</td>
+                    </tr>
+                    <tr>
+                        <td class="label">Average Loss</td>
+                        <td class="value pnl-negative">{{ report.average_loss|floatformat:0 }}</td>
+                    </tr>
+                </table>
+            </div>
+        </div>
+
+        <div class="col-md-4 mb-3">
+            <div class="stats-card">
+                <div class="card-header">Extremes & Drawdown</div>
+                <table class="stats-table">
+                    <tr>
+                        <td class="label">Largest Win</td>
+                        <td class="value pnl-positive">{{ report.largest_win|floatformat:0 }}</td>
+                    </tr>
+                    <tr>
+                        <td class="label">Largest Loss</td>
+                        <td class="value pnl-negative">{{ report.largest_loss|floatformat:0 }}</td>
+                    </tr>
+                    <tr>
+                        <td class="label">Max Drawdown</td>
+                        <td class="value pnl-negative">{{ report.max_drawdown|floatformat:0 }}</td>
+                    </tr>
+                    <tr>
+                        <td class="label">Max Drawdown %</td>
+                        <td class="value">{{ report.max_drawdown_pct|floatformat:1 }}%</td>
+                    </tr>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Best/Worst Month -->
+    <div class="row mb-4">
+        <div class="col-md-6 mb-3">
+            <div class="stats-card">
+                <div class="card-header">Best Month</div>
+                <div class="p-3">
+                    {% if report.best_month %}
+                    <div class="d-flex justify-content-between align-items-center">
+                        <span class="h5 mb-0">{{ report.best_month }}</span>
+                        <span class="h4 mb-0 pnl-positive">{{ report.best_month_pnl|floatformat:0 }}</span>
+                    </div>
+                    {% else %}
+                    <p class="text-muted mb-0">No data</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+        <div class="col-md-6 mb-3">
+            <div class="stats-card">
+                <div class="card-header">Worst Month</div>
+                <div class="p-3">
+                    {% if report.worst_month %}
+                    <div class="d-flex justify-content-between align-items-center">
+                        <span class="h5 mb-0">{{ report.worst_month }}</span>
+                        <span class="h4 mb-0 pnl-negative">{{ report.worst_month_pnl|floatformat:0 }}</span>
+                    </div>
+                    {% else %}
+                    <p class="text-muted mb-0">No data</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Strategy Breakdown -->
+    <div class="row">
+        <div class="col-12">
+            <div class="stats-card">
+                <div class="card-header">Strategy Performance</div>
+                <div class="p-3">
+                    {% for strategy in report.strategy_breakdown %}
+                    <div class="strategy-row">
+                        <div class="strategy-name">
+                            <strong>{{ strategy.display_name }}</strong>
+                            <br><small class="text-muted">{{ strategy.total_trades }} trades</small>
+                        </div>
+                        <div class="strategy-stats">
+                            <div class="strategy-winrate">
+                                <span class="badge {% if strategy.win_rate >= 50 %}bg-success{% else %}bg-danger{% endif %}">
+                                    {{ strategy.win_rate }}%
+                                </span>
+                            </div>
+                            <div class="strategy-pnl {% if strategy.net_pnl >= 0 %}pnl-positive{% else %}pnl-negative{% endif %}">
+                                {{ strategy.net_pnl|floatformat:0 }}
+                            </div>
+                        </div>
+                    </div>
+                    {% empty %}
+                    <p class="text-muted text-center mb-0">No strategy data available</p>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Broker Trade Summary (Raw Data) -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="stats-card">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <span>Broker Trade Summary (Raw API Data)</span>
+                    <button class="btn btn-sm btn-outline-primary" type="button" data-bs-toggle="collapse" data-bs-target="#brokerTradeSummary">
+                        Show/Hide
+                    </button>
+                </div>
+                <div class="collapse" id="brokerTradeSummary">
+                    <div class="p-3">
+                        <div id="broker-summary-content">
+                            <p class="text-muted">Loading broker trade summary...</p>
+                        </div>
+                        <div class="alert alert-warning mt-3 small mb-0">
+                            <strong>Note:</strong> This shows raw trade data synced from broker APIs.
+                            The P&L shown above is calculated from <strong>TakenTrade</strong> records (trades tracked through the suggestion system).
+                            <br>To match broker trades with your tracked trades, go to <a href="{% url 'trading:trade_history' %}">Trade History</a>.
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Dashboard Widget Preview -->
+    <div class="row mt-4">
+        <div class="col-md-4">
+            <h6 class="mb-2">Dashboard Widget Preview</h6>
+            <div class="widget-compact">
+                <div class="widget-title">Trading Performance ({{ report.fy_label }})</div>
+                <div class="widget-row">
+                    <span>P&L</span>
+                    <span class="widget-value">{{ report.net_pnl|floatformat:0 }}</span>
+                </div>
+                <div class="widget-row">
+                    <span>Win Rate</span>
+                    <span class="widget-value">{{ report.win_rate|floatformat:1 }}%</span>
+                </div>
+                <div class="widget-row">
+                    <span>Active / Closed</span>
+                    <span class="widget-value">{{ report.active_trades_count }} / {{ report.total_trades }}</span>
+                </div>
+                <div class="mt-2">
+                    <a href="{% url 'trading:performance' %}">View Full Report &rarr;</a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+// CSRF token for AJAX requests
+const csrfToken = '{{ csrf_token }}';
+
+// Broker trade stats from server
+const brokerTradeStats = {{ broker_trade_stats|safe }};
+
+document.addEventListener('DOMContentLoaded', function() {
+    // Update sync counts on page load
+    Object.keys(brokerTradeStats).forEach(accountId => {
+        const stats = brokerTradeStats[accountId];
+        const badge = document.getElementById(`sync-count-${accountId}`);
+        if (badge) {
+            badge.textContent = `${stats.total} synced trades`;
+            badge.classList.remove('bg-secondary');
+            badge.classList.add(stats.total > 0 ? 'bg-success' : 'bg-secondary');
+        }
+    });
+
+    // Sync button handlers
+    document.querySelectorAll('.sync-btn').forEach(btn => {
+        btn.addEventListener('click', function() {
+            const accountId = this.dataset.accountId;
+            const accountName = this.dataset.accountName;
+            const fromDate = document.querySelector(`.sync-from-date[data-account="${accountId}"]`).value;
+            const toDate = document.querySelector(`.sync-to-date[data-account="${accountId}"]`).value;
+
+            syncTrades(accountId, accountName, fromDate, toDate, this);
+        });
+    });
+
+    // Sync today buttons
+    document.querySelectorAll('.sync-today-btn').forEach(btn => {
+        btn.addEventListener('click', function() {
+            const accountId = this.dataset.accountId;
+            const mainBtn = document.querySelector(`.sync-btn[data-account-id="${accountId}"]`);
+            const accountName = mainBtn.dataset.accountName;
+            const today = '{{ today }}';
+
+            syncTrades(accountId, accountName, today, today, mainBtn);
+        });
+    });
+
+    // Monthly P&L Chart
+    const monthlyData = {{ report.chart_data|safe }};
+
+    new Chart(document.getElementById('monthlyPnlChart'), {
+        type: 'bar',
+        data: {
+            labels: monthlyData.labels,
+            datasets: [{
+                label: 'P&L',
+                data: monthlyData.data,
+                backgroundColor: monthlyData.data.map(v => v >= 0 ? 'rgba(22, 163, 74, 0.8)' : 'rgba(220, 38, 38, 0.8)'),
+                borderColor: monthlyData.data.map(v => v >= 0 ? 'rgb(22, 163, 74)' : 'rgb(220, 38, 38)'),
+                borderWidth: 1
+            }]
+        },
+        options: {
+            responsive: true,
+            plugins: {
+                legend: { display: false }
+            },
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    grid: { color: '#f0f0f0' }
+                },
+                x: {
+                    grid: { display: false }
+                }
+            }
+        }
+    });
+
+    // Outcome Pie Chart
+    new Chart(document.getElementById('outcomeChart'), {
+        type: 'doughnut',
+        data: {
+            labels: ['Winning', 'Losing', 'Breakeven'],
+            datasets: [{
+                data: [{{ report.winning_trades }}, {{ report.losing_trades }}, {{ report.breakeven_trades }}],
+                backgroundColor: ['#16a34a', '#dc2626', '#eab308'],
+                borderWidth: 0
+            }]
+        },
+        options: {
+            responsive: true,
+            plugins: {
+                legend: {
+                    position: 'bottom'
+                }
+            }
+        }
+    });
+});
+
+// Load broker summary when collapse opens
+document.getElementById('brokerTradeSummary').addEventListener('show.bs.collapse', function() {
+    loadBrokerSummary();
+});
+
+// Load broker trade summary
+async function loadBrokerSummary() {
+    const container = document.getElementById('broker-summary-content');
+
+    // Build summary from brokerTradeStats
+    let html = '<div class="row g-3">';
+
+    let totalTrades = 0;
+    let hasData = false;
+
+    Object.keys(brokerTradeStats).forEach(accountId => {
+        const stats = brokerTradeStats[accountId];
+        totalTrades += stats.total;
+        if (stats.total > 0) hasData = true;
+    });
+
+    if (!hasData) {
+        container.innerHTML = `
+            <div class="text-center text-muted py-4">
+                <p class="mb-2">No broker trades synced yet for this FY period.</p>
+                <p class="mb-0">Use the "Sync Trade Data from Brokers" section above to fetch trades from your broker accounts.</p>
+            </div>
+        `;
+        return;
+    }
+
+    // Show per-account breakdown
+    {% for account in accounts %}
+    const stats{{ account.id }} = brokerTradeStats[{{ account.id }}] || { total: 0, buy: 0, sell: 0 };
+    if (stats{{ account.id }}.total > 0) {
+        html += `
+            <div class="col-md-4">
+                <div class="border rounded p-3">
+                    <strong>{{ account.account_name }}</strong>
+                    <table class="table table-sm mt-2 mb-0">
+                        <tr><td>Total Trades</td><td class="text-end">${stats{{ account.id }}.total}</td></tr>
+                        <tr><td>Buy Trades</td><td class="text-end text-success">${stats{{ account.id }}.buy}</td></tr>
+                        <tr><td>Sell Trades</td><td class="text-end text-danger">${stats{{ account.id }}.sell}</td></tr>
+                    </table>
+                </div>
+            </div>
+        `;
+    }
+    {% endfor %}
+
+    html += '</div>';
+
+    html += `
+        <div class="mt-3 p-3 bg-light rounded">
+            <strong>Total across all accounts:</strong> ${totalTrades} trades synced
+            <br><small class="text-muted">Note: These are raw trades from broker APIs. P&L calculation requires matching buy/sell pairs.</small>
+        </div>
+    `;
+
+    container.innerHTML = html;
+}
+
+// Create trades from broker button handler
+document.getElementById('create-trades-btn').addEventListener('click', async function() {
+    const accountId = document.getElementById('create-trades-account').value;
+    const fromDate = document.getElementById('create-trades-from').value;
+    const toDate = document.getElementById('create-trades-to').value;
+    const resultDiv = document.getElementById('create-trades-result');
+    const btn = this;
+    const btnText = btn.querySelector('.btn-text');
+    const spinner = btn.querySelector('.spinner-border');
+
+    if (!accountId) {
+        resultDiv.innerHTML = '<span class="text-danger">Please select an account</span>';
+        return;
+    }
+
+    // Show loading
+    btn.disabled = true;
+    btnText.textContent = 'Processing...';
+    spinner.classList.remove('d-none');
+    resultDiv.innerHTML = '<span class="text-muted">Matching buy/sell pairs and calculating P&L...</span>';
+
+    try {
+        const response = await fetch('{% url "trading:create_trades_from_broker" %}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': csrfToken
+            },
+            body: JSON.stringify({
+                account_id: parseInt(accountId),
+                from_date: fromDate,
+                to_date: toDate
+            })
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            let html = `<span class="text-success">${data.message}</span>`;
+            if (data.errors && data.errors.length > 0) {
+                html += `<br><small class="text-warning">Warnings: ${data.errors.join(', ')}</small>`;
+            }
+            if (data.created_count > 0) {
+                html += `<br><a href="{% url 'trading:trade_history' %}" class="btn btn-sm btn-outline-primary mt-2">View Trade History</a>`;
+                html += ` <button onclick="location.reload()" class="btn btn-sm btn-outline-success mt-2">Refresh Performance</button>`;
+            }
+            resultDiv.innerHTML = html;
+        } else {
+            resultDiv.innerHTML = `<span class="text-danger">Error: ${data.error || 'Unknown error'}</span>`;
+        }
+    } catch (error) {
+        resultDiv.innerHTML = `<span class="text-danger">Error: ${error.message}</span>`;
+    } finally {
+        btn.disabled = false;
+        btnText.textContent = 'Create Trades';
+        spinner.classList.add('d-none');
+    }
+});
+
+// Sync trades function
+async function syncTrades(accountId, accountName, fromDate, toDate, btn) {
+    const resultDiv = document.querySelector(`.sync-result[data-account="${accountId}"]`);
+    const btnText = btn.querySelector('.btn-text');
+    const spinner = btn.querySelector('.spinner-border');
+
+    // Show loading
+    btn.disabled = true;
+    btnText.textContent = 'Syncing...';
+    spinner.classList.remove('d-none');
+    resultDiv.innerHTML = '<span class="text-muted">Fetching trades from broker...</span>';
+
+    try {
+        const response = await fetch('{% url "trading:sync_trades" %}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': csrfToken
+            },
+            body: JSON.stringify({
+                account_id: parseInt(accountId),
+                from_date: fromDate,
+                to_date: toDate
+            })
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            resultDiv.innerHTML = `
+                <span class="text-success">
+                    Synced: ${data.new_count} new, ${data.updated_count || 0} updated
+                    (${data.total_fetched || 0} total from broker)
+                </span>`;
+
+            // Update the badge count
+            const badge = document.getElementById(`sync-count-${accountId}`);
+            if (badge && data.new_count > 0) {
+                const currentCount = parseInt(badge.textContent) || 0;
+                badge.textContent = `${currentCount + data.new_count} synced trades`;
+                badge.classList.remove('bg-secondary');
+                badge.classList.add('bg-success');
+            }
+        } else {
+            resultDiv.innerHTML = `<span class="text-danger">Error: ${data.error || 'Unknown error'}</span>`;
+        }
+    } catch (error) {
+        resultDiv.innerHTML = `<span class="text-danger">Error: ${error.message}</span>`;
+    } finally {
+        // Reset button
+        btn.disabled = false;
+        btnText.textContent = 'Sync Trades';
+        spinner.classList.add('d-none');
+    }
+}
+</script>
+{% endblock %}

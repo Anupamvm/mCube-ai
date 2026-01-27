@@ -325,6 +325,173 @@ def auto_login_kotak_neo():
     }
 
 
+def get_order_book() -> dict:
+    """
+    Fetch today's orders from Kotak Neo API.
+
+    Returns:
+        dict: {
+            'success': bool,
+            'orders': list of order dicts,
+            'error': str (if failed)
+        }
+
+    Each order dict contains:
+        - order_id: Neo order ID
+        - trading_symbol: Symbol traded
+        - transaction_type: BUY or SELL
+        - quantity: Order quantity
+        - price: Order price
+        - status: Order status (EXECUTED, PENDING, CANCELLED, REJECTED)
+        - order_time: Time of order
+        - filled_quantity: Quantity filled
+        - average_price: Average execution price
+    """
+    try:
+        client = _get_authenticated_client()
+        response = client.order_report()
+
+        logger.info(f"Kotak Neo order book response: {response}")
+
+        if not response:
+            return {'success': True, 'orders': [], 'message': 'No orders found'}
+
+        # Handle different response formats
+        if isinstance(response, dict):
+            if response.get('stat') == 'Not_Ok':
+                error_msg = response.get('errMsg', response.get('message', 'Unknown error'))
+                # "No Data" is not an error, just empty orders
+                if 'no data' in error_msg.lower():
+                    return {'success': True, 'orders': [], 'message': 'No orders for today'}
+                return {'success': False, 'error': error_msg, 'orders': []}
+
+            orders_data = response.get('data', [])
+        elif isinstance(response, list):
+            orders_data = response
+        else:
+            return {'success': False, 'error': f'Unexpected response type: {type(response)}', 'orders': []}
+
+        # Parse orders
+        orders = []
+        for order in orders_data:
+            parsed_order = {
+                'order_id': order.get('nOrdNo', ''),
+                'trading_symbol': order.get('trdSym', order.get('sym', '')),
+                'exchange': order.get('exSeg', 'NFO'),
+                'transaction_type': 'BUY' if order.get('trnsTp') == 'B' else 'SELL',
+                'quantity': int(order.get('qty', 0)),
+                'price': float(order.get('prc', 0)),
+                'status': order.get('ordSt', ''),
+                'order_time': order.get('ordEntTm', ''),
+                'filled_quantity': int(order.get('fldQty', 0)),
+                'average_price': float(order.get('avgPrc', 0)),
+                'product': order.get('prod', ''),
+                'order_type': order.get('prcTp', ''),
+                'validity': order.get('vldt', ''),
+                'disclosed_quantity': int(order.get('dscQty', 0)),
+                'trigger_price': float(order.get('trgPrc', 0)),
+                'rejection_reason': order.get('rejRsn', ''),
+                'raw_data': order
+            }
+            orders.append(parsed_order)
+
+        logger.info(f"Fetched {len(orders)} orders from Kotak Neo")
+        return {'success': True, 'orders': orders}
+
+    except NeoAuthenticationError as e:
+        logger.error(f"Authentication error fetching order book: {e}")
+        return {'success': False, 'error': str(e), 'orders': []}
+    except Exception as e:
+        logger.exception(f"Error fetching Kotak Neo order book: {e}")
+        return {'success': False, 'error': str(e), 'orders': []}
+
+
+def get_trade_book() -> dict:
+    """
+    Fetch today's executed trades from Kotak Neo API.
+
+    Returns:
+        dict: {
+            'success': bool,
+            'trades': list of trade dicts,
+            'error': str (if failed)
+        }
+
+    Each trade dict contains:
+        - trade_id: Neo trade ID
+        - order_id: Associated order ID
+        - trading_symbol: Symbol traded
+        - transaction_type: BUY or SELL
+        - quantity: Trade quantity
+        - price: Trade price
+        - trade_time: Time of trade
+        - exchange: Exchange (NFO, NSE, etc.)
+    """
+    try:
+        client = _get_authenticated_client()
+        response = client.trade_report()
+
+        logger.info(f"Kotak Neo trade book response: {response}")
+
+        if not response:
+            return {'success': True, 'trades': [], 'message': 'No trades found'}
+
+        # Handle different response formats
+        if isinstance(response, dict):
+            if response.get('stat') == 'Not_Ok':
+                error_msg = response.get('errMsg', response.get('message', 'Unknown error'))
+                # "No Data" is not an error, just empty trades
+                if 'no data' in error_msg.lower():
+                    return {'success': True, 'trades': [], 'message': 'No trades for today'}
+                return {'success': False, 'error': error_msg, 'trades': []}
+
+            trades_data = response.get('data', [])
+        elif isinstance(response, list):
+            trades_data = response
+        else:
+            return {'success': False, 'error': f'Unexpected response type: {type(response)}', 'trades': []}
+
+        # Parse trades
+        trades = []
+        for trade in trades_data:
+            from datetime import datetime, date
+
+            # Parse trade time
+            trade_time_str = trade.get('flTm', '')
+            trade_time = None
+            if trade_time_str:
+                try:
+                    trade_time = datetime.strptime(trade_time_str, '%H:%M:%S').time()
+                except ValueError:
+                    pass
+
+            parsed_trade = {
+                'trade_id': trade.get('flId', ''),
+                'order_id': trade.get('nOrdNo', ''),
+                'trading_symbol': trade.get('trdSym', trade.get('sym', '')),
+                'exchange': trade.get('exSeg', 'NFO'),
+                'transaction_type': 'BUY' if trade.get('trnsTp') == 'B' else 'SELL',
+                'quantity': int(trade.get('fldQty', trade.get('qty', 0))),
+                'price': float(trade.get('flPrc', trade.get('avgPrc', 0))),
+                'trade_time': trade_time,
+                'trade_date': date.today(),
+                'product': trade.get('prod', ''),
+                'symbol': trade.get('sym', ''),
+                'raw_data': trade
+            }
+            trades.append(parsed_trade)
+
+        logger.info(f"Fetched {len(trades)} trades from Kotak Neo")
+        return {'success': True, 'trades': trades}
+
+    except NeoAuthenticationError as e:
+        logger.error(f"Authentication error fetching trade book: {e}")
+        return {'success': False, 'error': str(e), 'trades': []}
+    except Exception as e:
+        logger.exception(f"Error fetching Kotak Neo trade book: {e}")
+        return {'success': False, 'error': str(e), 'trades': []}
+
+
 def is_open_position() -> bool:
     """
     Returns True if any net position is open, else False.

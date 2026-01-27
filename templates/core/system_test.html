@@ -397,7 +397,7 @@
                 </div>
                 {% if test.trigger_url %}
                 <div class="test-actions">
-                    <form method="post" action="{{ test.trigger_url }}" style="display: inline;">
+                    <form method="post" action="{{ test.trigger_url }}" target="_blank" style="display: inline;">
                         {% csrf_token %}
                         <button type="submit" class="trigger-btn">{{ test.trigger_label|default:"🔄 Run Test" }}</button>
                     </form>

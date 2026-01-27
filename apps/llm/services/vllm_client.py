@@ -22,31 +22,66 @@ class VLLMClient:
     Client for interacting with vLLM server using OpenAI-compatible API
 
     Configuration:
-        VLLM_HOST: vLLM server URL (default: http://27.107.134.179:8000/v1)
+        VLLM_HOST: vLLM server URL (tries public then local IP automatically)
         VLLM_MODEL: Model name (default: hugging-quants/Meta-Llama-3.1-70B-Instruct-AWQ-INT4)
         VLLM_API_KEY: API key if required (default: not-needed)
+
+    The client automatically tries multiple URLs in order:
+    1. Public IP (27.107.134.179) - works from external networks
+    2. Local IP (192.168.1.32) - works from same network
     """
 
+    # Default URLs to try in order (public first, then local)
+    DEFAULT_URLS = [
+        'http://27.107.134.179:8000/v1',  # Public IP
+        'http://192.168.1.32:8000/v1',     # Local IP
+    ]
+
     def __init__(self):
-        """Initialize vLLM client"""
-        self.base_url = os.getenv('VLLM_HOST', 'http://27.107.134.179:8000/v1')
+        """Initialize vLLM client with automatic URL fallback"""
         self.model = os.getenv('VLLM_MODEL', 'hugging-quants/Meta-Llama-3.1-70B-Instruct-AWQ-INT4')
         self.api_key = os.getenv('VLLM_API_KEY', 'not-needed')
 
-        # Initialize OpenAI client pointing to vLLM
-        self.client = OpenAI(
-            base_url=self.base_url,
-            api_key=self.api_key
-        )
+        # If VLLM_HOST is explicitly set, use only that URL
+        explicit_host = os.getenv('VLLM_HOST')
+        if explicit_host:
+            urls_to_try = [explicit_host]
+        else:
+            urls_to_try = self.DEFAULT_URLS
 
-        # Verify connection
-        self.enabled = self._check_connection()
+        # Try each URL until one works
+        self.base_url = None
+        self.client = None
+        self.enabled = False
 
-    def _check_connection(self) -> bool:
-        """Check if vLLM server is accessible"""
+        for url in urls_to_try:
+            logger.info(f"Trying vLLM server at {url}...")
+            try:
+                client = OpenAI(
+                    base_url=url,
+                    api_key=self.api_key,
+                    timeout=10.0  # 10 second timeout for connection attempts
+                )
+                if self._try_connection(client):
+                    self.base_url = url
+                    self.client = client
+                    self.enabled = True
+                    logger.info(f"Successfully connected to vLLM at {url}")
+                    break
+            except Exception as e:
+                logger.warning(f"Failed to connect to {url}: {str(e)}")
+                continue
+
+        if not self.enabled:
+            logger.warning("Could not connect to any vLLM server")
+            # Set defaults for error reporting
+            self.base_url = urls_to_try[0] if urls_to_try else 'not-configured'
+            self.client = OpenAI(base_url=self.base_url, api_key=self.api_key)
+
+    def _try_connection(self, client: OpenAI) -> bool:
+        """Try to connect to vLLM server with given client"""
         try:
-            # Try a simple completion to verify connection
-            response = self.client.chat.completions.create(
+            response = client.chat.completions.create(
                 model=self.model,
                 messages=[
                     {"role": "system", "content": "You are a helpful assistant."},
@@ -55,14 +90,13 @@ class VLLMClient:
                 max_tokens=5,
                 temperature=0.1
             )
-            if response and response.choices:
-                logger.info(f"vLLM server connected at {self.base_url}")
-                logger.info(f"Model: {self.model}")
-                return True
+            return response and response.choices
+        except Exception:
             return False
-        except Exception as e:
-            logger.warning(f"vLLM server not accessible: {str(e)}")
-            return False
+
+    def _check_connection(self) -> bool:
+        """Check if vLLM server is accessible (re-check current connection)"""
+        return self._try_connection(self.client) if self.client else False
 
     def is_enabled(self) -> bool:
         """Check if vLLM client is enabled"""

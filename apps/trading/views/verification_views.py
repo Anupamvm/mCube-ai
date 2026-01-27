@@ -571,15 +571,84 @@ def verify_future_trade(request):
         analysis_passed = analysis_result.get('verdict') == 'PASS'
         historical_passed = historical_verification.get('trade_allowed', True)
 
-        # Trade only passes if both analysis and historical checks pass
-        passed = analysis_passed and historical_passed
-
         direction = analysis_result.get('direction', 'NEUTRAL')
         composite_score = analysis_result.get('composite_score', 0)
 
         # Log if historical verification blocked the trade
         if analysis_passed and not historical_passed:
             logger.warning(f"Trade blocked by historical verification for {stock_symbol}")
+
+        # ===== NEWS IMPACT VERIFICATION =====
+        # Fetch and analyze news for the stock to check for negative news that could block the trade
+        news_verification = {
+            'success': False,
+            'trade_allowed': True,
+            'blocking_articles': [],
+            'warning_articles': [],
+            'summary': {}
+        }
+
+        try:
+            from apps.data.services.gnews_client import get_gnews_client
+            from apps.data.models import TLStockData
+            from apps.llm.services.news_impact_analyzer import get_news_impact_analyzer
+
+            logger.info(f"[Verify Trade] Fetching news for {stock_symbol} ({direction} trade)")
+
+            # Get stock details for news search
+            stock_data = TLStockData.objects.filter(nsecode=stock_symbol).first()
+            stock_name = stock_data.stock_name if stock_data else stock_symbol
+            industry_name = stock_data.industry_name if stock_data else None
+
+            # Fetch stock news (limit to 5 for speed during verification)
+            gnews = get_gnews_client()
+            stock_news_result = gnews.fetch_stock_news(
+                stock_symbol=stock_symbol,
+                stock_name=stock_name,
+                max_results=5
+            )
+
+            # Analyze news impact
+            if stock_news_result.get('articles'):
+                analyzer = get_news_impact_analyzer()
+                impact_result = analyzer.analyze_news_for_trade(
+                    stock_news={'articles': stock_news_result.get('articles', [])},
+                    industry_news={'articles': []},  # Skip industry/competitor for speed
+                    competitor_news={'articles': []},
+                    stock_symbol=stock_symbol,
+                    stock_name=stock_name,
+                    trade_direction=direction,
+                    industry_name=industry_name,
+                    max_articles_per_category=5
+                )
+
+                news_verification = {
+                    'success': True,
+                    'trade_allowed': impact_result['trade_allowed'],
+                    'blocking_articles': impact_result['blocking_articles'],
+                    'warning_articles': impact_result['warning_articles'],
+                    'summary': impact_result['summary'],
+                    'stock_news': impact_result['stock_news']
+                }
+
+                logger.info(f"[Verify Trade] News impact: trade_allowed={impact_result['trade_allowed']}, "
+                           f"blocking={len(impact_result['blocking_articles'])}, warnings={len(impact_result['warning_articles'])}")
+            else:
+                logger.info(f"[Verify Trade] No news articles found for {stock_symbol}")
+                news_verification['success'] = True
+
+        except Exception as news_error:
+            logger.warning(f"[Verify Trade] News verification failed: {news_error}")
+            # Don't block trade if news check fails - just log and continue
+            news_verification['error'] = str(news_error)
+
+        # Check if news blocks the trade
+        news_passed = news_verification.get('trade_allowed', True)
+        if analysis_passed and historical_passed and not news_passed:
+            logger.warning(f"Trade BLOCKED by negative news for {stock_symbol}")
+
+        # Trade only passes if analysis, historical checks, AND news checks pass
+        passed = analysis_passed and historical_passed and news_passed
 
         # Calculate position sizing with 50% margin rule (like options)
         position_details = {}
@@ -788,14 +857,14 @@ def verify_future_trade(request):
             'score_breakdown': analysis_result.get('scores', {})  # Add component scores breakdown
         }
 
-        # Build verdict message considering both analysis and historical verification
+        # Build verdict message considering analysis, historical verification, AND news verification
         if passed:
             verdict_text = f'PASS - Score: {composite_score}/100'
             reason_text = f'Composite score: {composite_score}/100. Direction: {direction}'
         elif not analysis_passed:
             verdict_text = f'FAIL - Score: {composite_score}/100'
             reason_text = f'Analysis failed: Composite score {composite_score}/100 below threshold'
-        else:
+        elif not historical_passed:
             # Analysis passed but historical verification failed
             hist_verdict = historical_verification.get('verdict', 'BLOCKED')
             hist_failures = [c['name'] for c in historical_verification.get('risk_checks', []) if c.get('status') == 'FAIL']
@@ -808,6 +877,12 @@ def verify_future_trade(request):
                 # Risk check failure
                 verdict_text = f'BLOCKED - Historical Risk Check Failed'
                 reason_text = f'Analysis passed (score: {composite_score}) but blocked by: {", ".join(hist_failures)}'
+        else:
+            # Analysis and historical passed but news verification failed (HARD BLOCK)
+            blocking_count = len(news_verification.get('blocking_articles', []))
+            blocking_titles = [a.get('title', 'Unknown')[:50] for a in news_verification.get('blocking_articles', [])[:2]]
+            verdict_text = f'BLOCKED - Negative News Detected'
+            reason_text = f'Analysis passed (score: {composite_score}) but {blocking_count} highly negative news article(s) detected: {"; ".join(blocking_titles)}'
 
         response_data = {
             'success': True,
@@ -831,12 +906,22 @@ def verify_future_trade(request):
                 'risk_summary': historical_verification.get('risk_summary', {}),
                 'recommendations': historical_verification.get('recommendations', []),
                 'analysis': historical_verification.get('analysis', {})
+            },
+            # News Impact Verification Results
+            'news_verification': {
+                'success': news_verification.get('success', False),
+                'trade_allowed': news_verification.get('trade_allowed', True),
+                'blocking_articles': news_verification.get('blocking_articles', []),
+                'warning_articles': news_verification.get('warning_articles', []),
+                'summary': news_verification.get('summary', {}),
+                'stock_news': news_verification.get('stock_news', {})
             }
         }
 
         # Save trade suggestion to database (only if PASS)
         if passed:
             from apps.trading.models import TradeSuggestion
+            from apps.brokers.integrations.breeze import get_india_vix
             from datetime import timedelta
             from django.utils import timezone
             import json
@@ -944,6 +1029,18 @@ def verify_future_trade(request):
             max_loss_value = abs(futures_price_decimal - stop_loss_price) * lot_size * recommended_lots
             max_profit_value = abs(target_price - futures_price_decimal) * lot_size * recommended_lots
 
+            # Calculate risk/reward ratio
+            risk_reward_ratio_value = Decimal('0')
+            if max_loss_value > 0:
+                risk_reward_ratio_value = max_profit_value / max_loss_value
+
+            # Fetch VIX for the suggestion record
+            try:
+                vix_value = get_india_vix()
+            except Exception as vix_err:
+                logger.warning(f"Could not fetch VIX for suggestion: {vix_err}")
+                vix_value = None
+
             suggestion = TradeSuggestion.objects.create(
                 user=request.user,
                 strategy='icici_futures',
@@ -952,6 +1049,7 @@ def verify_future_trade(request):
                 direction=direction.upper(),
                 # Market Data
                 spot_price=Decimal(str(spot_price)),
+                vix=vix_value,
                 expiry_date=expiry_dt.date(),
                 days_to_expiry=(expiry_dt.date() - datetime.now().date()).days,
                 # Position Sizing
@@ -963,6 +1061,7 @@ def verify_future_trade(request):
                 # Risk Metrics
                 max_profit=max_profit_value,
                 max_loss=max_loss_value,
+                risk_reward_ratio=risk_reward_ratio_value,
                 breakeven_upper=target_price if direction == 'LONG' else None,
                 breakeven_lower=stop_loss_price if direction == 'LONG' else None,
                 # Complete Data
@@ -1306,26 +1405,79 @@ def fetch_trade_news(request):
                 'source': {'name': article.source, 'url': ''}
             } for article in articles]
 
-        # Build response from database
-        response_data = {
-            'success': True,
-            'stock_news': {
-                'articles': db_articles_to_dict(stock_articles_db),
-                'totalArticles': len(stock_articles_db),
-                'stock_name': stock_name,
-                'stock_symbol': stock_symbol
-            },
-            'industry_news': {
-                'articles': db_articles_to_dict(industry_articles_db),
-                'totalArticles': len(industry_articles_db),
-                'industry_name': industry_name or 'Unknown'
-            },
-            'competitor_news': {
-                'articles': db_articles_to_dict(competitor_articles_db),
-                'totalArticles': len(competitor_articles_db),
-                'competitors': competitor_news_result.get('competitors', [])
-            }
+        # Build initial response from database
+        stock_news_data = {
+            'articles': db_articles_to_dict(stock_articles_db),
+            'totalArticles': len(stock_articles_db),
+            'stock_name': stock_name,
+            'stock_symbol': stock_symbol
         }
+        industry_news_data = {
+            'articles': db_articles_to_dict(industry_articles_db),
+            'totalArticles': len(industry_articles_db),
+            'industry_name': industry_name or 'Unknown'
+        }
+        competitor_news_data = {
+            'articles': db_articles_to_dict(competitor_articles_db),
+            'totalArticles': len(competitor_articles_db),
+            'competitors': competitor_news_result.get('competitors', [])
+        }
+
+        # Step 8: Analyze news impact using LLM
+        # Get trade direction from request (default to LONG for news display)
+        trade_direction = body.get('trade_direction', 'LONG').upper()
+        logger.info(f"[Trade News] Analyzing news impact for {stock_symbol} ({trade_direction} trade)")
+
+        try:
+            from apps.llm.services.news_impact_analyzer import get_news_impact_analyzer
+
+            analyzer = get_news_impact_analyzer()
+            impact_result = analyzer.analyze_news_for_trade(
+                stock_news=stock_news_data,
+                industry_news=industry_news_data,
+                competitor_news=competitor_news_data,
+                stock_symbol=stock_symbol,
+                stock_name=stock_name,
+                trade_direction=trade_direction,
+                industry_name=industry_name,
+                max_articles_per_category=5  # Limit for speed
+            )
+
+            # Use impact-analyzed and sorted news data
+            response_data = {
+                'success': True,
+                'stock_news': impact_result['stock_news'],
+                'industry_news': impact_result['industry_news'],
+                'competitor_news': impact_result['competitor_news'],
+                'news_verification': {
+                    'trade_allowed': impact_result['trade_allowed'],
+                    'blocking_articles': impact_result['blocking_articles'],
+                    'warning_articles': impact_result['warning_articles'],
+                    'summary': impact_result['summary']
+                }
+            }
+
+            logger.info(f"[Trade News] Impact analysis complete: trade_allowed={impact_result['trade_allowed']}, "
+                       f"blocking={len(impact_result['blocking_articles'])}, warnings={len(impact_result['warning_articles'])}")
+
+        except Exception as impact_error:
+            logger.warning(f"[Trade News] Impact analysis failed: {impact_error}, returning unanalyzed news")
+            # Fallback: return news without impact analysis
+            response_data = {
+                'success': True,
+                'stock_news': stock_news_data,
+                'industry_news': industry_news_data,
+                'competitor_news': competitor_news_data,
+                'news_verification': {
+                    'trade_allowed': True,
+                    'blocking_articles': [],
+                    'warning_articles': [],
+                    'summary': {
+                        'total_analyzed': 0,
+                        'error': str(impact_error)
+                    }
+                }
+            }
 
         logger.info(f"[Trade News] Successfully fetched news for {stock_symbol}")
         logger.info(f"[Trade News] Stock: {len(response_data['stock_news']['articles'])} articles")

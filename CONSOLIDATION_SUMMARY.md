@@ -221,8 +221,10 @@ All historical data is now managed through the Brokers admin interface.
 
 ---
 
-## Status: ✅ Code Changes Complete
+## Status: ✅ Complete
 
-**Pending:** Run database migrations
+**Migrations Applied:** Yes (2026-01-23)
+- `apps/brokers/migrations/0008_remove_historicalprice_historical__stock_c_d7837e_idx_and_more.py`
+- `apps/trading/migrations/0006_delete_historicaldata.py`
 
 **Date Completed:** 2026-01-23

@@ -4,6 +4,7 @@ Trading URLs
 
 from django.urls import path
 from . import views, api_views
+from .api import trade_tracking_views as tracking_api
 
 app_name = 'trading'
 
@@ -86,4 +87,22 @@ urlpatterns = [
     path('api/prepare-historical-data/', api_views.prepare_historical_data, name='api_prepare_historical_data'),
     path('api/get-related-instruments/', api_views.get_related_instruments, name='api_get_related_instruments'),
     path('api/verify-historical-data/', api_views.verify_historical_data, name='api_verify_historical_data'),
+
+    # Trade History & Performance Pages
+    path('history/trades/', views.trade_history, name='trade_history'),
+    path('performance/', views.performance, name='performance'),
+    path('trades/<int:trade_id>/', views.trade_detail, name='trade_detail'),
+
+    # Suggestions list (alias for pending_suggestions)
+    path('suggestions/list/', views.pending_suggestions, name='suggestions_list'),
+
+    # Trade Tracking API Endpoints
+    path('api/suggestions/<int:suggestion_id>/accept/', tracking_api.accept_suggestion, name='accept_suggestion'),
+    path('api/suggestions/<int:suggestion_id>/reject/', tracking_api.reject_suggestion, name='reject_suggestion_api'),
+    path('api/taken-trades/', tracking_api.list_taken_trades, name='list_taken_trades'),
+    path('api/taken-trades/<int:trade_id>/', tracking_api.get_trade_detail, name='api_trade_detail'),
+    path('api/reports/fy/', tracking_api.get_fy_report, name='api_fy_report'),
+    path('api/sync/trades/', tracking_api.sync_trades, name='sync_trades'),
+    path('api/sync/status/<int:account_id>/', tracking_api.get_sync_status, name='api_sync_status'),
+    path('api/trades/create-from-broker/', tracking_api.create_trades_from_broker, name='create_trades_from_broker'),
 ]

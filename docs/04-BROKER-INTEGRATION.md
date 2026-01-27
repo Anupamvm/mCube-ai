@@ -464,15 +464,60 @@ secrets.py
 
 ---
 
+## Modular Broker Architecture
+
+The broker integrations have been refactored into a modular structure for better maintainability:
+
+### ICICI Breeze (`apps/brokers/integrations/breeze_module/`)
+
+| Module | Purpose |
+|--------|---------|
+| `client.py` | Main BreezeAPIClient class |
+| `quotes.py` | Quote fetching and LTP retrieval |
+| `orders.py` | Order placement (futures, options, strangle) |
+| `margin.py` | Margin calculation and availability |
+| `historical.py` | Historical OHLC data fetching |
+| `expiry.py` | Expiry date management |
+| `option_chain.py` | Option chain data retrieval |
+| `data_fetcher.py` | Generic data fetching utilities |
+| `api_classes.py` | API response classes and enums |
+
+### Kotak Neo (`apps/brokers/integrations/neo/`)
+
+| Module | Purpose |
+|--------|---------|
+| `client.py` | Main NeoAPI client class |
+| `quotes.py` | Quote and LTP retrieval |
+| `orders.py` | Order placement and management |
+| `batch_orders.py` | Batch order execution (strangle, iron condor) |
+| `data_fetcher.py` | Data fetching utilities |
+| `symbol_mapper.py` | Symbol mapping and instrument lookup |
+
+### Usage
+
+```python
+# Import from main integration file (facade pattern)
+from apps.brokers.integrations.breeze import get_breeze_client, BreezeAPIClient
+
+# Or import specific modules for advanced usage
+from apps.brokers.integrations.breeze_module.quotes import get_ltp
+from apps.brokers.integrations.breeze_module.margin import get_nfo_margin
+from apps.brokers.integrations.neo.batch_orders import execute_strangle_orders
+```
+
+---
+
 ## File Reference
 
 | File | Purpose |
 |------|---------|
 | `apps/core/models.py` | CredentialStore model |
-| `apps/brokers/models.py` | Order, Execution, BrokerLimit, BrokerPosition models |
+| `apps/brokers/models.py` | Order, Execution, BrokerLimit, BrokerPosition, HistoricalPrice models |
 | `apps/brokers/interfaces.py` | BrokerInterface & factory |
-| `apps/brokers/integrations/breeze.py` | Breeze integration |
-| `apps/brokers/integrations/kotak_neo.py` | Kotak Neo integration |
+| `apps/brokers/integrations/breeze.py` | Breeze integration (facade) |
+| `apps/brokers/integrations/breeze_module/` | Modular Breeze implementation |
+| `apps/brokers/integrations/kotak_neo.py` | Kotak Neo integration (facade) |
+| `apps/brokers/integrations/neo/` | Modular Neo implementation |
 | `apps/brokers/services/order_sync.py` | Order synchronization service |
 | `tools/neo.py` | NeoAPI implementation |
 | `apps/core/management/commands/setup_credentials.py` | CLI commands |
