@@ -6,36 +6,164 @@
 
 ## What is mCube?
 
-mCube is an automated trading system that manages two accounts with different strategies:
+mCube is an automated trading system that manages two broker accounts with different trading strategies:
 
-| Account | Capital | Strategy | Target Return |
-|---------|---------|----------|---------------|
-| **Kotak** | Rs 6 Crores | Weekly Nifty Short Strangle | Rs 6-8L/month |
-| **ICICI** | Rs 1.2 Crores | LLM-Validated Futures Trading | Rs 4-6L/month |
+| Account | Broker | Capital | Strategy | Target Return |
+|---------|--------|---------|----------|---------------|
+| **Kotak** | Kotak Neo | Rs 6 Crores | Weekly Nifty Short Strangle / Broken Iron Condor | Rs 6-8L/month |
+| **ICICI** | ICICI Breeze | Rs 1.2 Crores | LLM-Validated Futures Trading | Rs 4-6L/month |
 
 **Combined Target**: Rs 12-15L monthly (1.7-2.1% monthly, 20-25% annually)
 
 ---
 
-## Documentation Reading Guide
+## Core Philosophy
 
-### For First-Time Setup (Start Here)
+### Critical Rule: ONE POSITION PER ACCOUNT
 
-1. **[01-GETTING-STARTED.md](01-GETTING-STARTED.md)** - Installation, configuration, and first run
+The most important rule in mCube: **Only ONE active position per broker account at any time.**
 
-### For Understanding the System
+This rule:
+- Prevents over-exposure
+- Simplifies risk management
+- Makes P&L tracking clear
+- Is enforced at the code level (not just documentation)
 
-2. **[02-ARCHITECTURE.md](02-ARCHITECTURE.md)** - How the system is built
-3. **[03-TRADING-STRATEGIES.md](03-TRADING-STRATEGIES.md)** - The trading logic
+### 50% Margin Rule
 
-### For Broker & Data Integration
+For any new position, use only 50% of available margin. The remaining 50% is reserved for:
+- Averaging opportunities (when position goes against you)
+- Emergency adjustments
+- Margin calls
 
-4. **[04-BROKER-INTEGRATION.md](04-BROKER-INTEGRATION.md)** - Connecting to brokers
-5. **[05-DATA-SOURCES.md](05-DATA-SOURCES.md)** - Market data and LLM
+---
 
-### For Daily Operations
+## System Architecture
 
-6. **[06-OPERATIONS.md](06-OPERATIONS.md)** - Running and monitoring
+```
+                     mCube AI Trading System
+    ┌─────────────────────────────────────────────────────────┐
+    │                 Django Application                       │
+    │  ┌─────────────────────────────────────────────────┐    │
+    │  │    Frontend (Templates + Bootstrap 5 + HTMX)    │    │
+    │  └─────────────────────────────────────────────────┘    │
+    │  ┌─────────────────────────────────────────────────┐    │
+    │  │           Django Backend (11 Apps)               │    │
+    │  │    core | accounts | positions | strategies |    │    │
+    │  │    risk | data | llm | analytics | alerts |      │    │
+    │  │    brokers | trading                             │    │
+    │  └─────────────────────────────────────────────────┘    │
+    │  ┌─────────────────────────────────────────────────┐    │
+    │  │    Celery Workers + Django Background Tasks      │    │
+    │  └─────────────────────────────────────────────────┘    │
+    │  ┌─────────────────────────────────────────────────┐    │
+    │  │    SQLite (data) | Redis (cache/queue)          │    │
+    │  └─────────────────────────────────────────────────┘    │
+    └─────────────────────────────────────────────────────────┘
+                               │
+    ┌─────────────────────────────────────────────────────────┐
+    │  Kotak Neo | ICICI Breeze | Trendlyne | Telegram | LLM  │
+    └─────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Technology Stack
+
+| Layer | Technology | Purpose |
+|-------|------------|---------|
+| Framework | Django 4.2 | Web application |
+| Database | SQLite | Persistent storage |
+| Cache/Queue | Redis | Celery message broker |
+| Tasks | Celery 5.3 + background_task | Background automation |
+| Frontend | Bootstrap 5 + HTMX | UI |
+| LLM | Ollama (DeepSeek) | Trade validation |
+| Vector DB | ChromaDB | RAG system |
+| Alerts | Telegram Bot | Notifications |
+
+---
+
+## Project Structure
+
+```
+mCube-ai/
+├── mcube_ai/           # Django project settings
+│   ├── settings.py
+│   ├── urls.py
+│   └── celery.py
+│
+├── apps/               # Django applications (11 apps)
+│   ├── core/          # Shared utilities, credentials, scheduling
+│   ├── accounts/      # Broker accounts, margin management
+│   ├── positions/     # Position tracking, P&L, exit logic
+│   ├── strategies/    # Trading algorithms (Strangle, Futures)
+│   ├── risk/          # Risk limits, circuit breakers
+│   ├── data/          # Market data, Trendlyne integration
+│   ├── llm/           # LLM validation, RAG, news processing
+│   ├── analytics/     # P&L tracking, learning patterns
+│   ├── alerts/        # Telegram bot
+│   ├── brokers/       # Broker API integrations, orders
+│   └── trading/       # Trading workflows, UI
+│
+├── tools/             # Standalone broker utilities
+│   └── neo.py        # Kotak Neo API wrapper
+│
+├── templates/         # HTML templates
+├── static/            # CSS, JS assets
+├── logs/              # Application logs
+└── docs/              # This documentation
+```
+
+---
+
+## The 11 Django Apps
+
+| App | Purpose | Key Responsibilities |
+|-----|---------|---------------------|
+| **core** | Foundation | Credentials, constants, utilities, background tasks |
+| **accounts** | Account Management | BrokerAccount model, margin calculations |
+| **positions** | Position Lifecycle | Entry, monitoring, exit, averaging, P&L |
+| **strategies** | Trading Logic | Strangle, Iron Condor, Futures algorithms |
+| **risk** | Risk Management | Limits, circuit breakers, auto-shutdown |
+| **data** | Market Data | Trendlyne, analyzers, validators, signals |
+| **llm** | AI Integration | Trade validation, news processing, RAG |
+| **analytics** | Performance | P&L reports, pattern discovery, learning |
+| **alerts** | Notifications | Telegram bot with 14 commands |
+| **brokers** | Broker APIs | Kotak Neo, ICICI Breeze integrations |
+| **trading** | Trading UI | Suggestions, approval, execution |
+
+For detailed documentation of each app, see the [apps/](apps/) directory.
+
+---
+
+## Trading Strategies
+
+### 1. Weekly Nifty Short Strangle (Kotak)
+
+**Concept**: Sell both a call and put option at out-of-the-money strikes, collecting premium.
+
+- **When**: Monday/Tuesday entry, Thursday/Friday exit
+- **Strikes**: Calculated using VIX-adjusted delta formula
+- **Profit**: If NIFTY stays within the strike range, keep all premium
+- **Risk**: Unlimited if market moves significantly
+
+### 2. Broken Iron Condor (Kotak)
+
+**Concept**: Short strangle plus an insurance put to cap downside risk.
+
+- **3 Legs**: Sell Call + Sell Put + Buy Put (insurance)
+- **Benefit**: Defined maximum loss (2x expected profit)
+- **When**: High VIX environments or uncertain markets
+
+### 3. LLM-Validated Futures (ICICI)
+
+**Concept**: Directional futures trading with AI validation.
+
+- **Screening**: 9-factor composite scoring (OI, sector, technical)
+- **Validation**: LLM with 70% minimum confidence
+- **Averaging**: Up to 3 averaging attempts if position goes against
+
+See [03-TRADING-STRATEGIES.md](03-TRADING-STRATEGIES.md) for full algorithm details.
 
 ---
 
@@ -51,45 +179,14 @@ mCube is an automated trading system that manages two accounts with different st
 5. EXIT EOD only if >= 50% target achieved
 ```
 
-### Tech Stack
-
-| Component | Technology |
-|-----------|------------|
-| Framework | Django 4.2 |
-| Database | SQLite |
-| Tasks | Celery + Redis + background_task |
-| LLM | Ollama (local) |
-| Alerts | Telegram Bot |
-
-### Project Structure
-
-```
-mCube-ai/
-├── apps/               # 11 Django applications
-│   ├── core/          # Shared utilities, credentials
-│   ├── accounts/      # Broker accounts
-│   ├── positions/     # Position tracking
-│   ├── strategies/    # Trading strategies
-│   ├── risk/          # Risk management
-│   ├── data/          # Market data, Trendlyne
-│   ├── llm/           # LLM integration
-│   ├── analytics/     # P&L tracking
-│   ├── alerts/        # Telegram bot
-│   ├── brokers/       # Broker integrations, orders
-│   └── trading/       # Trading workflows
-├── templates/         # HTML templates
-├── static/            # CSS, JS assets
-├── logs/              # Application logs
-└── docs/              # This documentation
-```
-
----
-
-## Essential Commands
+### Essential Commands
 
 ```bash
 # Start Django
 python manage.py runserver
+
+# Start Redis
+redis-server
 
 # Start Celery worker
 celery -A mcube_ai worker -l info
@@ -125,10 +222,30 @@ tail -f logs/mcube_ai.log
 
 ---
 
-## Master Design Document
+## Documentation Reading Guide
 
-For complete system design with all formulas:
-- **[design/mcube-ai.design.md](design/mcube-ai.design.md)**
+### For First-Time Setup
+
+1. **[01-GETTING-STARTED.md](01-GETTING-STARTED.md)** - Installation and first run
+
+### For Understanding the System
+
+2. **[02-ARCHITECTURE.md](02-ARCHITECTURE.md)** - High-level architecture
+3. **[03-TRADING-STRATEGIES.md](03-TRADING-STRATEGIES.md)** - Trading algorithms
+
+### For Broker & Data Integration
+
+4. **[04-BROKER-INTEGRATION.md](04-BROKER-INTEGRATION.md)** - Connecting to brokers
+5. **[05-DATA-SOURCES.md](05-DATA-SOURCES.md)** - Market data and LLM
+
+### For Daily Operations
+
+6. **[06-OPERATIONS.md](06-OPERATIONS.md)** - Running and monitoring
+
+### For Deep Dives (Junior Developers Start Here)
+
+7. **[apps/](apps/)** - Detailed documentation for each Django app
+8. **[ALGORITHMS.md](ALGORITHMS.md)** - Algorithm study guide
 
 ---
 
@@ -147,4 +264,26 @@ For complete system design with all formulas:
 
 ---
 
-*Last Updated: December 2024*
+## For Junior Developers
+
+If you're new to the codebase, follow this learning path:
+
+1. **Read this README** - Understand the system overview
+2. **Read [apps/core.md](apps/core.md)** - Understand the foundation
+3. **Read [apps/accounts.md](apps/accounts.md)** - Understand account structure
+4. **Read [apps/positions.md](apps/positions.md)** - Understand position lifecycle
+5. **Read [apps/strategies.md](apps/strategies.md)** - Understand the algorithms
+6. **Read [ALGORITHMS.md](ALGORITHMS.md)** - Deep dive into algorithm logic
+7. **Run the system locally** - Follow 01-GETTING-STARTED.md
+8. **Study the code** - Start with `apps/core/models.py`
+
+---
+
+## Master Design Document
+
+For complete system design with all formulas and implementation details:
+- **[design/mcube-ai.design.md](design/mcube-ai.design.md)**
+
+---
+
+*Last Updated: January 2026*

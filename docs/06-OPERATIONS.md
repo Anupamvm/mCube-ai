@@ -222,7 +222,7 @@ is_trading_paused()
 
 # Check today's P&L
 for acc in BrokerAccount.objects.filter(is_active=True):
-    print(f"{acc.broker}: {acc.get_today_pnl()}")
+    print(f"{acc.broker}: {acc.get_todays_pnl()}")
 ```
 
 ---

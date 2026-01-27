@@ -83,7 +83,7 @@ python manage.py shell
 
 In the shell:
 ```python
-from apps.trading.models import HistoricalPrice
+from apps.brokers.models import HistoricalPrice
 print("Model loaded successfully!")
 HistoricalPrice.objects.count()  # Should return 0
 ```
@@ -294,7 +294,7 @@ HISTORICAL_DATA_SETUP.md                   # This file
 ### Django View Integration
 
 ```python
-from apps.trading.models import HistoricalPrice
+from apps.brokers.models import HistoricalPrice
 
 # Get latest 100 daily candles for ITC
 candles = HistoricalPrice.get_latest_data(
@@ -312,7 +312,7 @@ for candle in candles:
 ### Programmatic Data Fetching
 
 ```python
-from apps.trading.models import HistoricalPrice
+from apps.brokers.models import HistoricalPrice
 
 # Fetch and save data
 deleted, created = HistoricalPrice.replace_data(
