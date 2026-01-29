@@ -65,6 +65,10 @@ chroma_db/
 /data/chromadb/*
 /data/backups/*
 
+# Trendlyne data (PDFs downloaded locally, not shared between machines)
+apps/data/tldata/analyst_reports/
+apps/data/debug_screenshots/
+
 # Temporary files
 *.tmp
 *.bak

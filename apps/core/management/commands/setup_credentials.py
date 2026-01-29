@@ -129,7 +129,9 @@ class Command(BaseCommand):
         self.stdout.write('\nYou need:')
         self.stdout.write('1. API Key (from Breeze console)')
         self.stdout.write('2. API Secret (from Breeze console)')
-        self.stdout.write('3. Session Token (from login)')
+        self.stdout.write('3. ICICI Direct User ID (for auto-login)')
+        self.stdout.write('4. ICICI Direct Password (for auto-login)')
+        self.stdout.write('5. Session Token (optional, can use auto-login instead)')
 
         api_key = input("\nEnter API Key: ").strip()
         if not api_key:
@@ -139,7 +141,13 @@ class Command(BaseCommand):
         if not api_secret:
             raise CommandError("API Secret is required")
 
-        session_token = input("Enter Session Token (optional, will prompt on first use): ").strip()
+        self.stdout.write(self.style.WARNING('\n-- Auto-Login Credentials (for automated token refresh) --'))
+        username = input("Enter ICICI Direct User ID (optional, for auto-login): ").strip()
+        password = ""
+        if username:
+            password = getpass.getpass("Enter ICICI Direct Password: ").strip()
+
+        session_token = input("\nEnter Session Token (optional, will prompt on first use): ").strip()
 
         # Create or update credentials
         cred, created = CredentialStore.objects.update_or_create(
@@ -148,6 +156,8 @@ class Command(BaseCommand):
             defaults={
                 'api_key': api_key,
                 'api_secret': api_secret,
+                'username': username or None,
+                'password': password or None,
                 'session_token': session_token or None,
             }
         )
@@ -156,6 +166,12 @@ class Command(BaseCommand):
             self.stdout.write(self.style.SUCCESS(f'\n✅ Breeze credentials created for "{name}"'))
         else:
             self.stdout.write(self.style.SUCCESS(f'\n✅ Breeze credentials updated for "{name}"'))
+
+        if username and password:
+            self.stdout.write(self.style.SUCCESS('✅ Auto-login credentials saved'))
+            self.stdout.write('   You can now use: python manage.py breeze_auto_login')
+        else:
+            self.stdout.write(self.style.WARNING('⚠️  Auto-login not configured (no username/password)'))
 
     def setup_kotakneo(self):
         """Setup Kotak Neo credentials"""

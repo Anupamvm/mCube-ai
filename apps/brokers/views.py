@@ -169,14 +169,57 @@ def breeze_login(request):
                 messages.error(request, f"Error: {str(e)}")
 
     # Check if token is already valid
+    token_valid = False
     try:
         status = get_or_prompt_breeze_token()
         if status == 'ready':
+            token_valid = True
             messages.info(request, "Session token is already valid for today.")
     except:
         pass
 
-    return render(request, 'brokers/breeze_login.html')
+    # Check if auto-login credentials are configured
+    creds = CredentialStore.objects.filter(service='breeze').first()
+    auto_login_available = creds and creds.username and creds.password and creds.api_key
+
+    return render(request, 'brokers/breeze_login.html', {
+        'token_valid': token_valid,
+        'auto_login_available': auto_login_available,
+    })
+
+
+@login_required
+@user_passes_test(is_admin_user, login_url='/brokers/login/')
+def breeze_auto_login(request):
+    """
+    Automated Breeze login using Selenium (Admin only).
+
+    Opens browser, fills credentials, waits for OTP, captures session token.
+    """
+    if request.method != 'POST':
+        return redirect('brokers:breeze_login')
+
+    try:
+        from apps.brokers.services.breeze_auto_login import auto_login_breeze
+
+        # Run the auto-login process
+        success, message = auto_login_breeze(headless=False, timeout=300)
+
+        if success:
+            messages.success(request, message)
+            return redirect('brokers:breeze_data')
+        else:
+            messages.error(request, f"Auto-login failed: {message}")
+
+    except ImportError as e:
+        logger.exception(f"Selenium not installed: {e}")
+        messages.error(request, "Auto-login requires Selenium. Install with: pip install selenium")
+
+    except Exception as e:
+        logger.exception(f"Error in Breeze auto-login: {e}")
+        messages.error(request, f"Auto-login error: {str(e)}")
+
+    return redirect('brokers:breeze_login')
 
 
 @login_required

@@ -21,6 +21,7 @@ urlpatterns = [
 
     # Breeze URLs
     path('breeze/login/', views.breeze_login, name='breeze_login'),
+    path('breeze/auto-login/', views.breeze_auto_login, name='breeze_auto_login'),
     path('breeze/data/', views.breeze_data, name='breeze_data'),
     path('breeze/nifty-quote/', views.nifty_quote, name='nifty_quote'),
     path('breeze/option-chain/', views.breeze_option_chain, name='option_chain'),

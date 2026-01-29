@@ -5,28 +5,89 @@
 {% block content %}
 <div class="card">
     <h2>ICICI Breeze - Session Token</h2>
-    <p>Enter your daily session token from ICICI Direct portal to authenticate with Breeze API.</p>
+
+    {% if token_valid %}
+    <div class="alert alert-success">
+        <strong>Status:</strong> Session token is valid for today.
+        <a href="{% url 'brokers:breeze_data' %}" class="btn btn-sm btn-primary ml-2">View Data</a>
+    </div>
+    {% endif %}
+
+    {% if auto_login_available %}
+    <div class="card mb-4" style="background-color: #f8f9fa; border: 1px solid #28a745;">
+        <div class="card-body">
+            <h4 class="card-title">Automated Login</h4>
+            <p class="card-text">
+                Click the button below to automatically fill in your credentials.
+                A browser window will open where you need to <strong>enter the OTP manually</strong>.
+            </p>
+            <form method="post" action="{% url 'brokers:breeze_auto_login' %}">
+                {% csrf_token %}
+                <button type="submit" class="btn btn-success btn-lg">
+                    <i class="fas fa-magic"></i> Auto Login (Enter OTP in Browser)
+                </button>
+            </form>
+            <small class="text-muted mt-2 d-block">
+                This will open Chrome, fill credentials, and wait for you to enter OTP.
+            </small>
+        </div>
+    </div>
+    {% else %}
+    <div class="alert alert-warning">
+        <strong>Auto-login not configured.</strong>
+        To enable auto-login, run:
+        <code>python manage.py setup_breeze_credentials</code>
+        or manually add username/password in CredentialStore for 'breeze' service.
+    </div>
+    {% endif %}
+
+    <hr>
+
+    <h4>Manual Token Entry</h4>
+    <p>Alternatively, enter your daily session token from ICICI Direct portal:</p>
 
     <form method="post">
         {% csrf_token %}
         <div class="form-group">
             <label for="session_token">Session Token:</label>
-            <input type="text" id="session_token" name="session_token" required
-                   placeholder="Enter session token from ICICI portal">
+            <input type="text" id="session_token" name="session_token" class="form-control"
+                   required placeholder="Enter session token from ICICI portal">
         </div>
 
-        <button type="submit" class="btn btn-success">Save Token</button>
+        <button type="submit" class="btn btn-primary">Save Token</button>
     </form>
 </div>
 
-<div class="card">
-    <h3>How to get Session Token</h3>
+<div class="card mt-4">
+    <h3>How to get Session Token Manually</h3>
     <ol>
-        <li>Login to ICICI Direct portal (https://secure.icicidirect.com)</li>
-        <li>Navigate to API section or developer console</li>
-        <li>Generate a new session token for today</li>
-        <li>Copy the token and paste it above</li>
-        <li>Note: Session tokens expire daily and must be refreshed</li>
+        <li>Go to: <a href="https://api.icicidirect.com/apiuser/login" target="_blank">https://api.icicidirect.com/apiuser/login</a></li>
+        <li>Login with your ICICI Direct credentials</li>
+        <li>Enter the OTP sent to your registered mobile</li>
+        <li>After successful login, you'll be redirected to a URL like:<br>
+            <code>https://127.0.0.1/?apisession=XXXXXXXX</code></li>
+        <li>Copy the value after <code>apisession=</code> and paste it above</li>
+        <li><strong>Note:</strong> Session tokens expire daily and must be refreshed each day</li>
     </ol>
 </div>
+
+{% if not auto_login_available %}
+<div class="card mt-4">
+    <h3>Setup Auto-Login</h3>
+    <p>To enable automated login (fills credentials, you only enter OTP):</p>
+    <ol>
+        <li>Ensure your Breeze credentials are stored in the database</li>
+        <li>Run: <code>python manage.py setup_credentials --setup-breeze</code></li>
+        <li>When prompted, enter your:
+            <ul>
+                <li>API Key (from ICICI API portal)</li>
+                <li>API Secret</li>
+                <li>ICICI Direct User ID (login username)</li>
+                <li>ICICI Direct Password</li>
+            </ul>
+        </li>
+        <li>Chrome browser must be installed on this machine</li>
+    </ol>
+</div>
+{% endif %}
 {% endblock %}

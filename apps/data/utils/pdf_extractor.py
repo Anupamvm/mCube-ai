@@ -9,7 +9,51 @@ import logging
 import os
 from typing import Optional, Tuple
 
+from django.conf import settings
+
 logger = logging.getLogger(__name__)
+
+
+def _resolve_pdf_path(pdf_path: str) -> str:
+    """
+    Resolve PDF path to handle absolute paths from different machines.
+
+    If the exact path doesn't exist, tries to find the file relative to BASE_DIR
+    by extracting the relative portion from the path.
+
+    Args:
+        pdf_path: Original path (may be from another machine)
+
+    Returns:
+        Resolved path that exists, or original path if not found
+    """
+    if not pdf_path:
+        return pdf_path
+
+    # If path exists as-is, return it
+    if os.path.exists(pdf_path):
+        return pdf_path
+
+    # Try to extract relative path and resolve from BASE_DIR
+    # Look for common markers in the path
+    markers = ['apps/data/tldata/', 'mCube-ai/apps/data/tldata/']
+
+    for marker in markers:
+        if marker in pdf_path:
+            # Extract the relative part starting from apps/data/tldata/
+            idx = pdf_path.find(marker)
+            if marker.startswith('mCube-ai/'):
+                relative_path = pdf_path[idx + len('mCube-ai/'):]
+            else:
+                relative_path = pdf_path[idx:]
+
+            resolved = os.path.join(settings.BASE_DIR, relative_path)
+            if os.path.exists(resolved):
+                logger.debug(f"Resolved PDF path: {pdf_path} -> {resolved}")
+                return resolved
+
+    # Return original path if resolution failed
+    return pdf_path
 
 
 def extract_pdf_text(pdf_path: str, max_pages: int = 50) -> Tuple[bool, str, dict]:
@@ -26,7 +70,10 @@ def extract_pdf_text(pdf_path: str, max_pages: int = 50) -> Tuple[bool, str, dic
         - extracted_text: The extracted text content
         - metadata: dict with page_count, char_count, etc.
     """
-    if not pdf_path or not os.path.exists(pdf_path):
+    # Resolve path to handle different machines
+    resolved_path = _resolve_pdf_path(pdf_path)
+
+    if not resolved_path or not os.path.exists(resolved_path):
         logger.error(f"PDF file not found: {pdf_path}")
         return False, "", {"error": "File not found"}
 
@@ -41,11 +88,11 @@ def extract_pdf_text(pdf_path: str, max_pages: int = 50) -> Tuple[bool, str, dic
         metadata = {
             "page_count": 0,
             "char_count": 0,
-            "file_size": os.path.getsize(pdf_path),
-            "file_path": pdf_path,
+            "file_size": os.path.getsize(resolved_path),
+            "file_path": resolved_path,
         }
 
-        with pdfplumber.open(pdf_path) as pdf:
+        with pdfplumber.open(resolved_path) as pdf:
             metadata["page_count"] = len(pdf.pages)
             pages_to_process = min(len(pdf.pages), max_pages)
 
@@ -63,14 +110,14 @@ def extract_pdf_text(pdf_path: str, max_pages: int = 50) -> Tuple[bool, str, dic
         metadata["pages_processed"] = pages_to_process
 
         if not extracted_text:
-            logger.warning(f"No text extracted from PDF: {pdf_path}")
+            logger.warning(f"No text extracted from PDF: {resolved_path}")
             return False, "", {**metadata, "error": "No text content found"}
 
-        logger.info(f"Extracted {metadata['char_count']} chars from {pages_to_process} pages: {pdf_path}")
+        logger.info(f"Extracted {metadata['char_count']} chars from {pages_to_process} pages: {resolved_path}")
         return True, extracted_text, metadata
 
     except Exception as e:
-        logger.error(f"Error extracting text from PDF {pdf_path}: {e}", exc_info=True)
+        logger.error(f"Error extracting text from PDF {resolved_path}: {e}", exc_info=True)
         return False, "", {"error": str(e)}
 
 
@@ -122,7 +169,10 @@ def get_pdf_info(pdf_path: str) -> dict:
     Returns:
         dict with page_count, file_size, etc.
     """
-    if not pdf_path or not os.path.exists(pdf_path):
+    # Resolve path to handle different machines
+    resolved_path = _resolve_pdf_path(pdf_path)
+
+    if not resolved_path or not os.path.exists(resolved_path):
         return {"error": "File not found"}
 
     try:
@@ -132,12 +182,12 @@ def get_pdf_info(pdf_path: str) -> dict:
 
     try:
         info = {
-            "file_path": pdf_path,
-            "file_size": os.path.getsize(pdf_path),
-            "file_name": os.path.basename(pdf_path),
+            "file_path": resolved_path,
+            "file_size": os.path.getsize(resolved_path),
+            "file_name": os.path.basename(resolved_path),
         }
 
-        with pdfplumber.open(pdf_path) as pdf:
+        with pdfplumber.open(resolved_path) as pdf:
             info["page_count"] = len(pdf.pages)
             if pdf.metadata:
                 info["title"] = pdf.metadata.get("Title", "")

@@ -42,6 +42,7 @@ def get_historical_news_analysis(stock_symbol: str, stock_name: str = None, indu
     from django.db.models import Q
     from datetime import timedelta
     from django.utils import timezone
+    from django.conf import settings
 
     try:
         # Look back 7 days for relevant news
@@ -50,32 +51,61 @@ def get_historical_news_analysis(stock_symbol: str, stock_name: str = None, indu
         # Build query for stock-related news
         query = Q(published_at__gte=cutoff_date) & Q(processed=True)
 
-        # Filter by stock symbol in symbols_mentioned or search_keywords
-        symbol_filter = Q(symbols_mentioned__contains=[stock_symbol])
+        # Check if using PostgreSQL (supports __contains on JSONField)
+        db_engine = settings.DATABASES['default']['ENGINE']
+        is_postgres = 'postgresql' in db_engine
 
-        # Also search in search_keywords for the stock symbol/name
-        keyword_filter = Q(search_keywords__contains=[stock_symbol])
-        if stock_name:
-            keyword_filter |= Q(search_keywords__contains=[stock_name])
+        if is_postgres:
+            # PostgreSQL supports __contains on JSONField arrays
+            symbol_filter = Q(symbols_mentioned__contains=[stock_symbol])
+            keyword_filter = Q(search_keywords__contains=[stock_symbol])
+            if stock_name:
+                keyword_filter |= Q(search_keywords__contains=[stock_name])
 
-        # Combine filters - get stock-specific news
-        articles = NewsArticle.objects.filter(
-            query & (symbol_filter | keyword_filter)
-        ).exclude(
-            sentiment_score__isnull=True
-        ).order_by('sentiment_score')[:limit * 2]  # Get more to filter
-
-        # If not enough stock-specific news, include industry news
-        if len(articles) < limit and industry_name:
-            industry_articles = NewsArticle.objects.filter(
-                query & Q(sectors_mentioned__contains=[industry_name])
+            # Combine filters - get stock-specific news
+            articles = NewsArticle.objects.filter(
+                query & (symbol_filter | keyword_filter)
             ).exclude(
                 sentiment_score__isnull=True
-            ).exclude(
-                id__in=[a.id for a in articles]
-            ).order_by('sentiment_score')[:limit]
+            ).order_by('sentiment_score')[:limit * 2]
 
-            articles = list(articles) + list(industry_articles)
+            # If not enough stock-specific news, include industry news
+            if len(articles) < limit and industry_name:
+                industry_articles = NewsArticle.objects.filter(
+                    query & Q(sectors_mentioned__contains=[industry_name])
+                ).exclude(
+                    sentiment_score__isnull=True
+                ).exclude(
+                    id__in=[a.id for a in articles]
+                ).order_by('sentiment_score')[:limit]
+
+                articles = list(articles) + list(industry_articles)
+        else:
+            # SQLite fallback: use __icontains on text representation
+            # This searches for the symbol as a substring in the JSON field
+            symbol_filter = Q(symbols_mentioned__icontains=stock_symbol)
+            keyword_filter = Q(search_keywords__icontains=stock_symbol)
+            if stock_name:
+                keyword_filter |= Q(search_keywords__icontains=stock_name)
+
+            # Combine filters - get stock-specific news
+            articles = NewsArticle.objects.filter(
+                query & (symbol_filter | keyword_filter)
+            ).exclude(
+                sentiment_score__isnull=True
+            ).order_by('sentiment_score')[:limit * 2]
+
+            # If not enough stock-specific news, include industry news
+            if len(articles) < limit and industry_name:
+                industry_articles = NewsArticle.objects.filter(
+                    query & Q(sectors_mentioned__icontains=industry_name)
+                ).exclude(
+                    sentiment_score__isnull=True
+                ).exclude(
+                    id__in=[a.id for a in articles]
+                ).order_by('sentiment_score')[:limit]
+
+                articles = list(articles) + list(industry_articles)
 
         # Also include high-impact market news
         market_articles = NewsArticle.objects.filter(
