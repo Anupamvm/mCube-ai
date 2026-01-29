@@ -1,615 +1,409 @@
 {% extends 'analytics/base.html' %}
 
-{% block title %}Learning Dashboard - mCube Analytics{% endblock %}
+{% block title %}Trading Dashboard - mCube{% endblock %}
 
 {% block content %}
 
-<!-- P&L Dashboard Section -->
-<div class="card" id="pnl-dashboard">
-    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-        <h2>Real-Time P&L Dashboard</h2>
-        <button id="refresh-pnl" class="btn btn-success">Refresh P&L Data</button>
+<!-- Quick Stats Row -->
+<div class="stat-grid" style="margin-bottom: 24px;">
+    <div class="stat-card">
+        <div class="stat-label">Open Positions</div>
+        <div class="stat-value" id="count-open">--</div>
     </div>
-
-    <div id="pnl-loading" style="text-align: center; padding: 40px; display: none;">
-        <div style="font-size: 18px; color: #666;">Loading P&L data...</div>
+    <div class="stat-card">
+        <div class="stat-label">Suggestions</div>
+        <div class="stat-value" id="count-suggestions">--</div>
     </div>
-
-    <!-- Account Summary Cards -->
-    <div id="account-summary-container"></div>
-
-    <!-- Strategy-Level P&L -->
-    <div class="card" style="margin-top: 20px;" id="strategy-pnl-section">
-        <h3>Strategy Performance</h3>
-        <div id="strategy-chart-container" style="margin-bottom: 20px;">
-            <canvas id="strategyPnlChart" style="max-height: 300px;"></canvas>
-        </div>
-        <div id="strategy-table-container"></div>
+    <div class="stat-card">
+        <div class="stat-label">Today's P&L</div>
+        <div class="stat-value" id="todays-pnl">--</div>
     </div>
-
-    <!-- Active Positions -->
-    <div class="card" style="margin-top: 20px;" id="active-positions-section">
-        <h3>Active Positions</h3>
-        <div id="active-positions-container"></div>
-    </div>
-
-    <!-- Daily P&L Chart -->
-    <div class="card" style="margin-top: 20px;">
-        <h3>Daily P&L Trend (Last 30 Days)</h3>
-        <canvas id="dailyPnlChart" style="max-height: 300px;"></canvas>
-    </div>
-
-    <!-- Weekly P&L Chart -->
-    <div class="card" style="margin-top: 20px;">
-        <h3>Weekly P&L Performance</h3>
-        <canvas id="weeklyPnlChart" style="max-height: 300px;"></canvas>
+    <div class="stat-card">
+        <div class="stat-label">Total Trades</div>
+        <div class="stat-value" id="count-closed">--</div>
     </div>
 </div>
 
-<!-- Learning Dashboard Section -->
+<!-- Sync Controls -->
+<div class="card" style="margin-bottom: 24px; padding: 16px;">
+    <div style="display: flex; justify-content: space-between; align-items: center;">
+        <div>
+            <strong>Broker Sync</strong>
+            <span id="sync-status" style="margin-left: 12px; color: #718096; font-size: 13px;">Last sync: Never</span>
+        </div>
+        <div style="display: flex; gap: 12px;">
+            <button id="btn-sync" class="btn btn-success" onclick="syncPositions(false)">
+                Sync from Brokers
+            </button>
+            <button id="btn-clear-sync" class="btn btn-warning" onclick="syncPositions(true)">
+                Clear & Sync
+            </button>
+        </div>
+    </div>
+    <div id="sync-result" style="margin-top: 12px; display: none;"></div>
+</div>
+
+<!-- Section 1: Open Positions (from Brokers) -->
+<div class="card" id="open-positions-card">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+        <h3 style="margin: 0;">Open Positions</h3>
+        <span class="badge badge-info" id="open-count-badge">0</span>
+    </div>
+    <div id="open-positions-container">
+        <div style="text-align: center; padding: 40px; color: #718096;">Loading...</div>
+    </div>
+</div>
+
+<!-- Section 2: System Suggestions -->
+<div class="card" id="suggestions-card">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+        <h3 style="margin: 0;">System Suggestions</h3>
+        <span class="badge badge-warning" id="suggestions-count-badge">0</span>
+    </div>
+    <div id="suggestions-container">
+        <div style="text-align: center; padding: 40px; color: #718096;">Loading...</div>
+    </div>
+</div>
+
+<!-- Section 3: Trade History -->
+<div class="card" id="history-card">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+        <h3 style="margin: 0;">Trade History</h3>
+        <span class="badge badge-secondary" id="history-count-badge">0</span>
+    </div>
+    <div id="history-container">
+        <div style="text-align: center; padding: 40px; color: #718096;">Loading...</div>
+    </div>
+</div>
+
+<!-- Learning Engine (Collapsible) -->
 <div class="card">
-    <h2>Learning Engine Control</h2>
-
-    {% if active_session %}
-    <div style="background-color: #d4edda; padding: 15px; border-radius: 4px; margin-bottom: 20px;">
-        <strong>Active Session:</strong> {{ active_session.name }}
-        <br>
-        <strong>Status:</strong> <span class="badge badge-success">{{ active_session.status }}</span>
-        <br>
-        <strong>Started:</strong> {{ active_session.started_at|date:"Y-m-d H:i:s" }}
+    <div style="display: flex; justify-content: space-between; align-items: center; cursor: pointer;" onclick="toggleSection('learning')">
+        <h3 style="margin: 0;">Learning Engine</h3>
+        <span id="learning-toggle" style="font-size: 20px;">+</span>
     </div>
 
-    {% if user.is_superuser %}
-    <form method="post" action="{% url 'analytics:stop_learning' active_session.id %}" style="display: inline;">
-        {% csrf_token %}
-        <button type="submit" class="btn btn-danger">Stop Learning</button>
-    </form>
-    <form method="post" action="{% url 'analytics:pause_learning' active_session.id %}" style="display: inline; margin-left: 10px;">
-        {% csrf_token %}
-        <button type="submit" class="btn btn-warning">Pause Learning</button>
-    </form>
-    {% endif %}
-
-    {% elif recent_session and recent_session.status == 'PAUSED' %}
-    <div style="background-color: #fff3cd; padding: 15px; border-radius: 4px; margin-bottom: 20px;">
-        <strong>Paused Session:</strong> {{ recent_session.name }}
-        <br>
-        <strong>Status:</strong> <span class="badge badge-warning">{{ recent_session.status }}</span>
-    </div>
-
-    {% if user.is_superuser %}
-    <form method="post" action="{% url 'analytics:resume_learning' recent_session.id %}" style="display: inline;">
-        {% csrf_token %}
-        <button type="submit" class="btn btn-success">Resume Learning</button>
-    </form>
-    <form method="post" action="{% url 'analytics:stop_learning' recent_session.id %}" style="display: inline; margin-left: 10px;">
-        {% csrf_token %}
-        <button type="submit" class="btn btn-danger">Stop Learning</button>
-    </form>
-    {% endif %}
-
-    {% else %}
-    <div style="background-color: #e2e8f0; padding: 15px; border-radius: 4px; margin-bottom: 20px;">
-        <strong>No active learning session</strong>
-    </div>
-
-    {% if user.is_superuser %}
-        {% if can_start_learning %}
-        <form method="post" action="{% url 'analytics:start_learning' %}" style="margin-bottom: 20px;">
+    <div id="learning-content" style="display: none; margin-top: 16px;">
+        {% if active_session %}
+        <div style="display: flex; align-items: center; gap: 16px; padding: 12px; background: #d4edda; border-radius: 6px; margin-bottom: 16px;">
+            <span class="badge badge-success">RUNNING</span>
+            <span><strong>{{ active_session.name }}</strong></span>
+            <span style="color: #718096; font-size: 13px;">Started {{ active_session.started_at|date:"M d, H:i" }}</span>
+            {% if user.is_superuser %}
+            <div style="margin-left: auto; display: flex; gap: 8px;">
+                <form method="post" action="{% url 'analytics:stop_learning' active_session.id %}" style="margin: 0;">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-sm btn-danger">Stop</button>
+                </form>
+            </div>
+            {% endif %}
+        </div>
+        {% else %}
+        <div style="padding: 12px; background: #e2e8f0; border-radius: 6px; margin-bottom: 16px;">
+            <span style="color: #718096;">No active learning session</span>
+        </div>
+        {% if user.is_superuser and can_start_learning %}
+        <form method="post" action="{% url 'analytics:start_learning' %}" style="display: flex; gap: 12px; align-items: end;">
             {% csrf_token %}
-            <div class="form-group">
-                <label for="name">Session Name:</label>
-                <input type="text" id="name" name="name" placeholder="Learning Session {{ recent_session.id|add:1|default:1 }}" class="form-control">
+            <div style="flex: 1;">
+                <input type="text" id="name" name="name" placeholder="Session name" class="form-control">
             </div>
             <button type="submit" class="btn btn-success">Start Learning</button>
         </form>
-        {% else %}
-        <div style="background-color: #fed7d7; padding: 15px; border-radius: 4px; margin-top: 20px;">
-            Need at least 10 closed trades to start learning. Currently have {{ total_trades }} trades.
+        {% endif %}
+        {% endif %}
+
+        {% if patterns %}
+        <div style="margin-top: 20px;">
+            <h4>Recent Patterns</h4>
+            <table>
+                <thead><tr><th>Pattern</th><th>Type</th><th>Success</th><th>Confidence</th></tr></thead>
+                <tbody>
+                {% for pattern in patterns|slice:":5" %}
+                <tr>
+                    <td>{{ pattern.name }}</td>
+                    <td><span class="badge badge-info">{{ pattern.pattern_type }}</span></td>
+                    <td>{{ pattern.success_rate|floatformat:1 }}%</td>
+                    <td>{{ pattern.confidence_score|floatformat:0 }}%</td>
+                </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+            <a href="{% url 'analytics:view_patterns' %}" style="font-size: 13px;">View all patterns &rarr;</a>
         </div>
         {% endif %}
-    {% endif %}
-    {% endif %}
-</div>
-
-<div class="stat-grid">
-    <div class="stat-card">
-        <div class="stat-label">Total Trades</div>
-        <div class="stat-value">{{ total_trades }}</div>
-    </div>
-    <div class="stat-card">
-        <div class="stat-label">Analyzed Trades</div>
-        <div class="stat-value">{{ analyzed_trades }}</div>
-    </div>
-    <div class="stat-card">
-        <div class="stat-label">Patterns Found</div>
-        <div class="stat-value">{{ patterns|length }}</div>
-    </div>
-    <div class="stat-card">
-        <div class="stat-label">Pending Suggestions</div>
-        <div class="stat-value">{{ suggestions|length }}</div>
     </div>
 </div>
-
-{% if recent_session %}
-<div class="card">
-    <h2>Session Statistics</h2>
-    <table>
-        <tr>
-            <th>Metric</th>
-            <th>Value</th>
-        </tr>
-        <tr>
-            <td>Trades Analyzed</td>
-            <td>{{ recent_session.trades_analyzed }}</td>
-        </tr>
-        <tr>
-            <td>Patterns Discovered</td>
-            <td>{{ recent_session.patterns_discovered }}</td>
-        </tr>
-        <tr>
-            <td>Parameters Adjusted</td>
-            <td>{{ recent_session.parameters_adjusted }}</td>
-        </tr>
-        {% if recent_session.pre_learning_win_rate %}
-        <tr>
-            <td>Pre-Learning Win Rate</td>
-            <td>{{ recent_session.pre_learning_win_rate }}%</td>
-        </tr>
-        {% endif %}
-        {% if recent_session.post_learning_win_rate %}
-        <tr>
-            <td>Post-Learning Win Rate</td>
-            <td>{{ recent_session.post_learning_win_rate }}%</td>
-        </tr>
-        {% endif %}
-        {% if recent_session.improvement_pct %}
-        <tr>
-            <td>Improvement</td>
-            <td>{{ recent_session.improvement_pct }}%</td>
-        </tr>
-        {% endif %}
-    </table>
-</div>
-{% endif %}
-
-{% if patterns %}
-<div class="card">
-    <h2>Recent Patterns Discovered</h2>
-    <table>
-        <thead>
-            <tr>
-                <th>Pattern</th>
-                <th>Type</th>
-                <th>Success Rate</th>
-                <th>Confidence</th>
-                <th>Actionable</th>
-                <th>Action</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for pattern in patterns %}
-            <tr>
-                <td><strong>{{ pattern.name }}</strong></td>
-                <td><span class="badge badge-info">{{ pattern.pattern_type }}</span></td>
-                <td>{{ pattern.success_rate }}%</td>
-                <td>{{ pattern.confidence_score }}%</td>
-                <td>
-                    {% if pattern.is_actionable %}
-                    <span class="badge badge-success">Yes</span>
-                    {% else %}
-                    <span class="badge badge-warning">No</span>
-                    {% endif %}
-                </td>
-                <td>
-                    <a href="{% url 'analytics:view_pattern_detail' pattern.id %}" class="btn btn-sm">View</a>
-                </td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
-    <div style="margin-top: 15px;">
-        <a href="{% url 'analytics:view_patterns' %}" class="btn">View All Patterns</a>
-    </div>
-</div>
-{% endif %}
-
-{% if suggestions %}
-{% if user.is_superuser %}
-<div class="card">
-    <h2>Pending Suggestions</h2>
-    <table>
-        <thead>
-            <tr>
-                <th>Parameter</th>
-                <th>Current</th>
-                <th>Suggested</th>
-                <th>Expected Improvement</th>
-                <th>Confidence</th>
-                <th>Risk</th>
-                <th>Action</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for suggestion in suggestions %}
-            <tr>
-                <td><strong>{{ suggestion.parameter_name }}</strong></td>
-                <td>{{ suggestion.current_value }}</td>
-                <td>{{ suggestion.suggested_value }}</td>
-                <td>+{{ suggestion.expected_improvement_pct }}%</td>
-                <td>{{ suggestion.confidence }}%</td>
-                <td><span class="badge badge-{% if suggestion.risk_level == 'LOW' %}success{% elif suggestion.risk_level == 'MEDIUM' %}warning{% else %}danger{% endif %}">{{ suggestion.risk_level }}</span></td>
-                <td>
-                    <form method="post" action="{% url 'analytics:approve_suggestion' suggestion.id %}" style="display: inline;">
-                        {% csrf_token %}
-                        <button type="submit" class="btn btn-success btn-sm">Approve</button>
-                    </form>
-                    <form method="post" action="{% url 'analytics:reject_suggestion' suggestion.id %}" style="display: inline;">
-                        {% csrf_token %}
-                        <button type="submit" class="btn btn-danger btn-sm">Reject</button>
-                    </form>
-                </td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
-    <div style="margin-top: 15px;">
-        <a href="{% url 'analytics:view_suggestions' %}" class="btn">View All Suggestions</a>
-    </div>
-</div>
-{% endif %}
-{% endif %}
-
-{% if recent_metrics %}
-<div class="card">
-    <h2>Recent Performance Metrics</h2>
-    <table>
-        <thead>
-            <tr>
-                <th>Metric Type</th>
-                <th>Value</th>
-                <th>Time Period</th>
-                <th>Calculated</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for metric in recent_metrics %}
-            <tr>
-                <td>{{ metric.get_metric_type_display }}</td>
-                <td><strong>{{ metric.metric_value }}</strong></td>
-                <td>{{ metric.time_period|default:"All Time" }}</td>
-                <td>{{ metric.calculation_date|date:"Y-m-d H:i" }}</td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
-</div>
-{% endif %}
 
 {% endblock %}
 
 {% block extra_js %}
 <script>
-// P&L Dashboard JavaScript
-let dailyPnlChart, weeklyPnlChart, strategyPnlChart;
+function toggleSection(section) {
+    const content = document.getElementById(section + '-content');
+    const toggle = document.getElementById(section + '-toggle');
+    if (content.style.display === 'none') {
+        content.style.display = 'block';
+        toggle.textContent = '−';
+    } else {
+        content.style.display = 'none';
+        toggle.textContent = '+';
+    }
+}
 
-// Function to fetch and display P&L data
-function loadPnlData() {
-    const loadingDiv = document.getElementById('pnl-loading');
-    loadingDiv.style.display = 'block';
+function formatDate(dateStr) {
+    if (!dateStr) return '-';
+    const d = new Date(dateStr);
+    return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+}
 
-    fetch('{% url "analytics:api_pnl_data" %}')
+function formatDateShort(dateStr) {
+    if (!dateStr) return '-';
+    const d = new Date(dateStr);
+    return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short' });
+}
+
+function syncPositions(clearFirst) {
+    const btn = document.getElementById(clearFirst ? 'btn-clear-sync' : 'btn-sync');
+    const resultDiv = document.getElementById('sync-result');
+
+    btn.disabled = true;
+    btn.textContent = 'Syncing...';
+    resultDiv.style.display = 'none';
+
+    const formData = new FormData();
+    formData.append('clear', clearFirst ? 'true' : 'false');
+
+    fetch('{% url "analytics:api_sync_positions" %}', {
+        method: 'POST',
+        headers: {
+            'X-CSRFToken': '{{ csrf_token }}'
+        },
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+        btn.disabled = false;
+        btn.textContent = clearFirst ? 'Clear & Sync' : 'Sync from Brokers';
+
+        if (data.success) {
+            resultDiv.style.display = 'block';
+            resultDiv.style.background = '#d4edda';
+            resultDiv.style.padding = '12px';
+            resultDiv.style.borderRadius = '6px';
+            resultDiv.innerHTML = `
+                <strong>Sync complete!</strong>
+                Accounts: ${data.accounts_synced} |
+                Created: ${data.positions_created} |
+                Updated: ${data.positions_updated} |
+                Closed: ${data.positions_closed} |
+                History: ${data.history_synced || 0}
+            `;
+            document.getElementById('sync-status').textContent = 'Last sync: Just now';
+            loadPositionsData();
+        } else {
+            resultDiv.style.display = 'block';
+            resultDiv.style.background = '#fed7d7';
+            resultDiv.style.padding = '12px';
+            resultDiv.style.borderRadius = '6px';
+            resultDiv.innerHTML = `<strong>Sync failed:</strong> ${data.error || data.errors.join(', ')}`;
+        }
+    })
+    .catch(error => {
+        btn.disabled = false;
+        btn.textContent = clearFirst ? 'Clear & Sync' : 'Sync from Brokers';
+        resultDiv.style.display = 'block';
+        resultDiv.style.background = '#fed7d7';
+        resultDiv.style.padding = '12px';
+        resultDiv.innerHTML = `<strong>Error:</strong> ${error.message}`;
+    });
+}
+
+function loadPositionsData() {
+    fetch('{% url "analytics:api_positions_data" %}')
         .then(response => response.json())
         .then(data => {
-            loadingDiv.style.display = 'none';
+            if (data.success) {
+                // Update counts
+                document.getElementById('count-open').textContent = data.counts.open;
+                document.getElementById('count-suggestions').textContent = data.counts.suggested;
+                document.getElementById('count-closed').textContent = data.counts.closed;
 
-            if (data.success && data.accounts && data.accounts.length > 0) {
-                // Render account summaries
-                renderAccountSummaries(data.accounts);
+                document.getElementById('open-count-badge').textContent = data.counts.open;
+                document.getElementById('suggestions-count-badge').textContent = data.counts.suggested;
+                document.getElementById('history-count-badge').textContent = data.counts.closed;
 
-                // Render charts for first account
-                const firstAccount = data.accounts[0];
-                renderStrategyChart(firstAccount.strategy_summary);
-                renderActivePositions(firstAccount.active_positions);
-                renderDailyPnlChart(firstAccount.daily_pnl);
-                renderWeeklyPnlChart(firstAccount.weekly_pnl);
-            } else {
-                document.getElementById('account-summary-container').innerHTML =
-                    '<div style="padding: 20px; text-align: center; color: #666;">No P&L data available. Create some positions to see data here.</div>';
+                // Render sections
+                renderOpenPositions(data.open_positions);
+                renderSuggestions(data.suggestions);
+                renderTradeHistory(data.trade_history);
             }
         })
         .catch(error => {
-            loadingDiv.style.display = 'none';
-            console.error('Error loading P&L data:', error);
-            document.getElementById('account-summary-container').innerHTML =
-                '<div style="padding: 20px; text-align: center; color: #e53e3e;">Error loading P&L data. Please try again.</div>';
+            console.error('Error loading positions:', error);
+        });
+
+    // Also load P&L data for today's P&L
+    fetch('{% url "analytics:api_pnl_data" %}')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success && data.accounts && data.accounts.length > 0) {
+                const summary = data.accounts[0].account_summary;
+                const todaysPnl = summary.todays_pnl || 0;
+                const pnlColor = todaysPnl >= 0 ? '#48bb78' : '#f56565';
+                document.getElementById('todays-pnl').innerHTML =
+                    `<span style="color: ${pnlColor}">${summary.todays_pnl_formatted}</span>`;
+            }
         });
 }
 
-// Render account summary cards
-function renderAccountSummaries(accounts) {
-    const container = document.getElementById('account-summary-container');
-    let html = '';
+function renderOpenPositions(positions) {
+    const container = document.getElementById('open-positions-container');
 
-    accounts.forEach(accountData => {
-        const summary = accountData.account_summary;
-        const pnlClass = summary.total_pnl >= 0 ? 'success' : 'danger';
-        const todaysPnlClass = summary.todays_pnl >= 0 ? 'success' : 'danger';
-
-        html += `
-            <div class="card" style="margin-bottom: 20px;">
-                <h3 style="margin-top: 0;">${summary.account_name} (${summary.broker})</h3>
-
-                <div class="stat-grid">
-                    <div class="stat-card">
-                        <div class="stat-label">Total P&L</div>
-                        <div class="stat-value" style="color: ${summary.total_pnl >= 0 ? '#48bb78' : '#f56565'};">
-                            ${summary.total_pnl_formatted}
-                        </div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-label">Today's P&L</div>
-                        <div class="stat-value" style="color: ${summary.todays_pnl >= 0 ? '#48bb78' : '#f56565'};">
-                            ${summary.todays_pnl_formatted}
-                        </div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-label">Realized P&L</div>
-                        <div class="stat-value" style="color: ${summary.realized_pnl >= 0 ? '#48bb78' : '#f56565'};">
-                            ${summary.realized_pnl_formatted}
-                        </div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-label">Unrealized P&L</div>
-                        <div class="stat-value" style="color: ${summary.unrealized_pnl >= 0 ? '#48bb78' : '#f56565'};">
-                            ${summary.unrealized_pnl_formatted}
-                        </div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-label">Win Rate</div>
-                        <div class="stat-value">${summary.win_rate_formatted}</div>
-                        <div style="font-size: 12px; color: #718096;">${summary.winning_trades}W / ${summary.losing_trades}L</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-label">Active Positions</div>
-                        <div class="stat-value">${summary.active_positions_count}</div>
-                    </div>
-                </div>
-            </div>
-        `;
-    });
-
-    container.innerHTML = html;
-}
-
-// Render strategy performance chart
-function renderStrategyChart(strategies) {
-    if (!strategies || strategies.length === 0) {
-        document.getElementById('strategy-pnl-section').style.display = 'none';
-        return;
-    }
-
-    const ctx = document.getElementById('strategyPnlChart');
-
-    // Destroy existing chart
-    if (strategyPnlChart) {
-        strategyPnlChart.destroy();
-    }
-
-    const labels = strategies.map(s => s.strategy_type);
-    const pnlData = strategies.map(s => s.total_pnl);
-    const colors = pnlData.map(val => val >= 0 ? 'rgba(72, 187, 120, 0.7)' : 'rgba(245, 101, 101, 0.7)');
-
-    strategyPnlChart = new Chart(ctx, {
-        type: 'bar',
-        data: {
-            labels: labels,
-            datasets: [{
-                label: 'Total P&L',
-                data: pnlData,
-                backgroundColor: colors,
-                borderColor: colors.map(c => c.replace('0.7', '1')),
-                borderWidth: 1
-            }]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: true,
-            plugins: {
-                legend: { display: false },
-                title: { display: false }
-            },
-            scales: {
-                y: { beginAtZero: true }
-            }
-        }
-    });
-
-    // Render strategy table
-    let tableHtml = `
-        <table>
-            <thead>
-                <tr>
-                    <th>Strategy</th>
-                    <th>Total P&L</th>
-                    <th>Realized</th>
-                    <th>Unrealized</th>
-                    <th>Active</th>
-                    <th>Closed</th>
-                    <th>Win Rate</th>
-                </tr>
-            </thead>
-            <tbody>
-    `;
-
-    strategies.forEach(s => {
-        const pnlColor = s.total_pnl >= 0 ? '#48bb78' : '#f56565';
-        tableHtml += `
-            <tr>
-                <td><strong>${s.strategy_type}</strong></td>
-                <td style="color: ${pnlColor}; font-weight: bold;">${s.total_pnl_formatted}</td>
-                <td>${s.realized_pnl_formatted}</td>
-                <td>${s.unrealized_pnl_formatted}</td>
-                <td>${s.active_positions}</td>
-                <td>${s.closed_positions}</td>
-                <td>${s.win_rate_formatted}</td>
-            </tr>
-        `;
-    });
-
-    tableHtml += '</tbody></table>';
-    document.getElementById('strategy-table-container').innerHTML = tableHtml;
-}
-
-// Render active positions
-function renderActivePositions(positions) {
     if (!positions || positions.length === 0) {
-        document.getElementById('active-positions-section').style.display = 'none';
+        container.innerHTML = '<div style="text-align: center; padding: 30px; color: #718096;">No open positions. Click "Sync from Brokers" to fetch latest data.</div>';
         return;
     }
 
-    let html = `
-        <table>
-            <thead>
-                <tr>
-                    <th>Instrument</th>
-                    <th>Direction</th>
-                    <th>Qty</th>
-                    <th>Entry</th>
-                    <th>Current</th>
-                    <th>P&L</th>
-                    <th>P&L %</th>
-                    <th>Entry Time</th>
-                </tr>
-            </thead>
-            <tbody>
-    `;
+    let html = `<table>
+        <thead>
+            <tr>
+                <th>Entry Date</th>
+                <th>Instrument</th>
+                <th>Direction</th>
+                <th>Qty</th>
+                <th>Entry</th>
+                <th>LTP</th>
+                <th>P&L</th>
+                <th>Broker</th>
+            </tr>
+        </thead>
+        <tbody>`;
 
     positions.forEach(pos => {
-        const pnlColor = pos.pnl >= 0 ? '#48bb78' : '#f56565';
-        const directionBadge = pos.direction === 'LONG' ? 'success' : (pos.direction === 'SHORT' ? 'danger' : 'warning');
+        const pnlColor = pos.unrealized_pnl >= 0 ? '#48bb78' : '#f56565';
+        const dirBadge = pos.direction === 'LONG' ? 'success' : 'danger';
 
-        html += `
-            <tr>
-                <td><strong>${pos.instrument}</strong></td>
-                <td><span class="badge badge-${directionBadge}">${pos.direction}</span></td>
-                <td>${pos.quantity} x ${pos.lot_size}</td>
-                <td>Rs.${pos.entry_price.toFixed(2)}</td>
-                <td>Rs.${pos.current_price.toFixed(2)}</td>
-                <td style="color: ${pnlColor}; font-weight: bold;">${pos.pnl_formatted}</td>
-                <td style="color: ${pnlColor};">${pos.pnl_pct_formatted}</td>
-                <td>${new Date(pos.entry_time).toLocaleString()}</td>
-            </tr>
-        `;
+        html += `<tr>
+            <td style="white-space: nowrap; font-size: 13px;">${formatDate(pos.entry_time)}</td>
+            <td><strong>${pos.instrument}</strong></td>
+            <td><span class="badge badge-${dirBadge}">${pos.direction}</span></td>
+            <td>${pos.quantity}</td>
+            <td>${pos.entry_price.toFixed(2)}</td>
+            <td>${pos.current_price.toFixed(2)}</td>
+            <td style="color: ${pnlColor}; font-weight: bold;">${pos.pnl_formatted}</td>
+            <td style="font-size: 12px; color: #718096;">${pos.broker || '-'}</td>
+        </tr>`;
     });
 
     html += '</tbody></table>';
-    document.getElementById('active-positions-container').innerHTML = html;
+    container.innerHTML = html;
 }
 
-// Render daily P&L chart
-function renderDailyPnlChart(dailyData) {
-    if (!dailyData || dailyData.length === 0) return;
+function renderSuggestions(suggestions) {
+    const container = document.getElementById('suggestions-container');
 
-    const ctx = document.getElementById('dailyPnlChart');
-
-    if (dailyPnlChart) {
-        dailyPnlChart.destroy();
+    if (!suggestions || suggestions.length === 0) {
+        container.innerHTML = '<div style="text-align: center; padding: 30px; color: #718096;">No pending suggestions. The learning engine will generate suggestions based on pattern analysis.</div>';
+        return;
     }
 
-    // Reverse to show oldest to newest
-    const reversed = [...dailyData].reverse();
-    const labels = reversed.map(d => d.date);
-    const pnlData = reversed.map(d => d.total_pnl);
+    let html = `<table>
+        <thead>
+            <tr>
+                <th>Created</th>
+                <th>Instrument</th>
+                <th>Direction</th>
+                <th>Entry</th>
+                <th>SL</th>
+                <th>Target</th>
+                <th>Confidence</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>`;
 
-    dailyPnlChart = new Chart(ctx, {
-        type: 'line',
-        data: {
-            labels: labels,
-            datasets: [{
-                label: 'Daily P&L',
-                data: pnlData,
-                borderColor: 'rgba(102, 126, 234, 1)',
-                backgroundColor: 'rgba(102, 126, 234, 0.1)',
-                tension: 0.1,
-                fill: true
-            }]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: true,
-            plugins: {
-                legend: { display: true },
-                title: { display: false }
-            },
-            scales: {
-                y: { beginAtZero: true }
-            }
+    suggestions.forEach(s => {
+        const dirBadge = s.direction === 'LONG' ? 'success' : 'danger';
+        const confidence = s.confidence ? s.confidence.toFixed(0) + '%' : '-';
+
+        html += `<tr>
+            <td style="white-space: nowrap; font-size: 13px;">${formatDate(s.created_at)}</td>
+            <td><strong>${s.instrument}</strong></td>
+            <td><span class="badge badge-${dirBadge}">${s.direction}</span></td>
+            <td>${s.entry_price.toFixed(2)}</td>
+            <td>${s.stop_loss ? s.stop_loss.toFixed(2) : '-'}</td>
+            <td>${s.target ? s.target.toFixed(2) : '-'}</td>
+            <td>${confidence}</td>
+            <td>
+                <button class="btn btn-success btn-sm" onclick="approveSuggestion(${s.id})">Approve</button>
+                <button class="btn btn-danger btn-sm" onclick="rejectSuggestion(${s.id})">Reject</button>
+            </td>
+        </tr>`;
+        if (s.reason) {
+            html += `<tr><td colspan="8" style="background: #f7fafc; padding: 8px; font-size: 13px; color: #718096;">${s.reason}</td></tr>`;
         }
     });
+
+    html += '</tbody></table>';
+    container.innerHTML = html;
 }
 
-// Render weekly P&L chart
-function renderWeeklyPnlChart(weeklyData) {
-    if (!weeklyData || weeklyData.length === 0) return;
+function renderTradeHistory(trades) {
+    const container = document.getElementById('history-container');
 
-    const ctx = document.getElementById('weeklyPnlChart');
-
-    if (weeklyPnlChart) {
-        weeklyPnlChart.destroy();
+    if (!trades || trades.length === 0) {
+        container.innerHTML = '<div style="text-align: center; padding: 30px; color: #718096;">No trade history yet.</div>';
+        return;
     }
 
-    // Reverse to show oldest to newest
-    const reversed = [...weeklyData].reverse();
-    const labels = reversed.map(d => `${d.period_start} to ${d.period_end}`);
-    const pnlData = reversed.map(d => d.total_pnl);
-    const colors = pnlData.map(val => val >= 0 ? 'rgba(72, 187, 120, 0.7)' : 'rgba(245, 101, 101, 0.7)');
+    let html = `<table>
+        <thead>
+            <tr>
+                <th>Exit Date</th>
+                <th>Instrument</th>
+                <th>Direction</th>
+                <th>Entry</th>
+                <th>Exit</th>
+                <th>P&L</th>
+                <th>Reason</th>
+            </tr>
+        </thead>
+        <tbody>`;
 
-    weeklyPnlChart = new Chart(ctx, {
-        type: 'bar',
-        data: {
-            labels: labels,
-            datasets: [{
-                label: 'Weekly P&L',
-                data: pnlData,
-                backgroundColor: colors,
-                borderColor: colors.map(c => c.replace('0.7', '1')),
-                borderWidth: 1
-            }]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: true,
-            plugins: {
-                legend: { display: false },
-                title: { display: false }
-            },
-            scales: {
-                y: { beginAtZero: true }
-            }
-        }
+    trades.forEach(t => {
+        const pnlColor = t.realized_pnl >= 0 ? '#48bb78' : '#f56565';
+        const dirBadge = t.direction === 'LONG' ? 'success' : 'danger';
+
+        html += `<tr>
+            <td style="white-space: nowrap; font-size: 13px;">${formatDateShort(t.exit_time)}</td>
+            <td><strong>${t.instrument}</strong></td>
+            <td><span class="badge badge-${dirBadge}">${t.direction}</span></td>
+            <td>${t.entry_price.toFixed(2)}</td>
+            <td>${t.exit_price ? t.exit_price.toFixed(2) : '-'}</td>
+            <td style="color: ${pnlColor}; font-weight: bold;">${t.pnl_formatted}</td>
+            <td style="font-size: 12px; color: #718096;">${t.exit_reason || '-'}</td>
+        </tr>`;
     });
+
+    html += '</tbody></table>';
+    container.innerHTML = html;
 }
 
-// Event listener for refresh button
-document.getElementById('refresh-pnl').addEventListener('click', loadPnlData);
+function approveSuggestion(id) {
+    // TODO: Implement approval
+    alert('Approve suggestion ' + id);
+}
 
-// Load P&L data on page load
-document.addEventListener('DOMContentLoaded', loadPnlData);
+function rejectSuggestion(id) {
+    // TODO: Implement rejection
+    alert('Reject suggestion ' + id);
+}
 
-// Auto-refresh learning status every 30 seconds
-setInterval(function() {
-    fetch('{% url "analytics:api_learning_status" %}')
-        .then(response => response.json())
-        .then(data => {
-            if (data.status === 'running' && !document.querySelector('.badge-success')) {
-                // Status changed to running, reload page
-                location.reload();
-            } else if (data.status === 'stopped' && document.querySelector('.badge-success')) {
-                // Status changed to stopped, reload page
-                location.reload();
-            }
-        });
-}, 30000);
+// Load on page ready
+document.addEventListener('DOMContentLoaded', loadPositionsData);
+
+// Auto-refresh every 60 seconds
+setInterval(loadPositionsData, 60000);
 </script>
 {% endblock %}

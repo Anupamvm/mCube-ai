@@ -12,7 +12,11 @@ import re
 import jwt
 from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
-from neo_api_client import NeoAPI
+try:
+    from neo_api_client import NeoAPI
+except ImportError:
+    # Use local wrapper if neo_api_client not installed
+    from tools.neo import NeoAPI
 from django.utils import timezone
 from django.core.cache import cache
 from apps.core.models import CredentialStore

@@ -28,4 +28,6 @@ urlpatterns = [
     path('api/learning-status/', views.api_learning_status, name='api_learning_status'),
     path('api/performance-metrics/', views.api_performance_metrics, name='api_performance_metrics'),
     path('api/pnl-data/', views.api_pnl_data, name='api_pnl_data'),
+    path('api/sync-positions/', views.api_sync_positions, name='api_sync_positions'),
+    path('api/positions-data/', views.api_positions_data, name='api_positions_data'),
 ]

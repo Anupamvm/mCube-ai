@@ -12,7 +12,7 @@ from decimal import Decimal
 from typing import Union
 
 
-def format_indian_currency(amount: Union[Decimal, float, int]) -> str:
+def format_indian_currency(amount: Union[Decimal, float, int, None]) -> str:
     """
     Format amount in Indian currency format (Rs.)
 
@@ -34,10 +34,16 @@ def format_indian_currency(amount: Union[Decimal, float, int]) -> str:
         >>> format_indian_currency(Decimal('1234.50'))
         'Rs.1,234.50'
     """
+    if amount is None:
+        return 'Rs.0'
+
     if isinstance(amount, Decimal):
         amount_float = float(amount)
     else:
-        amount_float = float(amount)
+        try:
+            amount_float = float(amount)
+        except (TypeError, ValueError):
+            return 'Rs.0'
 
     # Handle negative amounts
     is_negative = amount_float < 0
@@ -84,7 +90,7 @@ def format_indian_currency(amount: Union[Decimal, float, int]) -> str:
     return result
 
 
-def format_percentage(value: Union[Decimal, float], decimal_places: int = 2) -> str:
+def format_percentage(value: Union[Decimal, float, None], decimal_places: int = 2) -> str:
     """
     Format value as percentage
 
@@ -103,10 +109,17 @@ def format_percentage(value: Union[Decimal, float], decimal_places: int = 2) -> 
         >>> format_percentage(1.5, 1)
         '150.0%'
     """
+    if value is None:
+        return f"0.{'0' * decimal_places}%"
+
     if isinstance(value, Decimal):
         value = float(value)
 
-    percentage = value * 100
+    try:
+        percentage = float(value) * 100
+    except (TypeError, ValueError):
+        return f"0.{'0' * decimal_places}%"
+
     return f"{percentage:.{decimal_places}f}%"
 
 

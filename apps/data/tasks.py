@@ -364,6 +364,306 @@ def fetch_and_import_trendlyne_data(self):
         return {"status": "error", "error": str(e)}
 
 
+@shared_task(name='fetch_analyst_reports_daily', bind=True)
+def fetch_analyst_reports_daily(self):
+    """
+    Fetch analyst reports for all F&O stocks (Daily - 7:00 AM)
+
+    Fetches analyst price targets and research reports for all stocks
+    that have trendlyne_id in TLStockData. Downloads PDFs and triggers
+    LLM analysis for new reports.
+    """
+    logger = TaskLogger(
+        task_name='fetch_analyst_reports_daily',
+        task_category='data',
+        task_id=self.request.id
+    )
+
+    logger.start("Starting daily analyst reports fetch for F&O stocks")
+
+    try:
+        from apps.data.models import TLStockData, ContractStockData, AnalystPriceTarget, AnalystReport
+        from apps.data.providers.trendlyne import TrendlyneProvider
+
+        # Get F&O stocks with trendlyne_id
+        fno_symbols = set(ContractStockData.objects.values_list('nse_code', flat=True))
+        stocks_with_id = TLStockData.objects.filter(
+            nsecode__in=fno_symbols,
+            trendlyne_id__isnull=False
+        ).values('nsecode', 'trendlyne_id', 'stock_name')
+
+        logger.step('fetching', f"Found {len(stocks_with_id)} F&O stocks with trendlyne_id")
+
+        results = {
+            'processed': 0,
+            'price_targets_saved': 0,
+            'reports_saved': 0,
+            'errors': []
+        }
+
+        with TrendlyneProvider() as provider:
+            # Login once
+            if not provider.login():
+                logger.error('login_failed', "Could not login to Trendlyne")
+                return {"status": "error", "error": "Trendlyne login failed"}
+
+            for stock in stocks_with_id:
+                try:
+                    symbol = stock['nsecode']
+                    trendlyne_id = stock['trendlyne_id']
+
+                    logger.info('processing_stock', f"Processing {symbol} (ID: {trendlyne_id})")
+
+                    # Fetch analyst data
+                    data = provider.fetch_analyst_data(
+                        symbol=symbol,
+                        trendlyne_id=trendlyne_id,
+                        months_back=3,
+                        download_pdfs=True
+                    )
+
+                    if not data.get('success'):
+                        results['errors'].append(f"{symbol}: {data.get('error', 'Unknown error')}")
+                        continue
+
+                    # Save price target
+                    price_target_data = data.get('price_target', {})
+                    if price_target_data.get('success'):
+                        AnalystPriceTarget.objects.update_or_create(
+                            nse_code=symbol,
+                            defaults={
+                                'symbol': symbol,
+                                'trendlyne_id': trendlyne_id,
+                                'stock_name': stock.get('stock_name', ''),
+                                'current_price': price_target_data.get('current_price'),
+                                'avg_target_price': price_target_data.get('avg_target_price'),
+                                'upside_pct': price_target_data.get('upside_pct'),
+                                'analyst_count': price_target_data.get('analyst_count', 0),
+                                'strong_buy_count': price_target_data.get('strong_buy_count', 0),
+                                'buy_count': price_target_data.get('buy_count', 0),
+                                'hold_count': price_target_data.get('hold_count', 0),
+                                'sell_count': price_target_data.get('sell_count', 0),
+                                'strong_sell_count': price_target_data.get('strong_sell_count', 0),
+                                'source_url': price_target_data.get('source_url', ''),
+                                'scrape_success': True,
+                            }
+                        )
+                        results['price_targets_saved'] += 1
+
+                    # Save reports
+                    reports_data = data.get('reports', {})
+                    for report in reports_data.get('reports', []):
+                        try:
+                            AnalystReport.objects.update_or_create(
+                                symbol=symbol,
+                                report_date=report.get('report_date'),
+                                author=report.get('author', '')[:200],
+                                defaults={
+                                    'nse_code': symbol,
+                                    'trendlyne_id': trendlyne_id,
+                                    'report_title': report.get('report_title', ''),
+                                    'ltp_at_report': report.get('ltp_at_report'),
+                                    'target_price': report.get('target_price'),
+                                    'upside_pct': report.get('upside_pct'),
+                                    'recommendation_type': report.get('recommendation_type', 'UNKNOWN'),
+                                    'pdf_url': report.get('pdf_url', ''),
+                                    'pdf_local_path': report.get('pdf_local_path', ''),
+                                    'pdf_download_success': bool(report.get('pdf_local_path')),
+                                }
+                            )
+                            results['reports_saved'] += 1
+                        except Exception as report_error:
+                            logger.warning('report_save_error', f"Error saving report for {symbol}: {report_error}")
+
+                    results['processed'] += 1
+
+                except Exception as stock_error:
+                    results['errors'].append(f"{stock.get('nsecode')}: {str(stock_error)}")
+                    logger.warning('stock_error', f"Error processing stock: {stock_error}")
+
+        logger.success("Daily analyst reports fetch completed", context=results)
+        return {"status": "success", **results, "timestamp": timezone.now().isoformat()}
+
+    except Exception as e:
+        logger.failure("Error in daily analyst reports fetch", error=e)
+        return {"status": "error", "error": str(e)}
+
+
+@shared_task(name='fetch_analyst_reports_for_stock', bind=True)
+def fetch_analyst_reports_for_stock(self, symbol: str, nse_code: str = None):
+    """
+    Fetch analyst reports for a single stock (On-demand task)
+
+    Used for on-demand refresh when data is stale during trade verification.
+
+    Args:
+        symbol: Stock symbol
+        nse_code: NSE code (defaults to symbol)
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+
+    nse_code = nse_code or symbol
+
+    try:
+        from apps.data.models import TLStockData, AnalystPriceTarget, AnalystReport
+        from apps.data.providers.trendlyne import TrendlyneProvider
+
+        logger.info(f"Fetching analyst reports for {symbol}")
+
+        # Get trendlyne_id from TLStockData
+        stock_data = TLStockData.objects.filter(nsecode__iexact=nse_code).first()
+        trendlyne_id = stock_data.trendlyne_id if stock_data else None
+
+        with TrendlyneProvider() as provider:
+            if not provider.login():
+                logger.error(f"Could not login to Trendlyne for {symbol}")
+                return {"status": "error", "error": "Login failed"}
+
+            data = provider.fetch_analyst_data(
+                symbol=symbol,
+                trendlyne_id=trendlyne_id,
+                months_back=3,
+                download_pdfs=True
+            )
+
+            if not data.get('success'):
+                return {"status": "error", "error": data.get('error', 'Unknown error')}
+
+            # Update trendlyne_id in TLStockData if we found it
+            extracted_id = data.get('trendlyne_id')
+            if extracted_id and stock_data and not stock_data.trendlyne_id:
+                stock_data.trendlyne_id = extracted_id
+                stock_data.save()
+                logger.info(f"Updated trendlyne_id for {symbol}: {extracted_id}")
+
+            # Save price target
+            price_target_data = data.get('price_target', {})
+            if price_target_data.get('success'):
+                AnalystPriceTarget.objects.update_or_create(
+                    nse_code=nse_code,
+                    defaults={
+                        'symbol': symbol,
+                        'trendlyne_id': extracted_id,
+                        'stock_name': stock_data.stock_name if stock_data else '',
+                        'current_price': price_target_data.get('current_price'),
+                        'avg_target_price': price_target_data.get('avg_target_price'),
+                        'upside_pct': price_target_data.get('upside_pct'),
+                        'analyst_count': price_target_data.get('analyst_count', 0),
+                        'strong_buy_count': price_target_data.get('strong_buy_count', 0),
+                        'buy_count': price_target_data.get('buy_count', 0),
+                        'hold_count': price_target_data.get('hold_count', 0),
+                        'sell_count': price_target_data.get('sell_count', 0),
+                        'strong_sell_count': price_target_data.get('strong_sell_count', 0),
+                        'source_url': price_target_data.get('source_url', ''),
+                        'scrape_success': True,
+                    }
+                )
+
+            # Save reports
+            reports_saved = 0
+            reports_data = data.get('reports', {})
+            for report in reports_data.get('reports', []):
+                try:
+                    AnalystReport.objects.update_or_create(
+                        symbol=symbol,
+                        report_date=report.get('report_date'),
+                        author=report.get('author', '')[:200],
+                        defaults={
+                            'nse_code': nse_code,
+                            'trendlyne_id': extracted_id,
+                            'report_title': report.get('report_title', ''),
+                            'ltp_at_report': report.get('ltp_at_report'),
+                            'target_price': report.get('target_price'),
+                            'upside_pct': report.get('upside_pct'),
+                            'recommendation_type': report.get('recommendation_type', 'UNKNOWN'),
+                            'pdf_url': report.get('pdf_url', ''),
+                            'pdf_local_path': report.get('pdf_local_path', ''),
+                            'pdf_download_success': bool(report.get('pdf_local_path')),
+                        }
+                    )
+                    reports_saved += 1
+                except Exception as e:
+                    logger.warning(f"Error saving report for {symbol}: {e}")
+
+            logger.info(f"Fetched analyst data for {symbol}: 1 price target, {reports_saved} reports")
+            return {
+                "status": "success",
+                "symbol": symbol,
+                "price_target_saved": True,
+                "reports_saved": reports_saved
+            }
+
+    except Exception as e:
+        logger.error(f"Error fetching analyst reports for {symbol}: {e}", exc_info=True)
+        return {"status": "error", "error": str(e)}
+
+
+@shared_task(name='process_analyst_report_pdfs', bind=True)
+def process_analyst_report_pdfs(self, limit: int = 50):
+    """
+    Process unprocessed analyst report PDFs with LLM (Daily - 7:30 AM)
+
+    Extracts text from downloaded PDFs and runs LLM analysis.
+
+    Args:
+        limit: Maximum number of reports to process per run
+    """
+    logger = TaskLogger(
+        task_name='process_analyst_report_pdfs',
+        task_category='llm',
+        task_id=self.request.id
+    )
+
+    logger.start(f"Processing up to {limit} unprocessed analyst report PDFs")
+
+    try:
+        from apps.data.models import AnalystReport
+        from apps.llm.services.analyst_report_analyzer import get_analyst_report_analyzer
+
+        # Get unprocessed reports with downloaded PDFs
+        unprocessed = AnalystReport.objects.filter(
+            llm_processed=False,
+            pdf_download_success=True,
+            pdf_local_path__isnull=False
+        ).exclude(pdf_local_path='').order_by('-report_date')[:limit]
+
+        logger.step('fetching', f"Found {unprocessed.count()} reports to process")
+
+        analyzer = get_analyst_report_analyzer()
+        results = {
+            'processed': 0,
+            'success': 0,
+            'failed': 0,
+            'errors': []
+        }
+
+        for report in unprocessed:
+            try:
+                logger.info('processing_report',
+                           f"Processing {report.symbol} report by {report.author} ({report.report_date})")
+
+                success = analyzer.analyze_and_save(report)
+
+                results['processed'] += 1
+                if success:
+                    results['success'] += 1
+                else:
+                    results['failed'] += 1
+
+            except Exception as e:
+                results['errors'].append(f"{report.symbol}: {str(e)}")
+                results['failed'] += 1
+                logger.warning('report_error', f"Error processing report {report.id}: {e}")
+
+        logger.success("PDF processing completed", context=results)
+        return {"status": "success", **results, "timestamp": timezone.now().isoformat()}
+
+    except Exception as e:
+        logger.failure("Error processing analyst report PDFs", error=e)
+        return {"status": "error", "error": str(e)}
+
+
 # Celery Beat Schedule
 """
 Add to your settings.py or celeryconfig.py:
@@ -411,6 +711,18 @@ CELERY_BEAT_SCHEDULE = {
     'scan-opportunities': {
         'task': 'scan_for_opportunities',
         'schedule': crontab(minute=0, hour='9-15', day_of_week='1-5'),
+    },
+
+    # Fetch analyst reports (Daily 7:00 AM - before market opens)
+    'fetch-analyst-reports-daily': {
+        'task': 'fetch_analyst_reports_daily',
+        'schedule': crontab(hour=7, minute=0, day_of_week='1-5'),
+    },
+
+    # Process analyst report PDFs with LLM (Daily 7:30 AM)
+    'process-analyst-pdfs': {
+        'task': 'process_analyst_report_pdfs',
+        'schedule': crontab(hour=7, minute=30, day_of_week='1-5'),
     },
 }
 """

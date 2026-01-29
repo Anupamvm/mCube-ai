@@ -23,7 +23,7 @@ from celery import shared_task
 from django.utils import timezone
 from django.db.models import Sum, Avg, Count, Q
 
-from apps.analytics.models import LearningSession, LearningPattern, PerformanceAnalysis
+from apps.analytics.models import LearningSession, LearningPattern, TradePerformance
 from apps.analytics.services.learning_engine import LearningEngine
 from apps.positions.models import Position
 from apps.accounts.models import BrokerAccount
@@ -180,8 +180,9 @@ def update_learning_patterns():
 
     try:
         # Get all active learning sessions
+        # Note: Model uses 'RUNNING' status for active sessions
         active_sessions = LearningSession.objects.filter(
-            status='ACTIVE'
+            status='RUNNING'
         )
 
         if not active_sessions.exists():

@@ -351,6 +351,224 @@ Return ONLY a valid JSON object (no markdown, no explanation):
 
         return result
 
+    def analyze_market_article_impact(self, article: Dict) -> Dict:
+        """
+        Analyze a single article's impact on Indian stock markets.
+
+        Args:
+            article: Article dict with 'title', 'description', 'content'
+
+        Returns:
+            Dict with:
+                - impact_score: float (-1.0 to 1.0)
+                - impact_label: str (HIGHLY_NEGATIVE to HIGHLY_POSITIVE)
+                - category: str (e.g., 'US_FED', 'GLOBAL_MARKETS', 'COMMODITIES', etc.)
+                - reasoning: str
+                - market_direction: str ('BEARISH', 'NEUTRAL', 'BULLISH')
+                - relevance: float (0.0 to 1.0) - how relevant to Indian markets
+        """
+        if not self.llm_client.is_enabled():
+            logger.warning("LLM not available for market news analysis")
+            return {
+                'impact_score': 0.0,
+                'impact_label': 'NEUTRAL',
+                'category': 'UNKNOWN',
+                'reasoning': 'LLM not available',
+                'market_direction': 'NEUTRAL',
+                'relevance': 0.0
+            }
+
+        title = article.get('title', '')
+        description = article.get('description', '')
+        content = article.get('content', description)
+
+        # Truncate content to avoid token limits
+        if len(content) > 1500:
+            content = content[:1500] + "..."
+
+        prompt = f"""You are a market analyst evaluating news impact on INDIAN STOCK MARKETS (Nifty/Sensex).
+
+NEWS ARTICLE:
+Title: {title}
+Content: {content}
+
+Analyze this news for its impact on Indian equity markets. Consider:
+1. Global market cues (US/Europe/Asia overnight performance)
+2. Fed/central bank decisions and interest rates
+3. Economic data (jobs, inflation, GDP)
+4. Commodity prices (crude oil, gold) affecting India
+5. FII/DII flows and foreign investment sentiment
+6. Sector-specific impacts on Indian markets
+
+Return ONLY valid JSON (no markdown):
+{{"impact_score": <-1.0 to 1.0>, "impact_label": "<HIGHLY_NEGATIVE|NEGATIVE|NEUTRAL|POSITIVE|HIGHLY_POSITIVE>", "category": "<US_FED|GLOBAL_MARKETS|COMMODITIES|INDIAN_ECONOMY|FII_DII|SECTOR_NEWS|GEOPOLITICAL|OTHER>", "reasoning": "<one sentence on how this affects Indian markets>", "market_direction": "<BEARISH|NEUTRAL|BULLISH>", "relevance": <0.0 to 1.0>}}"""
+
+        system_prompt = "You are a financial market analyst. Respond ONLY with valid JSON."
+
+        try:
+            success, response, metadata = self.llm_client.generate(
+                prompt=prompt,
+                system=system_prompt,
+                temperature=0.2,
+                max_tokens=200
+            )
+
+            if not success:
+                logger.error(f"LLM analysis failed for market article: {title[:50]}")
+                return self._default_market_result("LLM analysis failed")
+
+            # Parse JSON response
+            result = self._parse_market_llm_response(response)
+            logger.info(f"Market article: {result['impact_label']} ({result['impact_score']:.2f}) [{result['category']}] - {title[:50]}")
+            return result
+
+        except Exception as e:
+            logger.error(f"Error analyzing market article: {e}", exc_info=True)
+            return self._default_market_result(f"Analysis error: {str(e)}")
+
+    def _parse_market_llm_response(self, response: str) -> Dict:
+        """Parse LLM JSON response for market news"""
+        try:
+            response = response.strip()
+            if response.startswith("```json"):
+                response = response[7:]
+            elif response.startswith("```"):
+                response = response[3:]
+            if response.endswith("```"):
+                response = response[:-3]
+            response = response.strip()
+
+            data = json.loads(response)
+
+            impact_score = float(data.get('impact_score', 0.0))
+            impact_score = max(-1.0, min(1.0, impact_score))
+
+            return {
+                'impact_score': impact_score,
+                'impact_label': data.get('impact_label', self._get_impact_label(impact_score)),
+                'category': data.get('category', 'OTHER'),
+                'reasoning': data.get('reasoning', 'No reasoning provided'),
+                'market_direction': data.get('market_direction', 'NEUTRAL'),
+                'relevance': float(data.get('relevance', 0.5))
+            }
+
+        except (json.JSONDecodeError, ValueError, KeyError) as e:
+            logger.warning(f"Failed to parse market LLM response: {response[:200]}, error: {e}")
+            return self._default_market_result("Failed to parse LLM response")
+
+    def _default_market_result(self, reason: str) -> Dict:
+        """Return default neutral result for market news"""
+        return {
+            'impact_score': 0.0,
+            'impact_label': 'NEUTRAL',
+            'category': 'UNKNOWN',
+            'reasoning': reason,
+            'market_direction': 'NEUTRAL',
+            'relevance': 0.0
+        }
+
+    def analyze_market_news(
+        self,
+        articles: List[Dict],
+        top_n: int = 20
+    ) -> Dict:
+        """
+        Analyze multiple market news articles and return top impactful ones.
+
+        Args:
+            articles: List of article dicts
+            top_n: Number of top articles to return (default: 20)
+
+        Returns:
+            Dict with:
+                - articles: List of analyzed articles sorted by impact
+                - summary: Overall market sentiment summary
+                - category_breakdown: Count by category
+        """
+        analyzed_articles = []
+
+        logger.info(f"[Market News] Analyzing {len(articles)} articles for market impact")
+
+        for i, article in enumerate(articles):
+            try:
+                impact = self.analyze_market_article_impact(article)
+
+                # Filter out low-relevance articles
+                if impact['relevance'] < 0.2:
+                    continue
+
+                enriched_article = {
+                    **article,
+                    'impact_score': impact['impact_score'],
+                    'impact_label': impact['impact_label'],
+                    'impact_category': impact['category'],
+                    'impact_reasoning': impact['reasoning'],
+                    'market_direction': impact['market_direction'],
+                    'relevance': impact['relevance']
+                }
+                analyzed_articles.append(enriched_article)
+
+                # Log progress every 10 articles
+                if (i + 1) % 10 == 0:
+                    logger.info(f"[Market News] Analyzed {i + 1}/{len(articles)} articles")
+
+            except Exception as e:
+                logger.warning(f"Error analyzing article {i}: {e}")
+                continue
+
+        # Sort by combined score: abs(impact_score) * relevance
+        analyzed_articles.sort(
+            key=lambda x: abs(x['impact_score']) * x['relevance'],
+            reverse=True
+        )
+
+        # Take top N
+        top_articles = analyzed_articles[:top_n]
+
+        # Calculate summary
+        if top_articles:
+            avg_score = sum(a['impact_score'] for a in top_articles) / len(top_articles)
+            bearish_count = len([a for a in top_articles if a['market_direction'] == 'BEARISH'])
+            bullish_count = len([a for a in top_articles if a['market_direction'] == 'BULLISH'])
+            neutral_count = len(top_articles) - bearish_count - bullish_count
+        else:
+            avg_score = 0.0
+            bearish_count = bullish_count = neutral_count = 0
+
+        # Category breakdown
+        category_counts = {}
+        for article in top_articles:
+            cat = article.get('impact_category', 'OTHER')
+            category_counts[cat] = category_counts.get(cat, 0) + 1
+
+        # Determine overall market outlook
+        if avg_score <= -0.3:
+            outlook = 'BEARISH'
+        elif avg_score >= 0.3:
+            outlook = 'BULLISH'
+        else:
+            outlook = 'NEUTRAL'
+
+        summary = {
+            'total_analyzed': len(articles),
+            'relevant_articles': len(analyzed_articles),
+            'top_articles_count': len(top_articles),
+            'average_impact_score': round(avg_score, 3),
+            'overall_sentiment': self._get_impact_label(avg_score),
+            'market_outlook': outlook,
+            'bearish_count': bearish_count,
+            'bullish_count': bullish_count,
+            'neutral_count': neutral_count
+        }
+
+        logger.info(f"[Market News] Analysis complete: {len(top_articles)} top articles, outlook: {outlook}")
+
+        return {
+            'articles': top_articles,
+            'summary': summary,
+            'category_breakdown': category_counts
+        }
+
 
 # Global instance
 _news_impact_analyzer = None

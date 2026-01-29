@@ -14,12 +14,194 @@ import logging
 import time
 import uuid
 from functools import wraps
+from django.conf import settings
 from django.contrib.auth.decorators import login_required
 from django.views.decorators.http import require_POST
 from django.http import JsonResponse, StreamingHttpResponse
 from django.shortcuts import render
 
 logger = logging.getLogger(__name__)
+
+
+def get_historical_news_analysis(stock_symbol: str, stock_name: str = None, industry_name: str = None, limit: int = 5):
+    """
+    Fetch historical news analysis from database for a stock.
+
+    Returns top 5 most impactful (negative) articles that could affect trading decisions.
+
+    Args:
+        stock_symbol: Stock symbol to search for
+        stock_name: Optional stock name for broader search
+        industry_name: Optional industry name for sector news
+        limit: Max articles to return (default: 5)
+
+    Returns:
+        Dict with historical_articles list and summary
+    """
+    from apps.data.models import NewsArticle
+    from django.db.models import Q
+    from datetime import timedelta
+    from django.utils import timezone
+
+    try:
+        # Look back 7 days for relevant news
+        cutoff_date = timezone.now() - timedelta(days=7)
+
+        # Build query for stock-related news
+        query = Q(published_at__gte=cutoff_date) & Q(processed=True)
+
+        # Filter by stock symbol in symbols_mentioned or search_keywords
+        symbol_filter = Q(symbols_mentioned__contains=[stock_symbol])
+
+        # Also search in search_keywords for the stock symbol/name
+        keyword_filter = Q(search_keywords__contains=[stock_symbol])
+        if stock_name:
+            keyword_filter |= Q(search_keywords__contains=[stock_name])
+
+        # Combine filters - get stock-specific news
+        articles = NewsArticle.objects.filter(
+            query & (symbol_filter | keyword_filter)
+        ).exclude(
+            sentiment_score__isnull=True
+        ).order_by('sentiment_score')[:limit * 2]  # Get more to filter
+
+        # If not enough stock-specific news, include industry news
+        if len(articles) < limit and industry_name:
+            industry_articles = NewsArticle.objects.filter(
+                query & Q(sectors_mentioned__contains=[industry_name])
+            ).exclude(
+                sentiment_score__isnull=True
+            ).exclude(
+                id__in=[a.id for a in articles]
+            ).order_by('sentiment_score')[:limit]
+
+            articles = list(articles) + list(industry_articles)
+
+        # Also include high-impact market news
+        market_articles = NewsArticle.objects.filter(
+            query & Q(news_type='MARKET') & Q(sentiment_score__lt=-0.3)
+        ).exclude(
+            id__in=[a.id for a in articles]
+        ).order_by('sentiment_score')[:3]
+
+        articles = list(articles) + list(market_articles)
+
+        # Sort by impact (most negative first) and take top N
+        articles = sorted(articles, key=lambda x: x.sentiment_score or 0)[:limit]
+
+        # Build response
+        historical_articles = []
+        for article in articles:
+            historical_articles.append({
+                'title': article.title,
+                'url': article.url,
+                'source': article.source,
+                'published_at': article.published_at.isoformat() if article.published_at else None,
+                'impact_score': article.sentiment_score or 0,
+                'impact_label': article.impact_analysis.get('impact_label', 'NEUTRAL') if article.impact_analysis else 'NEUTRAL',
+                'impact_reasoning': article.impact_reasoning or article.impact_analysis.get('impact_reasoning', '') if article.impact_analysis else '',
+                'market_direction': article.market_direction or 'NEUTRAL',
+                'news_type': article.news_type or 'STOCK',
+                'category': article.impact_category or article.category or '',
+                'could_block_trade': (article.sentiment_score or 0) <= -0.6
+            })
+
+        # Calculate summary
+        blocking_count = len([a for a in historical_articles if a['could_block_trade']])
+        negative_count = len([a for a in historical_articles if a['impact_score'] < -0.3])
+        avg_score = sum(a['impact_score'] for a in historical_articles) / len(historical_articles) if historical_articles else 0
+
+        return {
+            'success': True,
+            'articles': historical_articles,
+            'summary': {
+                'total_articles': len(historical_articles),
+                'blocking_count': blocking_count,
+                'negative_count': negative_count,
+                'average_score': round(avg_score, 3),
+                'days_analyzed': 7
+            }
+        }
+
+    except Exception as e:
+        logger.warning(f"[Historical News] Error fetching historical news: {e}")
+        return {
+            'success': False,
+            'articles': [],
+            'summary': {},
+            'error': str(e)
+        }
+
+
+def get_historical_market_news(limit: int = 5):
+    """
+    Fetch historical market news analysis from database.
+
+    Returns top 5 most impactful market news articles that could affect trading decisions.
+
+    Args:
+        limit: Max articles to return (default: 5)
+
+    Returns:
+        Dict with articles list and summary
+    """
+    from apps.data.models import NewsArticle
+    from datetime import timedelta
+    from django.utils import timezone
+
+    try:
+        # Look back 7 days for relevant market news
+        cutoff_date = timezone.now() - timedelta(days=7)
+
+        # Get market news with impact analysis
+        articles = NewsArticle.objects.filter(
+            published_at__gte=cutoff_date,
+            news_type='MARKET',
+            processed=True
+        ).exclude(
+            sentiment_score__isnull=True
+        ).order_by('sentiment_score')[:limit]
+
+        # Build response
+        historical_articles = []
+        for article in articles:
+            historical_articles.append({
+                'title': article.title,
+                'url': article.url,
+                'source': article.source,
+                'published_at': article.published_at.isoformat() if article.published_at else None,
+                'impact_score': article.sentiment_score or 0,
+                'impact_label': article.impact_analysis.get('impact_label', 'NEUTRAL') if article.impact_analysis else 'NEUTRAL',
+                'impact_reasoning': article.impact_reasoning or '',
+                'market_direction': article.market_direction or 'NEUTRAL',
+                'category': article.impact_category or '',
+                'could_block_trade': (article.sentiment_score or 0) <= -0.6
+            })
+
+        # Calculate summary
+        blocking_count = len([a for a in historical_articles if a['could_block_trade']])
+        negative_count = len([a for a in historical_articles if a['impact_score'] < -0.3])
+        avg_score = sum(a['impact_score'] for a in historical_articles) / len(historical_articles) if historical_articles else 0
+
+        return {
+            'success': True,
+            'articles': historical_articles,
+            'summary': {
+                'total_articles': len(historical_articles),
+                'blocking_count': blocking_count,
+                'negative_count': negative_count,
+                'average_score': round(avg_score, 3),
+                'days_analyzed': 7
+            }
+        }
+
+    except Exception as e:
+        logger.warning(f"[Historical Market News] Error: {e}")
+        return {
+            'success': False,
+            'articles': [],
+            'summary': {}
+        }
 
 
 def ajax_login_required(view_func):
@@ -647,8 +829,414 @@ def verify_future_trade(request):
         if analysis_passed and historical_passed and not news_passed:
             logger.warning(f"Trade BLOCKED by negative news for {stock_symbol}")
 
-        # Trade only passes if analysis, historical checks, AND news checks pass
-        passed = analysis_passed and historical_passed and news_passed
+        # ===== HISTORICAL NEWS ANALYSIS =====
+        # Fetch previously analyzed news from database (top 5 most impactful)
+        historical_news = get_historical_news_analysis(
+            stock_symbol=stock_symbol,
+            stock_name=stock_name if 'stock_name' in dir() else None,
+            industry_name=industry_name if 'industry_name' in dir() else None,
+            limit=5
+        )
+        logger.info(f"[Verify Trade] Historical news: {len(historical_news.get('articles', []))} articles, "
+                   f"blocking={historical_news.get('summary', {}).get('blocking_count', 0)}")
+
+        # ===== ANALYST REPORT VERIFICATION =====
+        # Check analyst price targets and recommendations
+        # On-demand fetch: If no data or data > 24 hours old, fetch fresh from Trendlyne
+        analyst_verification = {
+            'success': False,
+            'trade_allowed': True,
+            'blocking_reasons': [],
+            'warnings': [],
+            'price_target': None,
+            'reports_summary': None,
+            'top_blocking_reports': [],
+            'recommendation': 'PROCEED',
+            'data_source': 'none',
+            'fetch_status': 'not_started',
+            'debug_info': []
+        }
+
+        try:
+            from apps.data.models import AnalystPriceTarget, AnalystReport, TLStockData
+            from apps.llm.services.analyst_report_aggregator import get_analyst_report_aggregator
+            from datetime import timedelta
+            from django.utils import timezone
+
+            logger.info(f"[Verify Trade] Checking analyst data for {stock_symbol}")
+
+            # Check if we have fresh analyst data (< 24 hours old)
+            stale_cutoff = timezone.now() - timedelta(hours=24)
+            existing_price_target = AnalystPriceTarget.objects.filter(
+                nse_code__iexact=stock_symbol,
+                fetch_timestamp__gte=stale_cutoff
+            ).first()
+
+            if existing_price_target:
+                # Check if the cached data actually has useful values
+                has_useful_data = (
+                    existing_price_target.avg_target_price is not None or
+                    existing_price_target.analyst_count > 0
+                )
+
+                if has_useful_data:
+                    logger.info(f"[Verify Trade] Found fresh analyst data for {stock_symbol} (fetched: {existing_price_target.fetch_timestamp})")
+                    analyst_verification['data_source'] = 'cache'
+                    analyst_verification['fetch_status'] = 'using_cache'
+                    analyst_verification['debug_info'].append(f"Using cached data from {existing_price_target.fetch_timestamp}")
+                    analyst_verification['debug_info'].append(f"Target: {existing_price_target.avg_target_price}, Analysts: {existing_price_target.analyst_count}")
+                else:
+                    # Cached record exists but has no useful data - treat as no data
+                    logger.warning(f"[Verify Trade] Cached data for {stock_symbol} has no useful values, will re-fetch")
+                    analyst_verification['debug_info'].append("Cached record has empty values, treating as no data")
+                    existing_price_target = None  # Force re-fetch
+            else:
+                # No fresh data - fetch from Trendlyne
+                logger.info(f"[Verify Trade] No fresh analyst data for {stock_symbol}, fetching from Trendlyne...")
+                analyst_verification['data_source'] = 'fresh_fetch'
+                analyst_verification['fetch_status'] = 'fetching'
+                analyst_verification['debug_info'].append("No cached data found, fetching from Trendlyne")
+
+                # Get trendlyne_id from TLStockData if available
+                tl_stock = TLStockData.objects.filter(nsecode__iexact=stock_symbol).first()
+                trendlyne_id = tl_stock.trendlyne_id if tl_stock else None
+                analyst_verification['debug_info'].append(f"TLStockData found: {tl_stock is not None}, trendlyne_id: {trendlyne_id}")
+
+                try:
+                    from apps.data.providers.trendlyne import TrendlyneProvider
+
+                    analyst_verification['debug_info'].append("Initializing TrendlyneProvider...")
+                    logger.info(f"[Verify Trade] Initializing TrendlyneProvider for {stock_symbol}")
+
+                    with TrendlyneProvider() as provider:
+                        # Initialize driver and login
+                        analyst_verification['debug_info'].append("Initializing Chrome driver...")
+                        provider.init_driver()
+                        analyst_verification['debug_info'].append("Chrome driver initialized, attempting login...")
+                        logger.info(f"[Verify Trade] Chrome driver initialized, attempting Trendlyne login...")
+
+                        login_success = provider.login()
+                        analyst_verification['debug_info'].append(f"Login result: {login_success}")
+                        logger.info(f"[Verify Trade] Trendlyne login result: {login_success}")
+
+                        if login_success:
+                            logger.info(f"[Verify Trade] Logged into Trendlyne, fetching analyst data for {stock_symbol}")
+
+                            # Fetch analyst data (price targets + reports)
+                            fetch_result = provider.fetch_analyst_data(
+                                symbol=stock_symbol,
+                                trendlyne_id=trendlyne_id,
+                                months_back=3,
+                                download_pdfs=False  # Skip PDF download for speed during verification
+                            )
+
+                            analyst_verification['debug_info'].append(f"Fetch result success: {fetch_result.get('success')}")
+                            if fetch_result.get('success'):
+                                analyst_verification['fetch_status'] = 'fetch_success'
+                                # Extract trendlyne_id if we got it
+                                extracted_id = fetch_result.get('trendlyne_id')
+
+                                # Update TLStockData with trendlyne_id if found
+                                if extracted_id and tl_stock and not tl_stock.trendlyne_id:
+                                    tl_stock.trendlyne_id = extracted_id
+                                    tl_stock.save()
+                                    logger.info(f"[Verify Trade] Saved trendlyne_id {extracted_id} for {stock_symbol}")
+
+                                # Save price target data
+                                price_target_data = fetch_result.get('price_target', {})
+                                logger.info(f"[Verify Trade] Price target fetch result: {price_target_data}")
+                                analyst_verification['debug_info'].append(
+                                    f"Fetched price target: Current=₹{price_target_data.get('current_price')}, "
+                                    f"Target=₹{price_target_data.get('avg_target_price')}, "
+                                    f"Upside={price_target_data.get('upside_pct')}%, "
+                                    f"Analysts={price_target_data.get('analyst_count')} "
+                                    f"(SB:{price_target_data.get('strong_buy_count')}, B:{price_target_data.get('buy_count')}, "
+                                    f"H:{price_target_data.get('hold_count')}, S:{price_target_data.get('sell_count')}, SS:{price_target_data.get('strong_sell_count')})"
+                                )
+
+                                # Check if we have any useful data
+                                has_price_data = price_target_data.get('avg_target_price') is not None
+                                has_analyst_data = price_target_data.get('analyst_count', 0) > 0
+                                has_upside_data = price_target_data.get('upside_pct') is not None
+
+                                if has_price_data or has_analyst_data or has_upside_data:
+                                    AnalystPriceTarget.objects.update_or_create(
+                                        nse_code=stock_symbol,
+                                        defaults={
+                                            'symbol': stock_symbol,
+                                            'trendlyne_id': extracted_id,
+                                            'stock_name': tl_stock.stock_name if tl_stock else '',
+                                            'current_price': price_target_data.get('current_price'),
+                                            'avg_target_price': price_target_data.get('avg_target_price'),
+                                            'upside_pct': price_target_data.get('upside_pct'),
+                                            'analyst_count': price_target_data.get('analyst_count', 0),
+                                            'strong_buy_count': price_target_data.get('strong_buy_count', 0),
+                                            'buy_count': price_target_data.get('buy_count', 0),
+                                            'hold_count': price_target_data.get('hold_count', 0),
+                                            'sell_count': price_target_data.get('sell_count', 0),
+                                            'strong_sell_count': price_target_data.get('strong_sell_count', 0),
+                                            'source_url': price_target_data.get('source_url', ''),
+                                            'scrape_success': True,
+                                        }
+                                    )
+                                    logger.info(f"[Verify Trade] Saved price target for {stock_symbol}: Target=₹{price_target_data.get('avg_target_price')}, Upside={price_target_data.get('upside_pct')}%")
+                                else:
+                                    # No useful data found from scraping
+                                    logger.warning(f"[Verify Trade] Trendlyne scraping returned no useful analyst data for {stock_symbol}")
+                                    analyst_verification['warnings'].append("Trendlyne page did not contain parseable analyst data")
+                                    analyst_verification['debug_info'].append("Scraping returned empty values - page structure may have changed")
+
+                                # Save reports
+                                reports_data = fetch_result.get('reports', {})
+                                reports_saved = 0
+                                for report in reports_data.get('reports', []):
+                                    try:
+                                        AnalystReport.objects.update_or_create(
+                                            symbol=stock_symbol,
+                                            report_date=report.get('report_date'),
+                                            author=report.get('author', '')[:200],
+                                            defaults={
+                                                'nse_code': stock_symbol,
+                                                'trendlyne_id': extracted_id,
+                                                'report_title': report.get('report_title', ''),
+                                                'ltp_at_report': report.get('ltp_at_report'),
+                                                'target_price': report.get('target_price'),
+                                                'upside_pct': report.get('upside_pct'),
+                                                'recommendation_type': report.get('recommendation_type', 'UNKNOWN'),
+                                                'pdf_url': report.get('pdf_url', ''),
+                                                'pdf_local_path': report.get('pdf_local_path', ''),
+                                                'pdf_download_success': bool(report.get('pdf_local_path')),
+                                            }
+                                        )
+                                        reports_saved += 1
+                                    except Exception as re:
+                                        logger.warning(f"[Verify Trade] Error saving report: {re}")
+
+                                logger.info(f"[Verify Trade] Saved {reports_saved} analyst reports for {stock_symbol}")
+
+                                # Download PDFs for top 3 reports (for LLM summaries)
+                                # Using S3 redirect approach - navigate to PDF URL to get pre-signed S3 URL
+                                try:
+                                    import requests as req_lib
+                                    from django.db.models import Q
+
+                                    reports_to_download = AnalystReport.objects.filter(
+                                        nse_code__iexact=stock_symbol
+                                    ).filter(
+                                        Q(pdf_local_path__isnull=True) | Q(pdf_local_path='')
+                                    ).exclude(pdf_url='').order_by('-report_date')[:3]
+
+                                    import os
+                                    import re as regex
+                                    reports_dir = os.path.join(settings.BASE_DIR, 'apps', 'data', 'tldata', 'analyst_reports', stock_symbol.upper())
+                                    os.makedirs(reports_dir, exist_ok=True)
+
+                                    pdfs_downloaded = 0
+                                    for rpt in reports_to_download:
+                                        if rpt.pdf_url:
+                                            try:
+                                                safe_author = regex.sub(r'[^\w\-]', '_', rpt.author or 'unknown')[:50]
+                                                safe_date = str(rpt.report_date).replace('-', '_')
+                                                filename = f"{stock_symbol}_{safe_date}_{safe_author}.pdf"
+                                                local_path = os.path.join(reports_dir, filename)
+
+                                                # Skip if valid PDF exists
+                                                if os.path.exists(local_path) and os.path.getsize(local_path) > 5000:
+                                                    with open(local_path, 'rb') as f:
+                                                        if f.read(5) == b'%PDF-':
+                                                            rpt.pdf_local_path = local_path
+                                                            rpt.pdf_download_success = True
+                                                            rpt.save(update_fields=['pdf_local_path', 'pdf_download_success'])
+                                                            pdfs_downloaded += 1
+                                                            continue
+
+                                                # Navigate to PDF URL to get S3 redirect
+                                                provider.driver.get(rpt.pdf_url)
+                                                time.sleep(2)
+                                                s3_url = provider.driver.current_url
+
+                                                # Download from S3 (pre-signed URL, no auth needed)
+                                                resp = req_lib.get(s3_url, timeout=30)
+                                                if resp.status_code == 200 and len(resp.content) > 5000 and resp.content[:5] == b'%PDF-':
+                                                    with open(local_path, 'wb') as f:
+                                                        f.write(resp.content)
+                                                    rpt.pdf_local_path = local_path
+                                                    rpt.pdf_download_success = True
+                                                    rpt.save(update_fields=['pdf_local_path', 'pdf_download_success'])
+                                                    pdfs_downloaded += 1
+                                                    logger.info(f"[Verify Trade] Downloaded PDF: {filename}")
+                                            except Exception as pdf_err:
+                                                logger.warning(f"[Verify Trade] PDF download failed for {rpt.author}: {pdf_err}")
+
+                                    analyst_verification['debug_info'].append(f"Downloaded {pdfs_downloaded} PDFs for LLM summaries")
+                                except Exception as pdf_batch_err:
+                                    logger.warning(f"[Verify Trade] PDF batch download error: {pdf_batch_err}")
+                                    analyst_verification['debug_info'].append(f"PDF download error: {str(pdf_batch_err)}")
+                            else:
+                                logger.warning(f"[Verify Trade] Failed to fetch analyst data: {fetch_result.get('error')}")
+                                analyst_verification['warnings'].append(f"Could not fetch analyst data: {fetch_result.get('error', 'Unknown error')}")
+                                analyst_verification['fetch_status'] = 'fetch_failed'
+                                analyst_verification['debug_info'].append(f"Fetch failed: {fetch_result.get('error')}")
+                        else:
+                            logger.warning(f"[Verify Trade] Could not login to Trendlyne")
+                            analyst_verification['warnings'].append("Could not login to Trendlyne for analyst data")
+                            analyst_verification['fetch_status'] = 'login_failed'
+                            analyst_verification['debug_info'].append("Trendlyne login failed")
+
+                except Exception as fetch_error:
+                    import traceback
+                    error_trace = traceback.format_exc()
+                    logger.error(f"[Verify Trade] Error fetching analyst data: {fetch_error}\n{error_trace}")
+                    analyst_verification['warnings'].append(f"Error fetching analyst data: {str(fetch_error)}")
+                    analyst_verification['fetch_status'] = 'exception'
+                    analyst_verification['debug_info'].append(f"Exception: {str(fetch_error)}")
+                    analyst_verification['debug_info'].append(f"Traceback: {error_trace[:500]}")
+
+            # Now run aggregation with whatever data we have
+            aggregator = get_analyst_report_aggregator()
+            analyst_result = aggregator.aggregate_for_trade(
+                symbol=stock_symbol,
+                direction=direction,
+                current_price=float(futures_price) if futures_price else None,
+                nse_code=stock_symbol,
+                refresh_if_stale=False  # We already handled refresh above
+            )
+
+            # Preserve debug info and fetch status collected during fetch
+            preserved_debug_info = analyst_verification.get('debug_info', [])
+            preserved_fetch_status = analyst_verification.get('fetch_status', 'unknown')
+            preserved_data_source = analyst_verification.get('data_source', 'unknown')
+            preserved_warnings = analyst_verification.get('warnings', [])
+
+            # Add aggregation result info to debug
+            preserved_debug_info.append(f"Aggregation result: trade_allowed={analyst_result.get('trade_allowed')}")
+            if analyst_result.get('price_target'):
+                pt = analyst_result['price_target']
+                preserved_debug_info.append(f"Price target data: Current=₹{pt.get('current_price')}, Target=₹{pt.get('avg_target_price')}, Upside={pt.get('upside_pct')}%, Analysts={pt.get('analyst_count')}")
+            else:
+                preserved_debug_info.append("No price target data in aggregation result")
+
+            # Get quick LLM summaries for latest 3 reports
+            report_summaries = []
+            try:
+                from apps.llm.services.analyst_report_analyzer import get_quick_summaries_for_reports
+                from django.db.models import Q
+                import os
+                import re as regex
+
+                # Get latest 3 reports from database
+                recent_reports = AnalystReport.objects.filter(
+                    nse_code__iexact=stock_symbol
+                ).order_by('-report_date')[:3]
+
+                if recent_reports.exists():
+                    # Check if any reports need PDF download
+                    reports_needing_pdf = [r for r in recent_reports if not r.pdf_local_path and r.pdf_url]
+
+                    if reports_needing_pdf:
+                        preserved_debug_info.append(f"Need to download {len(reports_needing_pdf)} PDFs for summaries")
+
+                        # Download PDFs using authenticated session
+                        # Navigate to PDF URL to get S3 redirect, then download from S3
+                        try:
+                            from apps.data.providers.trendlyne import TrendlyneProvider
+                            import requests as req_lib
+                            import time
+
+                            with TrendlyneProvider(headless=True) as provider:
+                                provider.init_driver()
+                                if provider.login():
+                                    reports_dir = os.path.join(settings.BASE_DIR, 'apps', 'data', 'tldata', 'analyst_reports', stock_symbol.upper())
+                                    os.makedirs(reports_dir, exist_ok=True)
+
+                                    pdfs_downloaded = 0
+                                    for rpt in reports_needing_pdf:
+                                        try:
+                                            # Navigate to PDF URL to get S3 redirect
+                                            provider.driver.get(rpt.pdf_url)
+                                            time.sleep(2)
+
+                                            # Get the redirected S3 URL
+                                            s3_url = provider.driver.current_url
+
+                                            # Download from S3 (pre-signed URL, no auth needed)
+                                            resp = req_lib.get(s3_url, timeout=30)
+
+                                            if resp.status_code == 200 and len(resp.content) > 5000 and resp.content[:5] == b'%PDF-':
+                                                safe_author = regex.sub(r'[^\w\-]', '_', rpt.author or 'unknown')[:50]
+                                                safe_date = str(rpt.report_date).replace('-', '_')
+                                                filename = f"{stock_symbol}_{safe_date}_{safe_author}.pdf"
+                                                local_path = os.path.join(reports_dir, filename)
+
+                                                with open(local_path, 'wb') as f:
+                                                    f.write(resp.content)
+                                                rpt.pdf_local_path = local_path
+                                                rpt.pdf_download_success = True
+                                                rpt.save(update_fields=['pdf_local_path', 'pdf_download_success'])
+                                                pdfs_downloaded += 1
+                                                logger.info(f"[Verify Trade] Downloaded PDF for summary: {filename}")
+                                        except Exception as pdf_err:
+                                            logger.warning(f"[Verify Trade] PDF download error for {rpt.author}: {pdf_err}")
+
+                                    preserved_debug_info.append(f"Downloaded {pdfs_downloaded} PDFs for summaries")
+                                else:
+                                    preserved_debug_info.append("Could not login to Trendlyne for PDF download")
+                        except Exception as pdf_batch_err:
+                            logger.warning(f"[Verify Trade] PDF batch download error: {pdf_batch_err}")
+                            preserved_debug_info.append(f"PDF download error: {str(pdf_batch_err)}")
+
+                        # Refresh reports from DB after download
+                        recent_reports = AnalystReport.objects.filter(
+                            nse_code__iexact=stock_symbol
+                        ).order_by('-report_date')[:3]
+
+                    preserved_debug_info.append(f"Fetching quick summaries for {recent_reports.count()} reports...")
+                    report_summaries = get_quick_summaries_for_reports(
+                        reports=list(recent_reports),
+                        symbol=stock_symbol,
+                        max_reports=3
+                    )
+                    preserved_debug_info.append(f"Got {len([s for s in report_summaries if s.get('success')])} successful summaries")
+                else:
+                    preserved_debug_info.append("No reports found for quick summaries")
+            except Exception as summary_error:
+                logger.warning(f"[Verify Trade] Could not get quick summaries: {summary_error}")
+                preserved_debug_info.append(f"Quick summary error: {str(summary_error)}")
+
+            analyst_verification = {
+                'success': True,
+                'trade_allowed': analyst_result.get('trade_allowed', True),
+                'blocking_reasons': analyst_result.get('blocking_reasons', []),
+                'warnings': analyst_result.get('warnings', []) + preserved_warnings,
+                'price_target': analyst_result.get('price_target'),
+                'reports_summary': analyst_result.get('reports_summary'),
+                'top_blocking_reports': analyst_result.get('top_blocking_reports', []),
+                'recommendation': analyst_result.get('recommendation', 'PROCEED'),
+                'rules_checked': analyst_result.get('rules_checked', []),
+                'data_source': preserved_data_source,
+                'fetch_status': preserved_fetch_status,
+                'debug_info': preserved_debug_info,
+                'report_quick_summaries': report_summaries  # LLM summaries of latest 3 reports
+            }
+
+            logger.info(f"[Verify Trade] Analyst verification: trade_allowed={analyst_result.get('trade_allowed')}, "
+                       f"blocking_reasons={len(analyst_result.get('blocking_reasons', []))}, "
+                       f"warnings={len(analyst_result.get('warnings', []))}, "
+                       f"data_source={analyst_verification.get('data_source')}")
+
+        except Exception as analyst_error:
+            logger.warning(f"[Verify Trade] Analyst verification failed: {analyst_error}", exc_info=True)
+            # Don't block trade if analyst check fails - just log and continue
+            analyst_verification['error'] = str(analyst_error)
+            analyst_verification['warnings'].append(f"Analyst verification unavailable: {str(analyst_error)}")
+
+        # Check if analyst data blocks the trade
+        analyst_passed = analyst_verification.get('trade_allowed', True)
+        if analysis_passed and historical_passed and news_passed and not analyst_passed:
+            logger.warning(f"Trade BLOCKED by analyst data for {stock_symbol}: {analyst_verification.get('blocking_reasons', [])}")
+
+        # Trade only passes if analysis, historical checks, news checks, AND analyst checks pass
+        passed = analysis_passed and historical_passed and news_passed and analyst_passed
 
         # Calculate position sizing with 50% margin rule (like options)
         position_details = {}
@@ -857,7 +1445,7 @@ def verify_future_trade(request):
             'score_breakdown': analysis_result.get('scores', {})  # Add component scores breakdown
         }
 
-        # Build verdict message considering analysis, historical verification, AND news verification
+        # Build verdict message considering analysis, historical verification, news verification, AND analyst verification
         if passed:
             verdict_text = f'PASS - Score: {composite_score}/100'
             reason_text = f'Composite score: {composite_score}/100. Direction: {direction}'
@@ -877,12 +1465,17 @@ def verify_future_trade(request):
                 # Risk check failure
                 verdict_text = f'BLOCKED - Historical Risk Check Failed'
                 reason_text = f'Analysis passed (score: {composite_score}) but blocked by: {", ".join(hist_failures)}'
-        else:
+        elif not news_passed:
             # Analysis and historical passed but news verification failed (HARD BLOCK)
             blocking_count = len(news_verification.get('blocking_articles', []))
             blocking_titles = [a.get('title', 'Unknown')[:50] for a in news_verification.get('blocking_articles', [])[:2]]
             verdict_text = f'BLOCKED - Negative News Detected'
             reason_text = f'Analysis passed (score: {composite_score}) but {blocking_count} highly negative news article(s) detected: {"; ".join(blocking_titles)}'
+        else:
+            # All others passed but analyst verification failed
+            analyst_blocking_reasons = analyst_verification.get('blocking_reasons', [])
+            verdict_text = f'BLOCKED - Analyst Reports'
+            reason_text = f'Analysis passed (score: {composite_score}) but blocked by analyst data: {"; ".join(analyst_blocking_reasons[:2])}'
 
         response_data = {
             'success': True,
@@ -915,6 +1508,28 @@ def verify_future_trade(request):
                 'warning_articles': news_verification.get('warning_articles', []),
                 'summary': news_verification.get('summary', {}),
                 'stock_news': news_verification.get('stock_news', {})
+            },
+            # Historical News Analysis (from database)
+            'historical_news': {
+                'success': historical_news.get('success', False),
+                'articles': historical_news.get('articles', []),
+                'summary': historical_news.get('summary', {})
+            },
+            # Analyst Report Verification Results
+            'analyst_verification': {
+                'success': analyst_verification.get('success', False),
+                'trade_allowed': analyst_verification.get('trade_allowed', True),
+                'blocking_reasons': analyst_verification.get('blocking_reasons', []),
+                'warnings': analyst_verification.get('warnings', []),
+                'price_target': analyst_verification.get('price_target'),
+                'reports_summary': analyst_verification.get('reports_summary'),
+                'top_blocking_reports': analyst_verification.get('top_blocking_reports', []),
+                'recommendation': analyst_verification.get('recommendation', 'PROCEED'),
+                'rules_checked': analyst_verification.get('rules_checked', []),
+                'data_source': analyst_verification.get('data_source', 'none'),
+                'fetch_status': analyst_verification.get('fetch_status', 'unknown'),
+                'debug_info': analyst_verification.get('debug_info', []),
+                'report_quick_summaries': analyst_verification.get('report_quick_summaries', [])
             }
         }
 
@@ -1288,8 +1903,8 @@ def fetch_trade_news(request):
         from datetime import datetime
         from django.utils import timezone as django_timezone
 
-        def save_articles_to_db(articles, category, symbols=None, sectors=None):
-            """Save articles to NewsArticle model"""
+        def save_articles_to_db(articles, category, news_type, symbols=None, sectors=None, search_keywords=None):
+            """Save articles to NewsArticle model with extended fields"""
             saved_count = 0
             for article in articles:
                 try:
@@ -1306,7 +1921,7 @@ def fetch_trade_news(request):
                         logger.debug(f"[Trade News] Article already exists: {article['url']}")
                         continue
 
-                    # Create article
+                    # Create article with extended fields
                     NewsArticle.objects.create(
                         title=article.get('title', '')[:500],
                         source=article.get('source', {}).get('name', 'GNews')[:100],
@@ -1317,9 +1932,11 @@ def fetch_trade_news(request):
                         summary=article.get('description', '')[:1000],
                         content=article.get('content', ''),
                         category=category,
+                        news_type=news_type,
                         tags=[],
                         symbols_mentioned=symbols or [],
                         sectors_mentioned=sectors or [],
+                        search_keywords=search_keywords or [],
                         processed=False
                     )
                     saved_count += 1
@@ -1329,12 +1946,42 @@ def fetch_trade_news(request):
 
             return saved_count
 
+        def update_article_with_analysis(article_url, impact_data):
+            """Update an existing article with LLM analysis results"""
+            try:
+                article = NewsArticle.objects.filter(url=article_url).first()
+                if article:
+                    article.sentiment_score = impact_data.get('impact_score', 0)
+                    article.sentiment_label = 'NEGATIVE' if impact_data.get('impact_score', 0) < -0.3 else ('POSITIVE' if impact_data.get('impact_score', 0) > 0.3 else 'NEUTRAL')
+                    article.sentiment_confidence = impact_data.get('impact_confidence', 0)
+                    article.impact_reasoning = impact_data.get('impact_reasoning', '')
+                    article.market_direction = impact_data.get('market_direction') or ('BEARISH' if impact_data.get('impact_score', 0) < -0.3 else ('BULLISH' if impact_data.get('impact_score', 0) > 0.3 else 'NEUTRAL'))
+                    article.relevance_score = impact_data.get('relevance', 1.0)
+                    article.impact_category = impact_data.get('impact_category', '')
+                    article.impact_analysis = {
+                        'impact_score': impact_data.get('impact_score', 0),
+                        'impact_label': impact_data.get('impact_label', 'NEUTRAL'),
+                        'impact_reasoning': impact_data.get('impact_reasoning', ''),
+                        'trade_recommendation': impact_data.get('trade_recommendation', 'PROCEED'),
+                        'blocks_trade': impact_data.get('blocks_trade', False),
+                        'analyzed_at': django_timezone.now().isoformat()
+                    }
+                    article.processed = True
+                    article.processed_at = django_timezone.now()
+                    article.save()
+                    return True
+            except Exception as e:
+                logger.error(f"[Trade News] Error updating article analysis: {e}")
+            return False
+
         # Save stock news
         stock_articles_saved = save_articles_to_db(
             stock_news_result.get('articles', []),
             category='Stock',
+            news_type='STOCK',
             symbols=[stock_symbol],
-            sectors=[industry_name] if industry_name else []
+            sectors=[industry_name] if industry_name else [],
+            search_keywords=[stock_symbol, stock_name] if stock_name else [stock_symbol]
         )
         logger.info(f"[Trade News] Saved {stock_articles_saved} stock articles to database")
 
@@ -1342,8 +1989,10 @@ def fetch_trade_news(request):
         industry_articles_saved = save_articles_to_db(
             industry_news_result.get('articles', []),
             category='Industry',
+            news_type='INDUSTRY',
             symbols=[],
-            sectors=[industry_name] if industry_name else []
+            sectors=[industry_name] if industry_name else [],
+            search_keywords=[industry_name] if industry_name else []
         )
         logger.info(f"[Trade News] Saved {industry_articles_saved} industry articles to database")
 
@@ -1351,8 +2000,10 @@ def fetch_trade_news(request):
         competitor_articles_saved = save_articles_to_db(
             competitor_news_result.get('articles', []),
             category='Competitor',
+            news_type='COMPETITOR',
             symbols=[comp.nsecode for comp in competitors if hasattr(comp, 'nsecode')],
-            sectors=[industry_name] if industry_name else []
+            sectors=[industry_name] if industry_name else [],
+            search_keywords=competitor_names[:3] if competitor_names else []
         )
         logger.info(f"[Trade News] Saved {competitor_articles_saved} competitor articles to database")
 
@@ -1460,6 +2111,14 @@ def fetch_trade_news(request):
             logger.info(f"[Trade News] Impact analysis complete: trade_allowed={impact_result['trade_allowed']}, "
                        f"blocking={len(impact_result['blocking_articles'])}, warnings={len(impact_result['warning_articles'])}")
 
+            # Step 9: Update articles in database with LLM analysis results
+            updated_count = 0
+            for category_key in ['stock_news', 'industry_news', 'competitor_news']:
+                for article in impact_result.get(category_key, {}).get('articles', []):
+                    if update_article_with_analysis(article.get('url'), article):
+                        updated_count += 1
+            logger.info(f"[Trade News] Updated {updated_count} articles with LLM analysis")
+
         except Exception as impact_error:
             logger.warning(f"[Trade News] Impact analysis failed: {impact_error}, returning unanalyzed news")
             # Fallback: return news without impact analysis
@@ -1468,6 +2127,7 @@ def fetch_trade_news(request):
                 'stock_news': stock_news_data,
                 'industry_news': industry_news_data,
                 'competitor_news': competitor_news_data,
+                'generic_news': {'articles': [], 'totalArticles': 0},
                 'news_verification': {
                     'trade_allowed': True,
                     'blocking_articles': [],
@@ -1478,6 +2138,57 @@ def fetch_trade_news(request):
                     }
                 }
             }
+
+        # Step 10: Fetch top 2 most impactful market news from database (last 10 days)
+        try:
+            from datetime import timedelta
+            cutoff_date = django_timezone.now() - timedelta(days=10)
+
+            # Fetch all market articles from last 10 days
+            market_articles = list(NewsArticle.objects.filter(
+                news_type='MARKET',
+                processed=True,
+                published_at__gte=cutoff_date
+            ).order_by('-published_at')[:20])  # Get recent 20, then sort by impact
+
+            # Sort by absolute impact score (most impactful first, regardless of +/-)
+            market_articles.sort(key=lambda x: abs(x.sentiment_score or 0), reverse=True)
+
+            # Take top 2 most impactful articles
+            top_articles = market_articles[:2]
+
+            # Count total available for "View All" badge
+            total_market_articles = NewsArticle.objects.filter(
+                news_type='MARKET',
+                processed=True,
+                published_at__gte=cutoff_date
+            ).count()
+
+            generic_news_articles = []
+            for article in top_articles:
+                generic_news_articles.append({
+                    'title': article.title,
+                    'description': article.summary,
+                    'url': article.url,
+                    'image': article.image_url,
+                    'publishedAt': article.published_at.isoformat() if article.published_at else None,
+                    'source': {'name': article.source, 'url': ''},
+                    'impact_score': article.sentiment_score or 0,
+                    'impact_label': article.impact_analysis.get('impact_label', 'NEUTRAL') if article.impact_analysis else 'NEUTRAL',
+                    'impact_reasoning': article.impact_reasoning or '',
+                    'market_direction': article.market_direction or 'NEUTRAL',
+                    'impact_category': article.impact_category or ''
+                })
+
+            response_data['generic_news'] = {
+                'articles': generic_news_articles,
+                'totalArticles': total_market_articles  # Total in DB for "View All" count
+            }
+            logger.info(f"[Trade News] Generic market news: {len(generic_news_articles)} top impact articles (total in DB: {total_market_articles})")
+
+        except Exception as generic_error:
+            logger.warning(f"[Trade News] Error fetching generic news: {generic_error}")
+            response_data['generic_news'] = {'articles': [], 'totalArticles': 0}
 
         logger.info(f"[Trade News] Successfully fetched news for {stock_symbol}")
         logger.info(f"[Trade News] Stock: {len(response_data['stock_news']['articles'])} articles")
@@ -1497,23 +2208,28 @@ def fetch_trade_news(request):
 @login_required
 def news_details_page(request):
     """
-    Display detailed news page in a new window.
+    Display detailed news page.
 
-    Shows all news articles for a specific category (stock/industry/competitor).
+    When called without parameters: Shows Market News Dashboard with top impactful news
+    When called with parameters: Shows specific category news (stock/industry/competitor)
 
-    Query Parameters:
+    Query Parameters (for specific category):
         category: 'stock', 'industry', or 'competitor'
         identifier: Stock symbol, industry name, or competitor names
         title: Display title
 
     Returns:
-        Rendered HTML page with all news articles
+        Rendered HTML page with news articles
     """
     from apps.data.models import NewsArticle
 
     category = request.GET.get('category', '')
     identifier = request.GET.get('identifier', '')
     title = request.GET.get('title', '')
+
+    # If no category specified, show Market News Dashboard
+    if not category:
+        return market_news_dashboard(request)
 
     # Fetch articles from database based on category
     # SQLite-compatible approach: filter by category, then filter in Python
@@ -1546,13 +2262,182 @@ def news_details_page(request):
         articles = list(NewsArticle.objects.filter(
             category='Competitor'
         ).order_by('-published_at'))
+    elif category == 'market':
+        # Market intelligence news - from database (last 10 days)
+        from datetime import timedelta
+        from django.utils import timezone as django_timezone
+
+        cutoff_date = django_timezone.now() - timedelta(days=10)
+        articles = list(NewsArticle.objects.filter(
+            news_type='MARKET',
+            processed=True,
+            published_at__gte=cutoff_date
+        ).exclude(
+            sentiment_score__isnull=True
+        ).order_by('-relevance_score', 'sentiment_score')[:20])
 
     context = {
         'category': category,
         'identifier': identifier,
-        'title': title,
+        'title': title or ('Market Intelligence - Top Impact News' if category == 'market' else ''),
         'articles': articles,
         'total_count': len(articles)
     }
 
     return render(request, 'trading/news_details.html', context)
+
+
+@login_required
+def market_news_dashboard(request):
+    """
+    Display Market News Dashboard with top impactful news for Indian markets.
+
+    Fetches global market news using keywords like:
+    - US Fed, interest rates
+    - Global market movements (Dow, Nasdaq, S&P)
+    - Asian markets (Nikkei, Hang Seng)
+    - Crude oil, gold prices
+    - Economic data (jobs, GDP, inflation)
+
+    Each article is analyzed by LLM for impact on Indian markets.
+    Top 10-20 most impactful articles are displayed.
+
+    Returns:
+        Rendered HTML page with market news dashboard
+    """
+    from apps.data.services.gnews_client import get_gnews_client
+    from apps.llm.services.news_impact_analyzer import get_news_impact_analyzer
+    from apps.data.models import NewsArticle
+    from datetime import datetime
+    from django.utils import timezone as django_timezone
+
+    context = {
+        'articles': [],
+        'summary': {},
+        'category_breakdown': {},
+        'error': None,
+        'loading': False
+    }
+
+    # Check if this is an AJAX request for news data
+    if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+        try:
+            logger.info("[Market News] Fetching market news for dashboard")
+
+            # Fetch market news from GNews API
+            gnews = get_gnews_client()
+            news_result = gnews.fetch_market_news(
+                max_results_per_keyword=8,
+                use_cache=True
+            )
+
+            if not news_result.get('success'):
+                return JsonResponse({
+                    'success': False,
+                    'error': news_result.get('error', 'Failed to fetch news')
+                })
+
+            articles = news_result.get('articles', [])
+            keywords_used = news_result.get('keywords_used', [])
+            logger.info(f"[Market News] Fetched {len(articles)} articles, analyzing with LLM...")
+
+            # Analyze articles with LLM
+            analyzer = get_news_impact_analyzer()
+            analysis_result = analyzer.analyze_market_news(
+                articles=articles,
+                top_n=20
+            )
+
+            # Save analyzed articles to database
+            saved_count = 0
+            for article in analysis_result['articles']:
+                try:
+                    # Parse published date
+                    published_at = article.get('publishedAt')
+                    if published_at:
+                        published_dt = datetime.fromisoformat(published_at.replace('Z', '+00:00'))
+                    else:
+                        published_dt = django_timezone.now()
+
+                    # Check if article already exists
+                    existing = NewsArticle.objects.filter(url=article.get('url', '')).first()
+                    if existing:
+                        # Update existing article with new analysis
+                        existing.sentiment_score = article.get('impact_score', 0)
+                        existing.sentiment_label = 'NEGATIVE' if article.get('impact_score', 0) < -0.3 else ('POSITIVE' if article.get('impact_score', 0) > 0.3 else 'NEUTRAL')
+                        existing.impact_reasoning = article.get('impact_reasoning', '')
+                        existing.market_direction = article.get('market_direction', 'NEUTRAL')
+                        existing.relevance_score = article.get('relevance', 0)
+                        existing.impact_category = article.get('impact_category', '')
+                        existing.impact_analysis = {
+                            'impact_score': article.get('impact_score', 0),
+                            'impact_label': article.get('impact_label', 'NEUTRAL'),
+                            'impact_reasoning': article.get('impact_reasoning', ''),
+                            'market_direction': article.get('market_direction', 'NEUTRAL'),
+                            'relevance': article.get('relevance', 0),
+                            'analyzed_at': django_timezone.now().isoformat()
+                        }
+                        existing.processed = True
+                        existing.processed_at = django_timezone.now()
+                        existing.save()
+                    else:
+                        # Create new article with analysis
+                        NewsArticle.objects.create(
+                            title=article.get('title', '')[:500],
+                            source=article.get('source', {}).get('name', 'GNews')[:100],
+                            author='',
+                            published_at=published_dt,
+                            url=article.get('url', ''),
+                            image_url=article.get('image', ''),
+                            summary=article.get('description', '')[:1000],
+                            content=article.get('content', ''),
+                            category='Market',
+                            news_type='MARKET',
+                            tags=[],
+                            symbols_mentioned=[],
+                            sectors_mentioned=[],
+                            search_keywords=[article.get('search_keyword', '')] if article.get('search_keyword') else keywords_used[:3],
+                            sentiment_score=article.get('impact_score', 0),
+                            sentiment_label='NEGATIVE' if article.get('impact_score', 0) < -0.3 else ('POSITIVE' if article.get('impact_score', 0) > 0.3 else 'NEUTRAL'),
+                            impact_reasoning=article.get('impact_reasoning', ''),
+                            market_direction=article.get('market_direction', 'NEUTRAL'),
+                            relevance_score=article.get('relevance', 0),
+                            impact_category=article.get('impact_category', ''),
+                            impact_analysis={
+                                'impact_score': article.get('impact_score', 0),
+                                'impact_label': article.get('impact_label', 'NEUTRAL'),
+                                'impact_reasoning': article.get('impact_reasoning', ''),
+                                'market_direction': article.get('market_direction', 'NEUTRAL'),
+                                'relevance': article.get('relevance', 0),
+                                'analyzed_at': django_timezone.now().isoformat()
+                            },
+                            processed=True,
+                            processed_at=django_timezone.now()
+                        )
+                    saved_count += 1
+                except Exception as save_error:
+                    logger.warning(f"[Market News] Error saving article: {save_error}")
+                    continue
+
+            logger.info(f"[Market News] Saved/updated {saved_count} articles to database")
+
+            # Fetch historical market news from database (top 5 most impactful)
+            historical_market_news = get_historical_market_news(limit=5)
+
+            return JsonResponse({
+                'success': True,
+                'articles': analysis_result['articles'],
+                'summary': analysis_result['summary'],
+                'category_breakdown': analysis_result['category_breakdown'],
+                'historical_news': historical_market_news
+            })
+
+        except Exception as e:
+            logger.error(f"[Market News] Error: {e}", exc_info=True)
+            return JsonResponse({
+                'success': False,
+                'error': str(e)
+            })
+
+    # For regular page load, render the template (data will be loaded via AJAX)
+    return render(request, 'trading/market_news_dashboard.html', context)

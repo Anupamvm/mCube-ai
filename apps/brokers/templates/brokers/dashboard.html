@@ -17,7 +17,7 @@
     <p><strong>Margin Available:</strong> {{ kotak_limit.margin_available|indian_currency }}</p>
     <p><strong>Margin Used:</strong> {{ kotak_limit.margin_used|indian_currency }}</p>
     <p><strong>Last Updated:</strong> {{ kotak_limit.fetched_at }}</p>
-    <p><strong>Active Positions:</strong> {{ kotak_positions|length }}</p>
+    <p><strong>Open Positions:</strong> {{ kotak_positions|length }}</p>
     <a href="{% url 'brokers:kotakneo_data' %}" class="btn">View Full Data</a>
     {% else %}
     <p>No data available. <a href="{% url 'brokers:kotakneo_login' %}">Login to Kotak Neo</a></p>
@@ -30,7 +30,7 @@
     <p><strong>Margin Available:</strong> {{ breeze_limit.margin_available|indian_currency }}</p>
     <p><strong>Margin Used:</strong> {{ breeze_limit.margin_used|indian_currency }}</p>
     <p><strong>Last Updated:</strong> {{ breeze_limit.fetched_at }}</p>
-    <p><strong>Active Positions:</strong> {{ breeze_positions|length }}</p>
+    <p><strong>Open Positions:</strong> {{ breeze_positions|length }}</p>
     <a href="{% url 'brokers:breeze_data' %}" class="btn">View Full Data</a>
     {% else %}
     <p>No data available. <a href="{% url 'brokers:breeze_login' %}">Login to Breeze</a></p>

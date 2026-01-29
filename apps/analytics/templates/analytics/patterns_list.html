@@ -67,8 +67,8 @@
                     </strong>
                 </td>
                 <td>{{ pattern.confidence_score }}%</td>
-                <td style="color: #38a169;">น{{ pattern.avg_profit|floatformat:2 }}</td>
-                <td style="color: #f56565;">น{{ pattern.avg_loss|floatformat:2 }}</td>
+                <td style="color: #38a169;">ยน{{ pattern.avg_profit|floatformat:2 }}</td>
+                <td style="color: #f56565;">ยน{{ pattern.avg_loss|floatformat:2 }}</td>
                 <td>
                     <span class="badge badge-{% if pattern.validation_status == 'ACTIVE' %}success{% elif pattern.validation_status == 'TESTING' %}warning{% else %}danger{% endif %}">
                         {{ pattern.get_validation_status_display }}

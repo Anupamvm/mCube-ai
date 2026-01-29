@@ -13,7 +13,7 @@
 
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: linear-gradient(135deg, {% if category == 'market' %}#7c3aed 0%, #9333ea{% else %}#667eea 0%, #764ba2{% endif %} 100%);
             padding: 20px;
             min-height: 100vh;
         }
@@ -66,6 +66,80 @@
         .category-competitor {
             background: #fef3c7;
             color: #92400e;
+        }
+
+        .category-market {
+            background: #f3e8ff;
+            color: #7c3aed;
+        }
+
+        .impact-badge {
+            display: inline-block;
+            padding: 3px 10px;
+            border-radius: 4px;
+            font-size: 0.7rem;
+            font-weight: 700;
+            text-transform: uppercase;
+        }
+
+        .impact-highly-negative {
+            background: #fef2f2;
+            color: #dc2626;
+            border: 1px solid #fca5a5;
+        }
+
+        .impact-negative {
+            background: #fffbeb;
+            color: #d97706;
+            border: 1px solid #fcd34d;
+        }
+
+        .impact-neutral {
+            background: #f3f4f6;
+            color: #6b7280;
+            border: 1px solid #d1d5db;
+        }
+
+        .impact-positive {
+            background: #f0fdf4;
+            color: #16a34a;
+            border: 1px solid #86efac;
+        }
+
+        .impact-highly-positive {
+            background: #ecfdf5;
+            color: #059669;
+            border: 1px solid #6ee7b7;
+        }
+
+        .impact-analysis-box {
+            background: #faf5ff;
+            padding: 10px 14px;
+            border-radius: 6px;
+            margin-top: 10px;
+            border-left: 3px solid #8b5cf6;
+            font-size: 0.85rem;
+            color: #4b5563;
+        }
+
+        .direction-icon {
+            font-size: 1.2rem;
+            margin-right: 6px;
+        }
+
+        .impact-score {
+            font-weight: 700;
+            font-size: 0.9rem;
+        }
+
+        .impact-category-tag {
+            background: #f3e8ff;
+            color: #7c3aed;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 0.7rem;
+            font-weight: 600;
+            margin-left: 8px;
         }
 
         .articles-grid {
@@ -203,6 +277,8 @@
                         Industry News
                     {% elif category == 'competitor' %}
                         Competitor News
+                    {% elif category == 'market' %}
+                        Market Intelligence
                     {% endif %}
                 </span>
                 <span>{{ total_count }} article{{ total_count|pluralize }}</span>
@@ -219,10 +295,35 @@
                         <img src="{{ article.image_url }}" alt="{{ article.title }}" class="article-image" onerror="this.style.display='none'">
                         {% endif %}
                         <div class="article-text">
+                            {% if category == 'market' and article.market_direction %}
+                            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 10px; flex-wrap: wrap;">
+                                <span class="direction-icon">
+                                    {% if article.market_direction == 'BEARISH' %}📉{% elif article.market_direction == 'BULLISH' %}📈{% else %}➖{% endif %}
+                                </span>
+                                {% if article.impact_analysis.impact_label %}
+                                <span class="impact-badge impact-{{ article.impact_analysis.impact_label|lower|default:'neutral' }}">
+                                    {{ article.impact_analysis.impact_label|default:'NEUTRAL' }}
+                                </span>
+                                {% endif %}
+                                {% if article.impact_category %}
+                                <span class="impact-category-tag">{{ article.impact_category }}</span>
+                                {% endif %}
+                                {% if article.sentiment_score %}
+                                <span class="impact-score" style="color: {% if article.sentiment_score <= -0.3 %}#dc2626{% elif article.sentiment_score >= 0.3 %}#16a34a{% else %}#6b7280{% endif %};">
+                                    Score: {% if article.sentiment_score >= 0 %}+{% endif %}{{ article.sentiment_score|floatformat:2 }}
+                                </span>
+                                {% endif %}
+                            </div>
+                            {% endif %}
                             <h2 class="article-title">
                                 <a href="{{ article.url }}" target="_blank">{{ article.title }}</a>
                             </h2>
                             <p class="article-description">{{ article.summary }}</p>
+                            {% if category == 'market' and article.impact_reasoning %}
+                            <div class="impact-analysis-box">
+                                <strong>Impact Analysis:</strong> {{ article.impact_reasoning }}
+                            </div>
+                            {% endif %}
                             <div class="article-meta">
                                 <span>📅 {{ article.published_at|date:"M d, Y" }} at {{ article.published_at|time:"g:i A" }}</span>
                                 <span>📰 {{ article.source }}</span>

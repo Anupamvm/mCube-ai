@@ -1,0 +1,710 @@
+{% extends 'core/base.html' %}
+{% load static %}
+
+{% block title %}Market News Dashboard - mCube{% endblock %}
+
+{% block extra_css %}
+<style>
+    .dashboard-container {
+        max-width: 1400px;
+        margin: 0 auto;
+        padding: 20px;
+    }
+
+    /* Header Section */
+    .dashboard-header {
+        background: linear-gradient(135deg, #1e3a5f 0%, #2d5a87 100%);
+        border-radius: 16px;
+        padding: 30px;
+        margin-bottom: 25px;
+        color: white;
+        box-shadow: 0 8px 32px rgba(30, 58, 95, 0.3);
+    }
+
+    .header-content {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 20px;
+    }
+
+    .header-title {
+        display: flex;
+        align-items: center;
+        gap: 15px;
+    }
+
+    .header-title h1 {
+        font-size: 1.75rem;
+        font-weight: 700;
+        margin: 0;
+    }
+
+    .header-title p {
+        margin: 5px 0 0 0;
+        opacity: 0.85;
+        font-size: 0.95rem;
+    }
+
+    .refresh-btn {
+        background: rgba(255, 255, 255, 0.15);
+        border: 2px solid rgba(255, 255, 255, 0.3);
+        color: white;
+        padding: 12px 24px;
+        border-radius: 8px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.2s;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .refresh-btn:hover {
+        background: rgba(255, 255, 255, 0.25);
+    }
+
+    .refresh-btn:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+    }
+
+    .refresh-btn.loading .refresh-icon {
+        animation: spin 1s linear infinite;
+    }
+
+    @keyframes spin {
+        from { transform: rotate(0deg); }
+        to { transform: rotate(360deg); }
+    }
+
+    /* Summary Cards */
+    .summary-section {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 20px;
+        margin-bottom: 25px;
+    }
+
+    .summary-card {
+        background: white;
+        border-radius: 12px;
+        padding: 20px;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+        text-align: center;
+        border: 1px solid #e5e7eb;
+    }
+
+    .summary-card.outlook-bullish {
+        border-left: 4px solid #10b981;
+        background: linear-gradient(135deg, #f0fdf4 0%, white 100%);
+    }
+
+    .summary-card.outlook-bearish {
+        border-left: 4px solid #ef4444;
+        background: linear-gradient(135deg, #fef2f2 0%, white 100%);
+    }
+
+    .summary-card.outlook-neutral {
+        border-left: 4px solid #6b7280;
+        background: linear-gradient(135deg, #f9fafb 0%, white 100%);
+    }
+
+    .summary-value {
+        font-size: 2rem;
+        font-weight: 700;
+        margin-bottom: 5px;
+    }
+
+    .summary-label {
+        color: #6b7280;
+        font-size: 0.875rem;
+        font-weight: 500;
+    }
+
+    /* Category Breakdown */
+    .category-section {
+        background: white;
+        border-radius: 12px;
+        padding: 20px;
+        margin-bottom: 25px;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+    }
+
+    .category-section h3 {
+        margin: 0 0 15px 0;
+        font-size: 1rem;
+        color: #374151;
+    }
+
+    .category-tags {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+    }
+
+    .category-tag {
+        padding: 8px 16px;
+        border-radius: 20px;
+        font-size: 0.85rem;
+        font-weight: 600;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+
+    .category-tag.US_FED { background: #dbeafe; color: #1e40af; }
+    .category-tag.GLOBAL_MARKETS { background: #fae8ff; color: #86198f; }
+    .category-tag.COMMODITIES { background: #fef3c7; color: #92400e; }
+    .category-tag.INDIAN_ECONOMY { background: #d1fae5; color: #065f46; }
+    .category-tag.FII_DII { background: #e0e7ff; color: #3730a3; }
+    .category-tag.SECTOR_NEWS { background: #fee2e2; color: #991b1b; }
+    .category-tag.GEOPOLITICAL { background: #fce7f3; color: #9d174d; }
+    .category-tag.OTHER { background: #f3f4f6; color: #374151; }
+
+    /* Articles Section */
+    .articles-section {
+        background: white;
+        border-radius: 12px;
+        padding: 25px;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+    }
+
+    .articles-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 20px;
+        padding-bottom: 15px;
+        border-bottom: 1px solid #e5e7eb;
+    }
+
+    .articles-header h2 {
+        margin: 0;
+        font-size: 1.25rem;
+        color: #1f2937;
+    }
+
+    .article-count {
+        background: #f3f4f6;
+        padding: 6px 14px;
+        border-radius: 20px;
+        font-size: 0.85rem;
+        font-weight: 600;
+        color: #4b5563;
+    }
+
+    .articles-grid {
+        display: flex;
+        flex-direction: column;
+        gap: 20px;
+    }
+
+    .article-card {
+        border: 1px solid #e5e7eb;
+        border-radius: 12px;
+        padding: 20px;
+        transition: all 0.2s;
+    }
+
+    .article-card:hover {
+        border-color: #3b82f6;
+        box-shadow: 0 4px 12px rgba(59, 130, 246, 0.15);
+    }
+
+    .article-card.bearish {
+        border-left: 4px solid #ef4444;
+    }
+
+    .article-card.bullish {
+        border-left: 4px solid #10b981;
+    }
+
+    .article-card.neutral {
+        border-left: 4px solid #6b7280;
+    }
+
+    .article-badges {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-bottom: 12px;
+    }
+
+    .impact-badge {
+        padding: 4px 10px;
+        border-radius: 12px;
+        font-size: 0.7rem;
+        font-weight: 700;
+        text-transform: uppercase;
+    }
+
+    .impact-badge.HIGHLY_NEGATIVE { background: #fef2f2; color: #dc2626; border: 1px solid #fecaca; }
+    .impact-badge.NEGATIVE { background: #fffbeb; color: #d97706; border: 1px solid #fde68a; }
+    .impact-badge.NEUTRAL { background: #f3f4f6; color: #6b7280; border: 1px solid #d1d5db; }
+    .impact-badge.POSITIVE { background: #fefce8; color: #ca8a04; border: 1px solid #fef08a; }
+    .impact-badge.HIGHLY_POSITIVE { background: #f0fdf4; color: #16a34a; border: 1px solid #bbf7d0; }
+
+    .direction-badge {
+        padding: 4px 10px;
+        border-radius: 12px;
+        font-size: 0.7rem;
+        font-weight: 700;
+    }
+
+    .direction-badge.BEARISH { background: #ef4444; color: white; }
+    .direction-badge.BULLISH { background: #10b981; color: white; }
+    .direction-badge.NEUTRAL { background: #6b7280; color: white; }
+
+    .article-title {
+        font-size: 1.1rem;
+        font-weight: 600;
+        color: #1f2937;
+        margin-bottom: 10px;
+        line-height: 1.4;
+    }
+
+    .article-title a {
+        color: inherit;
+        text-decoration: none;
+    }
+
+    .article-title a:hover {
+        color: #3b82f6;
+    }
+
+    .article-reasoning {
+        background: #f9fafb;
+        padding: 12px 15px;
+        border-radius: 8px;
+        font-size: 0.9rem;
+        color: #4b5563;
+        margin-bottom: 12px;
+        border-left: 3px solid #3b82f6;
+    }
+
+    .article-meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 15px;
+        font-size: 0.8rem;
+        color: #9ca3af;
+    }
+
+    .article-meta span {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+    }
+
+    /* Loading State */
+    .loading-container {
+        text-align: center;
+        padding: 60px 20px;
+    }
+
+    .loading-spinner {
+        width: 50px;
+        height: 50px;
+        border: 4px solid #e5e7eb;
+        border-top-color: #3b82f6;
+        border-radius: 50%;
+        animation: spin 1s linear infinite;
+        margin: 0 auto 20px;
+    }
+
+    .loading-text {
+        color: #6b7280;
+        font-size: 1rem;
+    }
+
+    .loading-subtext {
+        color: #9ca3af;
+        font-size: 0.875rem;
+        margin-top: 8px;
+    }
+
+    /* Error State */
+    .error-container {
+        text-align: center;
+        padding: 60px 20px;
+        background: #fef2f2;
+        border-radius: 12px;
+        border: 1px solid #fecaca;
+    }
+
+    .error-icon {
+        font-size: 3rem;
+        margin-bottom: 15px;
+    }
+
+    .error-text {
+        color: #dc2626;
+        font-size: 1rem;
+        font-weight: 600;
+    }
+
+    .error-details {
+        color: #991b1b;
+        font-size: 0.875rem;
+        margin-top: 8px;
+    }
+
+    /* Empty State */
+    .empty-container {
+        text-align: center;
+        padding: 60px 20px;
+        color: #6b7280;
+    }
+
+    .empty-icon {
+        font-size: 4rem;
+        margin-bottom: 15px;
+    }
+
+    @media (max-width: 768px) {
+        .header-content {
+            flex-direction: column;
+            text-align: center;
+        }
+
+        .summary-section {
+            grid-template-columns: repeat(2, 1fr);
+        }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="dashboard-container">
+    <!-- Header -->
+    <div class="dashboard-header">
+        <div class="header-content">
+            <div class="header-title">
+                <div>
+                    <span style="font-size: 2.5rem;">📈</span>
+                </div>
+                <div>
+                    <h1>Market Intelligence Dashboard</h1>
+                    <p>Real-time global news impact analysis for Indian markets</p>
+                </div>
+            </div>
+            <button class="refresh-btn" onclick="loadMarketNews()" id="refreshBtn">
+                <span class="refresh-icon">🔄</span>
+                <span>Refresh News</span>
+            </button>
+        </div>
+    </div>
+
+    <!-- Summary Section (populated via JS) -->
+    <div class="summary-section" id="summarySection" style="display: none;">
+        <div class="summary-card" id="outlookCard">
+            <div class="summary-value" id="outlookValue">-</div>
+            <div class="summary-label">Market Outlook</div>
+        </div>
+        <div class="summary-card">
+            <div class="summary-value" id="avgScoreValue">-</div>
+            <div class="summary-label">Avg Impact Score</div>
+        </div>
+        <div class="summary-card">
+            <div class="summary-value" id="bullishValue" style="color: #10b981;">-</div>
+            <div class="summary-label">Bullish News</div>
+        </div>
+        <div class="summary-card">
+            <div class="summary-value" id="bearishValue" style="color: #ef4444;">-</div>
+            <div class="summary-label">Bearish News</div>
+        </div>
+        <div class="summary-card">
+            <div class="summary-value" id="analyzedValue" style="color: #3b82f6;">-</div>
+            <div class="summary-label">Articles Analyzed</div>
+        </div>
+    </div>
+
+    <!-- Category Breakdown (populated via JS) -->
+    <div class="category-section" id="categorySection" style="display: none;">
+        <h3>📊 News Categories</h3>
+        <div class="category-tags" id="categoryTags"></div>
+    </div>
+
+    <!-- Historical News Alert (populated via JS) -->
+    <div class="category-section" id="historicalSection" style="display: none;">
+        <div id="historicalHeader" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+            <h3 style="margin: 0;">📚 Historical Analysis (7 Days)</h3>
+            <span id="historicalBadge" style="padding: 4px 12px; border-radius: 12px; font-size: 0.75rem; font-weight: 600;"></span>
+        </div>
+        <div id="historicalArticles" style="display: flex; flex-direction: column; gap: 8px;"></div>
+    </div>
+
+    <!-- Articles Section -->
+    <div class="articles-section">
+        <div class="articles-header">
+            <h2>🔥 Top Market-Moving News</h2>
+            <span class="article-count" id="articleCount">Loading...</span>
+        </div>
+
+        <!-- Loading State -->
+        <div class="loading-container" id="loadingState">
+            <div class="loading-spinner"></div>
+            <div class="loading-text">Analyzing market news with AI...</div>
+            <div class="loading-subtext">Fetching and processing global market news</div>
+        </div>
+
+        <!-- Error State -->
+        <div class="error-container" id="errorState" style="display: none;">
+            <div class="error-icon">⚠️</div>
+            <div class="error-text">Failed to load market news</div>
+            <div class="error-details" id="errorDetails"></div>
+        </div>
+
+        <!-- Articles Grid -->
+        <div class="articles-grid" id="articlesGrid" style="display: none;"></div>
+
+        <!-- Empty State -->
+        <div class="empty-container" id="emptyState" style="display: none;">
+            <div class="empty-icon">📭</div>
+            <div>No market news available at the moment</div>
+        </div>
+    </div>
+</div>
+
+<script>
+    // Load market news on page load
+    document.addEventListener('DOMContentLoaded', function() {
+        loadMarketNews();
+    });
+
+    function loadMarketNews() {
+        const refreshBtn = document.getElementById('refreshBtn');
+        const loadingState = document.getElementById('loadingState');
+        const errorState = document.getElementById('errorState');
+        const articlesGrid = document.getElementById('articlesGrid');
+        const emptyState = document.getElementById('emptyState');
+        const summarySection = document.getElementById('summarySection');
+        const categorySection = document.getElementById('categorySection');
+
+        // Show loading state
+        refreshBtn.disabled = true;
+        refreshBtn.classList.add('loading');
+        loadingState.style.display = 'block';
+        errorState.style.display = 'none';
+        articlesGrid.style.display = 'none';
+        emptyState.style.display = 'none';
+        summarySection.style.display = 'none';
+        categorySection.style.display = 'none';
+
+        fetch(window.location.href, {
+            method: 'GET',
+            headers: {
+                'X-Requested-With': 'XMLHttpRequest'
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            refreshBtn.disabled = false;
+            refreshBtn.classList.remove('loading');
+            loadingState.style.display = 'none';
+
+            if (data.success) {
+                if (data.articles && data.articles.length > 0) {
+                    displaySummary(data.summary);
+                    displayCategories(data.category_breakdown);
+                    if (data.historical_news && data.historical_news.articles && data.historical_news.articles.length > 0) {
+                        displayHistoricalNews(data.historical_news);
+                    }
+                    displayArticles(data.articles);
+                } else {
+                    emptyState.style.display = 'block';
+                    document.getElementById('articleCount').textContent = '0 articles';
+                }
+            } else {
+                errorState.style.display = 'block';
+                document.getElementById('errorDetails').textContent = data.error || 'Unknown error';
+            }
+        })
+        .catch(error => {
+            console.error('Error loading market news:', error);
+            refreshBtn.disabled = false;
+            refreshBtn.classList.remove('loading');
+            loadingState.style.display = 'none';
+            errorState.style.display = 'block';
+            document.getElementById('errorDetails').textContent = error.message;
+        });
+    }
+
+    function displaySummary(summary) {
+        const summarySection = document.getElementById('summarySection');
+        const outlookCard = document.getElementById('outlookCard');
+
+        // Set outlook
+        const outlook = summary.market_outlook || 'NEUTRAL';
+        document.getElementById('outlookValue').textContent = outlook;
+        outlookCard.className = 'summary-card outlook-' + outlook.toLowerCase();
+
+        // Set other values
+        document.getElementById('avgScoreValue').textContent =
+            (summary.average_impact_score >= 0 ? '+' : '') + summary.average_impact_score.toFixed(2);
+        document.getElementById('bullishValue').textContent = summary.bullish_count || 0;
+        document.getElementById('bearishValue').textContent = summary.bearish_count || 0;
+        document.getElementById('analyzedValue').textContent = summary.total_analyzed || 0;
+
+        summarySection.style.display = 'grid';
+    }
+
+    function displayCategories(breakdown) {
+        const categorySection = document.getElementById('categorySection');
+        const categoryTags = document.getElementById('categoryTags');
+
+        const categoryIcons = {
+            'US_FED': '🏛️',
+            'GLOBAL_MARKETS': '🌍',
+            'COMMODITIES': '🛢️',
+            'INDIAN_ECONOMY': '🇮🇳',
+            'FII_DII': '💰',
+            'SECTOR_NEWS': '📊',
+            'GEOPOLITICAL': '🌐',
+            'OTHER': '📰'
+        };
+
+        const categoryNames = {
+            'US_FED': 'US Fed/Rates',
+            'GLOBAL_MARKETS': 'Global Markets',
+            'COMMODITIES': 'Commodities',
+            'INDIAN_ECONOMY': 'Indian Economy',
+            'FII_DII': 'FII/DII',
+            'SECTOR_NEWS': 'Sector News',
+            'GEOPOLITICAL': 'Geopolitical',
+            'OTHER': 'Other'
+        };
+
+        let html = '';
+        for (const [cat, count] of Object.entries(breakdown)) {
+            const icon = categoryIcons[cat] || '📰';
+            const name = categoryNames[cat] || cat;
+            html += `<span class="category-tag ${cat}">${icon} ${name} (${count})</span>`;
+        }
+
+        categoryTags.innerHTML = html;
+        categorySection.style.display = 'block';
+    }
+
+    function displayHistoricalNews(historicalNews) {
+        const section = document.getElementById('historicalSection');
+        const header = document.getElementById('historicalHeader');
+        const badge = document.getElementById('historicalBadge');
+        const container = document.getElementById('historicalArticles');
+
+        const articles = historicalNews.articles || [];
+        const summary = historicalNews.summary || {};
+        const blockingCount = summary.blocking_count || 0;
+
+        // Set badge style based on blocking articles
+        if (blockingCount > 0) {
+            badge.style.background = '#fef2f2';
+            badge.style.color = '#dc2626';
+            badge.textContent = `${blockingCount} High Impact`;
+        } else {
+            badge.style.background = '#f0fdf4';
+            badge.style.color = '#16a34a';
+            badge.textContent = 'No Blocking News';
+        }
+
+        let html = '';
+        articles.forEach(article => {
+            const score = article.impact_score || 0;
+            const isBlocking = article.could_block_trade;
+            const scoreColor = score <= -0.6 ? '#dc2626' : score <= -0.3 ? '#f59e0b' : score >= 0.3 ? '#10b981' : '#6b7280';
+            const bgColor = isBlocking ? '#fef2f2' : '#f9fafb';
+
+            html += `
+                <div style="background: ${bgColor}; border-radius: 6px; padding: 10px 12px; display: flex; justify-content: space-between; align-items: center; gap: 12px; ${isBlocking ? 'border-left: 3px solid #dc2626;' : ''}">
+                    <div style="flex: 1; min-width: 0;">
+                        <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 2px;">
+                            ${isBlocking ? '<span style="background: #dc2626; color: white; padding: 1px 5px; border-radius: 3px; font-size: 0.6rem; font-weight: 600;">BLOCKS</span>' : ''}
+                            <span style="color: #9ca3af; font-size: 0.65rem;">${article.category || ''}</span>
+                        </div>
+                        <a href="${article.url}" target="_blank" style="color: #1f2937; text-decoration: none; font-size: 0.8rem; font-weight: 500; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                            ${article.title}
+                        </a>
+                    </div>
+                    <div style="font-weight: 700; font-size: 0.85rem; color: ${scoreColor}; flex-shrink: 0;">
+                        ${score >= 0 ? '+' : ''}${score.toFixed(2)}
+                    </div>
+                </div>
+            `;
+        });
+
+        container.innerHTML = html;
+        section.style.display = 'block';
+    }
+
+    function displayArticles(articles) {
+        const articlesGrid = document.getElementById('articlesGrid');
+        const articleCount = document.getElementById('articleCount');
+
+        articleCount.textContent = `${articles.length} articles`;
+
+        let html = '';
+        articles.forEach((article, index) => {
+            const direction = article.market_direction || 'NEUTRAL';
+            const directionClass = direction.toLowerCase();
+
+            html += `
+                <div class="article-card ${directionClass}">
+                    <div class="article-badges">
+                        <span class="impact-badge ${article.impact_label}">${article.impact_label}</span>
+                        <span class="direction-badge ${direction}">${direction}</span>
+                        <span class="category-tag ${article.impact_category}" style="padding: 3px 8px; font-size: 0.65rem;">
+                            ${article.impact_category}
+                        </span>
+                        <span style="background: #f3f4f6; padding: 3px 8px; border-radius: 8px; font-size: 0.65rem; color: #6b7280;">
+                            Score: ${article.impact_score >= 0 ? '+' : ''}${article.impact_score.toFixed(2)}
+                        </span>
+                    </div>
+                    <h3 class="article-title">
+                        <a href="${article.url}" target="_blank">${article.title}</a>
+                    </h3>
+                    ${article.impact_reasoning ? `
+                        <div class="article-reasoning">
+                            <strong>Impact Analysis:</strong> ${article.impact_reasoning}
+                        </div>
+                    ` : ''}
+                    <div class="article-meta">
+                        <span>📅 ${formatDate(article.publishedAt)}</span>
+                        ${article.source?.name ? `<span>📰 ${article.source.name}</span>` : ''}
+                        <span>📈 Relevance: ${(article.relevance * 100).toFixed(0)}%</span>
+                        <a href="${article.url}" target="_blank" style="color: #3b82f6; text-decoration: none; font-weight: 600;">
+                            Read more →
+                        </a>
+                    </div>
+                </div>
+            `;
+        });
+
+        articlesGrid.innerHTML = html;
+        articlesGrid.style.display = 'flex';
+    }
+
+    function formatDate(dateString) {
+        if (!dateString) return 'Unknown';
+        try {
+            const date = new Date(dateString);
+            const now = new Date();
+            const diffMs = now - date;
+            const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+
+            if (diffHours < 1) {
+                const diffMinutes = Math.floor(diffMs / (1000 * 60));
+                return `${diffMinutes}m ago`;
+            } else if (diffHours < 24) {
+                return `${diffHours}h ago`;
+            } else {
+                const diffDays = Math.floor(diffHours / 24);
+                return `${diffDays}d ago`;
+            }
+        } catch (e) {
+            return dateString;
+        }
+    }
+</script>
+{% endblock %}

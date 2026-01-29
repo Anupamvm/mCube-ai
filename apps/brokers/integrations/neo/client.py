@@ -6,7 +6,10 @@ This module provides authentication and session management for Kotak Neo broker 
 
 import logging
 import jwt
-from neo_api_client import NeoAPI
+try:
+    from neo_api_client import NeoAPI
+except ImportError:
+    from tools.neo import NeoAPI
 
 from apps.brokers.utils.auth_manager import (
     get_credentials,

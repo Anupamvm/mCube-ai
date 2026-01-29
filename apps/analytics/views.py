@@ -304,6 +304,16 @@ def api_performance_metrics(request):
     return JsonResponse({'metrics': metrics})
 
 
+def _safe_float(value, default=0.0):
+    """Safely convert a value to float, returning default if None or invalid."""
+    if value is None:
+        return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
 @login_required
 @require_http_methods(["GET"])
 def api_pnl_data(request):
@@ -337,67 +347,67 @@ def api_pnl_data(request):
 
             # Format currency values for display
             account_summary = pnl_data['account_summary']
-            account_summary['total_pnl_formatted'] = format_indian_currency(account_summary['total_pnl'])
-            account_summary['realized_pnl_formatted'] = format_indian_currency(account_summary['realized_pnl'])
-            account_summary['unrealized_pnl_formatted'] = format_indian_currency(account_summary['unrealized_pnl'])
-            account_summary['todays_pnl_formatted'] = format_indian_currency(account_summary['todays_pnl'])
-            account_summary['win_rate_formatted'] = format_percentage(account_summary['win_rate'] / 100)
+            account_summary['total_pnl_formatted'] = format_indian_currency(account_summary.get('total_pnl'))
+            account_summary['realized_pnl_formatted'] = format_indian_currency(account_summary.get('realized_pnl'))
+            account_summary['unrealized_pnl_formatted'] = format_indian_currency(account_summary.get('unrealized_pnl'))
+            account_summary['todays_pnl_formatted'] = format_indian_currency(account_summary.get('todays_pnl'))
+            account_summary['win_rate_formatted'] = format_percentage(_safe_float(account_summary.get('win_rate'), 0) / 100)
 
             # Format position data
             for pos in pnl_data['active_positions']:
-                pos['pnl_formatted'] = format_indian_currency(pos['pnl'])
-                pos['pnl_pct_formatted'] = format_percentage(pos['pnl_pct'] / 100)
-                pos['entry_price'] = float(pos['entry_price'])
-                pos['current_price'] = float(pos['current_price'])
-                pos['stop_loss'] = float(pos['stop_loss'])
-                pos['target'] = float(pos['target'])
-                pos['pnl'] = float(pos['pnl'])
-                pos['margin_used'] = float(pos['margin_used'])
+                pos['pnl_formatted'] = format_indian_currency(pos.get('pnl'))
+                pos['pnl_pct_formatted'] = format_percentage(_safe_float(pos.get('pnl_pct'), 0) / 100)
+                pos['entry_price'] = _safe_float(pos.get('entry_price'))
+                pos['current_price'] = _safe_float(pos.get('current_price'))
+                pos['stop_loss'] = _safe_float(pos.get('stop_loss'))
+                pos['target'] = _safe_float(pos.get('target'))
+                pos['pnl'] = _safe_float(pos.get('pnl'))
+                pos['margin_used'] = _safe_float(pos.get('margin_used'))
 
             for pos in pnl_data['recent_closed_positions']:
-                pos['pnl_formatted'] = format_indian_currency(pos['pnl'])
-                pos['pnl_pct_formatted'] = format_percentage(pos['pnl_pct'] / 100)
-                pos['entry_price'] = float(pos['entry_price'])
-                pos['current_price'] = float(pos['current_price']) if pos['current_price'] else None
-                pos['stop_loss'] = float(pos['stop_loss'])
-                pos['target'] = float(pos['target'])
-                pos['pnl'] = float(pos['pnl'])
-                pos['margin_used'] = float(pos['margin_used'])
+                pos['pnl_formatted'] = format_indian_currency(pos.get('pnl'))
+                pos['pnl_pct_formatted'] = format_percentage(_safe_float(pos.get('pnl_pct'), 0) / 100)
+                pos['entry_price'] = _safe_float(pos.get('entry_price'))
+                pos['current_price'] = _safe_float(pos.get('current_price')) or None
+                pos['stop_loss'] = _safe_float(pos.get('stop_loss'))
+                pos['target'] = _safe_float(pos.get('target'))
+                pos['pnl'] = _safe_float(pos.get('pnl'))
+                pos['margin_used'] = _safe_float(pos.get('margin_used'))
 
             # Format strategy data
             for strategy in pnl_data['strategy_summary']:
-                strategy['total_pnl_formatted'] = format_indian_currency(strategy['total_pnl'])
-                strategy['realized_pnl_formatted'] = format_indian_currency(strategy['realized_pnl'])
-                strategy['unrealized_pnl_formatted'] = format_indian_currency(strategy['unrealized_pnl'])
-                strategy['win_rate_formatted'] = format_percentage(strategy['win_rate'] / 100)
-                strategy['total_pnl'] = float(strategy['total_pnl'])
-                strategy['realized_pnl'] = float(strategy['realized_pnl'])
-                strategy['unrealized_pnl'] = float(strategy['unrealized_pnl'])
-                strategy['win_rate'] = float(strategy['win_rate'])
+                strategy['total_pnl_formatted'] = format_indian_currency(strategy.get('total_pnl'))
+                strategy['realized_pnl_formatted'] = format_indian_currency(strategy.get('realized_pnl'))
+                strategy['unrealized_pnl_formatted'] = format_indian_currency(strategy.get('unrealized_pnl'))
+                strategy['win_rate_formatted'] = format_percentage(_safe_float(strategy.get('win_rate'), 0) / 100)
+                strategy['total_pnl'] = _safe_float(strategy.get('total_pnl'))
+                strategy['realized_pnl'] = _safe_float(strategy.get('realized_pnl'))
+                strategy['unrealized_pnl'] = _safe_float(strategy.get('unrealized_pnl'))
+                strategy['win_rate'] = _safe_float(strategy.get('win_rate'))
 
             # Convert Decimal to float for JSON serialization
             for dpnl in pnl_data['daily_pnl']:
-                dpnl['realized_pnl'] = float(dpnl['realized_pnl'])
-                dpnl['unrealized_pnl'] = float(dpnl['unrealized_pnl'])
-                dpnl['total_pnl'] = float(dpnl['total_pnl'])
-                dpnl['win_rate'] = float(dpnl['win_rate'])
+                dpnl['realized_pnl'] = _safe_float(dpnl.get('realized_pnl'))
+                dpnl['unrealized_pnl'] = _safe_float(dpnl.get('unrealized_pnl'))
+                dpnl['total_pnl'] = _safe_float(dpnl.get('total_pnl'))
+                dpnl['win_rate'] = _safe_float(dpnl.get('win_rate'))
 
             for wpnl in pnl_data['weekly_pnl']:
-                wpnl['total_pnl'] = float(wpnl['total_pnl'])
-                wpnl['win_rate'] = float(wpnl['win_rate'])
-                wpnl['profit_factor'] = float(wpnl['profit_factor'])
-                wpnl['sharpe_ratio'] = float(wpnl['sharpe_ratio']) if wpnl['sharpe_ratio'] else None
+                wpnl['total_pnl'] = _safe_float(wpnl.get('total_pnl'))
+                wpnl['win_rate'] = _safe_float(wpnl.get('win_rate'))
+                wpnl['profit_factor'] = _safe_float(wpnl.get('profit_factor'))
+                wpnl['sharpe_ratio'] = _safe_float(wpnl.get('sharpe_ratio')) or None
 
             for mpnl in pnl_data['monthly_pnl']:
-                mpnl['total_pnl'] = float(mpnl['total_pnl'])
-                mpnl['win_rate'] = float(mpnl['win_rate'])
-                mpnl['profit_factor'] = float(mpnl['profit_factor'])
-                mpnl['sharpe_ratio'] = float(mpnl['sharpe_ratio']) if mpnl['sharpe_ratio'] else None
+                mpnl['total_pnl'] = _safe_float(mpnl.get('total_pnl'))
+                mpnl['win_rate'] = _safe_float(mpnl.get('win_rate'))
+                mpnl['profit_factor'] = _safe_float(mpnl.get('profit_factor'))
+                mpnl['sharpe_ratio'] = _safe_float(mpnl.get('sharpe_ratio')) or None
 
             # Convert numeric account summary values to float
             for key in ['total_pnl', 'realized_pnl', 'unrealized_pnl', 'todays_pnl', 'todays_realized', 'win_rate', 'allocated_capital', 'available_capital']:
                 if key in account_summary:
-                    account_summary[key] = float(account_summary[key])
+                    account_summary[key] = _safe_float(account_summary.get(key))
 
             all_accounts_data.append(pnl_data)
 
@@ -410,3 +420,123 @@ def api_pnl_data(request):
         'accounts': all_accounts_data,
         'timestamp': timezone.now().isoformat()
     }, safe=False)
+
+
+# =============================================================================
+# POSITION SYNC & DATA ENDPOINTS
+# =============================================================================
+
+@login_required
+@require_http_methods(["POST"])
+def api_sync_positions(request):
+    """
+    API endpoint to sync positions from brokers.
+    Fetches fresh data from Kotak Neo and ICICI Breeze.
+    """
+    try:
+        from apps.positions.services.position_sync import sync_positions_from_brokers
+
+        clear_existing = request.POST.get('clear', 'false').lower() == 'true'
+        results = sync_positions_from_brokers(clear_existing=clear_existing)
+
+        return JsonResponse({
+            'success': results['success'],
+            'accounts_synced': results['accounts_synced'],
+            'positions_created': results['positions_created'],
+            'positions_updated': results['positions_updated'],
+            'positions_closed': results['positions_closed'],
+            'history_synced': results.get('history_synced', 0),
+            'errors': results['errors'],
+            'timestamp': timezone.now().isoformat()
+        })
+
+    except Exception as e:
+        logger.error(f"Error in api_sync_positions: {e}")
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=500)
+
+
+@login_required
+@require_http_methods(["GET"])
+def api_positions_data(request):
+    """
+    API endpoint to get all positions data organized by status.
+    Returns: open positions, suggestions, trade history
+    """
+    try:
+        from apps.positions.services.position_sync import get_position_summary
+        from apps.core.constants import POSITION_SOURCE_SYSTEM
+        from apps.core.utils.formatting import format_indian_currency
+
+        summary = get_position_summary()
+
+        # Format open positions
+        open_positions = []
+        for pos in summary['open_positions']:
+            open_positions.append({
+                'id': pos.id,
+                'instrument': pos.instrument,
+                'direction': pos.direction,
+                'quantity': pos.quantity,
+                'entry_price': float(pos.entry_price),
+                'current_price': float(pos.current_price),
+                'unrealized_pnl': float(pos.unrealized_pnl),
+                'pnl_formatted': format_indian_currency(pos.unrealized_pnl),
+                'entry_time': pos.entry_time.isoformat() if pos.entry_time else None,
+                'account': pos.account.account_name if pos.account else None,
+                'broker': pos.account.broker if pos.account else None,
+                'source': pos.source,
+                'last_synced': pos.last_synced_at.isoformat() if pos.last_synced_at else None,
+            })
+
+        # Format suggestions
+        suggestions = []
+        for pos in summary['suggestions']:
+            suggestions.append({
+                'id': pos.id,
+                'instrument': pos.instrument,
+                'direction': pos.direction,
+                'quantity': pos.quantity,
+                'entry_price': float(pos.entry_price),
+                'stop_loss': float(pos.stop_loss) if pos.stop_loss else None,
+                'target': float(pos.target) if pos.target else None,
+                'confidence': float(pos.confidence) if pos.confidence else None,
+                'reason': pos.suggestion_reason,
+                'created_at': pos.created_at.isoformat(),
+            })
+
+        # Format trade history
+        trade_history = []
+        for pos in summary['trade_history']:
+            trade_history.append({
+                'id': pos.id,
+                'instrument': pos.instrument,
+                'direction': pos.direction,
+                'quantity': pos.quantity,
+                'entry_price': float(pos.entry_price),
+                'exit_price': float(pos.exit_price) if pos.exit_price else None,
+                'realized_pnl': float(pos.realized_pnl),
+                'pnl_formatted': format_indian_currency(pos.realized_pnl),
+                'entry_time': pos.entry_time.isoformat() if pos.entry_time else None,
+                'exit_time': pos.exit_time.isoformat() if pos.exit_time else None,
+                'exit_reason': pos.exit_reason,
+                'account': pos.account.account_name if pos.account else None,
+            })
+
+        return JsonResponse({
+            'success': True,
+            'open_positions': open_positions,
+            'suggestions': suggestions,
+            'trade_history': trade_history,
+            'counts': summary['counts'],
+            'timestamp': timezone.now().isoformat()
+        })
+
+    except Exception as e:
+        logger.error(f"Error in api_positions_data: {e}")
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=500)

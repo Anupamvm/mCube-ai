@@ -75,7 +75,8 @@ def get_account_pnl_summary(account) -> Dict[str, Any]:
         'unrealized_pnl': total_unrealized,
         'todays_pnl': todays_pnl,
         'todays_realized': todays_realized,
-        'active_positions_count': unrealized_stats['active_count'] or 0,
+        'active_positions_count': unrealized_stats['active_count'] or 0,  # Open positions
+        'open_positions_count': unrealized_stats['active_count'] or 0,
         'closed_positions_count': realized_stats['closed_count'] or 0,
         'total_trades': total_trades,
         'winning_trades': winning_trades,
@@ -339,8 +340,10 @@ def get_comprehensive_pnl_data(account) -> Dict[str, Any]:
     """
     return {
         'account_summary': get_account_pnl_summary(account),
-        'active_positions': get_position_level_pnl(account, status='ACTIVE'),
-        'recent_closed_positions': get_position_level_pnl(account, status='CLOSED')[:10],  # Last 10
+        'active_positions': get_position_level_pnl(account, status='ACTIVE'),  # For backward compatibility
+        'open_positions': get_position_level_pnl(account, status='ACTIVE'),
+        'recent_closed_positions': get_position_level_pnl(account, status='CLOSED')[:10],
+        'trade_history': get_position_level_pnl(account, status='CLOSED')[:20],  # Last 20 trades
         'strategy_summary': get_strategy_level_pnl(account),
         'daily_pnl': get_daily_pnl_summary(account, days=30),
         'weekly_pnl': get_weekly_pnl_summary(account, weeks=12),

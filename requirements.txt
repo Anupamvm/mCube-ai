@@ -38,6 +38,9 @@ html5lib>=1.1  # Parser for BeautifulSoup
 selenium>=4.15.2
 chromedriver-autoinstaller>=0.6.4
 
+# PDF Processing
+pdfplumber>=0.10.0  # PDF text extraction for analyst reports
+
 # Alerts & Notifications
 python-telegram-bot==20.7
 telethon==1.33.1  # For advanced Telegram features

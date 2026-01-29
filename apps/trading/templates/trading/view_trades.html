@@ -567,8 +567,8 @@
 {% csrf_token %}
 <div class="page-header">
     <div class="container">
-        <h1 class="page-title">Active Trades</h1>
-        <p class="page-subtitle">Monitor and manage your active positions across all broker accounts</p>
+        <h1 class="page-title">Open Trades</h1>
+        <p class="page-subtitle">Monitor and manage your open positions across all broker accounts</p>
     </div>
 </div>
 
@@ -761,7 +761,7 @@ function displayPositions(broker, positions) {
         container.innerHTML = `
             <div class="no-positions">
                 <div class="no-positions-icon">📭</div>
-                <p>No active positions found</p>
+                <p>No open positions found</p>
             </div>
         `;
         return;
@@ -1287,7 +1287,7 @@ async function showAverageModal(broker) {
             modalBody.innerHTML = `
                 <div class="no-positions">
                     <div class="no-positions-icon">📭</div>
-                    <p>No active positions found for averaging</p>
+                    <p>No open positions found for averaging</p>
                 </div>
             `;
         }

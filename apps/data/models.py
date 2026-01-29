@@ -231,6 +231,7 @@ class TLStockData(TimeStampedModel):
     # Basic Information
     stock_name = models.CharField(max_length=100, null=True, blank=True)
     nsecode = models.CharField(max_length=20, null=True, blank=True, unique=True)
+    trendlyne_id = models.IntegerField(null=True, blank=True, help_text="Trendlyne internal stock ID extracted from URL")
     bsecode = models.CharField(max_length=20, null=True, blank=True)
     isin = models.CharField(max_length=20, null=True, blank=True)
     industry_name = models.CharField(max_length=100, null=True, blank=True)
@@ -515,6 +516,53 @@ class NewsArticle(TimeStampedModel):
     processed = models.BooleanField(default=False)
     processed_at = models.DateTimeField(null=True, blank=True)
 
+    # Extended fields for news impact analysis
+    news_type = models.CharField(
+        max_length=20,
+        choices=[
+            ('STOCK', 'Stock News'),
+            ('INDUSTRY', 'Industry News'),
+            ('COMPETITOR', 'Competitor News'),
+            ('MARKET', 'Market News'),
+        ],
+        default='STOCK',
+        db_index=True,
+        help_text="Type of news article"
+    )
+    search_keywords = models.JSONField(
+        default=list,
+        help_text="Keywords used to fetch this article"
+    )
+    impact_category = models.CharField(
+        max_length=30,
+        blank=True,
+        help_text="Impact category (US_FED, GLOBAL_MARKETS, COMMODITIES, etc.)"
+    )
+    market_direction = models.CharField(
+        max_length=10,
+        choices=[
+            ('BEARISH', 'Bearish'),
+            ('NEUTRAL', 'Neutral'),
+            ('BULLISH', 'Bullish'),
+        ],
+        null=True,
+        blank=True,
+        help_text="Market direction indicated by news"
+    )
+    impact_reasoning = models.TextField(
+        blank=True,
+        help_text="LLM reasoning for impact assessment"
+    )
+    relevance_score = models.FloatField(
+        null=True,
+        blank=True,
+        help_text="Relevance to Indian markets (0-1)"
+    )
+    impact_analysis = models.JSONField(
+        default=dict,
+        help_text="Complete LLM impact analysis results"
+    )
+
     class Meta:
         db_table = 'news_articles'
         ordering = ['-published_at']
@@ -522,6 +570,7 @@ class NewsArticle(TimeStampedModel):
             models.Index(fields=['-published_at']),
             models.Index(fields=['source', '-published_at']),
             models.Index(fields=['category', '-published_at']),
+            models.Index(fields=['news_type', '-published_at']),
         ]
 
     def __str__(self):
@@ -727,3 +776,161 @@ class DeepDiveAnalysis(TimeStampedModel):
         self.exit_price = exit_price
         self.calculate_pnl()
         self.save()
+
+
+class AnalystPriceTarget(TimeStampedModel):
+    """
+    Aggregate analyst price target data from Trendlyne
+
+    Stores consensus price targets and recommendation counts for a stock.
+    Fetched from Trendlyne's analyst consensus page.
+    """
+
+    # Stock identification
+    symbol = models.CharField(max_length=50, db_index=True)
+    nse_code = models.CharField(max_length=20, db_index=True)
+    trendlyne_id = models.IntegerField(null=True, blank=True, db_index=True)
+    stock_name = models.CharField(max_length=100, blank=True)
+
+    # Price data
+    current_price = models.DecimalField(max_digits=15, decimal_places=2, null=True, blank=True)
+    avg_target_price = models.DecimalField(max_digits=15, decimal_places=2, null=True, blank=True)
+    upside_pct = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True,
+                                      help_text="Percentage upside to average target price")
+    analyst_count = models.IntegerField(default=0, help_text="Number of analysts covering")
+
+    # Recommendation breakdown
+    strong_buy_count = models.IntegerField(default=0)
+    buy_count = models.IntegerField(default=0)
+    hold_count = models.IntegerField(default=0)
+    sell_count = models.IntegerField(default=0)
+    strong_sell_count = models.IntegerField(default=0)
+
+    # Metadata
+    fetch_timestamp = models.DateTimeField(auto_now=True)
+    source_url = models.URLField(max_length=500, blank=True)
+    scrape_success = models.BooleanField(default=True)
+    scrape_error = models.TextField(blank=True, help_text="Error message if scrape failed")
+
+    class Meta:
+        db_table = 'analyst_price_targets'
+        ordering = ['-fetch_timestamp']
+        indexes = [
+            models.Index(fields=['symbol', '-fetch_timestamp']),
+            models.Index(fields=['nse_code', '-fetch_timestamp']),
+        ]
+
+    def __str__(self):
+        return f"{self.symbol} - Target: ₹{self.avg_target_price} ({self.upside_pct}% upside)"
+
+    @property
+    def total_recommendations(self):
+        """Total number of recommendations"""
+        return (self.strong_buy_count + self.buy_count + self.hold_count +
+                self.sell_count + self.strong_sell_count)
+
+    @property
+    def sell_pct(self):
+        """Percentage of sell/strong sell recommendations"""
+        total = self.total_recommendations
+        if total == 0:
+            return 0
+        return ((self.sell_count + self.strong_sell_count) / total) * 100
+
+
+class AnalystReport(TimeStampedModel):
+    """
+    Individual analyst research reports from Trendlyne
+
+    Stores report metadata, PDF content, and LLM analysis results.
+    Reports are fetched from Trendlyne's research reports section.
+    """
+
+    RECOMMENDATION_CHOICES = [
+        ('STRONG_BUY', 'Strong Buy'),
+        ('BUY', 'Buy'),
+        ('HOLD', 'Hold'),
+        ('SELL', 'Sell'),
+        ('STRONG_SELL', 'Strong Sell'),
+        ('UNKNOWN', 'Unknown'),
+    ]
+
+    TRADE_RECOMMENDATION_CHOICES = [
+        ('BULLISH', 'Bullish'),
+        ('NEUTRAL', 'Neutral'),
+        ('BEARISH', 'Bearish'),
+    ]
+
+    # Stock identification
+    symbol = models.CharField(max_length=50, db_index=True)
+    nse_code = models.CharField(max_length=20, db_index=True)
+    trendlyne_id = models.IntegerField(null=True, blank=True)
+
+    # Report metadata
+    report_date = models.DateField(db_index=True)
+    author = models.CharField(max_length=200, blank=True, help_text="Brokerage/analyst name")
+    report_title = models.CharField(max_length=500, blank=True)
+
+    # Price data at report time
+    ltp_at_report = models.DecimalField(max_digits=15, decimal_places=2, null=True, blank=True,
+                                         help_text="Stock price when report was published")
+    target_price = models.DecimalField(max_digits=15, decimal_places=2, null=True, blank=True)
+    upside_pct = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True)
+
+    # Analyst recommendation
+    recommendation_type = models.CharField(
+        max_length=20,
+        choices=RECOMMENDATION_CHOICES,
+        default='UNKNOWN'
+    )
+
+    # PDF content
+    pdf_url = models.URLField(max_length=1000, blank=True, help_text="URL to PDF on Trendlyne")
+    pdf_local_path = models.CharField(max_length=500, blank=True,
+                                       help_text="Local path to downloaded PDF")
+    pdf_content_text = models.TextField(blank=True, help_text="Extracted text from PDF")
+
+    # LLM analysis results
+    llm_summary = models.TextField(blank=True, help_text="LLM-generated summary of report")
+    key_insights = models.JSONField(default=list, help_text="Key insights extracted by LLM")
+    sentiment_score = models.FloatField(null=True, blank=True,
+                                         help_text="Sentiment score from -1 (bearish) to 1 (bullish)")
+    trade_recommendation = models.CharField(
+        max_length=20,
+        choices=TRADE_RECOMMENDATION_CHOICES,
+        null=True,
+        blank=True,
+        help_text="LLM-derived trade recommendation"
+    )
+    risk_factors = models.JSONField(default=list, help_text="Risk factors identified by LLM")
+    catalysts = models.JSONField(default=list, help_text="Positive catalysts identified by LLM")
+
+    # Processing status
+    llm_processed = models.BooleanField(default=False)
+    llm_processed_at = models.DateTimeField(null=True, blank=True)
+    pdf_download_success = models.BooleanField(default=False)
+    processing_error = models.TextField(blank=True)
+
+    class Meta:
+        db_table = 'analyst_reports'
+        ordering = ['-report_date']
+        indexes = [
+            models.Index(fields=['symbol', '-report_date']),
+            models.Index(fields=['nse_code', '-report_date']),
+            models.Index(fields=['recommendation_type', '-report_date']),
+            models.Index(fields=['llm_processed']),
+        ]
+        unique_together = ['symbol', 'report_date', 'author']
+
+    def __str__(self):
+        return f"{self.symbol} - {self.author} ({self.report_date}) - {self.recommendation_type}"
+
+    @property
+    def is_bearish(self):
+        """Check if report has bearish recommendation"""
+        return self.recommendation_type in ['SELL', 'STRONG_SELL']
+
+    @property
+    def is_bullish(self):
+        """Check if report has bullish recommendation"""
+        return self.recommendation_type in ['BUY', 'STRONG_BUY']

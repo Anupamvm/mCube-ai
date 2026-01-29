@@ -358,6 +358,92 @@ class GNewsClient:
         return self.fetch_news(query, max_results=max_results)
 
 
+    def fetch_market_news(
+        self,
+        max_results_per_keyword: int = 10,
+        use_cache: bool = True
+    ) -> Dict:
+        """
+        Fetch market-moving news for Indian markets using multiple keywords.
+
+        Fetches news about:
+        - US Fed decisions, interest rates
+        - Global market movements (Dow, Nasdaq, S&P)
+        - Economic data (jobs, GDP, inflation)
+        - Asian markets (Nikkei, Hang Seng)
+        - Crude oil, gold prices
+        - FII/DII activity
+        - RBI policy
+        - Nifty, Sensex movements
+
+        Args:
+            max_results_per_keyword: Max articles per keyword (default: 10)
+            use_cache: Whether to use cached results (default: True)
+
+        Returns:
+            Dict with all fetched articles and metadata
+        """
+        # Market-moving keywords for Indian markets
+        keywords = [
+            # Global markets - overnight performance
+            "US stock market Dow Jones",
+            "Nasdaq S&P 500 overnight",
+            "Asian markets Nikkei Hang Seng",
+            # US Fed and economic data
+            "Federal Reserve interest rate",
+            "US Fed meeting decision",
+            "US jobs data employment",
+            "US inflation CPI",
+            # Commodities affecting India
+            "crude oil price",
+            "gold price market",
+            # Indian market specific
+            "Nifty Sensex India",
+            "FII DII India investment",
+            "RBI policy rate India",
+            # Global economic indicators
+            "global recession economy",
+            "China economy manufacturing",
+        ]
+
+        all_articles = []
+        seen_urls = set()
+
+        logger.info(f"[GNews] Fetching market news with {len(keywords)} keyword groups")
+
+        for keyword in keywords:
+            try:
+                result = self.fetch_news(
+                    query=keyword,
+                    max_results=max_results_per_keyword,
+                    use_cache=use_cache
+                )
+
+                if result.get('success') and result.get('articles'):
+                    for article in result['articles']:
+                        # Deduplicate by URL
+                        url = article.get('url', '')
+                        if url and url not in seen_urls:
+                            seen_urls.add(url)
+                            article['search_keyword'] = keyword
+                            all_articles.append(article)
+
+                    logger.debug(f"[GNews] Keyword '{keyword}': {len(result['articles'])} articles")
+
+            except Exception as e:
+                logger.warning(f"[GNews] Error fetching '{keyword}': {e}")
+                continue
+
+        logger.info(f"[GNews] Total unique market articles fetched: {len(all_articles)}")
+
+        return {
+            'success': True,
+            'articles': all_articles,
+            'totalArticles': len(all_articles),
+            'keywords_used': keywords
+        }
+
+
 # Convenience function for easy import
 def get_gnews_client() -> GNewsClient:
     """

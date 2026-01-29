@@ -41,10 +41,6 @@
                 <span class="icon">🛡️</span>
                 <span class="label">Broken Iron Condor</span>
             </a>
-            <a href="#" class="nav-item" onclick="window.location.href='{% url 'trading:view_trades' %}'; return false;">
-                <span class="icon">📈</span>
-                <span class="label">View Trades</span>
-            </a>
             <a href="#verify" class="nav-item">
                 <span class="icon">✅</span>
                 <span class="label">Verify Trade</span>
@@ -3428,6 +3424,19 @@ const TradeVerification = {
             console.log('[Verify] No historical_verification in response');
         }
 
+        // Historical News Analysis Section - Top 5 impactful articles from database
+        if (data.historical_news && data.historical_news.articles && data.historical_news.articles.length > 0) {
+            html += this.buildHistoricalNewsSection(data.historical_news);
+        }
+
+        // Analyst Report Verification Section - Price targets and research reports
+        console.log('[Verify] Analyst verification data:', data.analyst_verification);
+        if (data.analyst_verification) {
+            html += this.buildAnalystVerificationSection(data.analyst_verification);
+        } else {
+            console.log('[Verify] No analyst_verification in response');
+        }
+
         // Execution Buttons
         if (data.passed) {
             html += this.buildExecutionButtons();
@@ -3689,11 +3698,12 @@ const TradeVerification = {
                 <div style="text-align: center;">
                     <div style="font-size: 2.5rem; margin-bottom: 10px;">📰</div>
                     <h3 style="margin: 0; font-size: 1.5rem; font-weight: 800; text-shadow: 0 2px 4px rgba(0,0,0,0.2);">Market Intelligence Dashboard</h3>
-                    <p style="margin: 12px 0 0 0; font-size: 1rem; opacity: 0.95; font-weight: 500;">Three Critical Perspectives for Informed Trading</p>
-                    <div style="margin-top: 15px; display: flex; justify-content: center; gap: 20px; flex-wrap: wrap; font-size: 0.875rem;">
-                        <span style="background: rgba(255,255,255,0.2); padding: 6px 16px; border-radius: 20px; font-weight: 600;">1️⃣ Company News</span>
-                        <span style="background: rgba(255,255,255,0.2); padding: 6px 16px; border-radius: 20px; font-weight: 600;">2️⃣ Sector Trends</span>
-                        <span style="background: rgba(255,255,255,0.2); padding: 6px 16px; border-radius: 20px; font-weight: 600;">3️⃣ Competition Analysis</span>
+                    <p style="margin: 12px 0 0 0; font-size: 1rem; opacity: 0.95; font-weight: 500;">Four Critical Perspectives for Informed Trading</p>
+                    <div style="margin-top: 15px; display: flex; justify-content: center; gap: 15px; flex-wrap: wrap; font-size: 0.8rem;">
+                        <span style="background: rgba(255,255,255,0.2); padding: 5px 12px; border-radius: 20px; font-weight: 600;">1️⃣ Company</span>
+                        <span style="background: rgba(255,255,255,0.2); padding: 5px 12px; border-radius: 20px; font-weight: 600;">2️⃣ Sector</span>
+                        <span style="background: rgba(255,255,255,0.2); padding: 5px 12px; border-radius: 20px; font-weight: 600;">3️⃣ Competition</span>
+                        <span style="background: rgba(255,255,255,0.2); padding: 5px 12px; border-radius: 20px; font-weight: 600;">4️⃣ Market Intel</span>
                     </div>
                     ${newsVerification.summary ? `
                         <div style="margin-top: 15px; font-size: 0.8rem; opacity: 0.85;">
@@ -3743,7 +3753,120 @@ const TradeVerification = {
             true  // Always show
         );
 
+        // 4. Generic Market News Section (FOURTH - from database, last 10 days)
+        const genericNews = newsData.generic_news || {};
+        if (genericNews.articles && genericNews.articles.length > 0) {
+            html += this.buildGenericNewsCategory(
+                '4️⃣ Market Intelligence',
+                'Top 2 Most Impactful (10 Days)',
+                genericNews.articles || [],
+                genericNews.totalArticles || 0,
+                '#8b5cf6'  // Purple color
+            );
+        }
+
         newsContent.innerHTML = html;
+    },
+
+    buildGenericNewsCategory(title, subtitle, articles, totalArticles, color) {
+        // Detailed section for top 2 most impactful market news from database
+        if (!articles || articles.length === 0) {
+            return '';
+        }
+
+        const displayArticles = articles.slice(0, 2);  // Show top 2 most impactful
+        const hasMore = totalArticles > 2;
+
+        let html = `
+            <div style="margin-bottom: 30px; border: 4px solid ${color}; border-radius: 16px; overflow: hidden; box-shadow: 0 8px 20px rgba(0,0,0,0.12); background: white;">
+                <div style="background: linear-gradient(135deg, ${color} 0%, ${color}dd 100%); padding: 25px; border-bottom: 4px solid ${color};">
+                    <h4 style="color: white; margin: 0; font-size: 1.4rem; font-weight: 800; display: flex; align-items: center; justify-content: space-between; text-shadow: 0 2px 4px rgba(0,0,0,0.2);">
+                        <span style="display: flex; align-items: center; gap: 12px;">
+                            <span style="background: rgba(255,255,255,0.2); padding: 8px 12px; border-radius: 8px; font-size: 1.3rem;">${title.split(' ')[0]}</span>
+                            <span>${title.substring(title.indexOf(' ') + 1)}</span>
+                        </span>
+                    </h4>
+                    <div style="color: rgba(255,255,255,0.95); margin-top: 10px; font-size: 0.95rem; display: flex; align-items: center; justify-content: space-between;">
+                        <span style="font-weight: 500;">📊 ${subtitle}</span>
+                        <span style="background: rgba(255,255,255,0.25); padding: 6px 16px; border-radius: 20px; font-size: 0.875rem; font-weight: 600;">
+                            ${totalArticles} ${totalArticles === 1 ? 'article' : 'articles'}
+                        </span>
+                    </div>
+                </div>
+                <div style="padding: 25px; background: white;">
+        `;
+
+        // Display articles in detailed format (matching other sections)
+        displayArticles.forEach((article, index) => {
+            const publishedDate = this.formatNewsDate(article.publishedAt);
+            const score = article.impact_score || 0;
+            const scoreColor = score <= -0.6 ? '#dc2626' : score <= -0.3 ? '#f59e0b' : score >= 0.3 ? '#10b981' : '#6b7280';
+            const direction = article.market_direction || 'NEUTRAL';
+            const directionIcon = direction === 'BEARISH' ? '📉' : direction === 'BULLISH' ? '📈' : '➖';
+            const impactBadge = this.getImpactBadge(article.impact_label, article.impact_score);
+
+            html += `
+                <div style="padding: 15px; border-bottom: ${index < displayArticles.length - 1 ? '1px solid #e5e7eb' : 'none'};">
+                    <div style="display: flex; gap: 15px; align-items: start;">
+                        ${article.image ? `
+                        <img src="${article.image}"
+                             alt="${article.title}"
+                             style="width: 100px; height: 70px; object-fit: cover; border-radius: 6px; flex-shrink: 0;"
+                             onerror="this.style.display='none'">
+                        ` : ''}
+                        <div style="flex: 1; min-width: 0;">
+                            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px; flex-wrap: wrap;">
+                                <span style="font-size: 1.1rem;">${directionIcon}</span>
+                                ${impactBadge}
+                                ${article.impact_category ? `<span style="background: #f3e8ff; color: #7c3aed; padding: 2px 8px; border-radius: 4px; font-size: 0.7rem; font-weight: 600;">${article.impact_category}</span>` : ''}
+                            </div>
+                            <a href="${article.url}"
+                               target="_blank"
+                               style="color: #1f2937; text-decoration: none; font-weight: 600; font-size: 0.95rem; display: block; margin-bottom: 8px; line-height: 1.4; cursor: pointer;">
+                                ${article.title}
+                            </a>
+                            <p style="color: #6b7280; font-size: 0.85rem; margin: 0 0 8px 0; line-height: 1.5;">
+                                ${article.description || ''}
+                            </p>
+                            ${article.impact_reasoning ? `
+                            <div style="background: #faf5ff; padding: 8px 12px; border-radius: 6px; margin-bottom: 8px; font-size: 0.8rem; color: #4b5563; border-left: 3px solid ${color};">
+                                <strong>Impact Analysis:</strong> ${article.impact_reasoning}
+                            </div>
+                            ` : ''}
+                            <div style="display: flex; gap: 15px; align-items: center; flex-wrap: wrap; font-size: 0.75rem; color: #9ca3af;">
+                                <span>📅 ${publishedDate}</span>
+                                ${article.source?.name ? `<span>📰 ${article.source.name}</span>` : ''}
+                                <span style="font-weight: 600; color: ${scoreColor};">Score: ${score >= 0 ? '+' : ''}${score.toFixed(2)}</span>
+                                <a href="${article.url}"
+                                   target="_blank"
+                                   style="color: ${color}; text-decoration: none; font-weight: 500;">
+                                    Read more →
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        });
+
+        // Add "View More News" button if there are more articles
+        if (hasMore) {
+            html += `
+                <div style="padding: 15px; text-align: center; border-top: 1px solid #e5e7eb;">
+                    <button onclick="TradeVerification.viewMoreNews('market', 'market_intel', 'Market Intelligence')"
+                            style="background: ${color}; color: white; padding: 10px 24px; border: none; border-radius: 6px; font-weight: 600; cursor: pointer; font-size: 0.875rem; transition: opacity 0.2s;">
+                        📰 View All ${totalArticles} Articles →
+                    </button>
+                </div>
+            `;
+        }
+
+        html += `
+                </div>
+            </div>
+        `;
+
+        return html;
     },
 
     buildNewsCategory(title, subtitle, articles, totalArticles, color, categoryType, identifier, alwaysShow = false) {
@@ -4135,6 +4258,507 @@ const TradeVerification = {
                         </div>
                     </div>
                 </div>
+            `;
+        }
+
+        html += '</div>';
+
+        return html;
+    },
+
+    buildHistoricalNewsSection(historicalNews) {
+        // Build compact historical news analysis section showing top 5 impactful articles
+        if (!historicalNews || !historicalNews.articles || historicalNews.articles.length === 0) {
+            return '';
+        }
+
+        const articles = historicalNews.articles;
+        const summary = historicalNews.summary || {};
+        const blockingCount = summary.blocking_count || 0;
+        const hasBlockingNews = blockingCount > 0;
+
+        // Header color based on whether there are blocking articles
+        const headerBg = hasBlockingNews
+            ? 'linear-gradient(135deg, #dc2626 0%, #991b1b 100%)'
+            : 'linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%)';
+        const headerIcon = hasBlockingNews ? '🚨' : '📰';
+        const headerText = hasBlockingNews
+            ? `Historical News Alert: ${blockingCount} High-Impact Article${blockingCount > 1 ? 's' : ''}`
+            : 'Historical News Analysis (7 Days)';
+
+        let html = `
+            <div id="historicalNewsSection" style="background: white; border-radius: 12px; padding: 20px; margin-bottom: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
+                <!-- Compact Header -->
+                <div style="background: ${headerBg}; border-radius: 8px; padding: 12px 16px; margin-bottom: 15px; color: white; display: flex; justify-content: space-between; align-items: center;">
+                    <div style="display: flex; align-items: center; gap: 10px;">
+                        <span style="font-size: 1.3rem;">${headerIcon}</span>
+                        <div>
+                            <h3 style="margin: 0; font-size: 1rem; font-weight: 600;">${headerText}</h3>
+                            <span style="font-size: 0.75rem; opacity: 0.9;">Top ${articles.length} impactful articles from database</span>
+                        </div>
+                    </div>
+                    <div style="display: flex; gap: 10px; font-size: 0.75rem;">
+                        <span style="background: rgba(255,255,255,0.2); padding: 4px 10px; border-radius: 12px;">
+                            Avg: ${(summary.average_score || 0).toFixed(2)}
+                        </span>
+                        <span style="background: rgba(255,255,255,0.2); padding: 4px 10px; border-radius: 12px;">
+                            ${summary.negative_count || 0} Negative
+                        </span>
+                    </div>
+                </div>
+
+                <!-- Compact Articles List -->
+                <div style="display: flex; flex-direction: column; gap: 8px;">
+        `;
+
+        // Build compact article cards
+        articles.forEach((article, index) => {
+            const isBlocking = article.could_block_trade;
+            const score = article.impact_score || 0;
+            const scoreColor = score <= -0.6 ? '#dc2626' : score <= -0.3 ? '#f59e0b' : score >= 0.3 ? '#10b981' : '#6b7280';
+            const bgColor = isBlocking ? '#fef2f2' : '#f9fafb';
+            const borderColor = isBlocking ? '#fecaca' : '#e5e7eb';
+
+            // Impact badge
+            const impactBadge = article.impact_label || (score <= -0.6 ? 'HIGHLY_NEGATIVE' : score <= -0.3 ? 'NEGATIVE' : 'NEUTRAL');
+            const badgeStyles = {
+                'HIGHLY_NEGATIVE': 'background: #fef2f2; color: #dc2626; border: 1px solid #fecaca;',
+                'NEGATIVE': 'background: #fffbeb; color: #d97706; border: 1px solid #fde68a;',
+                'NEUTRAL': 'background: #f3f4f6; color: #6b7280; border: 1px solid #d1d5db;',
+                'POSITIVE': 'background: #f0fdf4; color: #16a34a; border: 1px solid #bbf7d0;',
+                'HIGHLY_POSITIVE': 'background: #f0fdf4; color: #16a34a; border: 1px solid #bbf7d0;'
+            };
+            const badgeStyle = badgeStyles[impactBadge] || badgeStyles['NEUTRAL'];
+
+            html += `
+                <div style="background: ${bgColor}; border: 1px solid ${borderColor}; border-radius: 8px; padding: 10px 14px; ${isBlocking ? 'border-left: 3px solid #dc2626;' : ''}">
+                    <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 12px;">
+                        <div style="flex: 1; min-width: 0;">
+                            <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 4px; flex-wrap: wrap;">
+                                <span style="${badgeStyle} padding: 2px 6px; border-radius: 4px; font-size: 0.6rem; font-weight: 700;">${impactBadge}</span>
+                                ${isBlocking ? '<span style="background: #dc2626; color: white; padding: 2px 6px; border-radius: 4px; font-size: 0.6rem; font-weight: 600;">BLOCKS</span>' : ''}
+                                <span style="color: #9ca3af; font-size: 0.65rem;">${article.news_type || 'STOCK'}</span>
+                            </div>
+                            <a href="${article.url}" target="_blank" style="color: #1f2937; text-decoration: none; font-size: 0.85rem; font-weight: 500; line-height: 1.3; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                                ${article.title}
+                            </a>
+                            ${article.impact_reasoning ? `
+                            <div style="color: #6b7280; font-size: 0.75rem; margin-top: 4px; line-height: 1.3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                                💡 ${article.impact_reasoning}
+                            </div>
+                            ` : ''}
+                        </div>
+                        <div style="text-align: right; flex-shrink: 0;">
+                            <div style="font-size: 0.9rem; font-weight: 700; color: ${scoreColor};">${score >= 0 ? '+' : ''}${score.toFixed(2)}</div>
+                            <div style="font-size: 0.6rem; color: #9ca3af;">${article.source || ''}</div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        });
+
+        html += `
+                </div>
+            </div>
+        `;
+
+        return html;
+    },
+
+    buildAnalystVerificationSection(verification) {
+        // Build analyst research reports verification section
+        console.log('[Verify] Building analyst verification section with:', verification);
+
+        if (!verification) {
+            console.log('[Verify] No analyst verification data provided');
+            return '';
+        }
+
+        const tradeAllowed = verification.trade_allowed !== false;
+        const blockingReasons = verification.blocking_reasons || [];
+        const warnings = verification.warnings || [];
+        const priceTarget = verification.price_target || {};
+        const reportsSummary = verification.reports_summary || {};
+        const blockingReports = verification.top_blocking_reports || [];
+        const rulesChecked = verification.rules_checked || [];
+        const dataSource = verification.data_source || 'unknown';
+
+        // Check if we have actual data
+        const hasData = priceTarget && (priceTarget.avg_target_price || priceTarget.analyst_count > 0);
+        const hasReports = reportsSummary && reportsSummary.total_reports > 0;
+
+        // Header colors based on trade_allowed
+        const headerBg = tradeAllowed
+            ? 'linear-gradient(135deg, #8b5cf6 0%, #6d28d9 100%)'
+            : 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)';
+        const headerIcon = tradeAllowed ? '📊' : '🚫';
+        const headerText = tradeAllowed ? 'Analyst Research Verification' : 'Analyst Research: Trade Blocked';
+
+        // Data source badge
+        const dataSourceBadge = dataSource === 'fresh_fetch'
+            ? '<span style="background: #10b981; padding: 3px 10px; border-radius: 12px; font-size: 0.7rem; font-weight: 600; margin-left: 10px;">🔄 FRESH DATA</span>'
+            : dataSource === 'cache'
+            ? '<span style="background: rgba(255,255,255,0.3); padding: 3px 10px; border-radius: 12px; font-size: 0.7rem; font-weight: 600; margin-left: 10px;">📦 CACHED</span>'
+            : '<span style="background: rgba(255,255,255,0.2); padding: 3px 10px; border-radius: 12px; font-size: 0.7rem; font-weight: 600; margin-left: 10px;">⚠️ NO DATA</span>';
+
+        let html = `
+            <div id="analystVerificationSection" style="background: white; border-radius: 12px; padding: 25px; margin-bottom: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
+                <!-- Header -->
+                <div style="background: ${headerBg}; border-radius: 8px; padding: 20px; margin-bottom: 20px; color: white;">
+                    <div style="display: flex; align-items: center; gap: 15px;">
+                        <span style="font-size: 2.5rem;">${headerIcon}</span>
+                        <div style="flex: 1;">
+                            <h3 style="margin: 0; font-size: 1.4rem; font-weight: 700;">${headerText}${dataSourceBadge}</h3>
+                            <p style="margin: 5px 0 0 0; font-size: 0.95rem; opacity: 0.95;">
+                                ${tradeAllowed ? (hasData ? 'Analyst data supports this trade' : 'No analyst data available - proceeding with caution') : blockingReasons.join('; ')}
+                            </p>
+                        </div>
+                        <div style="text-align: right;">
+                            <div style="font-size: 0.8rem; opacity: 0.9;">Recommendation</div>
+                            <div style="font-size: 1.2rem; font-weight: 700;">${verification.recommendation || 'PROCEED'}</div>
+                        </div>
+                    </div>
+                </div>
+        `;
+
+        // Consolidated Summary Box (always show)
+        const upside = priceTarget.upside_pct || 0;
+        const totalAnalysts = priceTarget.analyst_count || 0;
+        const buyCount = (priceTarget.strong_buy_count || 0) + (priceTarget.buy_count || 0);
+        const sellCount = (priceTarget.sell_count || 0) + (priceTarget.strong_sell_count || 0);
+        const holdCount = priceTarget.hold_count || 0;
+        const totalReports = reportsSummary.total_reports || 0;
+        const bullishReports = reportsSummary.bullish_count || 0;
+        const bearishReports = reportsSummary.bearish_count || 0;
+
+        // Build summary lines
+        let summaryLines = [];
+        if (hasData) {
+            summaryLines.push(`📈 <strong>Target Price:</strong> ₹${priceTarget.avg_target_price ? priceTarget.avg_target_price.toLocaleString('en-IN', {maximumFractionDigits: 0}) : 'N/A'} (${upside >= 0 ? '+' : ''}${upside.toFixed(1)}% upside) - ${upside >= 8 ? '✅ Meets 8% threshold' : '⚠️ Below 8% threshold'}`);
+            summaryLines.push(`👥 <strong>Analyst Coverage:</strong> ${totalAnalysts} analysts - ${buyCount} Buy, ${holdCount} Hold, ${sellCount} Sell`);
+            if (totalAnalysts > 0) {
+                const sellPct = (sellCount / totalAnalysts * 100).toFixed(1);
+                summaryLines.push(`📊 <strong>Sell Ratio:</strong> ${sellPct}% of analysts recommend Sell - ${parseFloat(sellPct) < 10 ? '✅ Below 10% threshold' : '⚠️ Exceeds 10% threshold'}`);
+            }
+        }
+        if (hasReports) {
+            summaryLines.push(`📝 <strong>Research Reports:</strong> ${totalReports} reports in last 3 months - ${bullishReports} Bullish, ${bearishReports} Bearish`);
+        }
+        if (!hasData && !hasReports) {
+            summaryLines.push(`⚠️ <strong>No Data:</strong> Analyst data could not be fetched from Trendlyne. This may be due to login issues or the stock not having analyst coverage.`);
+            summaryLines.push(`💡 <strong>Recommendation:</strong> Proceed with caution and verify analyst opinions from other sources.`);
+        }
+        // Add verdict line
+        if (tradeAllowed) {
+            summaryLines.push(`✅ <strong>Verdict:</strong> ${hasData ? 'All analyst checks passed. Trade is supported by analyst consensus.' : 'No blocking data found. Trade allowed with caution.'}`);
+        } else {
+            summaryLines.push(`🚫 <strong>Verdict:</strong> Trade blocked - ${blockingReasons[0] || 'Analyst data does not support this trade'}`);
+        }
+
+        html += `
+            <div style="background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%); border-radius: 12px; padding: 20px; margin-bottom: 20px; border: 2px solid #e2e8f0;">
+                <h4 style="color: #1f2937; margin: 0 0 15px 0; font-size: 1.1rem; font-weight: 700; display: flex; align-items: center; gap: 10px;">
+                    📋 Analyst Consensus Summary
+                </h4>
+                <div style="display: flex; flex-direction: column; gap: 8px; font-size: 0.95rem; color: #374151; line-height: 1.6;">
+                    ${summaryLines.map(line => `<div>${line}</div>`).join('')}
+                </div>
+            </div>
+        `;
+
+        // Price Target Section
+        if (hasData) {
+            const upside = priceTarget.upside_pct || 0;
+            const upsideColor = upside >= 8 ? '#10b981' : upside >= 0 ? '#f59e0b' : '#ef4444';
+
+            html += `
+                <div style="background: linear-gradient(135deg, #f3e8ff 0%, #ede9fe 100%); border-radius: 12px; padding: 20px; margin-bottom: 20px; border: 2px solid #c4b5fd;">
+                    <h4 style="color: #6d28d9; margin: 0 0 15px 0; font-size: 1.1rem; font-weight: 700; display: flex; align-items: center; gap: 10px;">
+                        🎯 Analyst Price Target Consensus
+                    </h4>
+                    <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px;">
+                        <div style="background: white; padding: 15px; border-radius: 8px; text-align: center; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
+                            <div style="font-size: 0.8rem; color: #6b7280; margin-bottom: 5px;">Current Price</div>
+                            <div style="font-size: 1.4rem; font-weight: 700; color: #1f2937;">₹${priceTarget.current_price ? priceTarget.current_price.toLocaleString('en-IN', {maximumFractionDigits: 2}) : 'N/A'}</div>
+                        </div>
+                        <div style="background: white; padding: 15px; border-radius: 8px; text-align: center; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
+                            <div style="font-size: 0.8rem; color: #6b7280; margin-bottom: 5px;">Avg Target Price</div>
+                            <div style="font-size: 1.4rem; font-weight: 700; color: #6d28d9;">₹${priceTarget.avg_target_price ? priceTarget.avg_target_price.toLocaleString('en-IN', {maximumFractionDigits: 2}) : 'N/A'}</div>
+                        </div>
+                        <div style="background: white; padding: 15px; border-radius: 8px; text-align: center; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
+                            <div style="font-size: 0.8rem; color: #6b7280; margin-bottom: 5px;">Upside Potential</div>
+                            <div style="font-size: 1.4rem; font-weight: 700; color: ${upsideColor};">${upside ? upside.toFixed(1) : 'N/A'}%</div>
+                            <div style="font-size: 0.7rem; color: #9ca3af;">Min: 8% for LONG</div>
+                        </div>
+                        <div style="background: white; padding: 15px; border-radius: 8px; text-align: center; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
+                            <div style="font-size: 0.8rem; color: #6b7280; margin-bottom: 5px;">Analysts Covering</div>
+                            <div style="font-size: 1.4rem; font-weight: 700; color: #1f2937;">${priceTarget.analyst_count || 0}</div>
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            // Recommendation Breakdown
+            const totalRecs = (priceTarget.strong_buy_count || 0) + (priceTarget.buy_count || 0) + (priceTarget.hold_count || 0) + (priceTarget.sell_count || 0) + (priceTarget.strong_sell_count || 0);
+
+            if (totalRecs > 0) {
+                const sellPct = ((priceTarget.sell_count || 0) + (priceTarget.strong_sell_count || 0)) / totalRecs * 100;
+
+                html += `
+                    <div style="background: #f8fafc; border-radius: 12px; padding: 20px; margin-bottom: 20px; border: 1px solid #e2e8f0;">
+                        <h4 style="color: #1f2937; margin: 0 0 15px 0; font-size: 1rem; font-weight: 600;">
+                            📈 Analyst Recommendations Breakdown
+                            <span style="font-weight: normal; font-size: 0.85rem; color: #6b7280; margin-left: 10px;">(Sell ${sellPct.toFixed(1)}% - Max 10% allowed)</span>
+                        </h4>
+                        <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                            <div style="background: #dcfce7; color: #166534; padding: 10px 20px; border-radius: 8px; font-weight: 600; border: 2px solid #86efac;">
+                                Strong Buy: ${priceTarget.strong_buy_count || 0}
+                            </div>
+                            <div style="background: #d1fae5; color: #047857; padding: 10px 20px; border-radius: 8px; font-weight: 600; border: 2px solid #6ee7b7;">
+                                Buy: ${priceTarget.buy_count || 0}
+                            </div>
+                            <div style="background: #f3f4f6; color: #374151; padding: 10px 20px; border-radius: 8px; font-weight: 600; border: 2px solid #d1d5db;">
+                                Hold: ${priceTarget.hold_count || 0}
+                            </div>
+                            <div style="background: #fef3c7; color: #92400e; padding: 10px 20px; border-radius: 8px; font-weight: 600; border: 2px solid #fcd34d;">
+                                Sell: ${priceTarget.sell_count || 0}
+                            </div>
+                            <div style="background: #fee2e2; color: #991b1b; padding: 10px 20px; border-radius: 8px; font-weight: 600; border: 2px solid #fca5a5;">
+                                Strong Sell: ${priceTarget.strong_sell_count || 0}
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+        } else {
+            html += `
+                <div style="background: #fffbeb; border-radius: 8px; padding: 15px; margin-bottom: 20px; border: 1px solid #fde68a; text-align: center;">
+                    <span style="font-size: 1.2rem;">⚠️</span>
+                    <span style="color: #92400e; font-weight: 500; margin-left: 10px;">No analyst price target data available for this stock</span>
+                </div>
+            `;
+        }
+
+        // Reports Summary
+        if (reportsSummary && reportsSummary.total_reports > 0) {
+            html += `
+                <div style="background: #f8fafc; border-radius: 12px; padding: 20px; margin-bottom: 20px; border: 1px solid #e2e8f0;">
+                    <h4 style="color: #1f2937; margin: 0 0 15px 0; font-size: 1rem; font-weight: 600;">
+                        📝 Research Reports (Last 3 Months)
+                    </h4>
+                    <div style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px;">
+                        <div style="background: white; padding: 12px; border-radius: 8px; text-align: center; border: 1px solid #e5e7eb;">
+                            <div style="font-size: 1.5rem; font-weight: 700; color: #1f2937;">${reportsSummary.total_reports}</div>
+                            <div style="font-size: 0.75rem; color: #6b7280;">Total Reports</div>
+                        </div>
+                        <div style="background: #f0fdf4; padding: 12px; border-radius: 8px; text-align: center; border: 1px solid #bbf7d0;">
+                            <div style="font-size: 1.5rem; font-weight: 700; color: #10b981;">${reportsSummary.bullish_count || 0}</div>
+                            <div style="font-size: 0.75rem; color: #166534;">Bullish</div>
+                        </div>
+                        <div style="background: #fef2f2; padding: 12px; border-radius: 8px; text-align: center; border: 1px solid #fecaca;">
+                            <div style="font-size: 1.5rem; font-weight: 700; color: #ef4444;">${reportsSummary.bearish_count || 0}</div>
+                            <div style="font-size: 0.75rem; color: #991b1b;">Bearish</div>
+                        </div>
+                        <div style="background: #f3f4f6; padding: 12px; border-radius: 8px; text-align: center; border: 1px solid #d1d5db;">
+                            <div style="font-size: 1.5rem; font-weight: 700; color: #374151;">${reportsSummary.hold_count || 0}</div>
+                            <div style="font-size: 0.75rem; color: #6b7280;">Hold</div>
+                        </div>
+                        <div style="background: #ede9fe; padding: 12px; border-radius: 8px; text-align: center; border: 1px solid #c4b5fd;">
+                            <div style="font-size: 1.5rem; font-weight: 700; color: #6d28d9;">${(reportsSummary.avg_sentiment_score || 0).toFixed(2)}</div>
+                            <div style="font-size: 0.75rem; color: #5b21b6;">Avg Sentiment</div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        // Quick LLM Summaries of Latest Reports
+        const quickSummaries = verification.report_quick_summaries || [];
+        if (quickSummaries && quickSummaries.length > 0) {
+            html += `
+                <div style="background: linear-gradient(135deg, #fdf4ff 0%, #fae8ff 100%); border-radius: 12px; padding: 20px; margin-bottom: 20px; border: 2px solid #e879f9;">
+                    <h4 style="color: #a21caf; margin: 0 0 15px 0; font-size: 1.1rem; font-weight: 700; display: flex; align-items: center; gap: 10px;">
+                        🤖 AI Summary of Latest Research Reports
+                        <span style="font-size: 0.75rem; font-weight: 500; background: #e879f9; color: white; padding: 3px 10px; border-radius: 12px;">Powered by LLM</span>
+                    </h4>
+                    <div style="display: flex; flex-direction: column; gap: 15px;">
+            `;
+
+            quickSummaries.forEach((summary, index) => {
+                const sentimentColor = summary.sentiment === 'BULLISH' ? '#10b981' : summary.sentiment === 'BEARISH' ? '#ef4444' : '#f59e0b';
+                const sentimentBg = summary.sentiment === 'BULLISH' ? '#ecfdf5' : summary.sentiment === 'BEARISH' ? '#fef2f2' : '#fffbeb';
+                const sentimentIcon = summary.sentiment === 'BULLISH' ? '📈' : summary.sentiment === 'BEARISH' ? '📉' : '➡️';
+
+                html += `
+                    <div style="background: white; border-radius: 10px; padding: 18px; border-left: 4px solid ${sentimentColor}; box-shadow: 0 2px 6px rgba(0,0,0,0.05);">
+                        <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px;">
+                            <div>
+                                <div style="font-weight: 700; color: #1f2937; font-size: 1rem;">${summary.author || 'Unknown Analyst'}</div>
+                                <div style="font-size: 0.85rem; color: #6b7280; margin-top: 3px;">
+                                    ${summary.report_date || 'Recent'} | Target: ₹${summary.target_price ? summary.target_price.toLocaleString('en-IN') : 'N/A'}
+                                </div>
+                            </div>
+                            <div style="display: flex; align-items: center; gap: 8px;">
+                                <span style="background: ${sentimentBg}; color: ${sentimentColor}; padding: 4px 12px; border-radius: 6px; font-size: 0.8rem; font-weight: 700;">
+                                    ${sentimentIcon} ${summary.sentiment || 'NEUTRAL'}
+                                </span>
+                                <span style="background: #f3f4f6; color: #374151; padding: 4px 12px; border-radius: 6px; font-size: 0.8rem; font-weight: 600;">
+                                    ${summary.recommendation || 'UNKNOWN'}
+                                </span>
+                            </div>
+                        </div>
+                `;
+
+                if (summary.success && summary.summary_points && summary.summary_points.length > 0) {
+                    html += `
+                        <div style="background: #f8fafc; border-radius: 8px; padding: 12px;">
+                            <ul style="margin: 0; padding-left: 20px; color: #374151; font-size: 0.9rem; line-height: 1.7;">
+                                ${summary.summary_points.map(point => `<li style="margin-bottom: 4px;">${point}</li>`).join('')}
+                            </ul>
+                        </div>
+                    `;
+                } else if (summary.error) {
+                    html += `
+                        <div style="background: #fef3c7; border-radius: 8px; padding: 12px; font-size: 0.85rem; color: #92400e;">
+                            ⚠️ Summary unavailable: ${summary.error}
+                        </div>
+                    `;
+                } else {
+                    html += `
+                        <div style="background: #f3f4f6; border-radius: 8px; padding: 12px; font-size: 0.85rem; color: #6b7280;">
+                            📄 No PDF content available for AI analysis
+                        </div>
+                    `;
+                }
+
+                html += '</div>';
+            });
+
+            html += '</div></div>';
+        }
+
+        // Rules Checked Section
+        if (rulesChecked && rulesChecked.length > 0) {
+            html += `
+                <div style="margin-bottom: 20px;">
+                    <h4 style="color: #1f2937; margin: 0 0 15px 0; font-size: 1rem; font-weight: 600;">
+                        ✅ Verification Rules
+                    </h4>
+                    <div style="display: flex; flex-direction: column; gap: 10px;">
+            `;
+
+            rulesChecked.forEach(rule => {
+                const passed = rule.passed !== false;
+                const statusColor = passed ? '#10b981' : '#ef4444';
+                const statusBg = passed ? '#f0fdf4' : '#fef2f2';
+                const statusIcon = passed ? '✅' : '❌';
+
+                html += `
+                    <div style="background: ${statusBg}; border-radius: 8px; padding: 15px; border-left: 4px solid ${statusColor};">
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <div style="display: flex; align-items: center; gap: 10px;">
+                                <span style="font-size: 1.2rem;">${statusIcon}</span>
+                                <div>
+                                    <div style="font-weight: 600; color: #1f2937; font-size: 0.95rem;">${rule.rule === 'UPSIDE_CHECK' ? 'Target Upside Check' : rule.rule === 'SELL_RECOMMENDATION_CHECK' ? 'Sell Recommendations Check' : rule.rule}</div>
+                                    <div style="font-size: 0.85rem; color: #6b7280; margin-top: 3px;">${rule.reason || ''}</div>
+                                </div>
+                            </div>
+                            <span style="background: ${statusColor}; color: white; padding: 4px 12px; border-radius: 4px; font-size: 0.8rem; font-weight: 600;">
+                                ${passed ? 'PASS' : 'FAIL'}
+                            </span>
+                        </div>
+                    </div>
+                `;
+            });
+
+            html += '</div></div>';
+        }
+
+        // Blocking Reports (if any)
+        if (blockingReports && blockingReports.length > 0) {
+            html += `
+                <div style="background: #fef2f2; border-radius: 12px; padding: 20px; border: 2px solid #fecaca;">
+                    <h4 style="color: #991b1b; margin: 0 0 15px 0; font-size: 1rem; font-weight: 700; display: flex; align-items: center; gap: 10px;">
+                        🚨 Bearish Research Reports
+                    </h4>
+                    <div style="display: flex; flex-direction: column; gap: 10px;">
+            `;
+
+            blockingReports.forEach(report => {
+                html += `
+                    <div style="background: white; border-radius: 8px; padding: 15px; border-left: 4px solid #ef4444;">
+                        <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+                            <div>
+                                <div style="font-weight: 600; color: #1f2937;">${report.author || 'Unknown Analyst'}</div>
+                                <div style="font-size: 0.85rem; color: #6b7280; margin-top: 3px;">
+                                    Date: ${report.report_date || 'N/A'} |
+                                    Target: ₹${report.target_price ? report.target_price.toLocaleString('en-IN') : 'N/A'} |
+                                    Upside: ${report.upside_pct ? report.upside_pct.toFixed(1) : 'N/A'}%
+                                </div>
+                            </div>
+                            <span style="background: #ef4444; color: white; padding: 4px 12px; border-radius: 4px; font-size: 0.8rem; font-weight: 600;">
+                                ${report.recommendation_type || 'SELL'}
+                            </span>
+                        </div>
+                        ${report.llm_summary ? `<div style="margin-top: 10px; font-size: 0.85rem; color: #374151; background: #f9fafb; padding: 10px; border-radius: 6px;">${report.llm_summary}</div>` : ''}
+                    </div>
+                `;
+            });
+
+            html += '</div></div>';
+        }
+
+        // Warnings
+        if (warnings && warnings.length > 0) {
+            html += `
+                <div style="background: #fffbeb; border-radius: 8px; padding: 15px; margin-top: 15px; border: 1px solid #fde68a;">
+                    <div style="display: flex; align-items: flex-start; gap: 10px;">
+                        <span style="font-size: 1.2rem;">⚠️</span>
+                        <div>
+                            <div style="font-weight: 600; color: #92400e; margin-bottom: 5px;">Warnings</div>
+                            <ul style="margin: 0; padding-left: 20px; color: #78350f; font-size: 0.9rem;">
+                                ${warnings.map(w => `<li>${w}</li>`).join('')}
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        // Data freshness note
+        if (priceTarget && priceTarget.is_stale) {
+            html += `
+                <div style="margin-top: 15px; padding: 10px 15px; background: #f3f4f6; border-radius: 6px; font-size: 0.85rem; color: #6b7280; display: flex; align-items: center; gap: 8px;">
+                    <span>🔄</span>
+                    <span>Analyst data is being refreshed in the background. Check back later for updated information.</span>
+                </div>
+            `;
+        }
+
+        // Debug info (collapsible)
+        const debugInfo = verification.debug_info || [];
+        const fetchStatus = verification.fetch_status || 'unknown';
+        if (debugInfo.length > 0 || fetchStatus !== 'unknown') {
+            html += `
+                <details style="margin-top: 15px;">
+                    <summary style="cursor: pointer; padding: 10px 15px; background: #f3f4f6; border-radius: 6px; font-size: 0.85rem; color: #6b7280; font-weight: 600;">
+                        🔍 Debug Info (click to expand) - Status: ${fetchStatus}
+                    </summary>
+                    <div style="margin-top: 10px; padding: 15px; background: #1f2937; border-radius: 6px; font-family: monospace; font-size: 0.8rem; color: #10b981;">
+                        <div style="margin-bottom: 8px;"><strong style="color: #60a5fa;">Fetch Status:</strong> ${fetchStatus}</div>
+                        <div style="margin-bottom: 8px;"><strong style="color: #60a5fa;">Data Source:</strong> ${dataSource}</div>
+                        <div style="margin-bottom: 8px;"><strong style="color: #60a5fa;">Has Price Target:</strong> ${hasData}</div>
+                        <div style="margin-bottom: 8px;"><strong style="color: #60a5fa;">Has Reports:</strong> ${hasReports}</div>
+                        ${debugInfo.length > 0 ? `
+                            <div style="margin-top: 10px; padding-top: 10px; border-top: 1px solid #374151;">
+                                <strong style="color: #60a5fa;">Log:</strong>
+                                <ul style="margin: 5px 0 0 20px; padding: 0; color: #9ca3af;">
+                                    ${debugInfo.map(d => `<li>${d}</li>`).join('')}
+                                </ul>
+                            </div>
+                        ` : ''}
+                    </div>
+                </details>
             `;
         }
 

@@ -37,7 +37,7 @@
                             <ul class="dropdown-menu">
                                 <li><a href="{% url 'trading:manual_triggers' %}" class="highlight-link">🎯 Execute Trade</a></li>
                                 <li class="dropdown-divider"></li>
-                                <li><a href="{% url 'trading:view_trades' %}">📋 Active Positions</a></li>
+                                <li><a href="{% url 'trading:view_trades' %}">📋 Open Positions</a></li>
                                 <li><a href="{% url 'trading:pending_suggestions' %}">⏳ Pending Approvals</a></li>
                                 <li class="dropdown-divider"></li>
                                 <li><a href="{% url 'trading:trade_history' %}">📜 Trade History</a></li>
@@ -74,11 +74,6 @@
                                 <li><a href="/system/test/">🧪 System Test</a></li>
                                 <li><a href="/system/background-tasks/">⏱️ Background Tasks</a></li>
                                 <li><a href="/admin/">⚙️ Admin Panel</a></li>
-                                <li class="dropdown-divider"></li>
-                                <li class="dropdown-header">Algorithm Testing</li>
-                                <li><a href="/algo_test/options/">Options Strategy</a></li>
-                                <li><a href="/algo_test/futures/">Futures Strategy</a></li>
-                                <li><a href="/algo_test/monitor/">Position Monitor</a></li>
                             </ul>
                         </li>
                         {% endif %}

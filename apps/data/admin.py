@@ -1,7 +1,7 @@
 from django.contrib import admin
 from .models import (
     MarketData, OptionChain, Event, TLStockData, ContractData, ContractStockData,
-    NewsArticle, InvestorCall, KnowledgeBase
+    NewsArticle, InvestorCall, KnowledgeBase, AnalystPriceTarget, AnalystReport
 )
 
 
@@ -144,6 +144,70 @@ class KnowledgeBaseAdmin(admin.ModelAdmin):
         }),
         ('Usage Stats', {
             'fields': ('times_retrieved', 'last_retrieved_at', 'relevance_score')
+        }),
+        ('Timestamps', {
+            'fields': ('created_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )
+
+
+@admin.register(AnalystPriceTarget)
+class AnalystPriceTargetAdmin(admin.ModelAdmin):
+    list_display = ['symbol', 'stock_name', 'current_price', 'avg_target_price',
+                    'upside_pct', 'analyst_count', 'sell_count', 'fetch_timestamp', 'scrape_success']
+    list_filter = ['scrape_success']
+    search_fields = ['symbol', 'nse_code', 'stock_name']
+    readonly_fields = ['created_at', 'updated_at', 'fetch_timestamp']
+
+    fieldsets = (
+        ('Stock Info', {
+            'fields': ('symbol', 'nse_code', 'trendlyne_id', 'stock_name')
+        }),
+        ('Price Targets', {
+            'fields': ('current_price', 'avg_target_price', 'upside_pct', 'analyst_count')
+        }),
+        ('Recommendations', {
+            'fields': ('strong_buy_count', 'buy_count', 'hold_count', 'sell_count', 'strong_sell_count')
+        }),
+        ('Metadata', {
+            'fields': ('source_url', 'scrape_success', 'scrape_error', 'fetch_timestamp')
+        }),
+        ('Timestamps', {
+            'fields': ('created_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )
+
+
+@admin.register(AnalystReport)
+class AnalystReportAdmin(admin.ModelAdmin):
+    list_display = ['symbol', 'author', 'report_date', 'recommendation_type',
+                    'target_price', 'upside_pct', 'sentiment_score', 'llm_processed']
+    list_filter = ['recommendation_type', 'trade_recommendation', 'llm_processed', 'pdf_download_success']
+    search_fields = ['symbol', 'nse_code', 'author', 'report_title', 'llm_summary']
+    date_hierarchy = 'report_date'
+    readonly_fields = ['created_at', 'updated_at', 'llm_processed_at']
+
+    fieldsets = (
+        ('Stock Info', {
+            'fields': ('symbol', 'nse_code', 'trendlyne_id')
+        }),
+        ('Report Metadata', {
+            'fields': ('report_date', 'author', 'report_title', 'recommendation_type')
+        }),
+        ('Price Data', {
+            'fields': ('ltp_at_report', 'target_price', 'upside_pct')
+        }),
+        ('PDF Content', {
+            'fields': ('pdf_url', 'pdf_local_path', 'pdf_content_text', 'pdf_download_success')
+        }),
+        ('LLM Analysis', {
+            'fields': ('llm_summary', 'key_insights', 'sentiment_score',
+                      'trade_recommendation', 'risk_factors', 'catalysts')
+        }),
+        ('Processing Status', {
+            'fields': ('llm_processed', 'llm_processed_at', 'processing_error')
         }),
         ('Timestamps', {
             'fields': ('created_at', 'updated_at'),
