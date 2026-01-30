@@ -1692,8 +1692,9 @@ def get_active_positions(request):
     """
     Get LIVE active positions from broker API (Breeze or Neo)
 
-    Fetches real-time open positions directly from the broker's API
-    instead of reading from database. Shows only positions with non-zero quantity.
+    Uses the unified integration functions that apply correct average price
+    overrides and LTP fetching. This ensures consistent data across Web UI,
+    Telegram bot, and Analysis Dashboard.
 
     GET params:
         - broker: 'breeze' or 'neo'
@@ -1713,314 +1714,122 @@ def get_active_positions(request):
         positions_data = []
 
         if broker == 'breeze':
-            # Fetch live positions from Breeze API
-            breeze = get_breeze_client()
-            pos_resp = breeze.get_portfolio_positions()
-
-            if pos_resp and pos_resp.get('Status') == 200:
-                raw_positions = pos_resp.get('Success', [])
-
-                for p in raw_positions:
-                    quantity = int(p.get('quantity') or 0)
-
-                    # Skip positions with zero quantity (closed positions)
-                    if quantity == 0:
-                        continue
-
-                    avg_price = float(p.get('average_price') or 0)
-                    ltp = float(p.get('ltp') or p.get('price') or 0)
-
-                    # Calculate unrealized P&L
-                    if quantity > 0:  # LONG position
-                        unrealized_pnl = (ltp - avg_price) * quantity
-                        direction = 'LONG'
-                    else:  # SHORT position
-                        unrealized_pnl = (avg_price - ltp) * abs(quantity)
-                        direction = 'SHORT'
-
-                    # Realized P&L is typically 0 for carry-forward positions
-                    realized_pnl = 0.0
-
-                    symbol = p.get('stock_code', 'N/A')
-                    product = p.get('product_type', 'N/A')
-                    exchange = p.get('exchange_code', 'NFO')
-
-                    # Extract expiry date from Breeze response
-                    expiry_date = None
-                    expiry_dt_str = p.get('expiry_date', '')
-                    if expiry_dt_str:
-                        try:
-                            from datetime import datetime as dt
-                            # Breeze usually returns expiry in DD-MMM-YYYY format
-                            # Try multiple formats
-                            for fmt in ['%d-%b-%Y', '%Y-%m-%d', '%d-%m-%Y']:
-                                try:
-                                    expiry_dt = dt.strptime(expiry_dt_str, fmt)
-                                    expiry_date = expiry_dt.strftime('%Y-%m-%d')
-                                    break
-                                except:
-                                    continue
-                        except Exception as e:
-                            logger.warning(f"Could not parse Breeze expiry date '{expiry_dt_str}': {e}")
-
-                    positions_data.append({
-                        'symbol': symbol,
-                        'exchange': exchange,
-                        'product': product,
-                        'direction': direction,
-                        'quantity': abs(quantity),
-                        'net_quantity': quantity,  # Net quantity in shares (for display)
-                        'net_quantity_shares': quantity,  # Net quantity in shares (for closing)
-                        'average_price': avg_price,
-                        'ltp': ltp,
-                        'unrealized_pnl': round(unrealized_pnl, 2),
-                        'realized_pnl': round(realized_pnl, 2),
-                        'total_pnl': round(unrealized_pnl + realized_pnl, 2),
-                        'pnl_percentage': round((unrealized_pnl / (avg_price * abs(quantity)) * 100), 2) if avg_price > 0 else 0,
-                        'expiry_date': expiry_date,  # Add expiry date for averaging analysis
-                    })
-            else:
-                logger.warning(f"Breeze positions API returned non-200 status: {pos_resp}")
-
-        elif broker == 'neo':
-            # Fetch live positions from Neo API
-            from apps.brokers.integrations.kotak_neo import get_kotak_neo_client, NeoAuthenticationError
+            # Use unified Breeze integration for consistent data
+            from apps.brokers.integrations.breeze import fetch_and_save_breeze_data
 
             try:
-                client = get_kotak_neo_client()
+                _, positions = fetch_and_save_breeze_data()
 
-                # Log API call details
-                logger.info("="*100)
-                logger.info("📞 CALLING NEO API: client.positions()")
-                logger.info("="*100)
+                for pos in positions:
+                    # Calculate P&L from BrokerPosition model
+                    avg_price = float(pos.average_price or 0)
+                    ltp = float(pos.ltp or 0)
+                    net_qty = pos.net_quantity
 
-                resp = client.positions()
-
-                # Log raw response
-                logger.info("="*100)
-                logger.info("📥 RAW NEO API RESPONSE:")
-                logger.info(f"Response type: {type(resp)}")
-                logger.info(f"Response keys: {list(resp.keys()) if isinstance(resp, dict) else 'N/A'}")
-                logger.info("="*100)
-                import json
-                logger.info(json.dumps(resp, indent=2, default=str))
-                logger.info("="*100)
-
-                raw_positions = resp.get('data', []) if isinstance(resp, dict) else []
-                logger.info(f"📊 Found {len(raw_positions)} positions in response")
-
-                for p in raw_positions:
-                    symbol = p.get('trdSym', 'N/A')
-                    logger.info("="*80)
-                    logger.info(f"🔍 PROCESSING POSITION: {symbol}")
-                    logger.info("="*80)
-
-                    # Log raw quantities and amounts
-                    logger.info(f"📦 RAW DATA FROM API:")
-                    logger.info(f"  cfBuyQty={p.get('cfBuyQty')}, cfBuyAmt={p.get('cfBuyAmt')}")
-                    logger.info(f"  cfSellQty={p.get('cfSellQty')}, cfSellAmt={p.get('cfSellAmt')}")
-                    logger.info(f"  flBuyQty={p.get('flBuyQty')}, buyAmt={p.get('buyAmt')}")
-                    logger.info(f"  flSellQty={p.get('flSellQty')}, sellAmt={p.get('sellAmt')}")
-                    logger.info(f"  lotSz={p.get('lotSz')}, stkPrc={p.get('stkPrc')}")
-
-                    # Get lot size
-                    lot_sz = int(p.get('lotSz', 1))
-
-                    # QUANTITY CALCULATION
-                    # API returns quantities in SHARES (actual contracts), not lots
-                    cf_buy_qty_shares = int(p.get('cfBuyQty', 0))
-                    fl_buy_qty_shares = int(p.get('flBuyQty', 0))
-                    cf_sell_qty_shares = int(p.get('cfSellQty', 0))
-                    fl_sell_qty_shares = int(p.get('flSellQty', 0))
-
-                    total_buy_qty_shares = cf_buy_qty_shares + fl_buy_qty_shares
-                    total_sell_qty_shares = cf_sell_qty_shares + fl_sell_qty_shares
-                    net_qty_shares = total_buy_qty_shares - total_sell_qty_shares
-
-                    # Convert shares to LOTS for display
-                    # Buy Quantity (lots) = Total Shares / Lot Size
-                    total_buy_qty_lots = total_buy_qty_shares // lot_sz if lot_sz > 0 else total_buy_qty_shares
-                    total_sell_qty_lots = total_sell_qty_shares // lot_sz if lot_sz > 0 else total_sell_qty_shares
-                    net_qty_lots = total_buy_qty_lots - total_sell_qty_lots
-
-                    logger.info(f"📊 QUANTITY CALCULATION:")
-                    logger.info(f"  Lot Size: {lot_sz}")
-                    logger.info(f"  Buy Qty: {cf_buy_qty_shares} shares = {cf_buy_qty_shares}/{lot_sz} = {total_buy_qty_lots} lots")
-                    logger.info(f"  Sell Qty: {cf_sell_qty_shares} shares = {cf_sell_qty_shares}/{lot_sz} = {total_sell_qty_lots} lots")
-                    logger.info(f"  Net Qty: {net_qty_shares} shares = {net_qty_lots} lots")
-
-                    # Skip positions with zero quantity
-                    if net_qty_lots == 0:
-                        logger.info(f"  ⏭️  Skipping {symbol} - zero net quantity")
-                        continue
-
-                    # AMOUNT FIELDS
-                    buy_amt = float(p.get('cfBuyAmt', 0)) + float(p.get('buyAmt', 0))
-                    sell_amt = float(p.get('cfSellAmt', 0)) + float(p.get('sellAmt', 0))
-
-                    logger.info(f"💰 AMOUNTS:")
-                    logger.info(f"  Buy Amount: ₹{buy_amt:,.2f}")
-                    logger.info(f"  Sell Amount: ₹{sell_amt:,.2f}")
-
-                    # AVERAGE PRICE CALCULATION
-                    # Avg Price = Total Amount / Total Quantity in shares
-                    # NOTE: Kotak portal uses SIMPLE average (Total Amt / Total Qty)
-                    # WITHOUT adding transaction costs
-
-                    if net_qty_lots > 0:
-                        # LONG position
-                        avg_price = buy_amt / total_buy_qty_shares if total_buy_qty_shares > 0 else 0
+                    if net_qty > 0:
                         direction = 'LONG'
-
-                        logger.info(f"📈 AVERAGE PRICE (LONG):")
-                        logger.info(f"  Buy Amount: ₹{buy_amt:,.2f}")
-                        logger.info(f"  Total Qty: {total_buy_qty_shares:,} shares")
-                        logger.info(f"  Average Price: ₹{avg_price:.2f}")
+                        unrealized_pnl = (ltp - avg_price) * net_qty
                     else:
-                        # SHORT position
-                        avg_price = sell_amt / total_sell_qty_shares if total_sell_qty_shares > 0 else 0
                         direction = 'SHORT'
+                        unrealized_pnl = (avg_price - ltp) * abs(net_qty)
 
-                        logger.info(f"📉 AVERAGE PRICE (SHORT):")
-                        logger.info(f"  Sell Amount: ₹{sell_amt:,.2f}")
-                        logger.info(f"  Total Qty: {total_sell_qty_shares:,} shares")
-                        logger.info(f"  Average Price: ₹{avg_price:.2f}")
+                    investment = avg_price * abs(net_qty)
+                    pnl_pct = (unrealized_pnl / investment * 100) if investment > 0 else 0
 
-                    # GET LTP (Last Traded Price) using the same method as order placement
-                    from apps.brokers.integrations.kotak_neo import get_ltp_from_neo
-
-                    ltp = None
-                    trading_symbol = p.get('trdSym')  # e.g., "BANKNIFTY25DECFUT"
-                    exchange_segment = p.get('exSeg', 'nse_fo')
-
-                    logger.info(f"💹 FETCHING LTP:")
-                    logger.info(f"  Trading Symbol: {trading_symbol}")
-                    logger.info(f"  Exchange Segment: {exchange_segment}")
-
-                    try:
-                        # Use the same authenticated client and method as order placement
-                        ltp = get_ltp_from_neo(
-                            trading_symbol=trading_symbol,
-                            exchange_segment=exchange_segment,
-                            client=client  # Pass the same authenticated client
-                        )
-
-                        if ltp is not None and ltp > 0:
-                            logger.info(f"  ✅ Successfully fetched LTP: ₹{ltp:.2f}")
-                        else:
-                            logger.warning(f"  ⚠️ Could not fetch LTP for {trading_symbol}")
-                    except Exception as e:
-                        logger.error(f"  ❌ Error fetching LTP: {e}", exc_info=True)
-
-                    # P&L CALCULATION
-                    logger.info(f"💰 P&L CALCULATION:")
-
-                    # REALIZED P&L
-                    # For open positions (where you only bought or only sold, not both):
-                    # - If you only bought (LONG), realized P&L = 0
-                    # - If you only sold (SHORT), realized P&L = 0
-                    # - If you have both buys and sells, realized P&L = settled portion
-
-                    if sell_amt == 0 and buy_amt > 0:
-                        # Fully LONG position - no sells yet
-                        realized_pnl = 0.0
-                        logger.info(f"  Realized P&L = ₹0.00 (fully open LONG position, no sells)")
-                    elif buy_amt == 0 and sell_amt > 0:
-                        # Fully SHORT position - no buys yet
-                        realized_pnl = 0.0
-                        logger.info(f"  Realized P&L = ₹0.00 (fully open SHORT position, no buys)")
-                    else:
-                        # Partially closed position
-                        realized_pnl = sell_amt - buy_amt
-                        logger.info(f"  Realized P&L = Sell Amt - Buy Amt")
-                        logger.info(f"  Realized P&L = ₹{sell_amt:,.2f} - ₹{buy_amt:,.2f}")
-                        logger.info(f"  Realized P&L = ₹{realized_pnl:,.2f}")
-
-                    # UNREALIZED P&L = (LTP - Avg Price) × Net Qty in shares
-                    # IMPORTANT: Only calculate if LTP is available and valid
-                    logger.info(f"  Checking LTP: {ltp} (type: {type(ltp)})")
-
-                    if ltp is not None and ltp > 0:
-                        if direction == 'LONG':
-                            # LONG: Profit if LTP > Avg Price
-                            unrealized_pnl = (ltp - avg_price) * net_qty_shares
-                            logger.info(f"  Unrealized P&L (LONG) = (LTP - Avg) × Qty (shares)")
-                            logger.info(f"  Unrealized P&L = (₹{ltp:.2f} - ₹{avg_price:.2f}) × {net_qty_shares}")
-                            logger.info(f"  Unrealized P&L = ₹{ltp - avg_price:.2f} × {net_qty_shares}")
-                            logger.info(f"  Unrealized P&L = ₹{unrealized_pnl:,.2f}")
-                        else:
-                            # SHORT: Profit if Avg Price > LTP
-                            unrealized_pnl = (avg_price - ltp) * abs(net_qty_shares)
-                            logger.info(f"  Unrealized P&L (SHORT) = (Avg - LTP) × Qty (shares)")
-                            logger.info(f"  Unrealized P&L = (₹{avg_price:.2f} - ₹{ltp:.2f}) × {abs(net_qty_shares)}")
-                            logger.info(f"  Unrealized P&L = ₹{avg_price - ltp:.2f} × {abs(net_qty_shares)}")
-                            logger.info(f"  Unrealized P&L = ₹{unrealized_pnl:,.2f}")
-                    else:
-                        unrealized_pnl = 0.0
-                        logger.warning(f"  ⚠️ LTP not available (LTP={ltp}), setting unrealized P&L to ₹0.00")
-
-                    # TOTAL P&L = Realized + Unrealized
-                    total_pnl = realized_pnl + unrealized_pnl
-                    logger.info(f"  📊 Total P&L = ₹{realized_pnl:,.2f} + ₹{unrealized_pnl:,.2f} = ₹{total_pnl:,.2f}")
-
-                    # Get additional fields
-                    product = p.get('prod', 'N/A')
-                    exchange = p.get('exSeg', 'N/A')
-
-                    # Calculate P&L percentage based on investment
-                    investment = avg_price * abs(net_qty_shares)
-                    pnl_pct = (total_pnl / investment * 100) if investment > 0 else 0
-
-                    logger.info("="*80)
-                    logger.info(f"📊 FINAL SUMMARY FOR {symbol}:")
-                    logger.info(f"  Direction: {direction}")
-                    logger.info(f"  Quantity: {abs(net_qty_lots)} lots ({abs(net_qty_shares)} shares)")
-                    logger.info(f"  Average Price: ₹{avg_price:.2f}")
-                    logger.info(f"  LTP: ₹{ltp:.2f}" if ltp is not None and ltp > 0 else "  LTP: Not Available")
-                    logger.info(f"  Realized P&L: ₹{realized_pnl:,.2f}")
-                    logger.info(f"  Unrealized P&L: ₹{unrealized_pnl:,.2f}")
-                    logger.info(f"  Total P&L: ₹{total_pnl:,.2f} ({pnl_pct:+.2f}%)")
-                    logger.info("="*80)
-
-                    # Extract expiry date from Neo response (format: "30 Dec, 2025")
-                    expiry_date = None
-                    expiry_dt_str = p.get('expDt', '')
-                    if expiry_dt_str:
-                        try:
-                            from datetime import datetime as dt
-                            # Convert "30 Dec, 2025" to "2025-12-30"
-                            expiry_dt = dt.strptime(expiry_dt_str, '%d %b, %Y')
-                            expiry_date = expiry_dt.strftime('%Y-%m-%d')
-                        except Exception as e:
-                            logger.warning(f"Could not parse expiry date '{expiry_dt_str}': {e}")
-
-                    # Prepare response data
-                    position_dict = {
-                        'symbol': symbol,
-                        'exchange': exchange,
-                        'product': product,
+                    positions_data.append({
+                        'symbol': pos.symbol,
+                        'exchange': pos.exchange_segment or 'NFO',
+                        'product': pos.product or 'NRML',
                         'direction': direction,
-                        'quantity': abs(net_qty_lots),  # Display in lots
-                        'net_quantity': net_qty_lots,  # Net quantity in lots (for display)
-                        'net_quantity_shares': net_qty_shares,  # Net quantity in shares (for closing)
-                        'average_price': round(avg_price, 2),
-                        'ltp': round(ltp, 2) if ltp is not None and ltp > 0 else None,
+                        'quantity': abs(net_qty),
+                        'net_quantity': net_qty,
+                        'net_quantity_shares': net_qty,
+                        'average_price': avg_price,
+                        'ltp': ltp if ltp > 0 else None,
                         'unrealized_pnl': round(unrealized_pnl, 2),
-                        'realized_pnl': round(realized_pnl, 2),
-                        'total_pnl': round(total_pnl, 2),
+                        'realized_pnl': 0.0,
+                        'total_pnl': round(unrealized_pnl, 2),
                         'pnl_percentage': round(pnl_pct, 2),
-                        'expiry_date': expiry_date,  # Add expiry date for averaging analysis
-                    }
+                        'expiry_date': None,  # BrokerPosition doesn't have expiry field
+                    })
 
-                    logger.info(f"📤 RESPONSE DATA FOR {symbol}:")
-                    logger.info(json.dumps(position_dict, indent=2))
+            except Exception as e:
+                logger.error(f"Error fetching Breeze positions: {e}", exc_info=True)
+                return JsonResponse({
+                    'success': False,
+                    'error': f'Failed to fetch Breeze positions: {str(e)}'
+                })
 
-                    positions_data.append(position_dict)
+        elif broker == 'neo':
+            # Use unified Neo integration for consistent data (includes avg price overrides)
+            from apps.brokers.integrations.kotak_neo import (
+                fetch_and_save_kotakneo_data,
+                NeoAuthenticationError
+            )
+
+            try:
+                _, positions = fetch_and_save_kotakneo_data()
+
+                # Known lot sizes for common instruments
+                lot_sizes = {
+                    'NIFTY': 75,
+                    'BANKNIFTY': 30,
+                    'FINNIFTY': 40,
+                    'HDFCBANK': 550,
+                    'RELIANCE': 250,
+                    'TCS': 150,
+                    'INFY': 300,
+                    'ICICIBANK': 700,
+                    'SBIN': 750,
+                    'AXISBANK': 625,
+                }
+
+                for pos in positions:
+                    # Get values from BrokerPosition model (already has override averages)
+                    avg_price = float(pos.average_price or 0)
+                    ltp = float(pos.ltp or 0)
+                    net_qty = pos.net_quantity  # In shares
+
+                    # Get lot size from mapping based on symbol
+                    symbol_base = pos.symbol.replace('FUT', '').rstrip('0123456789')
+                    for key in lot_sizes:
+                        if key in pos.symbol.upper():
+                            symbol_base = key
+                            break
+                    lot_size = lot_sizes.get(symbol_base, 1)
+
+                    # Calculate lots for display
+                    net_qty_lots = net_qty // lot_size if lot_size > 0 else net_qty
+
+                    if net_qty > 0:
+                        direction = 'LONG'
+                        unrealized_pnl = (ltp - avg_price) * net_qty
+                    else:
+                        direction = 'SHORT'
+                        unrealized_pnl = (avg_price - ltp) * abs(net_qty)
+
+                    investment = avg_price * abs(net_qty)
+                    pnl_pct = (unrealized_pnl / investment * 100) if investment > 0 else 0
+
+                    positions_data.append({
+                        'symbol': pos.symbol,
+                        'exchange': pos.exchange_segment or 'nse_fo',
+                        'product': pos.product or 'NRML',
+                        'direction': direction,
+                        'quantity': abs(net_qty_lots),
+                        'net_quantity': net_qty_lots,
+                        'net_quantity_shares': net_qty,
+                        'average_price': avg_price,
+                        'ltp': ltp if ltp > 0 else None,
+                        'unrealized_pnl': round(unrealized_pnl, 2),
+                        'realized_pnl': 0.0,
+                        'total_pnl': round(unrealized_pnl, 2),
+                        'pnl_percentage': round(pnl_pct, 2),
+                        'expiry_date': None,  # BrokerPosition doesn't have expiry field
+                    })
 
             except NeoAuthenticationError as e:
                 logger.error(f"Neo authentication error: {e.message}", exc_info=True)
-
-                # Return user-friendly error based on error type
                 error_messages = {
                     'connection': (
                         'Unable to connect to Kotak Neo servers. The broker servers may be '
@@ -2036,7 +1845,6 @@ def get_active_positions(request):
                     ),
                     'unknown': f'Kotak Neo authentication failed: {e.message}'
                 }
-
                 return JsonResponse({
                     'success': False,
                     'error': error_messages.get(e.error_type, error_messages['unknown']),

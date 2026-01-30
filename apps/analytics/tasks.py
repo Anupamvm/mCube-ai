@@ -1,14 +1,15 @@
 """
-Background tasks for analytics and learning system
+Background tasks for analytics system
 
-These tasks run in the background using Celery and django-background-tasks.
-
-Celery Tasks (Scheduled):
+Celery Scheduled Tasks:
+=======================
+Daily Tasks (4:00-5:00 PM, Mon-Fri):
 - generate_daily_pnl_report: Daily P&L report (4:00 PM)
-- update_learning_patterns: Update learning patterns (5:00 PM)
-- send_weekly_summary: Weekly summary report (Friday 6:00 PM)
+- sync_benchmark_data: Sync Nifty/BankNifty data (4:00 PM)
+- daily_data_aggregation: Sync trades and update DailyPnL (4:30 PM)
+- update_equity_curves: Update DailyEquityCurve (5:00 PM)
 
-Background Tasks (On-demand):
+Background Tasks (On-demand, django-background-tasks):
 - run_learning_analysis: Analyze learning sessions
 - analyze_single_trade: Analyze individual trades
 - calculate_session_metrics: Calculate session metrics
@@ -17,13 +18,13 @@ Background Tasks (On-demand):
 
 import logging
 from decimal import Decimal
-from datetime import datetime, timedelta
+from datetime import timedelta
 from background_task import background
 from celery import shared_task
 from django.utils import timezone
-from django.db.models import Sum, Avg, Count, Q
+from django.db.models import Sum
 
-from apps.analytics.models import LearningSession, LearningPattern, TradePerformance
+from apps.analytics.models import LearningSession, LearningPattern
 from apps.analytics.services.learning_engine import LearningEngine
 from apps.positions.models import Position
 from apps.accounts.models import BrokerAccount
@@ -157,235 +158,6 @@ def generate_daily_pnl_report():
         return {'success': False, 'message': str(e)}
 
 
-@shared_task(name='apps.analytics.tasks.update_learning_patterns')
-def update_learning_patterns():
-    """
-    Update learning patterns for all active sessions
-
-    Scheduled: Daily @ 5:00 PM (Mon-Fri)
-
-    Workflow:
-    1. Get all active learning sessions
-    2. Analyze recent trades
-    3. Discover new patterns
-    4. Validate existing patterns
-    5. Update pattern effectiveness scores
-
-    Returns:
-        dict: Task execution summary
-    """
-    logger.info("=" * 80)
-    logger.info("CELERY TASK: Update Learning Patterns")
-    logger.info("=" * 80)
-
-    try:
-        # Get all active learning sessions
-        # Note: Model uses 'RUNNING' status for active sessions
-        active_sessions = LearningSession.objects.filter(
-            status='RUNNING'
-        )
-
-        if not active_sessions.exists():
-            logger.info("ℹ️ No active learning sessions")
-            return {'success': True, 'sessions_processed': 0}
-
-        sessions_processed = 0
-        total_patterns_discovered = 0
-        total_patterns_validated = 0
-
-        for session in active_sessions:
-            try:
-                logger.info(f"Processing session: {session.name}")
-
-                engine = LearningEngine()
-
-                # Step 1: Analyze recent trades
-                trades_analyzed = engine.analyze_trades(session)
-                logger.info(f"  Analyzed {trades_analyzed} trades")
-
-                # Step 2: Discover new patterns
-                patterns_found = engine.discover_patterns(session)
-                logger.info(f"  Discovered {patterns_found} new patterns")
-                total_patterns_discovered += patterns_found
-
-                # Step 3: Validate existing patterns
-                patterns = LearningPattern.objects.filter(
-                    session=session,
-                    validation_status='TESTING'
-                )
-
-                from apps.analytics.services.pattern_recognition import PatternRecognizer
-                recognizer = PatternRecognizer(session)
-                validated_count = 0
-
-                for pattern in patterns:
-                    is_valid = recognizer.validate_pattern(pattern)
-                    if is_valid:
-                        pattern.validation_status = 'ACTIVE'
-                        pattern.last_validated = timezone.now()
-                        pattern.save()
-                        validated_count += 1
-
-                logger.info(f"  Validated {validated_count} patterns")
-                total_patterns_validated += validated_count
-
-                sessions_processed += 1
-
-            except Exception as e:
-                logger.error(f"Error processing session {session.name}: {e}")
-
-        logger.info(
-            f"✅ Learning patterns updated: {sessions_processed} sessions, "
-            f"{total_patterns_discovered} new patterns, {total_patterns_validated} validated"
-        )
-        logger.info("=" * 80)
-
-        return {
-            'success': True,
-            'sessions_processed': sessions_processed,
-            'patterns_discovered': total_patterns_discovered,
-            'patterns_validated': total_patterns_validated
-        }
-
-    except Exception as e:
-        logger.error(f"Error updating learning patterns: {e}", exc_info=True)
-        return {'success': False, 'message': str(e)}
-
-
-@shared_task(name='apps.analytics.tasks.send_weekly_summary')
-def send_weekly_summary():
-    """
-    Send weekly summary report
-
-    Scheduled: Friday @ 6:00 PM
-
-    Workflow:
-    1. Get all trades from this week
-    2. Calculate weekly P&L, win rate
-    3. Show top performers and worst trades
-    4. Learning insights and pattern effectiveness
-    5. Risk metrics and limit utilization
-    6. Send comprehensive report via Telegram
-
-    Returns:
-        dict: Task execution summary
-    """
-    logger.info("=" * 80)
-    logger.info("CELERY TASK: Weekly Summary Report")
-    logger.info("=" * 80)
-
-    try:
-        # Get Monday of current week
-        today = timezone.now().date()
-        week_start = today - timedelta(days=today.weekday())
-        week_end = today
-
-        report_lines = ["📊 WEEKLY SUMMARY REPORT\n"]
-        report_lines.append(f"Week: {week_start.strftime('%Y-%m-%d')} to {week_end.strftime('%Y-%m-%d')}\n")
-        report_lines.append("=" * 40 + "\n\n")
-
-        # Get all positions closed this week
-        weekly_positions = Position.objects.filter(
-            status='CLOSED',
-            exit_timestamp__date__gte=week_start,
-            exit_timestamp__date__lte=week_end
-        )
-
-        if not weekly_positions.exists():
-            report_text = "".join(report_lines) + "ℹ️ No trades this week"
-            send_telegram_notification(report_text, notification_type='INFO')
-            return {'success': True, 'trades_count': 0}
-
-        # Calculate weekly metrics
-        total_trades = weekly_positions.count()
-        total_pnl = weekly_positions.aggregate(Sum('realized_pnl'))['realized_pnl__sum'] or Decimal('0.00')
-        winners = weekly_positions.filter(realized_pnl__gt=0).count()
-        losers = weekly_positions.filter(realized_pnl__lt=0).count()
-        win_rate = (winners / total_trades * 100) if total_trades > 0 else 0
-
-        # Average P&L
-        avg_winner = weekly_positions.filter(realized_pnl__gt=0).aggregate(
-            Avg('realized_pnl')
-        )['realized_pnl__avg'] or Decimal('0.00')
-        avg_loser = weekly_positions.filter(realized_pnl__lt=0).aggregate(
-            Avg('realized_pnl')
-        )['realized_pnl__avg'] or Decimal('0.00')
-
-        # Overall summary
-        pnl_icon = "📈" if total_pnl > 0 else "📉" if total_pnl < 0 else "➖"
-
-        report_lines.append(f"{pnl_icon} WEEKLY PERFORMANCE\n")
-        report_lines.append(f"Total P&L: ₹{total_pnl:,.0f}\n")
-        report_lines.append(f"Total Trades: {total_trades}\n")
-        report_lines.append(f"Winners: {winners} ({win_rate:.1f}%)\n")
-        report_lines.append(f"Losers: {losers}\n")
-        report_lines.append(f"Avg Winner: ₹{avg_winner:,.0f}\n")
-        report_lines.append(f"Avg Loser: ₹{avg_loser:,.0f}\n\n")
-
-        # Top 3 winners
-        top_winners = weekly_positions.filter(realized_pnl__gt=0).order_by('-realized_pnl')[:3]
-        if top_winners.exists():
-            report_lines.append("🏆 TOP WINNERS:\n")
-            for i, pos in enumerate(top_winners, 1):
-                report_lines.append(
-                    f"{i}. {pos.instrument} - ₹{pos.realized_pnl:,.0f} "
-                    f"({pos.strategy_type})\n"
-                )
-            report_lines.append("\n")
-
-        # Top 3 losers
-        top_losers = weekly_positions.filter(realized_pnl__lt=0).order_by('realized_pnl')[:3]
-        if top_losers.exists():
-            report_lines.append("📉 TOP LOSERS:\n")
-            for i, pos in enumerate(top_losers, 1):
-                report_lines.append(
-                    f"{i}. {pos.instrument} - ₹{pos.realized_pnl:,.0f} "
-                    f"({pos.strategy_type})\n"
-                )
-            report_lines.append("\n")
-
-        # Strategy performance breakdown
-        report_lines.append("📊 STRATEGY BREAKDOWN:\n")
-        strategy_stats = weekly_positions.values('strategy_type').annotate(
-            count=Count('id'),
-            total_pnl=Sum('realized_pnl')
-        ).order_by('-total_pnl')
-
-        for stat in strategy_stats:
-            strategy_pnl = stat['total_pnl'] or Decimal('0.00')
-            strategy_icon = "✅" if strategy_pnl > 0 else "❌"
-            report_lines.append(
-                f"{strategy_icon} {stat['strategy_type']}: "
-                f"₹{strategy_pnl:,.0f} ({stat['count']} trades)\n"
-            )
-
-        # Send report
-        report_text = "".join(report_lines)
-        send_telegram_notification(
-            report_text,
-            notification_type='INFO'
-        )
-
-        logger.info(
-            f"✅ Weekly summary sent: ₹{total_pnl:,.0f}, {total_trades} trades, "
-            f"{win_rate:.1f}% win rate"
-        )
-        logger.info("=" * 80)
-
-        return {
-            'success': True,
-            'total_pnl': float(total_pnl),
-            'total_trades': total_trades,
-            'win_rate': float(win_rate)
-        }
-
-    except Exception as e:
-        logger.error(f"Error sending weekly summary: {e}", exc_info=True)
-        send_telegram_notification(
-            f"❌ ERROR: Weekly summary generation failed\n{str(e)}",
-            notification_type='ERROR'
-        )
-        return {'success': False, 'message': str(e)}
 
 
 # =============================================================================
@@ -492,7 +264,7 @@ def analyze_single_trade(position_id):
             logger.info(f"Position {position_id} already has performance analysis")
             return
 
-        logger.info(f"= Analyzing position: {position.symbol}")
+        logger.info(f"Analyzing position: {position.symbol}")
 
         engine = LearningEngine()
         performance = engine._analyze_single_trade(position)
@@ -598,3 +370,162 @@ def stop_continuous_learning(session_id):
     # and will prevent further scheduling
 
     logger.info(f" Continuous learning stopped for session {session_id}")
+
+
+# =============================================================================
+# NEW DATA PIPELINE TASKS (Phase 5)
+# =============================================================================
+
+@shared_task(name='apps.analytics.tasks.sync_benchmark_data')
+def sync_benchmark_data():
+    """
+    Sync benchmark data (Nifty/BankNifty) from Breeze historical API.
+
+    Scheduled: Daily @ 4:00 PM (Mon-Fri)
+
+    Returns:
+        dict: Task execution summary
+    """
+    logger.info("=" * 80)
+    logger.info("CELERY TASK: Sync Benchmark Data")
+    logger.info("=" * 80)
+
+    try:
+        from apps.analytics.services.benchmark_analyzer import get_analyzer
+        from datetime import date, timedelta
+
+        analyzer = get_analyzer()
+
+        today = date.today()
+        # Sync last 5 days to catch any missed data
+        from_date = today - timedelta(days=5)
+
+        nifty_count = analyzer.fetch_benchmark_data('NIFTY50', from_date, today)
+        banknifty_count = analyzer.fetch_benchmark_data('BANKNIFTY', from_date, today)
+
+        logger.info(f"Synced benchmark data: Nifty={nifty_count}, BankNifty={banknifty_count}")
+        logger.info("=" * 80)
+
+        return {
+            'success': True,
+            'nifty_records': nifty_count,
+            'banknifty_records': banknifty_count,
+        }
+
+    except Exception as e:
+        logger.error(f"Error syncing benchmark data: {e}", exc_info=True)
+        return {'success': False, 'error': str(e)}
+
+
+@shared_task(name='apps.analytics.tasks.daily_data_aggregation')
+def daily_data_aggregation():
+    """
+    Daily data aggregation - sync trades and update DailyPnL.
+
+    Scheduled: Daily @ 4:30 PM (Mon-Fri)
+
+    Returns:
+        dict: Task execution summary
+    """
+    logger.info("=" * 80)
+    logger.info("CELERY TASK: Daily Data Aggregation")
+    logger.info("=" * 80)
+
+    try:
+        from apps.analytics.models import DailyPnL
+        from datetime import date
+
+        today = date.today()
+        accounts = BrokerAccount.objects.filter(is_active=True)
+
+        accounts_updated = 0
+        for account in accounts:
+            try:
+                # Get positions closed today
+                positions = Position.objects.filter(
+                    account=account,
+                    status='CLOSED',
+                    exit_timestamp__date=today,
+                )
+
+                if not positions.exists():
+                    continue
+
+                # Calculate P&L
+                realized_pnl = positions.aggregate(total=Sum('realized_pnl'))['total'] or Decimal('0.00')
+                winners = positions.filter(realized_pnl__gt=0).count()
+                losers = positions.filter(realized_pnl__lt=0).count()
+
+                # Update or create DailyPnL
+                DailyPnL.objects.update_or_create(
+                    account=account,
+                    date=today,
+                    defaults={
+                        'realized_pnl': realized_pnl,
+                        'unrealized_pnl': Decimal('0.00'),
+                        'total_pnl': realized_pnl,
+                        'trades_count': positions.count(),
+                        'winning_trades': winners,
+                        'losing_trades': losers,
+                        'starting_capital': account.allocated_capital,
+                        'ending_capital': account.allocated_capital + realized_pnl,
+                    }
+                )
+
+                accounts_updated += 1
+
+            except Exception as e:
+                logger.error(f"Error aggregating data for {account.account_name}: {e}")
+
+        logger.info(f"Daily aggregation complete: {accounts_updated} accounts updated")
+        logger.info("=" * 80)
+
+        return {'success': True, 'accounts_updated': accounts_updated}
+
+    except Exception as e:
+        logger.error(f"Error in daily aggregation: {e}", exc_info=True)
+        return {'success': False, 'error': str(e)}
+
+
+@shared_task(name='apps.analytics.tasks.update_equity_curves')
+def update_equity_curves():
+    """
+    Update DailyEquityCurve for all accounts.
+
+    Scheduled: Daily @ 5:00 PM (Mon-Fri)
+
+    Returns:
+        dict: Task execution summary
+    """
+    logger.info("=" * 80)
+    logger.info("CELERY TASK: Update Equity Curves")
+    logger.info("=" * 80)
+
+    try:
+        from apps.analytics.services.returns_calculator import get_calculator
+        from datetime import date
+
+        calculator = get_calculator()
+        today = date.today()
+
+        accounts = BrokerAccount.objects.filter(is_active=True)
+        curves_updated = 0
+
+        for account in accounts:
+            try:
+                curve = calculator.calculate_daily_equity(account, today)
+                if curve:
+                    curves_updated += 1
+            except Exception as e:
+                logger.error(f"Error updating equity curve for {account.account_name}: {e}")
+
+        logger.info(f"Equity curves updated: {curves_updated} accounts")
+        logger.info("=" * 80)
+
+        return {'success': True, 'curves_updated': curves_updated}
+
+    except Exception as e:
+        logger.error(f"Error updating equity curves: {e}", exc_info=True)
+        return {'success': False, 'error': str(e)}
+
+

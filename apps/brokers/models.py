@@ -1450,3 +1450,290 @@ class BrokerTradeHistory(TimeStampedModel):
             trade_date=trade_date,
             defaults=defaults
         )
+
+
+# =============================================================================
+# CSV Import Models
+# =============================================================================
+
+class CSVImportLog(TimeStampedModel):
+    """
+    Track CSV imports for audit and rollback purposes.
+    """
+
+    FILE_TYPE_CHOICES = [
+        ('KOTAK_FNO', 'Kotak F&O Gain/Loss'),
+        ('BREEZE_FNO', 'Breeze FNO Portfolio'),
+    ]
+
+    STATUS_CHOICES = [
+        ('PENDING', 'Pending'),
+        ('PROCESSING', 'Processing'),
+        ('SUCCESS', 'Success'),
+        ('PARTIAL', 'Partial Success'),
+        ('FAILED', 'Failed'),
+    ]
+
+    import_batch_id = models.CharField(
+        max_length=50,
+        unique=True,
+        help_text="Unique batch ID for grouping imports"
+    )
+
+    file_type = models.CharField(
+        max_length=20,
+        choices=FILE_TYPE_CHOICES,
+        help_text="Type of CSV file imported"
+    )
+
+    original_filename = models.CharField(
+        max_length=255,
+        help_text="Original filename uploaded"
+    )
+
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default='PENDING',
+        help_text="Import status"
+    )
+
+    records_created = models.IntegerField(
+        default=0,
+        help_text="Number of records created"
+    )
+
+    records_updated = models.IntegerField(
+        default=0,
+        help_text="Number of records updated"
+    )
+
+    records_skipped = models.IntegerField(
+        default=0,
+        help_text="Number of records skipped"
+    )
+
+    errors = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="List of error messages"
+    )
+
+    imported_by = models.ForeignKey(
+        'auth.User',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        help_text="User who performed the import"
+    )
+
+    class Meta:
+        db_table = 'csv_import_logs'
+        verbose_name = 'CSV Import Log'
+        verbose_name_plural = 'CSV Import Logs'
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.file_type} - {self.import_batch_id} ({self.status})"
+
+
+class BrokerContractPnL(TimeStampedModel):
+    """
+    Aggregated contract-level P&L from CSV imports.
+
+    Unlike BrokerTradeHistory (individual trades), this stores
+    aggregated P&L per contract from broker statements.
+    """
+
+    BROKER_CHOICES = [
+        ('KOTAK', 'Kotak Neo'),
+        ('ICICI', 'ICICI Breeze'),
+    ]
+
+    SEGMENT_CHOICES = [
+        ('FUTURES', 'Futures'),
+        ('OPTIONS', 'Options'),
+    ]
+
+    SECURITY_TYPE_CHOICES = [
+        ('FUTSTK', 'Stock Futures'),
+        ('FUTIDX', 'Index Futures'),
+        ('OPTSTK', 'Stock Options'),
+        ('OPTIDX', 'Index Options'),
+    ]
+
+    # Broker and import tracking
+    broker = models.CharField(
+        max_length=10,
+        choices=BROKER_CHOICES,
+        help_text="Broker name"
+    )
+
+    import_batch_id = models.CharField(
+        max_length=50,
+        db_index=True,
+        help_text="Links to CSVImportLog batch"
+    )
+
+    # Contract identification
+    symbol = models.CharField(
+        max_length=50,
+        help_text="Base symbol (e.g., NIFTY, BANKNIFTY, HDFCBANK)"
+    )
+
+    trading_symbol = models.CharField(
+        max_length=200,
+        help_text="Full contract name from CSV"
+    )
+
+    segment = models.CharField(
+        max_length=10,
+        choices=SEGMENT_CHOICES,
+        help_text="FUTURES or OPTIONS"
+    )
+
+    security_type = models.CharField(
+        max_length=10,
+        choices=SECURITY_TYPE_CHOICES,
+        blank=True,
+        help_text="Detailed security type from Kotak CSV"
+    )
+
+    expiry_date = models.DateField(
+        null=True,
+        blank=True,
+        help_text="Contract expiry date"
+    )
+
+    strike_price = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Strike price for options"
+    )
+
+    option_type = models.CharField(
+        max_length=5,
+        blank=True,
+        help_text="CE or PE for options"
+    )
+
+    # Quantity and amounts
+    quantity = models.IntegerField(
+        default=0,
+        help_text="Total traded quantity"
+    )
+
+    buy_amount = models.DecimalField(
+        max_digits=15,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text="Total buy value"
+    )
+
+    sell_amount = models.DecimalField(
+        max_digits=15,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text="Total sell value"
+    )
+
+    # P&L figures
+    gross_pnl = models.DecimalField(
+        max_digits=15,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text="Gross P&L before charges"
+    )
+
+    net_pnl = models.DecimalField(
+        max_digits=15,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text="Net P&L after all charges"
+    )
+
+    # Charges breakdown (Kotak CSV)
+    gst = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text="GST charges"
+    )
+
+    brokerage = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text="Brokerage charges"
+    )
+
+    stt = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text="Securities Transaction Tax"
+    )
+
+    misc_charges = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text="Other miscellaneous charges"
+    )
+
+    total_charges = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text="Total of all charges"
+    )
+
+    # Breeze specific fields
+    realized_pnl = models.DecimalField(
+        max_digits=15,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text="Realized P&L (Breeze)"
+    )
+
+    unrealized_pnl = models.DecimalField(
+        max_digits=15,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text="Unrealized P&L (Breeze)"
+    )
+
+    # Raw data storage
+    raw_data = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Original CSV row as JSON"
+    )
+
+    class Meta:
+        db_table = 'broker_contract_pnl'
+        verbose_name = 'Broker Contract PnL'
+        verbose_name_plural = 'Broker Contract PnL'
+        ordering = ['-created_at', 'symbol']
+        indexes = [
+            models.Index(fields=['broker', 'import_batch_id']),
+            models.Index(fields=['symbol', 'expiry_date']),
+            models.Index(fields=['segment']),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['broker', 'import_batch_id', 'trading_symbol'],
+                name='unique_contract_per_import'
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.broker} - {self.trading_symbol} ({self.segment})"
+
+    def save(self, *args, **kwargs):
+        # Auto-calculate total charges if not set
+        if self.total_charges == Decimal('0.00'):
+            self.total_charges = self.gst + self.brokerage + self.stt + self.misc_charges
+        super().save(*args, **kwargs)

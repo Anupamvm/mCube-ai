@@ -100,7 +100,7 @@ const BrokerAuth = (function() {
     }
 
     /**
-     * Initialize authentication modals
+     * Initialize authentication modals and check for pending requests
      */
     function init() {
         // Check if modals already exist
@@ -113,10 +113,63 @@ const BrokerAuth = (function() {
         }
 
         console.log('[BrokerAuth] Initialized with Breeze and Neo authentication support');
+
+        // Check for pending requests from previous auth flow
+        checkAndRetryPendingRequest();
     }
 
     /**
-     * Show authentication modal
+     * Check sessionStorage for pending requests and retry after successful auth
+     */
+    function checkAndRetryPendingRequest() {
+        const pendingRequestStr = sessionStorage.getItem('breeze_pending_request');
+        if (!pendingRequestStr) return;
+
+        try {
+            const storedRequest = JSON.parse(pendingRequestStr);
+            console.log('[BrokerAuth] Found pending request from previous session:', storedRequest);
+
+            // Clear the stored request immediately to avoid infinite retries
+            sessionStorage.removeItem('breeze_pending_request');
+
+            // Verify the session is now valid before retrying
+            fetch('/brokers/breeze/session-status/')
+                .then(response => response.json())
+                .then(status => {
+                    if (status.valid) {
+                        console.log('[BrokerAuth] Session now valid - retrying pending request');
+
+                        // Show success notification
+                        showNotification(
+                            'Authentication Successful',
+                            'Breeze session restored. Retrying your previous action...',
+                            'success'
+                        );
+
+                        // Set the pending request and retry
+                        pendingRequest = storedRequest;
+                        currentBroker = 'breeze';
+
+                        // Small delay to let the page settle
+                        setTimeout(() => {
+                            retryPendingRequest();
+                        }, 1000);
+                    } else {
+                        console.log('[BrokerAuth] Session still invalid - not retrying');
+                    }
+                })
+                .catch(err => {
+                    console.error('[BrokerAuth] Error checking session status:', err);
+                });
+
+        } catch (e) {
+            console.error('[BrokerAuth] Error parsing pending request:', e);
+            sessionStorage.removeItem('breeze_pending_request');
+        }
+    }
+
+    /**
+     * Show authentication modal or redirect to auto-login page
      * @param {string} broker - 'breeze' or 'neo'
      * @param {Object} request - Optional pending request to retry after auth
      */
@@ -129,6 +182,135 @@ const BrokerAuth = (function() {
 
         currentBroker = broker;
         pendingRequest = request;
+
+        console.log(`[BrokerAuth] Authentication required for ${cfg.name}`);
+
+        // For Breeze, check if auto-login is available and redirect to login page
+        if (broker === 'breeze') {
+            // Check session status and redirect to auto-login page
+            checkAndRedirectToAutoLogin(broker);
+            return;
+        }
+
+        // For other brokers (Neo), show the manual token entry modal
+        showManualTokenModal(broker);
+    }
+
+    /**
+     * Check Breeze session status and redirect to auto-login page
+     * @param {string} broker - 'breeze'
+     */
+    async function checkAndRedirectToAutoLogin(broker) {
+        try {
+            const response = await fetch('/brokers/breeze/session-status/');
+            const status = await response.json();
+
+            console.log('[BrokerAuth] Session status:', status);
+
+            if (!status.valid) {
+                // Session is expired - redirect to login page with current URL as return
+                const currentUrl = encodeURIComponent(window.location.pathname + window.location.search);
+                const loginUrl = `/brokers/breeze/login/?next=${currentUrl}`;
+
+                console.log(`[BrokerAuth] Session expired - redirecting to: ${loginUrl}`);
+
+                // Show a brief notification before redirect
+                showNotification(
+                    'Session Expired',
+                    'Redirecting to Breeze login page. Please complete auto-login to continue.',
+                    'warning'
+                );
+
+                // Store pending request info in sessionStorage for retry after login
+                if (pendingRequest) {
+                    sessionStorage.setItem('breeze_pending_request', JSON.stringify(pendingRequest));
+                }
+
+                // Redirect after a brief delay to show the notification
+                setTimeout(() => {
+                    window.location.href = loginUrl;
+                }, 1500);
+            }
+        } catch (error) {
+            console.error('[BrokerAuth] Error checking session status:', error);
+            // Fallback to manual token entry modal if API fails
+            showManualTokenModal(broker);
+        }
+    }
+
+    /**
+     * Show notification to user
+     * @param {string} title - Notification title
+     * @param {string} message - Notification message
+     * @param {string} type - 'info', 'warning', 'error', 'success'
+     */
+    function showNotification(title, message, type = 'info') {
+        // Create notification element
+        const notification = document.createElement('div');
+        notification.className = `broker-auth-notification broker-auth-notification-${type}`;
+        notification.innerHTML = `
+            <div class="broker-auth-notification-content">
+                <strong>${title}</strong>
+                <p>${message}</p>
+            </div>
+        `;
+
+        // Style the notification based on type
+        const bgColors = {
+            'warning': '#fef3cd',
+            'error': '#f8d7da',
+            'success': '#d4edda',
+            'info': '#d1ecf1'
+        };
+        const borderColors = {
+            'warning': '#ffc107',
+            'error': '#dc3545',
+            'success': '#28a745',
+            'info': '#17a2b8'
+        };
+
+        notification.style.cssText = `
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: ${bgColors[type] || bgColors.info};
+            border: 1px solid ${borderColors[type] || borderColors.info};
+            border-radius: 8px;
+            padding: 16px 20px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            z-index: 10000;
+            max-width: 400px;
+            animation: slideIn 0.3s ease-out;
+        `;
+
+        // Add animation keyframes
+        if (!document.getElementById('broker-auth-styles')) {
+            const style = document.createElement('style');
+            style.id = 'broker-auth-styles';
+            style.textContent = `
+                @keyframes slideIn {
+                    from { transform: translateX(100%); opacity: 0; }
+                    to { transform: translateX(0); opacity: 1; }
+                }
+            `;
+            document.head.appendChild(style);
+        }
+
+        document.body.appendChild(notification);
+
+        // Remove after 5 seconds
+        setTimeout(() => {
+            notification.remove();
+        }, 5000);
+    }
+
+    /**
+     * Show manual token entry modal (for Neo or fallback)
+     * @param {string} broker - 'breeze' or 'neo'
+     */
+    function showManualTokenModal(broker) {
+        const cfg = config[broker];
+        if (!cfg) return;
 
         // Clear previous messages
         const messageDiv = document.getElementById(`${broker}AuthMessage`);
@@ -151,10 +333,10 @@ const BrokerAuth = (function() {
         } else {
             // If modal doesn't exist, initialize and try again
             init();
-            setTimeout(() => showAuthModal(broker, request), 100);
+            setTimeout(() => showManualTokenModal(broker), 100);
         }
 
-        console.log(`[BrokerAuth] Showing ${cfg.name} authentication modal`);
+        console.log(`[BrokerAuth] Showing ${cfg.name} manual token entry modal`);
     }
 
     /**
@@ -423,12 +605,16 @@ const BrokerAuth = (function() {
     return {
         init,
         showAuthModal,
+        showManualTokenModal,
+        checkAndRedirectToAutoLogin,
         closeModal,
         updateSession,
         isAuthenticated,
         clearAuth,
         handleAuthError,
-        retryPendingRequest
+        retryPendingRequest,
+        checkAndRetryPendingRequest,
+        showNotification
     };
 })();
 

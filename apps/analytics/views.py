@@ -1,5 +1,12 @@
 """
 Analytics and Learning System Views for mCube Trading System
+
+Includes:
+- Learning control views
+- Pattern & suggestion views
+- API endpoints for P&L and positions
+- Dashboard API endpoints for visualization
+- ML insights API endpoints
 """
 
 from django.shortcuts import render, redirect, get_object_or_404
@@ -9,6 +16,7 @@ from django.http import JsonResponse
 from django.views.decorators.http import require_http_methods
 from django.utils import timezone
 from decimal import Decimal
+from datetime import datetime
 
 from apps.analytics.models import (
     LearningSession,
@@ -18,7 +26,9 @@ from apps.analytics.models import (
     PerformanceMetric,
 )
 from apps.analytics.services.learning_engine import LearningEngine
+from apps.analytics.services.dashboard_service import get_dashboard_service
 from apps.positions.models import Position
+from apps.accounts.models import BrokerAccount
 
 import logging
 
@@ -432,12 +442,28 @@ def api_sync_positions(request):
     """
     API endpoint to sync positions from brokers.
     Fetches fresh data from Kotak Neo and ICICI Breeze.
+    Also syncs FY trade history from broker APIs.
     """
     try:
         from apps.positions.services.position_sync import sync_positions_from_brokers
+        from apps.analytics.services.fy_trade_analytics import get_fy_analytics
 
         clear_existing = request.POST.get('clear', 'false').lower() == 'true'
-        results = sync_positions_from_brokers(clear_existing=clear_existing)
+
+        # Sync current positions
+        results = sync_positions_from_brokers(clear_existing=clear_existing, include_history=False)
+
+        # Sync FY trade history from broker APIs
+        fy_analytics = get_fy_analytics()
+        fy_result = fy_analytics.sync_fy_trades_from_brokers(clear_existing=clear_existing)
+
+        # Merge results
+        results['history_synced'] = fy_result.get('total_trades_synced', 0)
+        results['fy_label'] = fy_result.get('fy_label', '')
+        results['fy_sync_details'] = fy_result.get('accounts', [])
+
+        if fy_result.get('errors'):
+            results['errors'].extend(fy_result['errors'])
 
         return JsonResponse({
             'success': results['success'],
@@ -446,12 +472,13 @@ def api_sync_positions(request):
             'positions_updated': results['positions_updated'],
             'positions_closed': results['positions_closed'],
             'history_synced': results.get('history_synced', 0),
+            'fy_label': results.get('fy_label', ''),
             'errors': results['errors'],
             'timestamp': timezone.now().isoformat()
         })
 
     except Exception as e:
-        logger.error(f"Error in api_sync_positions: {e}")
+        logger.error(f"Error in api_sync_positions: {e}", exc_info=True)
         return JsonResponse({
             'success': False,
             'error': str(e)
@@ -463,12 +490,14 @@ def api_sync_positions(request):
 def api_positions_data(request):
     """
     API endpoint to get all positions data organized by status.
-    Returns: open positions, suggestions, trade history
+    Returns: open positions, suggestions, trade history (from broker API)
     """
     try:
-        from apps.positions.services.position_sync import get_position_summary
+        from apps.positions.services.position_sync import get_position_summary, get_financial_year_start
         from apps.core.constants import POSITION_SOURCE_SYSTEM
         from apps.core.utils.formatting import format_indian_currency
+        from apps.brokers.models import BrokerTradeHistory
+        from datetime import date
 
         summary = get_position_summary()
 
@@ -507,35 +536,1230 @@ def api_positions_data(request):
                 'created_at': pos.created_at.isoformat(),
             })
 
-        # Format trade history
+        # Get broker trade history for current FY (from BrokerTradeHistory model)
+        fy_start = get_financial_year_start()
+        broker_trades = BrokerTradeHistory.objects.filter(
+            trade_date__gte=fy_start,
+            trade_date__lte=date.today()
+        ).select_related('account').order_by('-trade_date', '-trade_time')[:100]
+
         trade_history = []
-        for pos in summary['trade_history']:
+        for trade in broker_trades:
+            trade_value = float(trade.quantity * trade.price) if trade.price else 0
             trade_history.append({
-                'id': pos.id,
-                'instrument': pos.instrument,
-                'direction': pos.direction,
-                'quantity': pos.quantity,
-                'entry_price': float(pos.entry_price),
-                'exit_price': float(pos.exit_price) if pos.exit_price else None,
-                'realized_pnl': float(pos.realized_pnl),
-                'pnl_formatted': format_indian_currency(pos.realized_pnl),
-                'entry_time': pos.entry_time.isoformat() if pos.entry_time else None,
-                'exit_time': pos.exit_time.isoformat() if pos.exit_time else None,
-                'exit_reason': pos.exit_reason,
-                'account': pos.account.account_name if pos.account else None,
+                'id': trade.id,
+                'instrument': trade.trading_symbol or trade.symbol,
+                'symbol': trade.symbol,
+                'direction': trade.trade_type,
+                'quantity': trade.quantity,
+                'price': float(trade.price) if trade.price else 0,
+                'trade_value': trade_value,
+                'trade_date': trade.trade_date.strftime('%Y-%m-%d') if trade.trade_date else None,
+                'trade_time': trade.trade_time.strftime('%H:%M:%S') if trade.trade_time else None,
+                'segment': trade.segment,
+                'product_type': trade.product_type,
+                'account': trade.account.account_name if trade.account else None,
+                'broker': trade.broker,
+                'expiry_date': trade.expiry_date.strftime('%Y-%m-%d') if trade.expiry_date else None,
+                'strike_price': float(trade.strike_price) if trade.strike_price else None,
+                'option_type': trade.option_type,
             })
+
+        # Get trade count from BrokerTradeHistory
+        broker_trade_count = BrokerTradeHistory.objects.filter(
+            trade_date__gte=fy_start,
+            trade_date__lte=date.today()
+        ).count()
 
         return JsonResponse({
             'success': True,
             'open_positions': open_positions,
             'suggestions': suggestions,
             'trade_history': trade_history,
-            'counts': summary['counts'],
+            'counts': {
+                'open': summary['counts']['open'],
+                'suggested': summary['counts']['suggested'],
+                'closed': broker_trade_count,  # Use broker trade count
+            },
+            'fy_start': fy_start.strftime('%Y-%m-%d'),
             'timestamp': timezone.now().isoformat()
         })
 
     except Exception as e:
         logger.error(f"Error in api_positions_data: {e}")
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=500)
+
+
+# =============================================================================
+# DASHBOARD API ENDPOINTS
+# =============================================================================
+
+@login_required
+@require_http_methods(["GET"])
+def api_dashboard_summary(request):
+    """
+    API endpoint to get dashboard summary metrics.
+
+    Query params:
+    - account_id: Optional specific account ID
+    - period: Time period (1D, 1W, 1M, 3M, 6M, 1Y, FY, YTD, ALL)
+    """
+    try:
+        account = None
+        account_id = request.GET.get('account_id')
+        if account_id:
+            account = get_object_or_404(BrokerAccount, id=account_id)
+
+        period = request.GET.get('period', 'FY')
+
+        service = get_dashboard_service()
+        summary = service.get_summary_metrics(request.user, account, period)
+
+        return JsonResponse({
+            'success': True,
+            'data': summary,
+            'timestamp': timezone.now().isoformat()
+        })
+
+    except Exception as e:
+        logger.error(f"Error in api_dashboard_summary: {e}", exc_info=True)
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=500)
+
+
+@login_required
+@require_http_methods(["GET"])
+def api_pnl_chart_data(request):
+    """
+    API endpoint to get P&L chart data.
+
+    Query params:
+    - account_id: Optional specific account ID
+    - period: Time period (1D, 1W, 1M, 3M, 6M, 1Y, FY)
+    - granularity: Data granularity (daily, weekly, monthly)
+    """
+    try:
+        account = None
+        account_id = request.GET.get('account_id')
+        if account_id:
+            account = get_object_or_404(BrokerAccount, id=account_id)
+
+        period = request.GET.get('period', '1M')
+        granularity = request.GET.get('granularity', 'daily')
+
+        service = get_dashboard_service()
+        chart_data = service.get_pnl_chart_data(request.user, account, period, granularity)
+
+        return JsonResponse({
+            'success': True,
+            'data': chart_data,
+            'timestamp': timezone.now().isoformat()
+        })
+
+    except Exception as e:
+        logger.error(f"Error in api_pnl_chart_data: {e}", exc_info=True)
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=500)
+
+
+@login_required
+@require_http_methods(["GET"])
+def api_cumulative_returns(request):
+    """
+    API endpoint to get cumulative returns / equity curve data.
+
+    Query params:
+    - account_id: Optional specific account ID
+    - period: Time period
+    """
+    try:
+        account = None
+        account_id = request.GET.get('account_id')
+        if account_id:
+            account = get_object_or_404(BrokerAccount, id=account_id)
+
+        period = request.GET.get('period', 'FY')
+
+        service = get_dashboard_service()
+        returns_data = service.get_cumulative_returns(request.user, account, period)
+
+        return JsonResponse({
+            'success': True,
+            'data': returns_data,
+            'timestamp': timezone.now().isoformat()
+        })
+
+    except Exception as e:
+        logger.error(f"Error in api_cumulative_returns: {e}", exc_info=True)
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=500)
+
+
+@login_required
+@require_http_methods(["GET"])
+def api_win_loss_distribution(request):
+    """
+    API endpoint to get win/loss distribution data.
+
+    Query params:
+    - account_id: Optional specific account ID
+    - period: Time period
+    """
+    try:
+        account = None
+        account_id = request.GET.get('account_id')
+        if account_id:
+            account = get_object_or_404(BrokerAccount, id=account_id)
+
+        period = request.GET.get('period', 'FY')
+
+        service = get_dashboard_service()
+        distribution = service.get_win_loss_distribution(request.user, account, period)
+
+        return JsonResponse({
+            'success': True,
+            'data': distribution,
+            'timestamp': timezone.now().isoformat()
+        })
+
+    except Exception as e:
+        logger.error(f"Error in api_win_loss_distribution: {e}", exc_info=True)
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=500)
+
+
+@login_required
+@require_http_methods(["GET"])
+def api_strategy_performance(request):
+    """
+    API endpoint to get performance by strategy.
+
+    Query params:
+    - account_id: Optional specific account ID
+    - period: Time period
+    """
+    try:
+        account = None
+        account_id = request.GET.get('account_id')
+        if account_id:
+            account = get_object_or_404(BrokerAccount, id=account_id)
+
+        period = request.GET.get('period', 'FY')
+
+        service = get_dashboard_service()
+        strategy_data = service.get_strategy_performance(request.user, account, period)
+
+        return JsonResponse({
+            'success': True,
+            'data': strategy_data,
+            'timestamp': timezone.now().isoformat()
+        })
+
+    except Exception as e:
+        logger.error(f"Error in api_strategy_performance: {e}", exc_info=True)
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=500)
+
+
+@login_required
+@require_http_methods(["GET"])
+def api_drawdown_chart(request):
+    """
+    API endpoint to get drawdown chart data.
+
+    Query params:
+    - account_id: Optional specific account ID
+    - period: Time period
+    """
+    try:
+        account = None
+        account_id = request.GET.get('account_id')
+        if account_id:
+            account = get_object_or_404(BrokerAccount, id=account_id)
+
+        period = request.GET.get('period', 'FY')
+
+        service = get_dashboard_service()
+        returns_data = service.get_cumulative_returns(request.user, account, period)
+
+        # Extract drawdown data
+        drawdown_data = {
+            'labels': returns_data.get('labels', []),
+            'drawdown_pct': returns_data.get('drawdown_pct', []),
+        }
+
+        return JsonResponse({
+            'success': True,
+            'data': drawdown_data,
+            'timestamp': timezone.now().isoformat()
+        })
+
+    except Exception as e:
+        logger.error(f"Error in api_drawdown_chart: {e}", exc_info=True)
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=500)
+
+
+@login_required
+@require_http_methods(["GET"])
+def api_performance_heatmap(request):
+    """
+    API endpoint to get performance heatmap data (by day/hour).
+
+    Query params:
+    - account_id: Optional specific account ID
+    - period: Time period
+    """
+    try:
+        account = None
+        account_id = request.GET.get('account_id')
+        if account_id:
+            account = get_object_or_404(BrokerAccount, id=account_id)
+
+        period = request.GET.get('period', 'FY')
+
+        service = get_dashboard_service()
+        heatmap_data = service.get_performance_heatmap(request.user, account, period)
+
+        return JsonResponse({
+            'success': True,
+            'data': heatmap_data,
+            'timestamp': timezone.now().isoformat()
+        })
+
+    except Exception as e:
+        logger.error(f"Error in api_performance_heatmap: {e}", exc_info=True)
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=500)
+
+
+@login_required
+@require_http_methods(["GET"])
+def api_best_worst_trades(request):
+    """
+    API endpoint to get best and worst trades.
+
+    Query params:
+    - account_id: Optional specific account ID
+    - limit: Number of trades to return (default 10)
+    """
+    try:
+        account = None
+        account_id = request.GET.get('account_id')
+        if account_id:
+            account = get_object_or_404(BrokerAccount, id=account_id)
+
+        limit = int(request.GET.get('limit', 10))
+
+        service = get_dashboard_service()
+        trades_data = service.get_best_worst_trades(request.user, account, limit)
+
+        return JsonResponse({
+            'success': True,
+            'data': trades_data,
+            'timestamp': timezone.now().isoformat()
+        })
+
+    except Exception as e:
+        logger.error(f"Error in api_best_worst_trades: {e}", exc_info=True)
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=500)
+
+
+@login_required
+@require_http_methods(["GET"])
+def api_benchmark_comparison(request):
+    """
+    API endpoint to get benchmark comparison data.
+
+    Query params:
+    - account_id: Optional specific account ID
+    - benchmark: Benchmark to compare (NIFTY50, BANKNIFTY)
+    - period: Time period
+    """
+    try:
+        account = None
+        account_id = request.GET.get('account_id')
+        if account_id:
+            account = get_object_or_404(BrokerAccount, id=account_id)
+
+        benchmark = request.GET.get('benchmark', 'NIFTY50')
+        period = request.GET.get('period', 'FY')
+
+        service = get_dashboard_service()
+        comparison_data = service.get_benchmark_comparison(request.user, account, benchmark, period)
+
+        return JsonResponse({
+            'success': True,
+            'data': comparison_data,
+            'timestamp': timezone.now().isoformat()
+        })
+
+    except Exception as e:
+        logger.error(f"Error in api_benchmark_comparison: {e}", exc_info=True)
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=500)
+
+
+# =============================================================================
+# ML INSIGHTS API ENDPOINTS
+# =============================================================================
+
+@login_required
+@require_http_methods(["GET"])
+def api_decision_patterns(request):
+    """
+    API endpoint to get user decision pattern analysis.
+
+    Query params:
+    - period: Time period
+    """
+    try:
+        period = request.GET.get('period', 'FY')
+
+        service = get_dashboard_service()
+        patterns_data = service.get_decision_patterns(request.user, period)
+
+        return JsonResponse({
+            'success': True,
+            'data': patterns_data,
+            'timestamp': timezone.now().isoformat()
+        })
+
+    except Exception as e:
+        logger.error(f"Error in api_decision_patterns: {e}", exc_info=True)
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=500)
+
+
+@login_required
+@require_http_methods(["GET"])
+def api_recommendation_accuracy(request):
+    """
+    API endpoint to get recommendation accuracy analysis.
+
+    Query params:
+    - period: Time period
+    """
+    try:
+        period = request.GET.get('period', 'FY')
+
+        service = get_dashboard_service()
+        accuracy_data = service.get_recommendation_accuracy(request.user, period)
+
+        return JsonResponse({
+            'success': True,
+            'data': accuracy_data,
+            'timestamp': timezone.now().isoformat()
+        })
+
+    except Exception as e:
+        logger.error(f"Error in api_recommendation_accuracy: {e}", exc_info=True)
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=500)
+
+
+# =============================================================================
+# EXPORT API ENDPOINTS
+# =============================================================================
+
+@login_required
+@require_http_methods(["GET"])
+def api_export_trades(request):
+    """
+    API endpoint to export trades data.
+
+    Query params:
+    - from_date: Start date (YYYY-MM-DD)
+    - to_date: End date (YYYY-MM-DD)
+    - format: Export format (json, csv)
+    """
+    try:
+        from_date = request.GET.get('from_date')
+        to_date = request.GET.get('to_date')
+        export_format = request.GET.get('format', 'json')
+
+        if not from_date or not to_date:
+            return JsonResponse({
+                'success': False,
+                'error': 'from_date and to_date are required'
+            }, status=400)
+
+        from_date = datetime.strptime(from_date, '%Y-%m-%d').date()
+        to_date = datetime.strptime(to_date, '%Y-%m-%d').date()
+
+        from apps.trading.models import TakenTrade
+
+        trades = TakenTrade.objects.filter(
+            user=request.user,
+            status='CLOSED',
+            closed_at__date__gte=from_date,
+            closed_at__date__lte=to_date,
+        ).values(
+            'id', 'instrument', 'strategy', 'direction', 'trade_type',
+            'entry_price', 'exit_price', 'quantity', 'net_pnl', 'outcome',
+            'taken_at', 'closed_at'
+        )
+
+        trades_list = list(trades)
+
+        # Convert Decimal and datetime for JSON
+        for trade in trades_list:
+            for key, value in trade.items():
+                if isinstance(value, Decimal):
+                    trade[key] = float(value)
+                elif isinstance(value, datetime):
+                    trade[key] = value.isoformat()
+
+        if export_format == 'csv':
+            import csv
+            from django.http import HttpResponse
+
+            response = HttpResponse(content_type='text/csv')
+            response['Content-Disposition'] = f'attachment; filename="trades_{from_date}_{to_date}.csv"'
+
+            if trades_list:
+                writer = csv.DictWriter(response, fieldnames=trades_list[0].keys())
+                writer.writeheader()
+                writer.writerows(trades_list)
+
+            return response
+
+        return JsonResponse({
+            'success': True,
+            'data': trades_list,
+            'count': len(trades_list),
+            'timestamp': timezone.now().isoformat()
+        })
+
+    except Exception as e:
+        logger.error(f"Error in api_export_trades: {e}", exc_info=True)
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=500)
+
+
+@login_required
+@user_passes_test(is_admin_user, login_url='/brokers/login/')
+@require_http_methods(["GET"])
+def api_export_ml_data(request):
+    """
+    API endpoint to export ML training data.
+
+    Query params:
+    - from_date: Start date (YYYY-MM-DD)
+    - to_date: End date (YYYY-MM-DD)
+    - format: Export format (json, parquet)
+    """
+    try:
+        from_date = request.GET.get('from_date')
+        to_date = request.GET.get('to_date')
+        export_format = request.GET.get('format', 'json')
+
+        if not from_date or not to_date:
+            return JsonResponse({
+                'success': False,
+                'error': 'from_date and to_date are required'
+            }, status=400)
+
+        from_date = datetime.strptime(from_date, '%Y-%m-%d')
+        to_date = datetime.strptime(to_date, '%Y-%m-%d')
+
+        from apps.analytics.services.ml_data_collector import export_training_data
+
+        if export_format == 'parquet':
+            filepath = export_training_data(from_date, to_date, output_format='parquet')
+            return JsonResponse({
+                'success': True,
+                'filepath': filepath,
+                'message': f'ML data exported to {filepath}',
+                'timestamp': timezone.now().isoformat()
+            })
+        else:
+            data = export_training_data(from_date, to_date, output_format='dict')
+            return JsonResponse({
+                'success': True,
+                'data': data,
+                'count': len(data),
+                'timestamp': timezone.now().isoformat()
+            })
+
+    except Exception as e:
+        logger.error(f"Error in api_export_ml_data: {e}", exc_info=True)
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=500)
+
+
+# =============================================================================
+# DASHBOARD VIEW
+# =============================================================================
+
+@login_required
+# =============================================================================
+# FY TRADE ANALYTICS API ENDPOINTS
+# =============================================================================
+
+@login_required
+@require_http_methods(["GET"])
+def api_fy_monthly_performance(request):
+    """
+    API endpoint to get FY monthly performance breakdown.
+    Separates Futures and Options P&L.
+
+    Query params:
+    - account_id: Optional specific account ID
+    """
+    try:
+        from apps.analytics.services.fy_trade_analytics import get_fy_analytics
+
+        account = None
+        account_id = request.GET.get('account_id')
+        if account_id:
+            account = get_object_or_404(BrokerAccount, id=account_id)
+
+        analytics = get_fy_analytics()
+        performance = analytics.get_monthly_performance(account)
+
+        return JsonResponse({
+            'success': True,
+            'data': performance,
+            'timestamp': timezone.now().isoformat()
+        })
+
+    except Exception as e:
+        logger.error(f"Error in api_fy_monthly_performance: {e}", exc_info=True)
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=500)
+
+
+@login_required
+@require_http_methods(["GET"])
+def api_fy_broker_breakdown(request):
+    """
+    API endpoint to get FY performance by broker.
+    """
+    try:
+        from apps.analytics.services.fy_trade_analytics import get_fy_analytics
+
+        analytics = get_fy_analytics()
+        breakdown = analytics.get_broker_breakdown()
+
+        return JsonResponse({
+            'success': True,
+            'data': breakdown,
+            'timestamp': timezone.now().isoformat()
+        })
+
+    except Exception as e:
+        logger.error(f"Error in api_fy_broker_breakdown: {e}", exc_info=True)
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=500)
+
+
+# =============================================================================
+# BROKER TRADE ANALYTICS API ENDPOINTS
+# =============================================================================
+
+@login_required
+@require_http_methods(["GET"])
+def api_broker_trade_summary(request):
+    """
+    API endpoint to get trade summary from actual broker trade history.
+
+    Query params:
+    - account_id: Optional specific account ID
+    - from_date: Start date (YYYY-MM-DD)
+    - to_date: End date (YYYY-MM-DD)
+    """
+    try:
+        from apps.analytics.services.broker_trade_analytics import get_broker_analytics
+        from datetime import datetime
+
+        account = None
+        account_id = request.GET.get('account_id')
+        if account_id:
+            account = get_object_or_404(BrokerAccount, id=account_id)
+
+        from_date = None
+        to_date = None
+        if request.GET.get('from_date'):
+            from_date = datetime.strptime(request.GET['from_date'], '%Y-%m-%d').date()
+        if request.GET.get('to_date'):
+            to_date = datetime.strptime(request.GET['to_date'], '%Y-%m-%d').date()
+
+        analytics = get_broker_analytics()
+        summary = analytics.get_trade_summary(account, from_date, to_date)
+
+        return JsonResponse({
+            'success': True,
+            'data': summary,
+            'source': 'broker_api',
+            'timestamp': timezone.now().isoformat()
+        })
+
+    except Exception as e:
+        logger.error(f"Error in api_broker_trade_summary: {e}", exc_info=True)
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=500)
+
+
+@login_required
+@require_http_methods(["GET"])
+def api_broker_daily_pnl(request):
+    """
+    API endpoint to get daily P&L from broker trade history.
+
+    Query params:
+    - account_id: Optional specific account ID
+    - from_date: Start date (YYYY-MM-DD)
+    - to_date: End date (YYYY-MM-DD)
+    """
+    try:
+        from apps.analytics.services.broker_trade_analytics import get_broker_analytics
+        from datetime import datetime
+
+        account = None
+        account_id = request.GET.get('account_id')
+        if account_id:
+            account = get_object_or_404(BrokerAccount, id=account_id)
+
+        from_date = None
+        to_date = None
+        if request.GET.get('from_date'):
+            from_date = datetime.strptime(request.GET['from_date'], '%Y-%m-%d').date()
+        if request.GET.get('to_date'):
+            to_date = datetime.strptime(request.GET['to_date'], '%Y-%m-%d').date()
+
+        analytics = get_broker_analytics()
+        daily_data = analytics.get_daily_pnl(account, from_date, to_date)
+
+        # Format for chart
+        labels = [d['date'].strftime('%Y-%m-%d') if d['date'] else '' for d in daily_data]
+        pnl_values = [d['pnl'] for d in daily_data]
+
+        return JsonResponse({
+            'success': True,
+            'data': {
+                'labels': labels,
+                'pnl': pnl_values,
+                'daily_data': daily_data,
+            },
+            'source': 'broker_api',
+            'timestamp': timezone.now().isoformat()
+        })
+
+    except Exception as e:
+        logger.error(f"Error in api_broker_daily_pnl: {e}", exc_info=True)
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=500)
+
+
+@login_required
+@require_http_methods(["GET"])
+def api_broker_symbol_performance(request):
+    """
+    API endpoint to get performance by symbol from broker trade history.
+
+    Query params:
+    - account_id: Optional specific account ID
+    - from_date: Start date (YYYY-MM-DD)
+    - to_date: End date (YYYY-MM-DD)
+    - limit: Number of symbols to return (default 20)
+    """
+    try:
+        from apps.analytics.services.broker_trade_analytics import get_broker_analytics
+        from datetime import datetime
+
+        account = None
+        account_id = request.GET.get('account_id')
+        if account_id:
+            account = get_object_or_404(BrokerAccount, id=account_id)
+
+        from_date = None
+        to_date = None
+        if request.GET.get('from_date'):
+            from_date = datetime.strptime(request.GET['from_date'], '%Y-%m-%d').date()
+        if request.GET.get('to_date'):
+            to_date = datetime.strptime(request.GET['to_date'], '%Y-%m-%d').date()
+
+        limit = int(request.GET.get('limit', 20))
+
+        analytics = get_broker_analytics()
+        symbol_data = analytics.get_symbol_performance(account, from_date, to_date, limit)
+
+        return JsonResponse({
+            'success': True,
+            'data': symbol_data,
+            'source': 'broker_api',
+            'timestamp': timezone.now().isoformat()
+        })
+
+    except Exception as e:
+        logger.error(f"Error in api_broker_symbol_performance: {e}", exc_info=True)
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=500)
+
+
+@login_required
+@require_http_methods(["GET"])
+def api_broker_fy_summary(request):
+    """
+    API endpoint to get financial year summary from broker trade history.
+
+    Query params:
+    - account_id: Optional specific account ID
+    - fy_year: Financial year start (e.g., 2024 for FY 2024-25)
+    """
+    try:
+        from apps.analytics.services.broker_trade_analytics import get_broker_analytics
+
+        account = None
+        account_id = request.GET.get('account_id')
+        if account_id:
+            account = get_object_or_404(BrokerAccount, id=account_id)
+
+        fy_year = None
+        if request.GET.get('fy_year'):
+            fy_year = int(request.GET['fy_year'])
+
+        analytics = get_broker_analytics()
+        fy_data = analytics.get_fy_summary(account, fy_year)
+
+        return JsonResponse({
+            'success': True,
+            'data': fy_data,
+            'source': 'broker_api',
+            'timestamp': timezone.now().isoformat()
+        })
+
+    except Exception as e:
+        logger.error(f"Error in api_broker_fy_summary: {e}", exc_info=True)
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=500)
+
+
+@login_required
+@require_http_methods(["GET"])
+def api_broker_monthly_summary(request):
+    """
+    API endpoint to get monthly summary from broker trade history.
+
+    Query params:
+    - account_id: Optional specific account ID
+    - from_date: Start date (YYYY-MM-DD)
+    - to_date: End date (YYYY-MM-DD)
+    """
+    try:
+        from apps.analytics.services.broker_trade_analytics import get_broker_analytics
+        from datetime import datetime
+
+        account = None
+        account_id = request.GET.get('account_id')
+        if account_id:
+            account = get_object_or_404(BrokerAccount, id=account_id)
+
+        from_date = None
+        to_date = None
+        if request.GET.get('from_date'):
+            from_date = datetime.strptime(request.GET['from_date'], '%Y-%m-%d').date()
+        if request.GET.get('to_date'):
+            to_date = datetime.strptime(request.GET['to_date'], '%Y-%m-%d').date()
+
+        analytics = get_broker_analytics()
+        monthly_data = analytics.get_monthly_summary(account, from_date, to_date)
+
+        return JsonResponse({
+            'success': True,
+            'data': monthly_data,
+            'source': 'broker_api',
+            'timestamp': timezone.now().isoformat()
+        })
+
+    except Exception as e:
+        logger.error(f"Error in api_broker_monthly_summary: {e}", exc_info=True)
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=500)
+
+
+# =============================================================================
+# DASHBOARD VIEW
+# =============================================================================
+
+@login_required
+def dashboard(request):
+    """
+    Main analytics dashboard view.
+    """
+    # Get accounts for dropdown
+    accounts = BrokerAccount.objects.filter(is_active=True)
+
+    # Get broker trade sync status
+    from apps.brokers.models import BrokerTradeHistory
+    trade_count = BrokerTradeHistory.objects.count()
+    last_trade = BrokerTradeHistory.objects.order_by('-trade_date').first()
+
+    context = {
+        'accounts': accounts,
+        'default_period': 'FY',
+        'broker_trade_count': trade_count,
+        'last_broker_trade_date': last_trade.trade_date if last_trade else None,
+    }
+
+    return render(request, 'analytics/dashboard.html', context)
+
+
+# =============================================================================
+# DEBUG ENDPOINTS
+# =============================================================================
+
+@login_required
+@require_http_methods(["GET"])
+def api_debug_breeze_trades(request):
+    """
+    DEBUG endpoint to test Breeze trade API directly.
+
+    Query params:
+    - from_date: Start date (YYYY-MM-DD), defaults to 7 days ago
+    - to_date: End date (YYYY-MM-DD), defaults to today
+    - exchange: Exchange code (default: NFO)
+    """
+    try:
+        from apps.brokers.integrations.breeze import get_trade_list, get_trade_list_via_orders, get_breeze_client
+        from apps.brokers.utils.auth_manager import get_credentials, is_session_valid_breeze
+        from datetime import date, timedelta
+
+        # Check session
+        creds = get_credentials('breeze')
+        session_valid = is_session_valid_breeze(creds) if creds else False
+
+        result = {
+            'session_check': {
+                'has_credentials': bool(creds),
+                'session_valid': session_valid,
+                'api_key': creds.api_key[:10] + '...' if creds and creds.api_key else None,
+                'session_token': creds.session_token[:20] + '...' if creds and creds.session_token else None,
+                'last_session_update': str(creds.last_session_update) if creds else None,
+            },
+            'trade_api_test': {},
+            'order_api_test': {},
+        }
+
+        if not session_valid:
+            result['error'] = 'Breeze session is not valid. Please login at /brokers/breeze/login/'
+            return JsonResponse(result)
+
+        # Parse dates
+        to_date = request.GET.get('to_date')
+        from_date = request.GET.get('from_date')
+        exchange = request.GET.get('exchange', 'NFO')
+
+        if not to_date:
+            to_date = date.today().strftime('%Y-%m-%d')
+        if not from_date:
+            from_date = (date.today() - timedelta(days=7)).strftime('%Y-%m-%d')
+
+        result['query_params'] = {
+            'from_date': from_date,
+            'to_date': to_date,
+            'exchange': exchange,
+        }
+
+        # Test native trade list API
+        logger.info(f"DEBUG: Testing get_trade_list({from_date}, {to_date}, {exchange})")
+        trade_result = get_trade_list(from_date, to_date, exchange)
+        result['trade_api_test'] = {
+            'success': trade_result.get('success'),
+            'trades_count': len(trade_result.get('trades', [])),
+            'error': trade_result.get('error'),
+            'message': trade_result.get('message'),
+            'sample_trade': trade_result.get('trades', [])[:1] if trade_result.get('trades') else None,
+        }
+
+        # Test order-based fallback
+        logger.info(f"DEBUG: Testing get_trade_list_via_orders({from_date}, {to_date}, {exchange})")
+        order_result = get_trade_list_via_orders(from_date, to_date, exchange)
+        result['order_api_test'] = {
+            'success': order_result.get('success'),
+            'trades_count': len(order_result.get('trades', [])),
+            'error': order_result.get('error'),
+            'message': order_result.get('message'),
+            'sample_trade': order_result.get('trades', [])[:1] if order_result.get('trades') else None,
+        }
+
+        # Test raw Breeze SDK call
+        try:
+            breeze = get_breeze_client()
+            from_datetime = f"{from_date}T00:00:00.000Z"
+            to_datetime = f"{to_date}T23:59:59.000Z"
+
+            raw_response = breeze.get_trade_list(
+                exchange_code=exchange,
+                from_date=from_datetime,
+                to_date=to_datetime,
+                product_type="",
+                action="",
+                stock_code=""
+            )
+            result['raw_breeze_response'] = {
+                'Status': raw_response.get('Status'),
+                'Error': raw_response.get('Error'),
+                'Success_count': len(raw_response.get('Success', [])) if raw_response.get('Success') else 0,
+                'Success_sample': raw_response.get('Success', [])[:2] if raw_response.get('Success') else None,
+            }
+        except Exception as e:
+            result['raw_breeze_response'] = {'error': str(e)}
+
+        return JsonResponse(result)
+
+    except Exception as e:
+        logger.error(f"Error in api_debug_breeze_trades: {e}", exc_info=True)
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=500)
+
+
+@login_required
+def api_debug_resync_trades(request):
+    """
+    DEBUG endpoint to force re-sync trades with enhanced logging.
+
+    Query params:
+    - clear: If 'true', clear existing trades before sync
+    - days: Number of days to sync (default: 7)
+    """
+    try:
+        from apps.analytics.services.fy_trade_analytics import FYTradeAnalytics
+        from apps.brokers.models import BrokerTradeHistory
+        from apps.brokers.integrations.breeze import get_trade_list, get_breeze_client
+        from apps.brokers.utils.auth_manager import get_credentials, is_session_valid_breeze
+        from datetime import date, timedelta
+
+        # Check session
+        creds = get_credentials('breeze')
+        session_valid = is_session_valid_breeze(creds) if creds else False
+
+        if not session_valid:
+            return JsonResponse({
+                'success': False,
+                'error': 'Breeze session is not valid. Please login at /brokers/breeze/login/'
+            })
+
+        days = int(request.GET.get('days', 7))
+        clear = request.GET.get('clear', '').lower() == 'true'
+
+        # Calculate date range
+        to_date = date.today()
+        from_date = to_date - timedelta(days=days)
+
+        result = {
+            'date_range': f"{from_date} to {to_date}",
+            'cleared_existing': False,
+            'raw_api_sample': None,
+            'all_field_names': [],
+            'potential_price_fields': [],
+        }
+
+        # Clear existing if requested
+        if clear:
+            deleted = BrokerTradeHistory.objects.filter(
+                broker='ICICI',
+                trade_date__gte=from_date,
+                trade_date__lte=to_date
+            ).delete()[0]
+            result['cleared_existing'] = deleted
+
+        # Get raw API response to analyze fields
+        breeze = get_breeze_client()
+        from_datetime = f"{from_date.strftime('%Y-%m-%d')}T00:00:00.000Z"
+        to_datetime = f"{to_date.strftime('%Y-%m-%d')}T23:59:59.000Z"
+
+        raw_response = breeze.get_trade_list(
+            exchange_code='NFO',
+            from_date=from_datetime,
+            to_date=to_datetime,
+            product_type="",
+            action="",
+            stock_code=""
+        )
+
+        result['raw_api_status'] = raw_response.get('Status')
+        result['raw_api_error'] = raw_response.get('Error')
+
+        if raw_response.get('Success'):
+            trades_data = raw_response['Success']
+            result['total_trades_in_response'] = len(trades_data)
+
+            if trades_data:
+                # Get first trade as sample
+                sample_trade = trades_data[0]
+                result['all_field_names'] = list(sample_trade.keys())
+
+                # Analyze all fields for potential price values
+                potential_prices = {}
+                for key, value in sample_trade.items():
+                    # Check if it could be a price
+                    if value is not None:
+                        try:
+                            num_val = float(value)
+                            if 0.01 <= num_val <= 500000:  # Reasonable price range
+                                potential_prices[key] = num_val
+                        except (ValueError, TypeError):
+                            pass
+
+                result['potential_price_fields'] = potential_prices
+                result['raw_api_sample'] = sample_trade
+
+                # Show first 3 trades with all fields
+                result['first_3_trades'] = trades_data[:3]
+
+        return JsonResponse(result)
+
+    except Exception as e:
+        logger.error(f"Error in api_debug_resync_trades: {e}", exc_info=True)
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=500)
+
+
+@login_required
+def api_debug_stored_trades(request):
+    """
+    DEBUG endpoint to analyze stored BrokerTradeHistory records.
+    Shows trade distribution, buy/sell breakdown, and P&L analysis.
+    """
+    try:
+        from apps.brokers.models import BrokerTradeHistory
+        from django.db.models import Sum, Count, Q, F
+        from decimal import Decimal
+
+        limit = int(request.GET.get('limit', 10))
+        broker = request.GET.get('broker', '')
+
+        queryset = BrokerTradeHistory.objects.all()
+        if broker:
+            queryset = queryset.filter(broker__iexact=broker)
+
+        # Basic counts
+        result = {
+            'total_trades_in_db': queryset.count(),
+            'icici_trades': BrokerTradeHistory.objects.filter(broker='ICICI').count(),
+            'kotak_trades': BrokerTradeHistory.objects.filter(broker='KOTAK').count(),
+            'trades_with_zero_price': queryset.filter(price=0).count(),
+        }
+
+        # Buy vs Sell analysis
+        buy_trades = queryset.filter(trade_type='BUY')
+        sell_trades = queryset.filter(trade_type='SELL')
+
+        result['buy_sell_analysis'] = {
+            'buy_count': buy_trades.count(),
+            'sell_count': sell_trades.count(),
+            'buy_total_value': float(sum(t.quantity * t.price for t in buy_trades)),
+            'sell_total_value': float(sum(t.quantity * t.price for t in sell_trades)),
+        }
+        result['buy_sell_analysis']['calculated_pnl'] = (
+            result['buy_sell_analysis']['sell_total_value'] -
+            result['buy_sell_analysis']['buy_total_value']
+        )
+
+        # Symbol-wise analysis (top 10 by trade count)
+        symbol_stats = {}
+        for trade in queryset:
+            sym = trade.symbol
+            if sym not in symbol_stats:
+                symbol_stats[sym] = {'buy_qty': 0, 'sell_qty': 0, 'buy_value': 0, 'sell_value': 0, 'trades': 0}
+
+            value = float(trade.quantity * trade.price)
+            symbol_stats[sym]['trades'] += 1
+            if trade.trade_type == 'BUY':
+                symbol_stats[sym]['buy_qty'] += trade.quantity
+                symbol_stats[sym]['buy_value'] += value
+            else:
+                symbol_stats[sym]['sell_qty'] += trade.quantity
+                symbol_stats[sym]['sell_value'] += value
+
+        # Calculate net position and P&L per symbol
+        for sym, stats in symbol_stats.items():
+            stats['net_qty'] = stats['sell_qty'] - stats['buy_qty']  # Positive = closed, negative = open long
+            stats['pnl'] = stats['sell_value'] - stats['buy_value']
+
+        # Sort by trade count and take top 10
+        sorted_symbols = sorted(symbol_stats.items(), key=lambda x: x[1]['trades'], reverse=True)[:10]
+        result['symbol_analysis'] = {sym: stats for sym, stats in sorted_symbols}
+
+        # Sample trades
+        sample_trades = queryset.order_by('-trade_date', '-id')[:limit]
+        result['sample_trades'] = []
+        for trade in sample_trades:
+            result['sample_trades'].append({
+                'id': trade.id,
+                'broker': trade.broker,
+                'symbol': trade.symbol,
+                'trade_type': trade.trade_type,
+                'quantity': trade.quantity,
+                'price': str(trade.price),
+                'trade_value': str(trade.quantity * trade.price),
+                'trade_date': str(trade.trade_date),
+                'product_type': trade.product_type,
+            })
+
+        # Check for potential issues
+        result['potential_issues'] = []
+        if result['trades_with_zero_price'] > 0:
+            result['potential_issues'].append(f"{result['trades_with_zero_price']} trades have price=0")
+        if result['buy_sell_analysis']['buy_count'] > result['buy_sell_analysis']['sell_count'] * 1.5:
+            result['potential_issues'].append("Many more BUY trades than SELL - open positions will skew P&L")
+        if result['kotak_trades'] == 0:
+            result['potential_issues'].append("No Kotak trades - Neo API only returns same-day trades, historical data needs manual import")
+
+        return JsonResponse(result)
+
+    except Exception as e:
+        logger.error(f"Error in api_debug_stored_trades: {e}", exc_info=True)
         return JsonResponse({
             'success': False,
             'error': str(e)

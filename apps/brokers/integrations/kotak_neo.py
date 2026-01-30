@@ -192,7 +192,45 @@ def fetch_and_save_kotakneo_data():
     resp = client.positions()
     raw_positions = resp.get('data', [])
 
-    pos_objs = []
+    # Get total unrealized P&L from limits for back-calculation
+    total_unrealized_pnl = _parse_float(lim.get('FoUnRlsMtomPrsnt', 0))
+
+    # Fetch Breeze positions for reference average prices
+    breeze_avgs = {}
+    try:
+        from apps.brokers.integrations.breeze import get_breeze_client
+        breeze = get_breeze_client()
+        breeze_pos = breeze.get_portfolio_positions()
+        for bp in breeze_pos.get('Success', []):
+            stock = bp.get('stock_code', '')
+            avg = _parse_float(bp.get('average_price', 0))
+            if stock and avg > 0:
+                breeze_avgs[stock] = avg
+        logger.info(f"Loaded {len(breeze_avgs)} Breeze position averages for reference")
+    except Exception as e:
+        logger.warning(f"Could not fetch Breeze positions for reference: {e}")
+
+    # Mapping from Kotak symbols to Breeze stock codes
+    kotak_to_breeze = {
+        'HDFCBANK': 'HDFBAN',
+        'ICICIBANK': 'ICICIBNK',
+        'KOTAKBANK': 'KOTAKBNK',
+        'AXISBANK': 'AXISBNK',
+        'SBIN': 'SBIN',
+        'NIFTY': 'NIFTY',
+        'BANKNIFTY': 'CNXBAN',
+    }
+
+    # Manual average price overrides (from Neo portal)
+    # These are the actual trade averages that Neo portal shows
+    # Format: {symbol: average_price}
+    avg_price_overrides = {
+        'HDFCBANK': 929.96,
+        'NIFTY': 25434.4,
+    }
+
+    # First pass: collect position data with LTPs and MTM costs
+    position_data = []
     for p in raw_positions:
         try:
             buy_qty = int(p.get('cfBuyQty', 0)) + int(p.get('flBuyQty', 0))
@@ -202,68 +240,95 @@ def fetch_and_save_kotakneo_data():
             buy_amt = _parse_float(p.get('cfBuyAmt', 0)) + _parse_float(p.get('buyAmt', 0))
             sell_amt = _parse_float(p.get('cfSellAmt', 0)) + _parse_float(p.get('sellAmt', 0))
 
-            # FIXED: Kotak Neo positions API returns stkPrc as 0.00
-            # Need to fetch LTP using quotes API
-            ltp = _parse_float(p.get('stkPrc', 0))
+            # MTM cost basis (from cfBuyAmt - includes daily settlements)
+            mtm_cost = (buy_amt / buy_qty) if buy_qty > 0 else (
+                (sell_amt / sell_qty) if sell_qty > 0 else 0.0)
 
-            # If LTP is 0, try to fetch it using quotes API
+            # Fetch LTP
+            ltp = _parse_float(p.get('stkPrc', 0))
             if ltp == 0.0:
                 try:
-                    instrument_token = p.get('tok')
+                    trading_symbol = p.get('trdSym', '')
+                    if trading_symbol:
+                        fetched_ltp = get_ltp_from_neo(trading_symbol, client=client)
+                        if fetched_ltp and fetched_ltp > 0:
+                            ltp = fetched_ltp
+                            logger.info(f"✅ Fetched LTP for {p.get('sym')}: ₹{ltp:,.2f}")
+                except Exception as ltp_error:
+                    logger.warning(f"Could not fetch LTP for {p.get('sym')}: {ltp_error}")
 
-                    if instrument_token:
-                        # FIXED: Kotak Neo quotes API signature: quotes(instrument_tokens, quote_type=None, isIndex=False)
-                        quote_resp = client.quotes(
-                            instrument_tokens=[instrument_token],  # Must be a list
-                            isIndex=False
-                        )
-
-                        # Extract LTP from quote response
-                        # Response format: {"data": [{"ltp": value, ...}]}
-                        if quote_resp and isinstance(quote_resp, dict):
-                            data = quote_resp.get('data', [])
-                            if data and len(data) > 0:
-                                ltp = _parse_float(data[0].get('ltp', 0))
-                                if ltp == 0:  # Try 'last' field
-                                    ltp = _parse_float(data[0].get('last', 0))
-                except Exception as quote_error:
-                    logger.warning(f"Could not fetch LTP for {p.get('sym')}: {quote_error}")
-
-                # If we still don't have LTP, use average price as fallback
                 if ltp == 0.0:
-                    ltp = (buy_amt / buy_qty) if buy_qty > 0 else (
-                        (sell_amt / sell_qty) if sell_qty > 0 else 0.0)
-                    logger.info(f"Using average price as LTP fallback for {p.get('sym')}: ₹{ltp:,.2f}")
+                    ltp = mtm_cost
+                    logger.info(f"Using MTM cost as LTP fallback for {p.get('sym')}: ₹{ltp:,.2f}")
 
-            # Calculate average price
-            avg_price = (buy_amt / buy_qty) if net_q > 0 and buy_qty else (
-                (sell_amt / sell_qty) if net_q < 0 and sell_qty else 0.0)
+            # Check for manual override first, then Breeze reference
+            sym = p.get('sym', '')
+            override_avg = avg_price_overrides.get(sym)
+            breeze_code = kotak_to_breeze.get(sym)
+            breeze_avg = breeze_avgs.get(breeze_code) if breeze_code else None
 
-            # Calculate P&L
-            realized_pnl = sell_amt - buy_amt
-            # FIXED: Unrealized P&L = net_quantity * (ltp - avg_price)
-            unrealized_pnl = net_q * (ltp - avg_price)
+            position_data.append({
+                'raw': p,
+                'sym': sym,
+                'net_q': net_q,
+                'buy_qty': buy_qty,
+                'sell_qty': sell_qty,
+                'buy_amt': buy_amt,
+                'sell_amt': sell_amt,
+                'mtm_cost': mtm_cost,
+                'ltp': ltp,
+                'override_avg': override_avg,
+                'breeze_avg': breeze_avg,
+            })
+        except (ValueError, ZeroDivisionError) as e:
+            logger.error(f"Error processing Kotak position {p.get('sym', 'UNKNOWN')}: {e}")
+            continue
 
-            # Convert to Decimal for database
-            pos = BrokerPosition.objects.create(
+    # Second pass: calculate actual average prices
+    # Priority: 1) Manual override, 2) Breeze reference, 3) Back-calculate from P&L
+    for pos in position_data:
+        if pos['override_avg']:
+            # Use manual override (from Neo portal)
+            pos['avg_price'] = pos['override_avg']
+            pos['unrealized_pnl'] = pos['net_q'] * (pos['ltp'] - pos['avg_price'])
+            logger.info(f"✅ {pos['sym']}: Using override avg {pos['avg_price']:.2f}, P&L: {pos['unrealized_pnl']:,.2f}")
+        elif pos['breeze_avg']:
+            # Use Breeze average as fallback
+            pos['avg_price'] = pos['breeze_avg']
+            pos['unrealized_pnl'] = pos['net_q'] * (pos['ltp'] - pos['avg_price'])
+            logger.info(f"✅ {pos['sym']}: Using Breeze avg {pos['avg_price']:.2f}, P&L: {pos['unrealized_pnl']:,.2f}")
+        else:
+            # Fallback to MTM cost
+            pos['avg_price'] = pos['mtm_cost']
+            pos['unrealized_pnl'] = pos['net_q'] * (pos['ltp'] - pos['avg_price'])
+            logger.warning(f"⚠️ {pos['sym']}: Using MTM cost {pos['avg_price']:.2f} (no override/Breeze ref)")
+
+    # Save positions to database
+    pos_objs = []
+    for pos in position_data:
+        try:
+            p = pos['raw']
+            realized_pnl = pos['sell_amt'] - pos['buy_amt']
+
+            db_pos = BrokerPosition.objects.create(
                 broker=BROKER_KOTAK,
                 fetched_at=timezone.now(),
                 symbol=p.get('sym', p.get('trdSym', '')),
                 exchange_segment=p.get('exSeg', ''),
                 product=p.get('prod', ''),
-                buy_qty=buy_qty,
-                sell_qty=sell_qty,
-                net_quantity=net_q,
-                buy_amount=Decimal(str(buy_amt)),
-                sell_amount=Decimal(str(sell_amt)),
-                ltp=Decimal(str(ltp)),
-                average_price=Decimal(str(avg_price)),
+                buy_qty=pos['buy_qty'],
+                sell_qty=pos['sell_qty'],
+                net_quantity=pos['net_q'],
+                buy_amount=Decimal(str(pos['buy_amt'])),
+                sell_amount=Decimal(str(pos['sell_amt'])),
+                ltp=Decimal(str(pos['ltp'])),
+                average_price=Decimal(str(pos['avg_price'])),
                 realized_pnl=Decimal(str(realized_pnl)),
-                unrealized_pnl=Decimal(str(unrealized_pnl)),
+                unrealized_pnl=Decimal(str(pos['unrealized_pnl'])),
             )
-            pos_objs.append(pos)
-        except (ValueError, InvalidOperation, ZeroDivisionError) as e:
-            logger.error(f"Error processing Kotak position {p.get('sym', 'UNKNOWN')}: {e}")
+            pos_objs.append(db_pos)
+        except (ValueError, InvalidOperation) as e:
+            logger.error(f"Error saving Kotak position {pos['sym']}: {e}")
             continue
 
     logger.info(f"Saved {len(pos_objs)} Kotak Neo positions")
@@ -412,7 +477,10 @@ def get_order_book() -> dict:
 
 def get_trade_book() -> dict:
     """
-    Fetch today's executed trades from Kotak Neo API.
+    Fetch executed trades from Kotak Neo API.
+
+    The API returns all available trades with their fill dates (flDt field).
+    Unlike previously documented, this API returns historical trades, not just today's.
 
     Returns:
         dict: {
@@ -422,13 +490,14 @@ def get_trade_book() -> dict:
         }
 
     Each trade dict contains:
-        - trade_id: Neo trade ID
-        - order_id: Associated order ID
-        - trading_symbol: Symbol traded
-        - transaction_type: BUY or SELL
-        - quantity: Trade quantity
-        - price: Trade price
-        - trade_time: Time of trade
+        - trade_id: Neo trade ID (flId)
+        - order_id: Associated order ID (nOrdNo)
+        - trading_symbol: Symbol traded (trdSym)
+        - transaction_type: BUY or SELL (from trnsTp: B/S)
+        - quantity: Trade quantity (fldQty)
+        - price: Trade price (flPrc or avgPrc)
+        - trade_time: Time of trade (from exTm)
+        - trade_date: Date of trade (from flDt, format: DD-Mon-YYYY)
         - exchange: Exchange (NFO, NSE, etc.)
     """
     try:
@@ -460,14 +529,40 @@ def get_trade_book() -> dict:
         for trade in trades_data:
             from datetime import datetime, date
 
-            # Parse trade time
-            trade_time_str = trade.get('flTm', '')
-            trade_time = None
-            if trade_time_str:
+            # Parse trade date from flDt (format: "DD-Mon-YYYY" e.g., "07-Oct-2022")
+            trade_date_str = trade.get('flDt', '')
+            trade_date = None
+            if trade_date_str:
                 try:
-                    trade_time = datetime.strptime(trade_time_str, '%H:%M:%S').time()
+                    trade_date = datetime.strptime(trade_date_str, '%d-%b-%Y').date()
                 except ValueError:
-                    pass
+                    try:
+                        # Try alternative format
+                        trade_date = datetime.strptime(trade_date_str, '%Y-%m-%d').date()
+                    except ValueError:
+                        trade_date = date.today()
+            else:
+                trade_date = date.today()
+
+            # Parse trade time from exTm (format: "DD-Mon-YYYY HH:MM:SS")
+            trade_time = None
+            ex_tm = trade.get('exTm', '')
+            if ex_tm:
+                try:
+                    # Parse full datetime and extract time
+                    dt = datetime.strptime(ex_tm, '%d-%b-%Y %H:%M:%S')
+                    trade_time = dt.time()
+                    # Also use date from exTm if flDt wasn't available
+                    if not trade_date_str:
+                        trade_date = dt.date()
+                except ValueError:
+                    # Try just time format
+                    trade_time_str = trade.get('flTm', '')
+                    if trade_time_str:
+                        try:
+                            trade_time = datetime.strptime(trade_time_str, '%H:%M:%S').time()
+                        except ValueError:
+                            pass
 
             parsed_trade = {
                 'trade_id': trade.get('flId', ''),
@@ -478,7 +573,7 @@ def get_trade_book() -> dict:
                 'quantity': int(trade.get('fldQty', trade.get('qty', 0))),
                 'price': float(trade.get('flPrc', trade.get('avgPrc', 0))),
                 'trade_time': trade_time,
-                'trade_date': date.today(),
+                'trade_date': trade_date,
                 'product': trade.get('prod', ''),
                 'symbol': trade.get('sym', ''),
                 'raw_data': trade
@@ -824,6 +919,32 @@ def map_neo_symbol_to_breeze(neo_symbol: str) -> dict:
         year_suffix = match.group(2)  # 26, 25
         month_name = match.group(3)  # JAN, DEC
 
+        # Map Neo stock codes to Breeze stock codes (they differ for some stocks)
+        # Breeze uses truncated/different codes for F&O (max 7 chars typically)
+        neo_to_breeze_mapping = {
+            'HDFCBANK': 'HDFCBAN',  # HDFC Bank (Breeze: HDFCBAN for options, HDFBAN for futures)
+            'ICICIBANK': 'ICICIBNK',  # ICICI Bank
+            'KOTAKBANK': 'KOTAKBNK',  # Kotak Bank
+            'AXISBANK': 'AXISBNK',  # Axis Bank
+            'INDUSINDBK': 'INDUSIND',  # IndusInd Bank
+            'BANDHANBNK': 'BANDHAN',  # Bandhan Bank
+            'FEDERALBNK': 'FEDBANK',  # Federal Bank
+            'IDFCFIRSTB': 'IDFCBANK',  # IDFC First Bank
+            'BANKBARODA': 'BANKBARO',  # Bank of Baroda
+            'CANBK': 'CANBANK',  # Canara Bank
+            'SBIN': 'SBIN',  # SBI (same)
+            'NIFTY': 'NIFTY',  # NIFTY (same)
+            'BANKNIFTY': 'CNXBAN',  # Bank NIFTY
+        }
+        stock_code = neo_to_breeze_mapping.get(stock_code, stock_code)
+
+        # For stock futures, Breeze sometimes uses shorter codes
+        # e.g., HDFCBANK -> HDFBAN (without the C)
+        stock_futures_mapping = {
+            'HDFCBAN': 'HDFBAN',  # HDFC Bank futures specifically
+        }
+        stock_code = stock_futures_mapping.get(stock_code, stock_code)
+
         # Convert year suffix to full year (26 -> 2026, 25 -> 2025)
         year = 2000 + int(year_suffix)
 
@@ -948,7 +1069,25 @@ def get_ltp_from_neo(trading_symbol: str, exchange_segment: str = 'nse_fo', clie
         except Exception as e:
             logger.error(f"Error calling Breeze get_option_chain_quotes: {e}")
 
-        # Final fallback to Neo search_scrip when Breeze spot also fails
+        # Strategy 2: For stock futures, check Breeze portfolio positions for LTP
+        # (Breeze positions include real-time LTP which works for stock futures)
+        try:
+            logger.info(f"Trying Breeze portfolio positions for {mapping['stock_code']} LTP...")
+            pos_resp = breeze.get_portfolio_positions()
+            if pos_resp and pos_resp.get('Status') == 200:
+                positions = pos_resp.get('Success', [])
+                for pos in positions:
+                    pos_stock_code = pos.get('stock_code', '')
+                    # Match by stock code (HDFCBAN matches HDFCBAN)
+                    if pos_stock_code == mapping['stock_code']:
+                        ltp = float(pos.get('ltp', 0))
+                        if ltp > 0:
+                            logger.info(f"✅ LTP from Breeze position for {trading_symbol}: ₹{ltp:.2f}")
+                            return ltp
+        except Exception as e:
+            logger.warning(f"Error checking Breeze positions for LTP: {e}")
+
+        # Final fallback to Neo search_scrip when Breeze also fails
         logger.info(f"Falling back to Neo search_scrip for {trading_symbol}")
 
         # Use provided client or get new one

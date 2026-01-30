@@ -1,5 +1,7 @@
 """
 Trading Views - Trade Suggestion Approval and Management
+
+Includes ML-ready decision logging for user actions on suggestions.
 """
 
 from django.shortcuts import render, redirect, get_object_or_404
@@ -16,6 +18,29 @@ from apps.positions.models import Position
 from apps.brokers.integrations.breeze import get_india_vix
 
 logger = logging.getLogger(__name__)
+
+
+def _log_user_decision(user, suggestion, decision_type, notes=''):
+    """
+    Helper to log user decision for ML training data.
+
+    Args:
+        user: The user making the decision
+        suggestion: The TradeSuggestion being acted upon
+        decision_type: APPROVE, REJECT, MODIFY, IGNORE, or AUTO_APPROVE
+        notes: Optional notes explaining the decision
+    """
+    try:
+        from apps.analytics.services.ml_data_collector import log_user_decision
+        log_user_decision(
+            user=user,
+            suggestion=suggestion,
+            decision_type=decision_type,
+            decision_notes=notes,
+        )
+    except Exception as e:
+        # Don't fail the main operation if logging fails
+        logger.warning(f"Failed to log user decision: {e}")
 
 
 @login_required
@@ -60,7 +85,8 @@ def suggestion_detail(request, suggestion_id):
 @require_POST
 def approve_suggestion(request, suggestion_id):
     """
-    Approve a trade suggestion and proceed to execution
+    Approve a trade suggestion and proceed to execution.
+    Logs the decision for ML training.
     """
     suggestion = get_object_or_404(TradeSuggestion, id=suggestion_id, user=request.user)
 
@@ -75,13 +101,16 @@ def approve_suggestion(request, suggestion_id):
         suggestion.approval_timestamp = timezone.now()
         suggestion.save()
 
-        # Log the approval
+        # Log the approval (standard audit log)
         TradeSuggestionLog.objects.create(
             suggestion=suggestion,
             action='APPROVED',
             user=request.user,
             notes="Manually approved by user"
         )
+
+        # Log for ML training data
+        _log_user_decision(request.user, suggestion, 'APPROVE', "Manually approved by user")
 
         messages.success(request, f"Trade suggestion approved! Ready to execute {suggestion.instrument} {suggestion.direction}")
 
@@ -98,7 +127,8 @@ def approve_suggestion(request, suggestion_id):
 @require_POST
 def reject_suggestion(request, suggestion_id):
     """
-    Reject a trade suggestion
+    Reject a trade suggestion.
+    Logs the decision for ML training.
     """
     suggestion = get_object_or_404(TradeSuggestion, id=suggestion_id, user=request.user)
 
@@ -114,13 +144,16 @@ def reject_suggestion(request, suggestion_id):
         suggestion.approval_notes = rejection_reason
         suggestion.save()
 
-        # Log the rejection
+        # Log the rejection (standard audit log)
         TradeSuggestionLog.objects.create(
             suggestion=suggestion,
             action='REJECTED',
             user=request.user,
             notes=rejection_reason
         )
+
+        # Log for ML training data
+        _log_user_decision(request.user, suggestion, 'REJECT', rejection_reason)
 
         messages.info(request, "Trade suggestion rejected")
 

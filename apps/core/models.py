@@ -746,7 +746,8 @@ class CeleryTaskState(TimeStampedModel):
     Tracks enabled/disabled state for individual Celery tasks.
 
     Used to control static tasks defined in code (celery.py beat_schedule).
-    Tasks not in this table are considered enabled by default.
+    Tasks not in this table are considered DISABLED by default.
+    Users must explicitly enable tasks they want to run.
     """
 
     task_key = models.CharField(
@@ -766,8 +767,8 @@ class CeleryTaskState(TimeStampedModel):
         help_text="Human-readable task name"
     )
     is_enabled = models.BooleanField(
-        default=True,
-        help_text="Whether this task should run"
+        default=False,
+        help_text="Whether this task should run (default: disabled)"
     )
     last_toggled_at = models.DateTimeField(
         null=True,
@@ -792,12 +793,12 @@ class CeleryTaskState(TimeStampedModel):
 
     @classmethod
     def is_task_enabled(cls, task_key: str) -> bool:
-        """Check if a task is enabled (defaults to True if not in DB)"""
+        """Check if a task is enabled (defaults to False if not in DB)"""
         try:
             state = cls.objects.get(task_key=task_key)
             return state.is_enabled
         except cls.DoesNotExist:
-            return True  # Default to enabled if not tracked
+            return False  # Default to disabled - tasks must be explicitly enabled
 
     @classmethod
     def set_task_state(cls, task_key: str, enabled: bool, task_path: str = '',
@@ -820,3 +821,66 @@ class CeleryTaskState(TimeStampedModel):
     def get_all_states(cls) -> dict:
         """Get all task states as a dict {task_key: is_enabled}"""
         return {s.task_key: s.is_enabled for s in cls.objects.all()}
+
+    @classmethod
+    def initialize_static_tasks(cls, schedule: dict, force: bool = False) -> dict:
+        """
+        Initialize all static tasks in the database.
+
+        Args:
+            schedule: The beat schedule dictionary from celery.py
+            force: If True, reset all tasks to disabled. If False, only create missing tasks.
+
+        Returns:
+            dict with counts of created and updated tasks
+        """
+        from django.utils import timezone
+
+        created = 0
+        updated = 0
+
+        for task_key, config in schedule.items():
+            # Skip dynamic tasks (those managed by TradingScheduleConfig)
+            if any(d in task_key.lower() for d in ['premarket', 'market_open', 'trade_start', 'trade_monitor', 'trade_stop', 'day_close', 'analyze_day']):
+                continue
+
+            task_path = config.get('task', '')
+            display_name = task_key.replace('-', ' ').title()
+
+            if force:
+                # Reset to disabled
+                _, was_created = cls.objects.update_or_create(
+                    task_key=task_key,
+                    defaults={
+                        'is_enabled': False,
+                        'task_path': task_path,
+                        'display_name': display_name,
+                        'last_toggled_at': timezone.now(),
+                        'last_toggled_by': 'system',
+                    }
+                )
+                if was_created:
+                    created += 1
+                else:
+                    updated += 1
+            else:
+                # Only create if doesn't exist
+                _, was_created = cls.objects.get_or_create(
+                    task_key=task_key,
+                    defaults={
+                        'is_enabled': False,
+                        'task_path': task_path,
+                        'display_name': display_name,
+                        'last_toggled_at': timezone.now(),
+                        'last_toggled_by': 'system',
+                    }
+                )
+                if was_created:
+                    created += 1
+
+        return {'created': created, 'updated': updated}
+
+    @classmethod
+    def get_enabled_task_keys(cls) -> set:
+        """Get set of task keys that are enabled"""
+        return set(cls.objects.filter(is_enabled=True).values_list('task_key', flat=True))

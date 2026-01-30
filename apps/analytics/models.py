@@ -1,9 +1,28 @@
 """
 Analytics and performance tracking models for mCube Trading System
+
+Models:
+- DailyPnL: Daily P&L summary per account
+- Performance: Weekly/Monthly/Yearly performance metrics
+- LearningSession: Learning system sessions
+- TradePerformance: Individual trade analysis
+- LearningPattern: Discovered trading patterns
+- ParameterAdjustment: Suggested parameter changes
+- PerformanceMetric: Granular metrics for learning
+- FinancialYearSummary: Pre-computed FY analytics
+- UserDecisionLog: ML-ready user action logging
+- MarketContextSnapshot: Market state at decision time
+- UserBehaviorProfile: Aggregated user patterns
+- DailyEquityCurve: Daily capital tracking
+- AccountReturns: Pre-computed period returns
+- BenchmarkData: Nifty/BankNifty daily data
+- PortfolioBeta: Alpha/Beta calculations
+- MLFeatureStore: Pre-computed ML features
 """
 
 from decimal import Decimal
 from django.db import models
+from django.contrib.auth.models import User
 from apps.core.models import TimeStampedModel
 
 
@@ -816,3 +835,1030 @@ class FinancialYearSummary(TimeStampedModel):
             'worst_month': self.worst_month,
             'worst_month_pnl': float(self.worst_month_pnl) if self.worst_month_pnl else None,
         }
+
+
+# =============================================================================
+# ML-READY USER ACTION LOGGING MODELS (Phase 1)
+# =============================================================================
+
+class UserDecisionLog(TimeStampedModel):
+    """
+    Core ML training data - logs every user decision on trade suggestions.
+    Captures decision context, timing, and eventual outcome for ML training.
+    """
+
+    DECISION_TYPE_CHOICES = [
+        ('APPROVE', 'Approved'),
+        ('REJECT', 'Rejected'),
+        ('MODIFY', 'Modified'),
+        ('IGNORE', 'Ignored'),
+        ('AUTO_APPROVE', 'Auto-Approved'),
+    ]
+
+    OUTCOME_CHOICES = [
+        ('PROFIT', 'Profit'),
+        ('LOSS', 'Loss'),
+        ('BREAKEVEN', 'Breakeven'),
+        ('N/A', 'Not Applicable'),
+        ('PENDING', 'Pending'),
+    ]
+
+    # Core References
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='decision_logs'
+    )
+    suggestion = models.ForeignKey(
+        'trading.TradeSuggestion',
+        on_delete=models.CASCADE,
+        related_name='decision_logs'
+    )
+
+    # Decision Details
+    decision_type = models.CharField(
+        max_length=15,
+        choices=DECISION_TYPE_CHOICES
+    )
+    decision_timestamp = models.DateTimeField(
+        auto_now_add=True,
+        help_text="When the decision was made"
+    )
+
+    # Behavioral Metrics
+    time_to_decision_seconds = models.IntegerField(
+        null=True,
+        blank=True,
+        help_text="Time from suggestion creation to decision"
+    )
+    suggestion_viewed_count = models.IntegerField(
+        default=1,
+        help_text="How many times user viewed before deciding"
+    )
+
+    # Market Context at Decision Time
+    market_context = models.JSONField(
+        default=dict,
+        help_text="Market state: spot, vix, oi, trend, pcr, etc."
+    )
+    market_snapshot = models.ForeignKey(
+        'MarketContextSnapshot',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='decision_logs'
+    )
+
+    # Algorithm Metrics
+    algorithm_confidence = models.DecimalField(
+        max_digits=6,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Algorithm's confidence score (0-100)"
+    )
+    algorithm_signal_strength = models.DecimalField(
+        max_digits=6,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Signal strength from algorithm"
+    )
+
+    # Original vs Modified Parameters
+    original_parameters = models.JSONField(
+        default=dict,
+        help_text="Original parameters from suggestion"
+    )
+    modified_parameters = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="User-modified parameters (for MODIFY decisions)"
+    )
+
+    # Outcome Tracking (filled after trade closes)
+    final_pnl = models.DecimalField(
+        max_digits=15,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Final P&L if trade was taken"
+    )
+    final_outcome = models.CharField(
+        max_length=15,
+        choices=OUTCOME_CHOICES,
+        default='PENDING'
+    )
+    outcome_linked_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When outcome was linked back"
+    )
+
+    # User Notes
+    decision_notes = models.TextField(
+        blank=True,
+        help_text="User's reason for the decision"
+    )
+
+    class Meta:
+        db_table = 'user_decision_log'
+        ordering = ['-decision_timestamp']
+        indexes = [
+            models.Index(fields=['user', '-decision_timestamp']),
+            models.Index(fields=['decision_type', '-decision_timestamp']),
+            models.Index(fields=['final_outcome']),
+            models.Index(fields=['suggestion', 'decision_type']),
+        ]
+
+    def __str__(self):
+        return f"{self.user.username} - {self.decision_type} - {self.suggestion}"
+
+
+class MarketContextSnapshot(TimeStampedModel):
+    """
+    Captures complete market state at a specific point in time.
+    Used for ML feature engineering and decision context.
+    """
+
+    TREND_CHOICES = [
+        ('STRONG_UP', 'Strong Uptrend'),
+        ('UP', 'Uptrend'),
+        ('SIDEWAYS', 'Sideways'),
+        ('DOWN', 'Downtrend'),
+        ('STRONG_DOWN', 'Strong Downtrend'),
+    ]
+
+    # Timestamp
+    snapshot_timestamp = models.DateTimeField(
+        db_index=True,
+        help_text="Exact time of snapshot"
+    )
+
+    # Index Prices
+    nifty_spot = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        null=True,
+        blank=True
+    )
+    banknifty_spot = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        null=True,
+        blank=True
+    )
+    india_vix = models.DecimalField(
+        max_digits=6,
+        decimal_places=2,
+        null=True,
+        blank=True
+    )
+
+    # Day Change
+    nifty_day_change_pct = models.DecimalField(
+        max_digits=6,
+        decimal_places=2,
+        null=True,
+        blank=True
+    )
+    nifty_trend = models.CharField(
+        max_length=15,
+        choices=TREND_CHOICES,
+        blank=True
+    )
+
+    # Open Interest Data
+    total_call_oi = models.BigIntegerField(null=True, blank=True)
+    total_put_oi = models.BigIntegerField(null=True, blank=True)
+    pcr_oi = models.DecimalField(
+        max_digits=6,
+        decimal_places=3,
+        null=True,
+        blank=True,
+        help_text="Put/Call ratio by OI"
+    )
+    max_pain = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        null=True,
+        blank=True
+    )
+
+    # Technical Indicators
+    rsi_14 = models.DecimalField(
+        max_digits=6,
+        decimal_places=2,
+        null=True,
+        blank=True
+    )
+    macd_signal = models.CharField(
+        max_length=10,
+        choices=[('BUY', 'Buy'), ('SELL', 'Sell'), ('NEUTRAL', 'Neutral')],
+        blank=True
+    )
+
+    # Raw data for complete snapshot
+    raw_data = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Complete raw market data snapshot"
+    )
+
+    class Meta:
+        db_table = 'market_context_snapshot'
+        ordering = ['-snapshot_timestamp']
+        indexes = [
+            models.Index(fields=['-snapshot_timestamp']),
+            models.Index(fields=['nifty_trend', '-snapshot_timestamp']),
+        ]
+
+    def __str__(self):
+        vix = self.india_vix or 'N/A'
+        return f"Market @ {self.snapshot_timestamp.strftime('%Y-%m-%d %H:%M')} - VIX: {vix}"
+
+
+class UserBehaviorProfile(TimeStampedModel):
+    """
+    Aggregated user behavior patterns computed from decision logs.
+    Used as ML features for personalization.
+    """
+
+    # One profile per user
+    user = models.OneToOneField(
+        User,
+        on_delete=models.CASCADE,
+        related_name='behavior_profile'
+    )
+
+    # Decision Counts
+    total_suggestions_received = models.IntegerField(default=0)
+    suggestions_approved = models.IntegerField(default=0)
+    suggestions_rejected = models.IntegerField(default=0)
+    suggestions_modified = models.IntegerField(default=0)
+    suggestions_ignored = models.IntegerField(default=0)
+
+    # Rates
+    approval_rate = models.DecimalField(
+        max_digits=6,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text="Percentage of suggestions approved"
+    )
+    modification_rate = models.DecimalField(
+        max_digits=6,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text="Percentage of suggestions modified"
+    )
+
+    # Timing
+    avg_decision_time_seconds = models.IntegerField(
+        default=0,
+        help_text="Average time to make a decision"
+    )
+    median_decision_time_seconds = models.IntegerField(
+        default=0,
+        help_text="Median time to make a decision"
+    )
+
+    # Strategy-specific Approval Rates
+    strategy_approval_rates = models.JSONField(
+        default=dict,
+        help_text="Approval rate by strategy: {'kotak_strangle': 75.0, ...}"
+    )
+
+    # Market Condition Preferences
+    high_vix_approval_rate = models.DecimalField(
+        max_digits=6,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Approval rate when VIX > 18"
+    )
+    low_vix_approval_rate = models.DecimalField(
+        max_digits=6,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Approval rate when VIX <= 18"
+    )
+
+    # Performance Metrics
+    approved_trades_win_rate = models.DecimalField(
+        max_digits=6,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Win rate of trades user approved"
+    )
+    rejected_trades_would_have_won_rate = models.DecimalField(
+        max_digits=6,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Rate at which rejected trades would have been profitable"
+    )
+
+    # Last Computed
+    last_computed_at = models.DateTimeField(
+        auto_now=True,
+        help_text="When profile was last computed"
+    )
+    decisions_included = models.IntegerField(
+        default=0,
+        help_text="Number of decisions included in computation"
+    )
+
+    class Meta:
+        db_table = 'user_behavior_profile'
+        verbose_name = 'User Behavior Profile'
+        verbose_name_plural = 'User Behavior Profiles'
+
+    def __str__(self):
+        return f"{self.user.username} - {self.approval_rate}% approval rate"
+
+
+# =============================================================================
+# RETURNS CALCULATION MODELS (Phase 2)
+# =============================================================================
+
+class DailyEquityCurve(TimeStampedModel):
+    """
+    Daily capital and equity tracking for each account.
+    Used for equity curve visualization and drawdown calculations.
+    """
+
+    account = models.ForeignKey(
+        'accounts.BrokerAccount',
+        on_delete=models.CASCADE,
+        related_name='equity_curves'
+    )
+    date = models.DateField(db_index=True)
+
+    # Capital Metrics
+    opening_capital = models.DecimalField(
+        max_digits=15,
+        decimal_places=2,
+        help_text="Capital at market open"
+    )
+    closing_capital = models.DecimalField(
+        max_digits=15,
+        decimal_places=2,
+        help_text="Capital at market close"
+    )
+    high_capital = models.DecimalField(
+        max_digits=15,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Peak capital during the day"
+    )
+    low_capital = models.DecimalField(
+        max_digits=15,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Lowest capital during the day"
+    )
+
+    # P&L Breakdown
+    realized_pnl = models.DecimalField(
+        max_digits=15,
+        decimal_places=2,
+        default=Decimal('0.00')
+    )
+    unrealized_pnl = models.DecimalField(
+        max_digits=15,
+        decimal_places=2,
+        default=Decimal('0.00')
+    )
+    total_pnl = models.DecimalField(
+        max_digits=15,
+        decimal_places=2,
+        default=Decimal('0.00')
+    )
+
+    # Cumulative Metrics
+    cumulative_pnl = models.DecimalField(
+        max_digits=15,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text="Total P&L since inception"
+    )
+    cumulative_return_pct = models.DecimalField(
+        max_digits=10,
+        decimal_places=4,
+        default=Decimal('0.00'),
+        help_text="Cumulative return percentage"
+    )
+
+    # Drawdown Tracking
+    peak_capital = models.DecimalField(
+        max_digits=15,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="All-time high capital (for drawdown calc)"
+    )
+    current_drawdown = models.DecimalField(
+        max_digits=15,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text="Current drawdown from peak"
+    )
+    drawdown_pct = models.DecimalField(
+        max_digits=10,
+        decimal_places=4,
+        default=Decimal('0.00'),
+        help_text="Drawdown as percentage"
+    )
+
+    # Benchmark Comparison
+    nifty_close = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        null=True,
+        blank=True
+    )
+    nifty_return_pct = models.DecimalField(
+        max_digits=10,
+        decimal_places=4,
+        null=True,
+        blank=True,
+        help_text="Nifty's return on this day"
+    )
+    alpha = models.DecimalField(
+        max_digits=10,
+        decimal_places=4,
+        null=True,
+        blank=True,
+        help_text="Daily alpha vs Nifty"
+    )
+
+    # Trade Stats
+    trades_taken = models.IntegerField(default=0)
+    trades_closed = models.IntegerField(default=0)
+    winning_trades = models.IntegerField(default=0)
+    losing_trades = models.IntegerField(default=0)
+
+    class Meta:
+        db_table = 'daily_equity_curve'
+        unique_together = ['account', 'date']
+        ordering = ['-date']
+        indexes = [
+            models.Index(fields=['account', '-date']),
+            models.Index(fields=['-date']),
+        ]
+
+    def __str__(self):
+        return f"{self.account.account_name} - {self.date} - Rs.{self.closing_capital:,.2f}"
+
+    @property
+    def daily_return_pct(self):
+        """Calculate daily return percentage"""
+        if self.opening_capital and self.opening_capital > 0:
+            return ((self.closing_capital - self.opening_capital) / self.opening_capital) * 100
+        return Decimal('0.00')
+
+
+class AccountReturns(TimeStampedModel):
+    """
+    Pre-computed period returns for each account.
+    Includes risk-adjusted metrics like Sharpe and Sortino ratios.
+    """
+
+    PERIOD_TYPE_CHOICES = [
+        ('DAILY', 'Daily'),
+        ('WEEKLY', 'Weekly'),
+        ('MONTHLY', 'Monthly'),
+        ('QUARTERLY', 'Quarterly'),
+        ('FY', 'Financial Year'),
+        ('YTD', 'Year to Date'),
+        ('ALL_TIME', 'All Time'),
+    ]
+
+    account = models.ForeignKey(
+        'accounts.BrokerAccount',
+        on_delete=models.CASCADE,
+        related_name='account_returns'
+    )
+
+    # Period Definition
+    period_type = models.CharField(
+        max_length=15,
+        choices=PERIOD_TYPE_CHOICES
+    )
+    period_start = models.DateField()
+    period_end = models.DateField()
+    period_label = models.CharField(
+        max_length=30,
+        blank=True,
+        help_text="Display label like 'Jan 2025' or 'FY2024-25'"
+    )
+
+    # Capital
+    starting_capital = models.DecimalField(
+        max_digits=15,
+        decimal_places=2
+    )
+    ending_capital = models.DecimalField(
+        max_digits=15,
+        decimal_places=2
+    )
+    avg_capital = models.DecimalField(
+        max_digits=15,
+        decimal_places=2,
+        null=True,
+        blank=True
+    )
+
+    # Returns
+    absolute_return = models.DecimalField(
+        max_digits=15,
+        decimal_places=2,
+        help_text="Absolute P&L"
+    )
+    percentage_return = models.DecimalField(
+        max_digits=10,
+        decimal_places=4,
+        help_text="Return percentage"
+    )
+    annualized_return = models.DecimalField(
+        max_digits=10,
+        decimal_places=4,
+        null=True,
+        blank=True,
+        help_text="Annualized return (CAGR)"
+    )
+
+    # Risk Metrics
+    max_drawdown = models.DecimalField(
+        max_digits=15,
+        decimal_places=2,
+        default=Decimal('0.00')
+    )
+    max_drawdown_pct = models.DecimalField(
+        max_digits=10,
+        decimal_places=4,
+        default=Decimal('0.00')
+    )
+    volatility = models.DecimalField(
+        max_digits=10,
+        decimal_places=4,
+        null=True,
+        blank=True,
+        help_text="Standard deviation of returns"
+    )
+
+    # Risk-Adjusted Returns
+    sharpe_ratio = models.DecimalField(
+        max_digits=10,
+        decimal_places=4,
+        null=True,
+        blank=True
+    )
+    sortino_ratio = models.DecimalField(
+        max_digits=10,
+        decimal_places=4,
+        null=True,
+        blank=True
+    )
+    calmar_ratio = models.DecimalField(
+        max_digits=10,
+        decimal_places=4,
+        null=True,
+        blank=True,
+        help_text="Annualized return / Max drawdown"
+    )
+
+    # Trade Statistics
+    total_trades = models.IntegerField(default=0)
+    winning_trades = models.IntegerField(default=0)
+    losing_trades = models.IntegerField(default=0)
+    win_rate = models.DecimalField(
+        max_digits=6,
+        decimal_places=2,
+        default=Decimal('0.00')
+    )
+    profit_factor = models.DecimalField(
+        max_digits=10,
+        decimal_places=4,
+        null=True,
+        blank=True
+    )
+    avg_win = models.DecimalField(
+        max_digits=15,
+        decimal_places=2,
+        null=True,
+        blank=True
+    )
+    avg_loss = models.DecimalField(
+        max_digits=15,
+        decimal_places=2,
+        null=True,
+        blank=True
+    )
+
+    # Costs
+    total_brokerage = models.DecimalField(
+        max_digits=15,
+        decimal_places=2,
+        default=Decimal('0.00')
+    )
+    total_taxes = models.DecimalField(
+        max_digits=15,
+        decimal_places=2,
+        default=Decimal('0.00')
+    )
+    total_charges = models.DecimalField(
+        max_digits=15,
+        decimal_places=2,
+        default=Decimal('0.00')
+    )
+
+    # Strategy Breakdown
+    strategy_returns = models.JSONField(
+        default=dict,
+        help_text="Returns by strategy: {'kotak_strangle': {...}, ...}"
+    )
+
+    class Meta:
+        db_table = 'account_returns'
+        ordering = ['-period_end']
+        indexes = [
+            models.Index(fields=['account', 'period_type', '-period_end']),
+            models.Index(fields=['period_type', '-period_end']),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['account', 'period_type', 'period_start', 'period_end'],
+                name='unique_account_period'
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.account.account_name} - {self.period_type} - {self.period_label}"
+
+
+class BenchmarkData(TimeStampedModel):
+    """
+    Daily benchmark data (Nifty/BankNifty) for performance comparison.
+    """
+
+    BENCHMARK_CHOICES = [
+        ('NIFTY50', 'Nifty 50'),
+        ('BANKNIFTY', 'Bank Nifty'),
+        ('NIFTYIT', 'Nifty IT'),
+    ]
+
+    benchmark = models.CharField(
+        max_length=15,
+        choices=BENCHMARK_CHOICES
+    )
+    date = models.DateField(db_index=True)
+
+    # OHLC Data
+    open = models.DecimalField(max_digits=12, decimal_places=2)
+    high = models.DecimalField(max_digits=12, decimal_places=2)
+    low = models.DecimalField(max_digits=12, decimal_places=2)
+    close = models.DecimalField(max_digits=12, decimal_places=2)
+
+    # Volume (if available)
+    volume = models.BigIntegerField(null=True, blank=True)
+
+    # Returns
+    daily_return_pct = models.DecimalField(
+        max_digits=10,
+        decimal_places=4,
+        null=True,
+        blank=True
+    )
+    cumulative_return_pct = models.DecimalField(
+        max_digits=10,
+        decimal_places=4,
+        null=True,
+        blank=True,
+        help_text="Cumulative return from FY start"
+    )
+
+    class Meta:
+        db_table = 'benchmark_data'
+        unique_together = ['benchmark', 'date']
+        ordering = ['-date']
+        indexes = [
+            models.Index(fields=['benchmark', '-date']),
+        ]
+
+    def __str__(self):
+        return f"{self.benchmark} - {self.date} - {self.close}"
+
+
+class PortfolioBeta(TimeStampedModel):
+    """
+    Alpha/Beta calculations for portfolio vs benchmark.
+    """
+
+    PERIOD_TYPE_CHOICES = [
+        ('30D', '30 Days'),
+        ('60D', '60 Days'),
+        ('90D', '90 Days'),
+        ('180D', '180 Days'),
+        ('1Y', '1 Year'),
+        ('ALL', 'All Time'),
+    ]
+
+    account = models.ForeignKey(
+        'accounts.BrokerAccount',
+        on_delete=models.CASCADE,
+        related_name='portfolio_betas'
+    )
+    benchmark = models.CharField(
+        max_length=15,
+        choices=BenchmarkData.BENCHMARK_CHOICES
+    )
+    period_type = models.CharField(
+        max_length=10,
+        choices=PERIOD_TYPE_CHOICES
+    )
+    calculation_date = models.DateField()
+
+    # Beta/Alpha
+    beta = models.DecimalField(
+        max_digits=10,
+        decimal_places=4,
+        help_text="Portfolio beta vs benchmark"
+    )
+    alpha = models.DecimalField(
+        max_digits=10,
+        decimal_places=4,
+        help_text="Portfolio alpha (excess return)"
+    )
+
+    # Correlation
+    r_squared = models.DecimalField(
+        max_digits=10,
+        decimal_places=4,
+        null=True,
+        blank=True,
+        help_text="R-squared of regression"
+    )
+    correlation = models.DecimalField(
+        max_digits=10,
+        decimal_places=4,
+        null=True,
+        blank=True
+    )
+
+    # Returns Used in Calculation
+    portfolio_return = models.DecimalField(
+        max_digits=10,
+        decimal_places=4
+    )
+    benchmark_return = models.DecimalField(
+        max_digits=10,
+        decimal_places=4
+    )
+    excess_return = models.DecimalField(
+        max_digits=10,
+        decimal_places=4
+    )
+
+    # Risk-Free Rate Used
+    risk_free_rate = models.DecimalField(
+        max_digits=6,
+        decimal_places=4,
+        default=Decimal('0.065'),
+        help_text="Risk-free rate used (default 6.5% T-bill)"
+    )
+
+    class Meta:
+        db_table = 'portfolio_beta'
+        ordering = ['-calculation_date']
+        indexes = [
+            models.Index(fields=['account', 'benchmark', '-calculation_date']),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['account', 'benchmark', 'period_type', 'calculation_date'],
+                name='unique_beta_calculation'
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.account.account_name} vs {self.benchmark} - β:{self.beta:.2f} α:{self.alpha:.2f}"
+
+
+# =============================================================================
+# ML FEATURE ENGINEERING MODEL (Phase 3)
+# =============================================================================
+
+class MLFeatureStore(TimeStampedModel):
+    """
+    Pre-computed ML features for each user decision.
+    Stores feature vectors ready for ML training/inference.
+    """
+
+    # Link to Decision
+    decision_log = models.OneToOneField(
+        UserDecisionLog,
+        on_delete=models.CASCADE,
+        related_name='ml_features'
+    )
+
+    # Market Features
+    spot_price = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        null=True,
+        blank=True
+    )
+    vix = models.DecimalField(
+        max_digits=6,
+        decimal_places=2,
+        null=True,
+        blank=True
+    )
+    vix_percentile_30d = models.DecimalField(
+        max_digits=6,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="VIX percentile over last 30 days"
+    )
+
+    # Time Features
+    day_of_week = models.IntegerField(
+        null=True,
+        blank=True,
+        help_text="0=Monday, 6=Sunday"
+    )
+    hour_of_day = models.IntegerField(null=True, blank=True)
+    days_to_expiry = models.IntegerField(null=True, blank=True)
+    is_expiry_week = models.BooleanField(default=False)
+    is_monthly_expiry = models.BooleanField(default=False)
+
+    # Trend Features
+    spot_vs_sma20 = models.DecimalField(
+        max_digits=10,
+        decimal_places=4,
+        null=True,
+        blank=True,
+        help_text="(Spot - SMA20) / SMA20 * 100"
+    )
+    spot_vs_sma50 = models.DecimalField(
+        max_digits=10,
+        decimal_places=4,
+        null=True,
+        blank=True
+    )
+    rsi_14 = models.DecimalField(
+        max_digits=6,
+        decimal_places=2,
+        null=True,
+        blank=True
+    )
+    macd_histogram = models.DecimalField(
+        max_digits=10,
+        decimal_places=4,
+        null=True,
+        blank=True
+    )
+
+    # OI Features
+    pcr_oi = models.DecimalField(
+        max_digits=6,
+        decimal_places=3,
+        null=True,
+        blank=True
+    )
+    pcr_volume = models.DecimalField(
+        max_digits=6,
+        decimal_places=3,
+        null=True,
+        blank=True
+    )
+    max_pain_distance_pct = models.DecimalField(
+        max_digits=10,
+        decimal_places=4,
+        null=True,
+        blank=True,
+        help_text="Distance from max pain as percentage"
+    )
+
+    # Algorithm Features
+    algo_confidence = models.DecimalField(
+        max_digits=6,
+        decimal_places=2,
+        null=True,
+        blank=True
+    )
+    algo_signal_strength = models.DecimalField(
+        max_digits=6,
+        decimal_places=2,
+        null=True,
+        blank=True
+    )
+    strategy_type = models.CharField(max_length=30, blank=True)
+
+    # User Behavior Features
+    user_historical_approval_rate = models.DecimalField(
+        max_digits=6,
+        decimal_places=2,
+        null=True,
+        blank=True
+    )
+    user_avg_decision_time = models.IntegerField(null=True, blank=True)
+    user_win_rate = models.DecimalField(
+        max_digits=6,
+        decimal_places=2,
+        null=True,
+        blank=True
+    )
+
+    # Recent Performance Features
+    last_5_trades_pnl = models.DecimalField(
+        max_digits=15,
+        decimal_places=2,
+        null=True,
+        blank=True
+    )
+    last_5_trades_win_rate = models.DecimalField(
+        max_digits=6,
+        decimal_places=2,
+        null=True,
+        blank=True
+    )
+    current_streak = models.IntegerField(
+        default=0,
+        help_text="Positive for win streak, negative for loss streak"
+    )
+    current_day_pnl = models.DecimalField(
+        max_digits=15,
+        decimal_places=2,
+        null=True,
+        blank=True
+    )
+
+    # Labels (computed after outcome is known)
+    label_1d_pnl = models.DecimalField(
+        max_digits=15,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="P&L after 1 day (if closed)"
+    )
+    label_1d_outcome = models.CharField(
+        max_length=15,
+        blank=True,
+        help_text="1-day outcome: PROFIT/LOSS/OPEN"
+    )
+    label_final_pnl = models.DecimalField(
+        max_digits=15,
+        decimal_places=2,
+        null=True,
+        blank=True
+    )
+    label_final_outcome = models.CharField(
+        max_length=15,
+        blank=True,
+        help_text="Final outcome: PROFIT/LOSS/BREAKEVEN"
+    )
+
+    # Complete Feature Vector (for ML)
+    feature_vector = models.JSONField(
+        default=list,
+        help_text="Ordered list of features for ML model"
+    )
+    feature_version = models.CharField(
+        max_length=10,
+        default='v1',
+        help_text="Feature engineering version"
+    )
+
+    # Computation Status
+    is_complete = models.BooleanField(
+        default=False,
+        help_text="Whether all features are computed"
+    )
+    labels_computed = models.BooleanField(
+        default=False,
+        help_text="Whether outcome labels are computed"
+    )
+    computed_at = models.DateTimeField(
+        null=True,
+        blank=True
+    )
+
+    class Meta:
+        db_table = 'ml_feature_store'
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['is_complete', 'labels_computed']),
+            models.Index(fields=['strategy_type']),
+            models.Index(fields=['-created_at']),
+        ]
+
+    def __str__(self):
+        status = "Complete" if self.is_complete else "Partial"
+        return f"Features for Decision #{self.decision_log_id} - {status}"

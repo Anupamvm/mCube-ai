@@ -223,8 +223,10 @@ def get_breeze_historical_data(request):
                 }, status=400)
 
         if product_type == 'options':
-            strike_price_str = params.get('strike_price', '').strip()
-            right = params.get('right', '').strip().lower()
+            strike_price_raw = params.get('strike_price', '')
+            strike_price_str = str(strike_price_raw).strip() if strike_price_raw else ''
+            right_raw = params.get('right', '')
+            right = str(right_raw).strip().lower() if right_raw else ''
 
             if not strike_price_str:
                 return JsonResponse({

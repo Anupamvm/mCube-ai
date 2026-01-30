@@ -3512,41 +3512,131 @@ def celery_task_control(request):
     """
     Celery task control page - View and manage scheduled Celery tasks.
     Shows both static (code-defined) and dynamic (database-configured) tasks.
+    All tasks are inactive by default - users must explicitly activate them.
     """
     from apps.strategies.models import TradingScheduleConfig
     from apps.core.models import CeleryTaskState
-    from mcube_ai.celery import load_beat_schedule
+    from mcube_ai.celery import get_static_schedule
     import redis
 
     # Get dynamic tasks from database
     dynamic_tasks = list(TradingScheduleConfig.objects.all().order_by('scheduled_time'))
 
-    # Get static tasks from celery config
-    static_schedule = load_beat_schedule()
-
-    # Get all task states from database (handle missing table gracefully)
+    # Get ALL static tasks for display (not filtered by enabled state)
     try:
-        task_states = CeleryTaskState.get_all_states()
-    except Exception:
-        task_states = {}  # Default to empty if table doesn't exist yet
+        static_schedule = get_static_schedule()
+        logger.info(f"celery_task_control: Loaded {len(static_schedule)} static tasks")
+    except Exception as e:
+        logger.error(f"celery_task_control: Error loading static schedule: {e}")
+        static_schedule = {}
 
-    # Build static tasks list (excluding dynamic ones)
-    static_tasks = []
+    # Initialize any missing tasks in the database (as disabled by default)
+    # and get all task states
+    try:
+        CeleryTaskState.initialize_static_tasks(static_schedule, force=False)
+        task_states = CeleryTaskState.get_all_states()
+    except Exception as e:
+        logger.warning(f"Could not initialize/get task states: {e}")
+        task_states = {}
+
+    # Define task categories with display info
+    TASK_CATEGORIES = {
+        'data': {
+            'name': 'Market Data',
+            'icon': '📊',
+            'color': '#3182ce',
+            'description': 'Fetch and sync market data, news, and Trendlyne data',
+            'keywords': ['trendlyne', 'market-data', 'pre-market', 'post-market', 'live-market', 'morning-data-sync', 'news'],
+        },
+        'strategies': {
+            'name': 'Strategy Execution',
+            'icon': '🎯',
+            'color': '#805ad5',
+            'description': 'Daily trading workflow: setup, start, options, futures, close',
+            'keywords': ['setup-trading', 'start-trading', 'options', 'futures', 'screen', 'averaging', 'strangle', 'close-trading', 'batch-options'],
+        },
+        'monitoring': {
+            'name': 'Position Monitoring',
+            'icon': '👁️',
+            'color': '#dd6b20',
+            'description': 'Monitor open positions, P&L updates, and exit conditions',
+            'keywords': ['monitor', 'position', 'pnl', 'exit'],
+        },
+        'risk': {
+            'name': 'Risk Management',
+            'icon': '🛡️',
+            'color': '#e53e3e',
+            'description': 'Check risk limits and circuit breaker conditions',
+            'keywords': ['risk', 'circuit', 'limit'],
+        },
+        'reports': {
+            'name': 'Analytics & Reports',
+            'icon': '📈',
+            'color': '#38a169',
+            'description': 'Generate daily reports and update analytics',
+            'keywords': ['report', 'pnl-report', 'benchmark', 'aggregation', 'equity'],
+        },
+    }
+
+    def categorize_task(task_key, queue):
+        """Determine category based on task key and queue"""
+        key_lower = task_key.lower()
+
+        # First try to match by queue
+        if queue in TASK_CATEGORIES:
+            return queue
+
+        # Then try to match by keywords in task key
+        for cat_key, cat_info in TASK_CATEGORIES.items():
+            for keyword in cat_info['keywords']:
+                if keyword in key_lower:
+                    return cat_key
+
+        return 'reports'  # Default category
+
+    # Build categorized tasks
+    categorized_tasks = {cat: [] for cat in TASK_CATEGORIES.keys()}
+
     for key, config in static_schedule.items():
         # Skip if it's a dynamic task
         if any(d in key.lower() for d in ['premarket', 'market_open', 'trade_start', 'trade_monitor', 'trade_stop', 'day_close', 'analyze_day']):
             continue
 
-        # Get enabled state (default to True if not in DB)
-        is_enabled = task_states.get(key, True)
+        # Get enabled state (default to False/inactive if not in DB)
+        is_enabled = task_states.get(key, False)
+        queue = config.get('options', {}).get('queue', 'default')
+        category = categorize_task(key, queue)
 
-        static_tasks.append({
+        task_info = {
             'key': key,
             'task': config.get('task', 'Unknown'),
             'schedule': str(config.get('schedule', 'Unknown')),
-            'queue': config.get('options', {}).get('queue', 'default'),
+            'queue': queue,
             'is_enabled': is_enabled,
+        }
+
+        categorized_tasks[category].append(task_info)
+
+    # Build category info for template
+    task_categories = []
+    for cat_key, cat_info in TASK_CATEGORIES.items():
+        tasks = categorized_tasks.get(cat_key, [])
+        active_count = sum(1 for t in tasks if t['is_enabled'])
+        task_categories.append({
+            'key': cat_key,
+            'name': cat_info['name'],
+            'icon': cat_info['icon'],
+            'color': cat_info['color'],
+            'description': cat_info['description'],
+            'tasks': tasks,
+            'total': len(tasks),
+            'active': active_count,
         })
+
+    # Also keep flat list for backward compatibility
+    static_tasks = []
+    for tasks in categorized_tasks.values():
+        static_tasks.extend(tasks)
 
     # Check Celery worker status
     worker_status = {'active': False, 'workers': [], 'error': None}
@@ -3585,6 +3675,7 @@ def celery_task_control(request):
     context = {
         'dynamic_tasks': dynamic_tasks,
         'static_tasks': static_tasks,
+        'task_categories': task_categories,  # Categorized view for new UI
         'worker_status': worker_status,
         'redis_status': redis_status,
         'enabled_count': enabled_count,
@@ -3642,12 +3733,20 @@ def celery_control_all(request):
     try:
         if action == 'start':
             TradingScheduleConfig.objects.all().update(is_enabled=True)
-            messages.success(request, "All tasks enabled successfully.")
-            return JsonResponse({'success': True, 'message': 'All tasks enabled'})
+            beat_restarted, _ = restart_celery_beat()
+            message = "All tasks enabled"
+            if beat_restarted:
+                message += " (schedule reloaded)"
+            messages.success(request, message)
+            return JsonResponse({'success': True, 'message': message, 'beat_restarted': beat_restarted})
         elif action == 'stop':
             TradingScheduleConfig.objects.all().update(is_enabled=False)
-            messages.warning(request, "All tasks disabled.")
-            return JsonResponse({'success': True, 'message': 'All tasks disabled'})
+            beat_restarted, _ = restart_celery_beat()
+            message = "All tasks disabled"
+            if beat_restarted:
+                message += " (schedule reloaded)"
+            messages.warning(request, message)
+            return JsonResponse({'success': True, 'message': message, 'beat_restarted': beat_restarted})
         else:
             return JsonResponse({'success': False, 'error': 'Invalid action'}, status=400)
     except Exception as e:
@@ -3658,23 +3757,260 @@ def celery_control_all(request):
 @login_required
 @user_passes_test(is_admin_user)
 def reload_celery_schedule(request):
-    """Reload Celery beat schedule from database."""
+    """Reload Celery beat schedule by restarting celery beat."""
     from django.contrib import messages
 
     if request.method != 'POST':
         return JsonResponse({'success': False, 'error': 'POST required'}, status=405)
 
     try:
-        # Note: This requires celery beat to be restarted to pick up changes
-        # For live reload, you'd need django-celery-beat with database scheduler
-        messages.info(request, "Schedule changes saved. Restart Celery Beat to apply changes.")
+        beat_restarted, beat_message = restart_celery_beat()
+
+        if beat_restarted:
+            messages.success(request, "Celery Beat restarted - schedule reloaded.")
+        else:
+            messages.warning(request, f"Could not restart Celery Beat: {beat_message}")
+
         return JsonResponse({
-            'success': True,
+            'success': beat_restarted,
             'message': 'Schedule updated. Restart Celery Beat to apply changes.'
         })
     except Exception as e:
         logger.error(f"Error reloading schedule: {e}")
         return JsonResponse({'success': False, 'error': str(e)}, status=500)
+
+
+def ensure_celery_running():
+    """
+    Ensure Celery Beat and Worker are running. Start them if not.
+    Restart Beat to pick up schedule changes.
+
+    Returns:
+        dict: {
+            'success': bool,
+            'worker_status': str,
+            'beat_status': str,
+            'worker_started': bool,
+            'beat_restarted': bool,
+            'message': str
+        }
+    """
+    import subprocess
+    import signal
+    import os
+    import time
+
+    project_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+    # Find Python executable from virtual environment
+    # Must use venv Python to get correct site-packages
+    venv_python_paths = [
+        os.path.join(project_dir, 'venv', 'bin', 'python'),
+        os.path.join(project_dir, '.venv', 'bin', 'python'),
+    ]
+
+    python_path = None
+    for path in venv_python_paths:
+        if os.path.exists(path):
+            python_path = path
+            break
+
+    if not python_path:
+        logger.error("Virtual environment Python not found!")
+        return {
+            'success': False,
+            'worker_status': 'failed',
+            'beat_status': 'failed',
+            'worker_started': False,
+            'beat_restarted': False,
+            'worker_pid': None,
+            'beat_pid': None,
+            'message': 'Virtual environment not found',
+            'error_type': 'venv_missing'
+        }
+
+    # Check if Redis is running (required for Celery)
+    redis_check = subprocess.run(
+        ['redis-cli', 'ping'],
+        capture_output=True,
+        text=True
+    )
+    if redis_check.returncode != 0 or 'PONG' not in redis_check.stdout:
+        logger.error("Redis is not running!")
+        return {
+            'success': False,
+            'worker_status': 'failed',
+            'beat_status': 'failed',
+            'worker_started': False,
+            'beat_restarted': False,
+            'worker_pid': None,
+            'beat_pid': None,
+            'message': 'Redis not running. Run: brew install redis && brew services start redis',
+            'error_type': 'redis_not_running'
+        }
+
+    result = {
+        'success': False,
+        'worker_status': 'unknown',
+        'beat_status': 'unknown',
+        'worker_started': False,
+        'beat_restarted': False,
+        'worker_pid': None,
+        'beat_pid': None,
+        'message': ''
+    }
+
+    try:
+        # =====================================================================
+        # Check and start Celery Worker
+        # =====================================================================
+        worker_result = subprocess.run(
+            ['pgrep', '-f', 'celery.*mcube.*worker'],
+            capture_output=True,
+            text=True
+        )
+
+        worker_was_running = worker_result.returncode == 0 and worker_result.stdout.strip()
+
+        if not worker_was_running:
+            # Start celery worker with all queues using venv Python
+            log_file = os.path.join(project_dir, 'logs', 'celery_worker.log')
+            os.makedirs(os.path.dirname(log_file), exist_ok=True)
+
+            with open(log_file, 'a') as log:
+                log.write(f"\n{'='*60}\n")
+                log.write(f"Worker starting at {datetime.now().isoformat()}\n")
+                log.write(f"Using Python: {python_path}\n")
+                log.write(f"{'='*60}\n")
+
+                # Use python -m celery to ensure correct environment
+                proc = subprocess.Popen(
+                    [
+                        python_path, '-m', 'celery',
+                        '-A', 'mcube_ai', 'worker',
+                        '--loglevel=info',
+                        '-Q', 'data,strategies,monitoring,risk,reports,celery',
+                        '--concurrency=2'
+                    ],
+                    cwd=project_dir,
+                    stdout=log,
+                    stderr=log,
+                    start_new_session=True
+                )
+                result['worker_pid'] = proc.pid
+
+            logger.info(f"Celery worker started with PID {proc.pid} using {python_path}")
+            result['worker_started'] = True
+            result['worker_status'] = 'started'
+
+            # Wait for worker to initialize
+            time.sleep(3)
+
+            # Verify worker started successfully
+            verify = subprocess.run(
+                ['pgrep', '-f', 'celery.*mcube.*worker'],
+                capture_output=True,
+                text=True
+            )
+            if verify.returncode != 0:
+                result['worker_status'] = 'failed'
+                result['message'] = 'Worker failed to start - check logs/celery_worker.log'
+        else:
+            result['worker_status'] = 'running'
+            result['worker_pid'] = int(worker_result.stdout.strip().split('\n')[0])
+
+        # =====================================================================
+        # Restart Celery Beat (always restart to pick up schedule changes)
+        # =====================================================================
+        beat_result = subprocess.run(
+            ['pgrep', '-f', 'celery.*mcube.*beat'],
+            capture_output=True,
+            text=True
+        )
+
+        if beat_result.returncode == 0 and beat_result.stdout.strip():
+            # Kill existing celery beat processes
+            pids = beat_result.stdout.strip().split('\n')
+            for pid in pids:
+                try:
+                    os.kill(int(pid), signal.SIGTERM)
+                    logger.info(f"Stopped celery beat process {pid}")
+                except (ProcessLookupError, ValueError):
+                    pass
+
+            # Wait for process to terminate
+            time.sleep(1)
+
+        # Start celery beat using venv Python
+        log_file = os.path.join(project_dir, 'logs', 'celery_beat.log')
+        os.makedirs(os.path.dirname(log_file), exist_ok=True)
+
+        with open(log_file, 'a') as log:
+            log.write(f"\n{'='*60}\n")
+            log.write(f"Beat starting at {datetime.now().isoformat()}\n")
+            log.write(f"Using Python: {python_path}\n")
+            log.write(f"{'='*60}\n")
+
+            # Use python -m celery to ensure correct environment
+            proc = subprocess.Popen(
+                [python_path, '-m', 'celery', '-A', 'mcube_ai', 'beat', '--loglevel=info'],
+                cwd=project_dir,
+                stdout=log,
+                stderr=log,
+                start_new_session=True
+            )
+            result['beat_pid'] = proc.pid
+
+        logger.info(f"Celery beat started with PID {proc.pid} using {python_path}")
+        result['beat_restarted'] = True
+        result['beat_status'] = 'restarted'
+
+        # Wait for beat to initialize
+        time.sleep(2)
+
+        # Verify beat is running
+        verify_beat = subprocess.run(
+            ['pgrep', '-f', 'celery.*mcube.*beat'],
+            capture_output=True,
+            text=True
+        )
+        if verify_beat.returncode != 0:
+            result['beat_status'] = 'failed'
+            result['message'] = 'Beat failed to start - check logs/celery_beat.log'
+
+        # Set success based on current status
+        if result['worker_status'] in ('running', 'started') and result['beat_status'] == 'restarted':
+            result['success'] = True
+            result['message'] = f"Worker: {result['worker_status']}, Beat: {result['beat_status']}"
+        elif result['worker_status'] == 'failed':
+            result['message'] = 'Worker failed to start - check logs/celery_worker.log'
+
+        return result
+
+    except Exception as e:
+        logger.error(f"Error managing celery processes: {e}")
+        result['message'] = str(e)
+        return result
+
+
+def get_active_tasks_summary():
+    """Get summary of active tasks by category."""
+    from apps.core.models import CeleryTaskState
+
+    try:
+        enabled_tasks = CeleryTaskState.objects.filter(is_enabled=True).values_list('task_key', flat=True)
+        return {
+            'total_active': len(enabled_tasks),
+            'tasks': list(enabled_tasks)
+        }
+    except Exception:
+        return {'total_active': 0, 'tasks': []}
+
+
+# Alias for backward compatibility
+def restart_celery_beat():
+    result = ensure_celery_running()
+    return result.get('success', False), result.get('message', '')
 
 
 @login_required
@@ -3707,18 +4043,244 @@ def toggle_static_task(request):
             user=request.user.username
         )
 
-        status = 'started' if new_state else 'stopped'
-        messages.success(request, f"Task '{task_key}' {status} successfully.")
+        # Ensure Celery is running and restart Beat to pick up changes
+        celery_result = ensure_celery_running()
+        active_summary = get_active_tasks_summary()
+
+        status = 'activated' if new_state else 'deactivated'
 
         return JsonResponse({
             'success': True,
             'task_key': task_key,
             'is_enabled': new_state,
-            'message': f"Task '{task_key}' {status}"
+            'celery': {
+                'success': celery_result.get('success'),
+                'worker_status': celery_result.get('worker_status'),
+                'beat_status': celery_result.get('beat_status'),
+                'worker_started': celery_result.get('worker_started'),
+                'beat_restarted': celery_result.get('beat_restarted'),
+            },
+            'active_tasks': active_summary,
+            'message': f"Task {status}"
         })
     except Exception as e:
         logger.error(f"Error toggling static task {task_key}: {e}")
         return JsonResponse({'success': False, 'error': str(e)}, status=500)
+
+
+def parse_celery_log_line(line):
+    """Parse a celery log line into structured data."""
+    import re
+
+    # Pattern: [2026-01-30 16:32:01,521: INFO/MainProcess] message
+    # Process can be MainProcess, ForkPoolWorker-1, etc.
+    pattern = r'\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}),\d+: (\w+)/([\w-]+)\] (.+)'
+    match = re.match(pattern, line.strip())
+
+    if match:
+        timestamp, level, process, message = match.groups()
+        return {
+            'timestamp': timestamp,
+            'level': level.lower(),
+            'process': process,
+            'message': message,
+            'raw': line.strip()
+        }
+    return None
+
+
+def get_task_logs_from_file(task_name, limit=100):
+    """
+    Get logs for a specific task from celery log files.
+    Searches for task name in worker log.
+    """
+    import os
+    import re
+
+    project_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    worker_log = os.path.join(project_dir, 'logs', 'celery_worker.log')
+
+    logs = []
+
+    # Normalize task name for search
+    search_terms = [
+        task_name,
+        task_name.replace('-', '_'),
+        task_name.replace('_', '-'),
+        # Also search for task path patterns
+        f"apps.data.tasks.{task_name.replace('-', '_')}",
+        f"apps.strategies.tasks.{task_name.replace('-', '_')}",
+        f"apps.positions.tasks.{task_name.replace('-', '_')}",
+        f"apps.risk.tasks.{task_name.replace('-', '_')}",
+        f"apps.analytics.tasks.{task_name.replace('-', '_')}",
+    ]
+
+    if os.path.exists(worker_log):
+        try:
+            # Read last N lines efficiently
+            with open(worker_log, 'r') as f:
+                # Read all lines and get last 2000 for searching
+                all_lines = f.readlines()
+                recent_lines = all_lines[-2000:] if len(all_lines) > 2000 else all_lines
+
+            for line in reversed(recent_lines):
+                # Check if any search term is in the line
+                line_lower = line.lower()
+                for term in search_terms:
+                    if term.lower() in line_lower:
+                        parsed = parse_celery_log_line(line)
+                        if parsed:
+                            # Determine if it's a success or error
+                            msg_lower = parsed['message'].lower()
+                            if 'succeeded' in msg_lower:
+                                parsed['status'] = 'success'
+                                # Extract execution time if present
+                                time_match = re.search(r'in ([\d.]+)s', parsed['message'])
+                                if time_match:
+                                    parsed['execution_time'] = f"{float(time_match.group(1)):.3f}s"
+                            elif 'failed' in msg_lower or 'error' in msg_lower:
+                                parsed['status'] = 'error'
+                            elif 'received' in msg_lower:
+                                parsed['status'] = 'received'
+                            else:
+                                parsed['status'] = 'info'
+
+                            logs.append(parsed)
+                            if len(logs) >= limit:
+                                break
+                        break
+                if len(logs) >= limit:
+                    break
+        except Exception as e:
+            logger.error(f"Error reading celery log: {e}")
+
+    return logs
+
+
+@login_required
+@user_passes_test(is_admin_user)
+def get_task_logs(request):
+    """
+    Get logs for a specific task from celery log files.
+
+    Query params:
+        task_name: Name of the task (e.g., 'morning-data-sync')
+        limit: Max logs to return (default 50)
+    """
+    task_name = request.GET.get('task_name', '')
+    limit = min(int(request.GET.get('limit', 50)), 200)
+
+    if not task_name:
+        return JsonResponse({'success': False, 'error': 'task_name required'}, status=400)
+
+    # Get logs from celery log file
+    logs = get_task_logs_from_file(task_name, limit)
+
+    return JsonResponse({
+        'success': True,
+        'task_name': task_name,
+        'count': len(logs),
+        'logs': logs
+    })
+
+
+@login_required
+@user_passes_test(is_admin_user)
+def get_all_celery_logs(request):
+    """
+    Get all recent celery logs from both worker and beat log files.
+
+    Query params:
+        limit: Max lines to return (default 200)
+        log_type: 'worker', 'beat', or 'all' (default 'all')
+    """
+    import os
+
+    limit = min(int(request.GET.get('limit', 200)), 500)
+    log_type = request.GET.get('log_type', 'all')
+
+    project_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    worker_log = os.path.join(project_dir, 'logs', 'celery_worker.log')
+    beat_log = os.path.join(project_dir, 'logs', 'celery_beat.log')
+
+    logs = []
+
+    def read_log_file(filepath, source, max_lines):
+        """Read last N lines from a log file."""
+        entries = []
+        if os.path.exists(filepath):
+            try:
+                with open(filepath, 'r') as f:
+                    lines = f.readlines()
+                    recent = lines[-max_lines:] if len(lines) > max_lines else lines
+
+                for line in recent:
+                    parsed = parse_celery_log_line(line)
+                    if parsed:
+                        parsed['source'] = source
+                        # Determine status
+                        msg_lower = parsed['message'].lower()
+                        if 'succeeded' in msg_lower:
+                            parsed['status'] = 'success'
+                        elif 'failed' in msg_lower or 'error' in msg_lower:
+                            parsed['status'] = 'error'
+                        elif 'received' in msg_lower:
+                            parsed['status'] = 'received'
+                        elif 'sending due task' in msg_lower:
+                            parsed['status'] = 'scheduled'
+                        elif 'starting' in msg_lower:
+                            parsed['status'] = 'starting'
+                        else:
+                            parsed['status'] = 'info'
+                        entries.append(parsed)
+                    elif line.strip() and not line.startswith('='):
+                        # Non-parsed lines (errors, tracebacks)
+                        entries.append({
+                            'timestamp': '',
+                            'level': 'error' if 'error' in line.lower() or 'traceback' in line.lower() else 'info',
+                            'process': '',
+                            'message': line.strip()[:500],
+                            'source': source,
+                            'status': 'error' if 'error' in line.lower() else 'info',
+                            'raw': line.strip()[:500]
+                        })
+            except Exception as e:
+                logger.error(f"Error reading {filepath}: {e}")
+        return entries
+
+    # Read logs based on type
+    if log_type in ('worker', 'all'):
+        logs.extend(read_log_file(worker_log, 'worker', limit))
+    if log_type in ('beat', 'all'):
+        logs.extend(read_log_file(beat_log, 'beat', limit))
+
+    # Sort by timestamp (most recent first) and limit
+    logs_with_time = [l for l in logs if l.get('timestamp')]
+    logs_without_time = [l for l in logs if not l.get('timestamp')]
+
+    logs_with_time.sort(key=lambda x: x['timestamp'], reverse=True)
+    final_logs = (logs_with_time + logs_without_time)[:limit]
+
+    # Get celery process status
+    import subprocess
+    worker_running = subprocess.run(
+        ['pgrep', '-f', 'celery.*mcube.*worker'],
+        capture_output=True
+    ).returncode == 0
+    beat_running = subprocess.run(
+        ['pgrep', '-f', 'celery.*mcube.*beat'],
+        capture_output=True
+    ).returncode == 0
+
+    return JsonResponse({
+        'success': True,
+        'count': len(final_logs),
+        'logs': final_logs,
+        'status': {
+            'worker_running': worker_running,
+            'beat_running': beat_running
+        }
+    })
 
 
 @login_required
@@ -3726,7 +4288,7 @@ def toggle_static_task(request):
 def control_all_static_tasks(request):
     """Enable or disable all static Celery tasks."""
     from apps.core.models import CeleryTaskState
-    from mcube_ai.celery import load_beat_schedule
+    from mcube_ai.celery import get_static_schedule
     from django.contrib import messages
 
     if request.method != 'POST':
@@ -3735,8 +4297,8 @@ def control_all_static_tasks(request):
     action = request.POST.get('action', 'stop')
 
     try:
-        # Get all static tasks from schedule
-        static_schedule = load_beat_schedule()
+        # Get ALL static tasks from schedule (not filtered)
+        static_schedule = get_static_schedule()
         enabled = action == 'start'
 
         for key, config in static_schedule.items():
@@ -3752,12 +4314,105 @@ def control_all_static_tasks(request):
                 user=request.user.username
             )
 
-        status = 'started' if enabled else 'stopped'
-        messages.success(request, f"All static tasks {status} successfully.")
-        return JsonResponse({'success': True, 'message': f'All static tasks {status}'})
+        # Restart Celery Beat to pick up changes
+        beat_restarted, beat_message = restart_celery_beat()
+
+        status = 'activated' if enabled else 'deactivated'
+        message = f"All system tasks {status}"
+        if beat_restarted:
+            message += " (schedule reloaded)"
+
+        messages.success(request, message)
+        return JsonResponse({'success': True, 'message': message, 'beat_restarted': beat_restarted})
     except Exception as e:
         logger.error(f"Error controlling all static tasks: {e}")
         return JsonResponse({'success': False, 'error': str(e)}, status=500)
+
+
+@login_required
+@user_passes_test(is_admin_user)
+def control_category_tasks(request):
+    """Enable or disable all tasks in a specific category."""
+    from apps.core.models import CeleryTaskState
+    from mcube_ai.celery import get_static_schedule
+    from django.contrib import messages
+
+    if request.method != 'POST':
+        return JsonResponse({'success': False, 'error': 'POST required'}, status=405)
+
+    action = request.POST.get('action', 'stop')
+    category = request.POST.get('category', '')
+
+    # Category to queue/keyword mapping
+    CATEGORY_QUEUES = {
+        'data': 'data',
+        'strategies': 'strategies',
+        'monitoring': 'monitoring',
+        'risk': 'risk',
+        'reports': 'reports',
+    }
+
+    CATEGORY_KEYWORDS = {
+        'data': ['trendlyne', 'market-data', 'pre-market', 'post-market', 'live-market', 'morning-data-sync', 'news'],
+        'strategies': ['setup-trading', 'start-trading', 'options', 'futures', 'screen', 'averaging', 'strangle', 'close-trading', 'batch-options', 'evaluate-options'],
+        'monitoring': ['monitor', 'position', 'pnl', 'exit'],
+        'risk': ['risk', 'circuit', 'limit'],
+        'reports': ['report', 'pnl-report', 'benchmark', 'aggregation', 'equity'],
+    }
+
+    if category not in CATEGORY_QUEUES:
+        return JsonResponse({'success': False, 'error': f'Unknown category: {category}'}, status=400)
+
+    try:
+        static_schedule = get_static_schedule()
+        enabled = action == 'start'
+        updated_count = 0
+
+        for key, config in static_schedule.items():
+            # Skip dynamic tasks
+            if any(d in key.lower() for d in ['premarket', 'market_open', 'trade_start', 'trade_monitor', 'trade_stop', 'day_close', 'analyze_day']):
+                continue
+
+            # Check if task belongs to this category
+            queue = config.get('options', {}).get('queue', 'default')
+            key_lower = key.lower()
+            belongs_to_category = False
+
+            # Match by queue
+            if queue == CATEGORY_QUEUES.get(category):
+                belongs_to_category = True
+            else:
+                # Match by keywords
+                for keyword in CATEGORY_KEYWORDS.get(category, []):
+                    if keyword in key_lower:
+                        belongs_to_category = True
+                        break
+
+            if belongs_to_category:
+                CeleryTaskState.set_task_state(
+                    task_key=key,
+                    enabled=enabled,
+                    task_path=config.get('task', ''),
+                    display_name=key.replace('-', ' ').title(),
+                    user=request.user.username
+                )
+                updated_count += 1
+
+        status = 'activated' if enabled else 'deactivated'
+        # Restart Celery Beat to pick up changes
+        beat_restarted, beat_message = restart_celery_beat()
+
+        category_name = category.replace('_', ' ').title()
+        message = f"{updated_count} {category_name} tasks {status}"
+        if beat_restarted:
+            message += " (schedule reloaded)"
+
+        messages.success(request, message)
+        return redirect('core:celery_task_control')
+    except Exception as e:
+        logger.error(f"Error controlling category tasks: {e}")
+        messages.error(request, f"Error: {str(e)}")
+        return redirect('core:celery_task_control')
 
 
 # =============================================================================
@@ -3773,7 +4428,7 @@ def background_tasks_control(request):
     """
     from apps.strategies.models import TradingScheduleConfig
     from apps.core.models import CeleryTaskState
-    from mcube_ai.celery import load_beat_schedule
+    from mcube_ai.celery import get_all_tasks_for_display, get_static_schedule
     import redis
 
     # =========================================================================
@@ -3783,13 +4438,16 @@ def background_tasks_control(request):
     # Get dynamic tasks from database
     dynamic_tasks = list(TradingScheduleConfig.objects.all().order_by('scheduled_time'))
 
-    # Get static tasks from celery config
-    static_schedule = load_beat_schedule()
+    # Get ALL static tasks for display (not filtered by enabled state)
+    static_schedule = get_static_schedule()
 
-    # Get all task states from database (handle missing table gracefully)
+    # Initialize any missing tasks in the database (as disabled by default)
+    # and get all task states
     try:
+        CeleryTaskState.initialize_static_tasks(static_schedule, force=False)
         task_states = CeleryTaskState.get_all_states()
-    except Exception:
+    except Exception as e:
+        logger.warning(f"Could not initialize/get task states: {e}")
         task_states = {}
 
     # Build static tasks list (excluding dynamic ones)
@@ -3797,13 +4455,14 @@ def background_tasks_control(request):
     for key, config in static_schedule.items():
         if any(d in key.lower() for d in ['premarket', 'market_open', 'trade_start', 'trade_monitor', 'trade_stop', 'day_close', 'analyze_day']):
             continue
-        is_enabled = task_states.get(key, True)
+        # Default to False (inactive) if not in database
+        is_active = task_states.get(key, False)
         celery_static_tasks.append({
             'key': key,
             'task': config.get('task', 'Unknown'),
             'schedule': str(config.get('schedule', 'Unknown')),
             'queue': config.get('options', {}).get('queue', 'default'),
-            'is_enabled': is_enabled,
+            'is_active': is_active,
         })
 
     # Check Celery worker status
@@ -3828,9 +4487,9 @@ def background_tasks_control(request):
         redis_status['error'] = str(e)
 
     # Celery task counts
-    celery_dynamic_enabled = TradingScheduleConfig.objects.filter(is_enabled=True).count()
+    celery_dynamic_active = TradingScheduleConfig.objects.filter(is_enabled=True).count()
     celery_dynamic_total = TradingScheduleConfig.objects.count()
-    celery_static_enabled = sum(1 for t in celery_static_tasks if t['is_enabled'])
+    celery_static_active = sum(1 for t in celery_static_tasks if t['is_active'])
     celery_static_total = len(celery_static_tasks)
 
     # =========================================================================
@@ -3878,7 +4537,7 @@ def background_tasks_control(request):
         logger.warning(f"Could not fetch background tasks: {e}")
 
     # Total counts for all tasks
-    total_enabled = celery_dynamic_enabled + celery_static_enabled + bg_task_stats['pending'] + bg_task_stats['running']
+    total_active = celery_dynamic_active + celery_static_active + bg_task_stats['pending'] + bg_task_stats['running']
     total_tasks = celery_dynamic_total + celery_static_total + len(bg_tasks)
 
     context = {
@@ -3887,7 +4546,7 @@ def background_tasks_control(request):
         'celery_static_tasks': celery_static_tasks,
         'celery_worker_status': celery_worker_status,
         'redis_status': redis_status,
-        'celery_enabled_count': celery_dynamic_enabled + celery_static_enabled,
+        'celery_active_count': celery_dynamic_active + celery_static_active,
         'celery_total_count': celery_dynamic_total + celery_static_total,
 
         # Background tasks data
@@ -3895,7 +4554,7 @@ def background_tasks_control(request):
         'bg_task_stats': bg_task_stats,
 
         # Overall stats
-        'total_enabled': total_enabled,
+        'total_active': total_active,
         'total_tasks': total_tasks,
         'timestamp': datetime.now(),
     }

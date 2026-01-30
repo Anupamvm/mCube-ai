@@ -344,7 +344,8 @@ class TradingScheduleConfig(TimeStampedModel):
     """
     Configurable schedule for trading tasks
 
-    Allows UI-based configuration of task timings without code changes
+    Allows UI-based configuration of task timings without code changes.
+    Tasks are inactive by default - users must explicitly activate them.
     """
 
     TASK_CHOICES = [
@@ -363,7 +364,7 @@ class TradingScheduleConfig(TimeStampedModel):
 
     # Timing configuration
     scheduled_time = models.TimeField(help_text="Time to run this task (IST)")
-    is_enabled = models.BooleanField(default=True)
+    is_enabled = models.BooleanField(default=False, help_text="Task is inactive by default")
 
     # For recurring tasks (like monitoring)
     is_recurring = models.BooleanField(default=False)
@@ -707,6 +708,213 @@ class TradingInsight(TimeStampedModel):
 
     def __str__(self):
         return f"{self.get_insight_type_display()}: {self.title}"
+
+
+class TradingDaySetup(TimeStampedModel):
+    """
+    Trading day setup and status tracking
+
+    Captures the daily setup evaluation (8:55 AM) and start validation (9:15 AM)
+    to determine if the day is suitable for trading.
+    """
+
+    trading_date = models.DateField(db_index=True, unique=True)
+
+    # ==========================================================================
+    # SETUP PHASE (8:55 AM) - Pre-market evaluation
+    # ==========================================================================
+    setup_completed_at = models.DateTimeField(null=True, blank=True)
+
+    # Data freshness checks
+    trendlyne_data_fresh = models.BooleanField(default=False)
+    news_data_fresh = models.BooleanField(default=False)
+    broker_connection_ok = models.BooleanField(default=False)
+
+    # Calendar checks
+    is_trading_day = models.BooleanField(default=True, help_text="Not a holiday")
+    is_expiry_day = models.BooleanField(default=False)
+    is_major_event_day = models.BooleanField(default=False, help_text="RBI policy, budget, etc.")
+
+    # Global market sentiment (overnight)
+    us_market_change = models.DecimalField(max_digits=10, decimal_places=4, null=True, blank=True)
+    asian_market_change = models.DecimalField(max_digits=10, decimal_places=4, null=True, blank=True)
+    sgx_nifty_change = models.DecimalField(max_digits=10, decimal_places=4, null=True, blank=True)
+
+    # Pre-market risk assessment
+    overnight_risk_level = models.CharField(
+        max_length=20,
+        choices=[
+            ('LOW', 'Low Risk'),
+            ('MEDIUM', 'Medium Risk'),
+            ('HIGH', 'High Risk'),
+            ('EXTREME', 'Extreme Risk - No Trade')
+        ],
+        default='MEDIUM'
+    )
+
+    # Setup decision
+    setup_tradable = models.BooleanField(default=False, help_text="Day cleared for trading in setup")
+    setup_reason = models.TextField(blank=True, help_text="Reason for setup decision")
+
+    # ==========================================================================
+    # START PHASE (9:15 AM) - Market opening validation
+    # ==========================================================================
+    start_validated_at = models.DateTimeField(null=True, blank=True)
+
+    # Market opening data
+    nifty_open = models.DecimalField(max_digits=15, decimal_places=2, null=True, blank=True)
+    nifty_prev_close = models.DecimalField(max_digits=15, decimal_places=2, null=True, blank=True)
+    gap_percent = models.DecimalField(max_digits=10, decimal_places=4, null=True, blank=True)
+
+    # VIX at open
+    vix_open = models.DecimalField(max_digits=10, decimal_places=4, null=True, blank=True)
+    vix_level = models.CharField(
+        max_length=20,
+        choices=[
+            ('LOW', 'Low (<15)'),
+            ('NORMAL', 'Normal (15-20)'),
+            ('ELEVATED', 'Elevated (20-25)'),
+            ('HIGH', 'High (>25)')
+        ],
+        null=True, blank=True
+    )
+
+    # 52-week high proximity
+    nifty_52w_high = models.DecimalField(max_digits=15, decimal_places=2, null=True, blank=True)
+    distance_from_52w_high_pct = models.DecimalField(max_digits=10, decimal_places=4, null=True, blank=True)
+    near_52w_high = models.BooleanField(default=False, help_text="Within 2% of 52-week high")
+
+    # News impact assessment
+    major_news_detected = models.BooleanField(default=False)
+    news_sentiment = models.CharField(
+        max_length=20,
+        choices=[
+            ('POSITIVE', 'Positive'),
+            ('NEUTRAL', 'Neutral'),
+            ('NEGATIVE', 'Negative'),
+            ('MIXED', 'Mixed')
+        ],
+        null=True, blank=True
+    )
+    news_summary = models.TextField(blank=True)
+
+    # Start decision
+    start_tradable = models.BooleanField(default=False, help_text="Day cleared for trading at start")
+    start_reason = models.TextField(blank=True, help_text="Reason for start decision")
+
+    # ==========================================================================
+    # FINAL TRADING STATUS
+    # ==========================================================================
+    is_tradable = models.BooleanField(default=False, help_text="Final: Can we trade today?")
+    tradable_reason = models.TextField(blank=True)
+
+    # Strategy-specific flags
+    futures_trading_allowed = models.BooleanField(default=False)
+    options_strangle_allowed = models.BooleanField(default=False)
+    options_iron_condor_allowed = models.BooleanField(default=False)
+
+    # Recommended strategy based on conditions
+    recommended_strategy = models.CharField(
+        max_length=50,
+        choices=[
+            ('NONE', 'No Trading Today'),
+            ('STRANGLE', 'Weekly Nifty Strangle'),
+            ('IRON_CONDOR', 'Broken Wing Iron Condor'),
+            ('FUTURES_ONLY', 'Futures Only'),
+            ('ALL', 'All Strategies Allowed')
+        ],
+        default='NONE'
+    )
+
+    # ==========================================================================
+    # EXECUTION TRACKING
+    # ==========================================================================
+    futures_screened = models.BooleanField(default=False)
+    futures_screened_at = models.DateTimeField(null=True, blank=True)
+    futures_suggestions = models.JSONField(default=list, help_text="Top 5 futures suggestions")
+
+    options_strategy_evaluated = models.BooleanField(default=False)
+    options_evaluated_at = models.DateTimeField(null=True, blank=True)
+    options_strategy_selected = models.CharField(max_length=50, blank=True)
+
+    options_trade_started = models.BooleanField(default=False)
+    options_trade_started_at = models.DateTimeField(null=True, blank=True)
+
+    averaging_completed = models.BooleanField(default=False)
+    averaging_completed_at = models.DateTimeField(null=True, blank=True)
+
+    day_closed = models.BooleanField(default=False)
+    day_closed_at = models.DateTimeField(null=True, blank=True)
+    close_summary = models.JSONField(default=dict)
+
+    class Meta:
+        db_table = 'trading_day_setup'
+        ordering = ['-trading_date']
+        indexes = [
+            models.Index(fields=['-trading_date']),
+            models.Index(fields=['is_tradable']),
+        ]
+
+    def __str__(self):
+        status = "✅ Tradable" if self.is_tradable else "❌ No Trade"
+        return f"{self.trading_date} - {status} ({self.recommended_strategy})"
+
+
+class FuturesSuggestion(TimeStampedModel):
+    """
+    Futures trading suggestions from screening task
+
+    Stores top futures opportunities for the day
+    """
+
+    trading_date = models.DateField(db_index=True)
+    rank = models.IntegerField(help_text="Rank 1-5")
+
+    # Stock details
+    symbol = models.CharField(max_length=50)
+    stock_name = models.CharField(max_length=200, blank=True)
+
+    # Direction
+    direction = models.CharField(
+        max_length=10,
+        choices=[('LONG', 'Long'), ('SHORT', 'Short')]
+    )
+
+    # Volume analysis
+    volume_rank = models.IntegerField(help_text="Volume rank among F&O stocks")
+    volume_vs_avg = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+
+    # Score breakdown
+    composite_score = models.DecimalField(max_digits=5, decimal_places=2)
+    oi_score = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
+    technical_score = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
+    sector_score = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
+
+    # OI analysis
+    oi_buildup_type = models.CharField(max_length=50, blank=True)
+    oi_change_pct = models.DecimalField(max_digits=10, decimal_places=4, null=True, blank=True)
+
+    # Entry details
+    suggested_entry_price = models.DecimalField(max_digits=15, decimal_places=2, null=True, blank=True)
+    suggested_stop_loss = models.DecimalField(max_digits=15, decimal_places=2, null=True, blank=True)
+    suggested_target = models.DecimalField(max_digits=15, decimal_places=2, null=True, blank=True)
+
+    # Execution tracking
+    is_executed = models.BooleanField(default=False)
+    executed_at = models.DateTimeField(null=True, blank=True)
+    position_id = models.IntegerField(null=True, blank=True)
+
+    class Meta:
+        db_table = 'futures_suggestions'
+        ordering = ['-trading_date', 'rank']
+        unique_together = ['trading_date', 'rank']
+        indexes = [
+            models.Index(fields=['-trading_date']),
+            models.Index(fields=['symbol']),
+        ]
+
+    def __str__(self):
+        return f"{self.trading_date} #{self.rank}: {self.symbol} ({self.direction}) - Score: {self.composite_score}"
 
 
 # Import Nifty Strangle Strategy models

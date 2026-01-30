@@ -100,16 +100,18 @@ class BreezeAutoLogin:
             print(f"Login failed: {message}")
     """
 
+    # IMPORTANT: Must use /apiuser/login (not /apiuser/tradelogin)
     LOGIN_URL_TEMPLATE = "https://api.icicidirect.com/apiuser/login?api_key={api_key}"
     REDIRECT_HOST = "127.0.0.1"
 
-    # Element selectors based on the ICICI login form
+    # Element selectors based on the ICICI Breeze API login form
+    # The User ID field expects the registered mobile number
     SELECTORS = {
-        'user_id': 'txtuid',
-        'password': 'txtPass',
-        'tnc_checkbox': 'chkssTnc',
-        'login_button': 'btnSubmit',
-        'otp_panel': 'dvgetotp',
+        'user_id': 'txtuid',          # Mobile number field
+        'password': 'txtPass',         # Password field
+        'tnc_checkbox': 'chkssTnc',    # Terms & Conditions checkbox
+        'login_button': 'btnSubmit',   # Submit button
+        'otp_panel': 'dvgetotp',       # OTP entry panel
     }
 
     def __init__(self, headless: bool = False, timeout: int = 300, skip_validation: bool = False):
@@ -182,12 +184,27 @@ class BreezeAutoLogin:
 
     def _get_login_url(self) -> str:
         """Build the Breeze login URL with API key."""
-        from urllib.parse import quote
-        api_key = quote(self.credentials.api_key, safe='')
-        return self.LOGIN_URL_TEMPLATE.format(api_key=api_key)
+        from urllib.parse import quote, unquote
+
+        api_key = self.credentials.api_key
+        logger.info(f"Raw API key from database: {api_key}")
+
+        # Check if API key is already URL-encoded (contains %XX patterns)
+        if '%' in api_key:
+            # Already encoded, use as-is
+            api_key_encoded = api_key
+            logger.info("API key appears to be already URL-encoded")
+        else:
+            # Need to URL-encode (special chars like &, @, ^ need encoding)
+            api_key_encoded = quote(api_key, safe='')
+            logger.info(f"URL-encoded API key: {api_key_encoded}")
+
+        url = self.LOGIN_URL_TEMPLATE.format(api_key=api_key_encoded)
+        logger.info(f"Final login URL: {url}")
+        return url
 
     def _fill_login_form(self) -> bool:
-        """Fill username, password and check T&C."""
+        """Fill mobile number, password and check T&C."""
         try:
             from selenium.webdriver.common.by import By
             from selenium.webdriver.support.ui import WebDriverWait
@@ -195,13 +212,13 @@ class BreezeAutoLogin:
 
             wait = WebDriverWait(self.driver, 20)
 
-            # Wait for and fill User ID
+            # Wait for and fill User ID (mobile number)
             user_id_field = wait.until(
                 EC.presence_of_element_located((By.ID, self.SELECTORS['user_id']))
             )
             user_id_field.clear()
             user_id_field.send_keys(self.credentials.username)
-            logger.info("Filled User ID")
+            logger.info(f"Filled Mobile Number: {self.credentials.username}")
 
             # Fill Password
             password_field = self.driver.find_element(By.ID, self.SELECTORS['password'])
@@ -310,8 +327,21 @@ class BreezeAutoLogin:
 
             # Navigate to login page
             login_url = self._get_login_url()
-            logger.info(f"Navigating to Breeze login page...")
+            logger.info(f"Navigating to Breeze login page: {login_url}")
             self.driver.get(login_url)
+
+            # Wait for page to load and log current URL
+            time.sleep(2)
+            current_url = self.driver.current_url
+            logger.info(f"Current URL after navigation: {current_url}")
+
+            # Check if we were redirected to wrong page
+            if 'tradelogin' in current_url:
+                logger.warning(f"Redirected to tradelogin! Expected login page. Re-navigating...")
+                # Try navigating again with the correct URL
+                self.driver.get(login_url)
+                time.sleep(2)
+                logger.info(f"URL after re-navigation: {self.driver.current_url}")
 
             # Fill login form
             if not self._fill_login_form():

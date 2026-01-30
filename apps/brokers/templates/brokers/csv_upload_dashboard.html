@@ -1,0 +1,836 @@
+{% extends "core/base.html" %}
+{% load static %}
+
+{% block title %}CSV Trade History Import - mCube{% endblock %}
+
+{% block extra_css %}
+<style>
+    .upload-dashboard {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 2rem;
+    }
+
+    .page-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 2rem;
+    }
+
+    .page-header h1 {
+        font-size: 1.75rem;
+        font-weight: 600;
+        color: var(--darker);
+        margin: 0;
+    }
+
+    .upload-section {
+        background: var(--white);
+        border-radius: var(--radius-lg);
+        padding: 1.5rem;
+        box-shadow: var(--shadow-md);
+        margin-bottom: 2rem;
+    }
+
+    .upload-section h2 {
+        font-size: 1.125rem;
+        font-weight: 600;
+        margin-bottom: 1rem;
+        color: var(--darker);
+    }
+
+    .info-banner {
+        background: #eff6ff;
+        border: 1px solid #bfdbfe;
+        border-radius: var(--radius-md);
+        padding: 1rem;
+        margin-bottom: 1.5rem;
+        display: flex;
+        gap: 0.75rem;
+    }
+
+    .info-banner svg {
+        flex-shrink: 0;
+        width: 20px;
+        height: 20px;
+        color: #3b82f6;
+    }
+
+    .info-banner p {
+        margin: 0;
+        font-size: 0.875rem;
+        color: #1e40af;
+    }
+
+    .file-type-selector {
+        margin-bottom: 1.5rem;
+    }
+
+    .file-type-selector label {
+        display: block;
+        font-size: 0.875rem;
+        font-weight: 500;
+        margin-bottom: 0.5rem;
+        color: var(--gray);
+    }
+
+    .file-type-selector select {
+        width: 100%;
+        max-width: 400px;
+        padding: 0.75rem 1rem;
+        border: 1px solid var(--light);
+        border-radius: var(--radius-md);
+        font-size: 0.875rem;
+        background: white;
+    }
+
+    .drop-zone {
+        border: 2px dashed var(--light);
+        border-radius: var(--radius-lg);
+        padding: 3rem 2rem;
+        text-align: center;
+        transition: all 0.2s ease;
+        background: var(--lighter);
+        cursor: pointer;
+    }
+
+    .drop-zone:hover, .drop-zone.dragover {
+        border-color: var(--primary);
+        background: #f0f9ff;
+    }
+
+    .drop-zone svg {
+        width: 48px;
+        height: 48px;
+        color: var(--gray);
+        margin-bottom: 1rem;
+    }
+
+    .drop-zone h3 {
+        font-size: 1rem;
+        font-weight: 600;
+        color: var(--darker);
+        margin-bottom: 0.5rem;
+    }
+
+    .drop-zone p {
+        font-size: 0.875rem;
+        color: var(--gray);
+        margin: 0;
+    }
+
+    .drop-zone input[type="file"] {
+        display: none;
+    }
+
+    .file-preview {
+        display: none;
+        margin-top: 1rem;
+        padding: 1rem;
+        background: #f0fdf4;
+        border: 1px solid #bbf7d0;
+        border-radius: var(--radius-md);
+    }
+
+    .file-preview.show {
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+    }
+
+    .file-preview .file-info {
+        flex: 1;
+    }
+
+    .file-preview .file-name {
+        font-weight: 600;
+        color: var(--darker);
+    }
+
+    .file-preview .file-size {
+        font-size: 0.75rem;
+        color: var(--gray);
+    }
+
+    .file-preview .remove-file {
+        background: none;
+        border: none;
+        color: var(--danger);
+        cursor: pointer;
+        padding: 0.5rem;
+    }
+
+    .upload-actions {
+        margin-top: 1.5rem;
+        display: flex;
+        gap: 1rem;
+    }
+
+    .btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.75rem 1.5rem;
+        border-radius: var(--radius-md);
+        font-size: 0.875rem;
+        font-weight: 500;
+        cursor: pointer;
+        border: none;
+        transition: all 0.2s ease;
+    }
+
+    .btn-primary {
+        background: var(--primary);
+        color: white;
+    }
+
+    .btn-primary:hover {
+        background: var(--primary-dark);
+    }
+
+    .btn-secondary {
+        background: var(--light);
+        color: var(--darker);
+    }
+
+    .btn-secondary:hover {
+        background: var(--gray);
+        color: white;
+    }
+
+    .btn-danger {
+        background: var(--danger);
+        color: white;
+    }
+
+    .btn-danger:hover {
+        opacity: 0.9;
+    }
+
+    .btn:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+    }
+
+    .btn .spinner {
+        width: 16px;
+        height: 16px;
+        border: 2px solid transparent;
+        border-top-color: currentColor;
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+        display: none;
+    }
+
+    .btn.loading .spinner {
+        display: block;
+    }
+
+    .btn.loading .btn-text {
+        display: none;
+    }
+
+    @keyframes spin {
+        to { transform: rotate(360deg); }
+    }
+
+    /* Result Panel */
+    .result-panel {
+        background: var(--white);
+        border-radius: var(--radius-lg);
+        padding: 1.5rem;
+        box-shadow: var(--shadow-md);
+        margin-top: 1.5rem;
+        display: none;
+    }
+
+    .result-panel.show {
+        display: block;
+    }
+
+    .result-panel.success {
+        border-left: 4px solid var(--success);
+    }
+
+    .result-panel.error {
+        border-left: 4px solid var(--danger);
+    }
+
+    .result-panel h3 {
+        font-size: 1rem;
+        font-weight: 600;
+        margin-bottom: 1rem;
+        color: var(--darker);
+    }
+
+    .result-summary {
+        display: flex;
+        gap: 2rem;
+        margin-bottom: 1rem;
+    }
+
+    .result-item {
+        text-align: center;
+    }
+
+    .result-value {
+        font-size: 1.5rem;
+        font-weight: 700;
+    }
+
+    .result-value.success { color: var(--success); }
+    .result-value.warning { color: var(--warning); }
+    .result-value.info { color: var(--primary); }
+
+    .result-label {
+        font-size: 0.75rem;
+        color: var(--gray);
+    }
+
+    .result-details {
+        background: var(--lighter);
+        padding: 1rem;
+        border-radius: var(--radius-md);
+        font-size: 0.875rem;
+    }
+
+    .result-details pre {
+        margin: 0;
+        white-space: pre-wrap;
+        word-break: break-word;
+    }
+
+    /* Stats Cards */
+    .stats-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: 1.5rem;
+        margin-bottom: 2rem;
+    }
+
+    .stats-card {
+        background: var(--white);
+        border-radius: var(--radius-lg);
+        padding: 1.5rem;
+        box-shadow: var(--shadow-md);
+    }
+
+    .stats-card h3 {
+        font-size: 0.875rem;
+        font-weight: 600;
+        color: var(--gray);
+        margin-bottom: 1rem;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+
+    .stats-card .stat-row {
+        display: flex;
+        justify-content: space-between;
+        margin-bottom: 0.75rem;
+        font-size: 0.875rem;
+    }
+
+    .stats-card .stat-row:last-child {
+        margin-bottom: 0;
+        padding-top: 0.75rem;
+        border-top: 1px solid var(--light);
+    }
+
+    .stats-card .stat-label {
+        color: var(--gray);
+    }
+
+    .stats-card .stat-value {
+        font-weight: 600;
+        color: var(--darker);
+    }
+
+    .stats-card .stat-value.positive {
+        color: var(--success);
+    }
+
+    .stats-card .stat-value.negative {
+        color: var(--danger);
+    }
+
+    /* Imports Table */
+    .imports-section {
+        background: var(--white);
+        border-radius: var(--radius-lg);
+        padding: 1.5rem;
+        box-shadow: var(--shadow-md);
+    }
+
+    .imports-section h2 {
+        font-size: 1.125rem;
+        font-weight: 600;
+        margin-bottom: 1rem;
+        color: var(--darker);
+    }
+
+    .imports-table {
+        width: 100%;
+        border-collapse: collapse;
+    }
+
+    .imports-table th,
+    .imports-table td {
+        padding: 0.75rem 1rem;
+        text-align: left;
+        border-bottom: 1px solid var(--light);
+    }
+
+    .imports-table th {
+        font-size: 0.75rem;
+        font-weight: 600;
+        color: var(--gray);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+
+    .imports-table td {
+        font-size: 0.875rem;
+    }
+
+    .imports-table tr:hover td {
+        background: var(--lighter);
+    }
+
+    .status-badge {
+        display: inline-block;
+        padding: 0.25rem 0.75rem;
+        border-radius: 9999px;
+        font-size: 0.75rem;
+        font-weight: 500;
+    }
+
+    .status-badge.success {
+        background: #d1fae5;
+        color: #065f46;
+    }
+
+    .status-badge.partial {
+        background: #fef3c7;
+        color: #92400e;
+    }
+
+    .status-badge.failed {
+        background: #fee2e2;
+        color: #dc2626;
+    }
+
+    .status-badge.processing {
+        background: #dbeafe;
+        color: #1d4ed8;
+    }
+
+    .file-type-badge {
+        display: inline-block;
+        padding: 0.25rem 0.5rem;
+        border-radius: var(--radius-sm);
+        font-size: 0.75rem;
+        font-weight: 500;
+    }
+
+    .file-type-badge.kotak {
+        background: #fef3c7;
+        color: #92400e;
+    }
+
+    .file-type-badge.breeze {
+        background: #e0f2fe;
+        color: #0369a1;
+    }
+
+    .btn-sm {
+        padding: 0.375rem 0.75rem;
+        font-size: 0.75rem;
+    }
+
+    .empty-state {
+        text-align: center;
+        padding: 2rem;
+        color: var(--gray);
+    }
+
+    .empty-state svg {
+        width: 48px;
+        height: 48px;
+        margin-bottom: 1rem;
+        opacity: 0.5;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="upload-dashboard">
+    <div class="page-header">
+        <h1>CSV Trade History Import</h1>
+        <a href="{% url 'brokers:trade_sync_dashboard' %}" class="btn btn-secondary">
+            API Sync Dashboard
+        </a>
+    </div>
+
+    <div class="info-banner">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
+        <div>
+            <p><strong>Kotak F&O Gain/Loss:</strong> Download from Kotak Securities &gt; Reports &gt; Gain/Loss Report. Contains derivatives P&L with charges breakdown.</p>
+            <p><strong>Breeze FNO Portfolio:</strong> Download from ICICI Direct &gt; Portfolio &gt; F&O Portfolio. Contains realized and unrealized P&L per contract.</p>
+        </div>
+    </div>
+
+    <!-- Stats Cards -->
+    <div class="stats-grid">
+        <div class="stats-card">
+            <h3>Kotak Neo Imports</h3>
+            <div class="stat-row">
+                <span class="stat-label">Total Records</span>
+                <span class="stat-value">{{ kotak_summary.total_records|default:0 }}</span>
+            </div>
+            <div class="stat-row">
+                <span class="stat-label">Futures P&L</span>
+                <span class="stat-value {% if kotak_summary.futures_pnl and kotak_summary.futures_pnl > 0 %}positive{% elif kotak_summary.futures_pnl and kotak_summary.futures_pnl < 0 %}negative{% endif %}">
+                    {% if kotak_summary.futures_pnl %}{{ kotak_summary.futures_pnl|floatformat:2 }}{% else %}0.00{% endif %}
+                </span>
+            </div>
+            <div class="stat-row">
+                <span class="stat-label">Options P&L</span>
+                <span class="stat-value {% if kotak_summary.options_pnl and kotak_summary.options_pnl > 0 %}positive{% elif kotak_summary.options_pnl and kotak_summary.options_pnl < 0 %}negative{% endif %}">
+                    {% if kotak_summary.options_pnl %}{{ kotak_summary.options_pnl|floatformat:2 }}{% else %}0.00{% endif %}
+                </span>
+            </div>
+            <div class="stat-row">
+                <span class="stat-label">Total P&L</span>
+                <span class="stat-value {% if kotak_summary.total_pnl and kotak_summary.total_pnl > 0 %}positive{% elif kotak_summary.total_pnl and kotak_summary.total_pnl < 0 %}negative{% endif %}">
+                    {% if kotak_summary.total_pnl %}{{ kotak_summary.total_pnl|floatformat:2 }}{% else %}0.00{% endif %}
+                </span>
+            </div>
+        </div>
+
+        <div class="stats-card">
+            <h3>Breeze Imports</h3>
+            <div class="stat-row">
+                <span class="stat-label">Total Records</span>
+                <span class="stat-value">{{ breeze_summary.total_records|default:0 }}</span>
+            </div>
+            <div class="stat-row">
+                <span class="stat-label">Futures P&L</span>
+                <span class="stat-value {% if breeze_summary.futures_pnl and breeze_summary.futures_pnl > 0 %}positive{% elif breeze_summary.futures_pnl and breeze_summary.futures_pnl < 0 %}negative{% endif %}">
+                    {% if breeze_summary.futures_pnl %}{{ breeze_summary.futures_pnl|floatformat:2 }}{% else %}0.00{% endif %}
+                </span>
+            </div>
+            <div class="stat-row">
+                <span class="stat-label">Options P&L</span>
+                <span class="stat-value {% if breeze_summary.options_pnl and breeze_summary.options_pnl > 0 %}positive{% elif breeze_summary.options_pnl and breeze_summary.options_pnl < 0 %}negative{% endif %}">
+                    {% if breeze_summary.options_pnl %}{{ breeze_summary.options_pnl|floatformat:2 }}{% else %}0.00{% endif %}
+                </span>
+            </div>
+            <div class="stat-row">
+                <span class="stat-label">Total P&L</span>
+                <span class="stat-value {% if breeze_summary.total_pnl and breeze_summary.total_pnl > 0 %}positive{% elif breeze_summary.total_pnl and breeze_summary.total_pnl < 0 %}negative{% endif %}">
+                    {% if breeze_summary.total_pnl %}{{ breeze_summary.total_pnl|floatformat:2 }}{% else %}0.00{% endif %}
+                </span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Upload Section -->
+    <div class="upload-section">
+        <h2>Upload CSV File</h2>
+
+        <form id="upload-form" enctype="multipart/form-data">
+            {% csrf_token %}
+
+            <div class="file-type-selector">
+                <label for="file-type-select">File Type</label>
+                <select id="file-type-select" name="file_type" required>
+                    <option value="kotak_fno">Kotak F&O Gain/Loss</option>
+                    <option value="breeze_fno">Breeze FNO Portfolio</option>
+                </select>
+            </div>
+
+            <div class="drop-zone" id="drop-zone">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                </svg>
+                <h3>Drop CSV file here</h3>
+                <p>or click to browse</p>
+                <input type="file" id="csv-file-input" name="csv_file" accept=".csv" required>
+            </div>
+
+            <div class="file-preview" id="file-preview">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" width="24" height="24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+                <div class="file-info">
+                    <div class="file-name" id="file-name"></div>
+                    <div class="file-size" id="file-size"></div>
+                </div>
+                <button type="button" class="remove-file" id="remove-file">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" width="20" height="20">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                </button>
+            </div>
+
+            <div class="upload-actions">
+                <button type="submit" id="upload-btn" class="btn btn-primary" disabled>
+                    <span class="spinner"></span>
+                    <span class="btn-text">Upload & Import</span>
+                </button>
+            </div>
+        </form>
+
+        <!-- Result Panel -->
+        <div id="result-panel" class="result-panel">
+            <h3 id="result-title">Import Result</h3>
+            <div class="result-summary">
+                <div class="result-item">
+                    <div class="result-value success" id="result-created">0</div>
+                    <div class="result-label">Created</div>
+                </div>
+                <div class="result-item">
+                    <div class="result-value warning" id="result-updated">0</div>
+                    <div class="result-label">Updated</div>
+                </div>
+                <div class="result-item">
+                    <div class="result-value info" id="result-skipped">0</div>
+                    <div class="result-label">Skipped</div>
+                </div>
+            </div>
+            <div class="result-details">
+                <pre id="result-details"></pre>
+            </div>
+        </div>
+    </div>
+
+    <!-- Recent Imports -->
+    <div class="imports-section">
+        <h2>Recent Imports</h2>
+
+        {% if recent_imports %}
+        <table class="imports-table">
+            <thead>
+                <tr>
+                    <th>File Type</th>
+                    <th>Filename</th>
+                    <th>Status</th>
+                    <th>Records</th>
+                    <th>Imported</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for log in recent_imports %}
+                <tr data-batch-id="{{ log.import_batch_id }}">
+                    <td>
+                        <span class="file-type-badge {% if 'KOTAK' in log.file_type %}kotak{% else %}breeze{% endif %}">
+                            {{ log.get_file_type_display }}
+                        </span>
+                    </td>
+                    <td>{{ log.original_filename|truncatechars:40 }}</td>
+                    <td>
+                        <span class="status-badge {{ log.status|lower }}">
+                            {{ log.get_status_display }}
+                        </span>
+                    </td>
+                    <td>
+                        {{ log.records_created }} created
+                        {% if log.records_skipped %}, {{ log.records_skipped }} skipped{% endif %}
+                    </td>
+                    <td>{{ log.created_at|date:"M d, Y H:i" }}</td>
+                    <td>
+                        <button class="btn btn-sm btn-danger delete-batch-btn" data-batch-id="{{ log.import_batch_id }}">
+                            Delete
+                        </button>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <div class="empty-state">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+            </svg>
+            <p>No imports yet. Upload a CSV file to get started.</p>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+const csrfToken = '{{ csrf_token }}';
+const dropZone = document.getElementById('drop-zone');
+const fileInput = document.getElementById('csv-file-input');
+const filePreview = document.getElementById('file-preview');
+const fileName = document.getElementById('file-name');
+const fileSize = document.getElementById('file-size');
+const removeFileBtn = document.getElementById('remove-file');
+const uploadBtn = document.getElementById('upload-btn');
+const uploadForm = document.getElementById('upload-form');
+
+// Drag and drop handlers
+dropZone.addEventListener('click', () => fileInput.click());
+
+dropZone.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    dropZone.classList.add('dragover');
+});
+
+dropZone.addEventListener('dragleave', () => {
+    dropZone.classList.remove('dragover');
+});
+
+dropZone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    dropZone.classList.remove('dragover');
+
+    const files = e.dataTransfer.files;
+    if (files.length > 0 && files[0].name.toLowerCase().endsWith('.csv')) {
+        fileInput.files = files;
+        showFilePreview(files[0]);
+    } else {
+        alert('Please upload a CSV file');
+    }
+});
+
+fileInput.addEventListener('change', () => {
+    if (fileInput.files.length > 0) {
+        showFilePreview(fileInput.files[0]);
+    }
+});
+
+function showFilePreview(file) {
+    fileName.textContent = file.name;
+    fileSize.textContent = formatFileSize(file.size);
+    filePreview.classList.add('show');
+    uploadBtn.disabled = false;
+}
+
+function formatFileSize(bytes) {
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+}
+
+removeFileBtn.addEventListener('click', () => {
+    fileInput.value = '';
+    filePreview.classList.remove('show');
+    uploadBtn.disabled = true;
+});
+
+// Upload form handler
+uploadForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+
+    uploadBtn.classList.add('loading');
+    uploadBtn.disabled = true;
+
+    const formData = new FormData(uploadForm);
+
+    try {
+        const response = await fetch('{% url "brokers:api_upload_csv" %}', {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': csrfToken
+            },
+            body: formData
+        });
+
+        const data = await response.json();
+        showResult(data, data.success);
+
+        if (data.success) {
+            // Clear form
+            fileInput.value = '';
+            filePreview.classList.remove('show');
+
+            // Reload page to show new import
+            setTimeout(() => location.reload(), 2000);
+        }
+
+    } catch (error) {
+        showResult({ message: 'Error: ' + error.message, errors: [error.message] }, false);
+    } finally {
+        uploadBtn.classList.remove('loading');
+        uploadBtn.disabled = false;
+    }
+});
+
+function showResult(data, isSuccess) {
+    const panel = document.getElementById('result-panel');
+    panel.classList.add('show');
+    panel.classList.remove('success', 'error');
+    panel.classList.add(isSuccess ? 'success' : 'error');
+
+    document.getElementById('result-title').textContent = isSuccess ? 'Import Successful' : 'Import Failed';
+    document.getElementById('result-created').textContent = data.records_created || 0;
+    document.getElementById('result-updated').textContent = data.records_updated || 0;
+    document.getElementById('result-skipped').textContent = data.records_skipped || 0;
+
+    let details = data.message || '';
+    if (data.batch_id) {
+        details += `\nBatch ID: ${data.batch_id}`;
+    }
+    if (data.errors && data.errors.length > 0) {
+        details += '\n\nErrors:\n' + data.errors.slice(0, 10).join('\n');
+        if (data.errors.length > 10) {
+            details += `\n... and ${data.errors.length - 10} more errors`;
+        }
+    }
+    document.getElementById('result-details').textContent = details;
+
+    panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+// Delete batch handler
+document.querySelectorAll('.delete-batch-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+        const batchId = btn.dataset.batchId;
+        if (!confirm(`Delete import batch ${batchId} and all its records?`)) {
+            return;
+        }
+
+        btn.disabled = true;
+        btn.textContent = 'Deleting...';
+
+        try {
+            const response = await fetch(`/brokers/api/delete-import/${batchId}/`, {
+                method: 'POST',
+                headers: {
+                    'X-CSRFToken': csrfToken,
+                    'Content-Type': 'application/json'
+                }
+            });
+
+            const data = await response.json();
+
+            if (data.success) {
+                // Remove row from table
+                const row = btn.closest('tr');
+                row.remove();
+
+                // Reload to update stats
+                setTimeout(() => location.reload(), 500);
+            } else {
+                alert('Delete failed: ' + (data.error || 'Unknown error'));
+                btn.disabled = false;
+                btn.textContent = 'Delete';
+            }
+
+        } catch (error) {
+            alert('Error: ' + error.message);
+            btn.disabled = false;
+            btn.textContent = 'Delete';
+        }
+    });
+});
+</script>
+{% endblock %}

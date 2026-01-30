@@ -1,0 +1,388 @@
+{% extends "analytics/base.html" %}
+{% load static %}
+
+{% block page_title %}Performance Dashboard{% endblock %}
+{% block page_description %}Comprehensive trading analytics and performance metrics{% endblock %}
+
+{% block extra_css %}
+{{ block.super }}
+<style>
+    /* Dashboard-specific styles */
+    .dashboard-filters {
+        display: flex;
+        gap: 1rem;
+        margin-bottom: 2rem;
+        flex-wrap: wrap;
+        align-items: center;
+    }
+
+    .dashboard-filters select {
+        padding: 0.75rem 1rem;
+        border: 1px solid var(--light);
+        border-radius: var(--radius-md);
+        font-size: 0.875rem;
+        min-width: 150px;
+    }
+
+    .dashboard-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: 1.5rem;
+        margin-bottom: 2rem;
+    }
+
+    .summary-card {
+        background: var(--white);
+        padding: 1.5rem;
+        border-radius: var(--radius-lg);
+        box-shadow: var(--shadow-md);
+    }
+
+    .summary-card-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 1rem;
+    }
+
+    .summary-card-label {
+        color: var(--gray);
+        font-size: 0.875rem;
+        font-weight: 500;
+    }
+
+    .summary-card-value {
+        font-size: 2rem;
+        font-weight: 700;
+        color: var(--darker);
+    }
+
+    .summary-card-value.positive { color: var(--success); }
+    .summary-card-value.negative { color: var(--danger); }
+
+    .summary-card-change {
+        font-size: 0.875rem;
+        margin-top: 0.5rem;
+    }
+
+    .charts-grid {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 1.5rem;
+        margin-bottom: 2rem;
+    }
+
+    @media (max-width: 1024px) {
+        .charts-grid {
+            grid-template-columns: 1fr;
+        }
+    }
+
+    .chart-card {
+        background: var(--white);
+        padding: 1.5rem;
+        border-radius: var(--radius-lg);
+        box-shadow: var(--shadow-md);
+    }
+
+    .chart-card-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 1rem;
+    }
+
+    .chart-card-title {
+        font-size: 1.125rem;
+        font-weight: 600;
+        color: var(--darker);
+    }
+
+    .chart-area {
+        height: 300px;
+        position: relative;
+    }
+
+    .full-width { grid-column: 1 / -1; }
+
+    .loading-overlay {
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: rgba(255, 255, 255, 0.8);
+        z-index: 10;
+    }
+
+    .spinner {
+        width: 40px;
+        height: 40px;
+        border: 4px solid var(--light);
+        border-top-color: var(--primary);
+        border-radius: 50%;
+        animation: spin 1s linear infinite;
+    }
+
+    @keyframes spin {
+        to { transform: rotate(360deg); }
+    }
+
+    .benchmark-comparison {
+        display: flex;
+        gap: 2rem;
+        align-items: center;
+        padding: 1rem;
+        background: var(--lighter);
+        border-radius: var(--radius-md);
+        margin-top: 1rem;
+    }
+
+    .benchmark-item {
+        text-align: center;
+    }
+
+    .benchmark-label {
+        font-size: 0.75rem;
+        color: var(--gray);
+        text-transform: uppercase;
+    }
+
+    .benchmark-value {
+        font-size: 1.25rem;
+        font-weight: 700;
+    }
+
+    .trades-table {
+        width: 100%;
+        border-collapse: collapse;
+    }
+
+    .trades-table th, .trades-table td {
+        padding: 0.75rem;
+        text-align: left;
+        border-bottom: 1px solid var(--light);
+    }
+
+    .trades-table th {
+        color: var(--gray);
+        font-weight: 500;
+        font-size: 0.813rem;
+        text-transform: uppercase;
+    }
+
+    .pnl-positive { color: var(--success); }
+    .pnl-negative { color: var(--danger); }
+</style>
+{% endblock %}
+
+{% block page_content %}
+<!-- Filters -->
+<div class="dashboard-filters">
+    <label>
+        <select id="account-filter">
+            <option value="">All Accounts</option>
+            {% for account in accounts %}
+            <option value="{{ account.id }}">{{ account.account_name }}</option>
+            {% endfor %}
+        </select>
+    </label>
+    <label>
+        <select id="period-filter">
+            <option value="1D">Today</option>
+            <option value="1W">This Week</option>
+            <option value="1M">This Month</option>
+            <option value="3M">3 Months</option>
+            <option value="6M">6 Months</option>
+            <option value="1Y">1 Year</option>
+            <option value="FY" selected>Financial Year</option>
+            <option value="YTD">Year to Date</option>
+            <option value="ALL">All Time</option>
+        </select>
+    </label>
+    <button id="refresh-btn" class="btn btn-primary btn-sm">
+        Refresh Data
+    </button>
+    <a href="{% url 'brokers:trade_sync_dashboard' %}" class="btn btn-sm" style="background: var(--warning); color: white;">
+        Sync Broker Trades
+    </a>
+</div>
+
+<!-- Summary Cards -->
+<div class="dashboard-grid" id="summary-cards">
+    <div class="summary-card">
+        <div class="summary-card-header">
+            <span class="summary-card-label">Total P&L</span>
+        </div>
+        <div class="summary-card-value" id="total-pnl">--</div>
+    </div>
+    <div class="summary-card">
+        <div class="summary-card-header">
+            <span class="summary-card-label">Win Rate</span>
+        </div>
+        <div class="summary-card-value" id="win-rate">--</div>
+    </div>
+    <div class="summary-card">
+        <div class="summary-card-header">
+            <span class="summary-card-label">Total Trades</span>
+        </div>
+        <div class="summary-card-value" id="total-trades">--</div>
+    </div>
+    <div class="summary-card">
+        <div class="summary-card-header">
+            <span class="summary-card-label">Profit Factor</span>
+        </div>
+        <div class="summary-card-value" id="profit-factor">--</div>
+    </div>
+    <div class="summary-card">
+        <div class="summary-card-header">
+            <span class="summary-card-label">Sharpe Ratio</span>
+        </div>
+        <div class="summary-card-value" id="sharpe-ratio">--</div>
+    </div>
+    <div class="summary-card">
+        <div class="summary-card-header">
+            <span class="summary-card-label">Max Drawdown</span>
+        </div>
+        <div class="summary-card-value" id="max-drawdown">--</div>
+    </div>
+</div>
+
+<!-- Charts Row 1: P&L Chart and Equity Curve -->
+<div class="charts-grid">
+    <div class="chart-card">
+        <div class="chart-card-header">
+            <span class="chart-card-title">Daily P&L</span>
+            <select id="pnl-granularity" class="btn btn-sm">
+                <option value="daily">Daily</option>
+                <option value="weekly">Weekly</option>
+                <option value="monthly">Monthly</option>
+            </select>
+        </div>
+        <div class="chart-area" id="pnl-chart-container">
+            <div class="loading-overlay" id="pnl-loading">
+                <div class="spinner"></div>
+            </div>
+            <canvas id="pnl-chart"></canvas>
+        </div>
+    </div>
+    <div class="chart-card">
+        <div class="chart-card-header">
+            <span class="chart-card-title">Equity Curve</span>
+        </div>
+        <div class="chart-area" id="equity-chart-container">
+            <div class="loading-overlay" id="equity-loading">
+                <div class="spinner"></div>
+            </div>
+            <canvas id="equity-chart"></canvas>
+        </div>
+    </div>
+</div>
+
+<!-- Charts Row 2: Strategy Performance and Win/Loss Distribution -->
+<div class="charts-grid">
+    <div class="chart-card">
+        <div class="chart-card-header">
+            <span class="chart-card-title">Strategy Performance</span>
+        </div>
+        <div class="chart-area" id="strategy-chart-container">
+            <div class="loading-overlay" id="strategy-loading">
+                <div class="spinner"></div>
+            </div>
+            <canvas id="strategy-chart"></canvas>
+        </div>
+    </div>
+    <div class="chart-card">
+        <div class="chart-card-header">
+            <span class="chart-card-title">Win/Loss Distribution</span>
+        </div>
+        <div class="chart-area" id="distribution-chart-container">
+            <div class="loading-overlay" id="distribution-loading">
+                <div class="spinner"></div>
+            </div>
+            <canvas id="distribution-chart"></canvas>
+        </div>
+    </div>
+</div>
+
+<!-- Benchmark Comparison -->
+<div class="chart-card full-width" style="margin-bottom: 2rem;">
+    <div class="chart-card-header">
+        <span class="chart-card-title">Performance vs Benchmark</span>
+        <select id="benchmark-select" class="btn btn-sm">
+            <option value="NIFTY50">Nifty 50</option>
+            <option value="BANKNIFTY">Bank Nifty</option>
+        </select>
+    </div>
+    <div class="chart-area" id="benchmark-chart-container">
+        <div class="loading-overlay" id="benchmark-loading">
+            <div class="spinner"></div>
+        </div>
+        <canvas id="benchmark-chart"></canvas>
+    </div>
+    <div class="benchmark-comparison" id="benchmark-stats">
+        <div class="benchmark-item">
+            <div class="benchmark-label">Portfolio Return</div>
+            <div class="benchmark-value" id="portfolio-return">--</div>
+        </div>
+        <div class="benchmark-item">
+            <div class="benchmark-label">Benchmark Return</div>
+            <div class="benchmark-value" id="benchmark-return">--</div>
+        </div>
+        <div class="benchmark-item">
+            <div class="benchmark-label">Excess Return</div>
+            <div class="benchmark-value" id="excess-return">--</div>
+        </div>
+        <div class="benchmark-item">
+            <div class="benchmark-label">Beta</div>
+            <div class="benchmark-value" id="beta-value">--</div>
+        </div>
+        <div class="benchmark-item">
+            <div class="benchmark-label">Alpha</div>
+            <div class="benchmark-value" id="alpha-value">--</div>
+        </div>
+    </div>
+</div>
+
+<!-- Best and Worst Trades -->
+<div class="charts-grid">
+    <div class="chart-card">
+        <div class="chart-card-header">
+            <span class="chart-card-title">Best Trades</span>
+        </div>
+        <table class="trades-table" id="best-trades">
+            <thead>
+                <tr>
+                    <th>Instrument</th>
+                    <th>Strategy</th>
+                    <th>P&L</th>
+                </tr>
+            </thead>
+            <tbody></tbody>
+        </table>
+    </div>
+    <div class="chart-card">
+        <div class="chart-card-header">
+            <span class="chart-card-title">Worst Trades</span>
+        </div>
+        <table class="trades-table" id="worst-trades">
+            <thead>
+                <tr>
+                    <th>Instrument</th>
+                    <th>Strategy</th>
+                    <th>P&L</th>
+                </tr>
+            </thead>
+            <tbody></tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="{% static 'js/analytics/dashboard.js' %}"></script>
+{% endblock %}

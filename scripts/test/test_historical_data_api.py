@@ -87,39 +87,99 @@ def test_stock_data(user):
     return result.get('success', False)
 
 
-def test_futures_data(user):
-    """Test fetching futures data"""
-    print("\n" + "="*80)
-    print("TEST 2: Fetching Futures Data (NIFTY - NFO)")
-    print("="*80)
-
-    # Calculate next expiry (last Thursday of current month)
+def get_monthly_expiry(months_ahead=0):
+    """Get the last Thursday of specified month (monthly expiry)
+    months_ahead: 0 = current month, 1 = next month, etc.
+    If current month's expiry has passed, automatically uses next month.
+    """
     from calendar import monthrange
     today = datetime.now().date()
-    last_day = monthrange(today.year, today.month)[1]
-    last_date = datetime(today.year, today.month, last_day).date()
+
+    # Calculate target month
+    month = today.month + months_ahead
+    year = today.year
+    while month > 12:
+        month -= 12
+        year += 1
+
+    last_day = monthrange(year, month)[1]
+    last_date = datetime(year, month, last_day).date()
     last_thursday = last_date
     while last_thursday.weekday() != 3:  # 3 = Thursday
         last_thursday -= timedelta(days=1)
 
-    if last_thursday <= today:
-        # Move to next month
-        if today.month == 12:
-            next_month = 1
-            next_year = today.year + 1
-        else:
-            next_month = today.month + 1
-            next_year = today.year
-        last_day = monthrange(next_year, next_month)[1]
-        last_date = datetime(next_year, next_month, last_day).date()
-        last_thursday = last_date
-        while last_thursday.weekday() != 3:
-            last_thursday -= timedelta(days=1)
+    # If expiry has passed, get next month's expiry
+    if last_thursday < today:
+        return get_monthly_expiry(months_ahead + 1)
 
-    expiry_date = last_thursday.strftime('%Y-%m-%d')
+    return last_thursday
+
+
+def get_next_weekly_expiry():
+    """Get next Thursday (weekly expiry) - today if Thursday before market close, else next Thursday"""
+    today = datetime.now().date()
+    days_until_thursday = (3 - today.weekday()) % 7
+    if days_until_thursday == 0:
+        # It's Thursday - use today if before market close (3:30 PM)
+        if datetime.now().hour >= 16:
+            days_until_thursday = 7
+    elif days_until_thursday < 0:
+        days_until_thursday += 7
+    return today + timedelta(days=days_until_thursday)
+
+
+def get_known_futures_expiry(stock_code='MARUTI'):
+    """Get a known working expiry date from database or use Breeze-compatible date"""
+    from apps.brokers.models import HistoricalPrice
+
+    # Try to get expiry from existing database records
+    existing = HistoricalPrice.objects.filter(
+        stock_code=stock_code,
+        product_type='futures'
+    ).values('expiry_date').first()
+
+    if existing and existing['expiry_date']:
+        return existing['expiry_date'].strftime('%Y-%m-%d')
+
+    # Fallback: Breeze uses last Tuesday of month for stock futures (not Thursday)
+    # This is different from index futures which use Thursday
+    from calendar import monthrange
+    today = datetime.now().date()
+
+    # Get next month if we're past mid-month
+    if today.day > 15:
+        month = today.month + 1
+        year = today.year
+        if month > 12:
+            month = 1
+            year += 1
+    else:
+        month = today.month
+        year = today.year
+
+    last_day = monthrange(year, month)[1]
+    last_date = datetime(year, month, last_day).date()
+
+    # Find last Tuesday (weekday 1) - Breeze uses Tuesday for stock F&O
+    last_tuesday = last_date
+    while last_tuesday.weekday() != 1:
+        last_tuesday -= timedelta(days=1)
+
+    return last_tuesday.strftime('%Y-%m-%d')
+
+
+def test_futures_data(user):
+    """Test fetching futures data"""
+    print("\n" + "="*80)
+    print("TEST 2: Fetching Stock Futures Data (MARUTI - NFO)")
+    print("="*80)
+
+    # Get expiry date from database or calculate Breeze-compatible date
+    expiry_date = get_known_futures_expiry('MARUTI')
+    print(f"\nUsing expiry date: {expiry_date}")
 
     data = {
-        'stock_code': 'NIFTY',
+        'stock_code': 'MARUTI',
         'exchange_code': 'NFO',
         'product_type': 'futures',
         'expiry_date': expiry_date,
@@ -128,7 +188,7 @@ def test_futures_data(user):
         'interval': '5minute'
     }
 
-    print(f"\nRequest Data: {json.dumps(data, indent=2)}")
+    print(f"Request Data: {json.dumps(data, indent=2)}")
 
     request = create_test_request(user, data)
     response = get_breeze_historical_data(request)
@@ -150,48 +210,48 @@ def test_futures_data(user):
 
 
 def test_options_data(user):
-    """Test fetching options data"""
+    """Test fetching options data
+
+    Note: Options data fetching requires:
+    1. Correct expiry date (weekly for NIFTY - every Thursday)
+    2. Valid strike price near current NIFTY level
+    3. Market hours or recent trading data
+
+    This test may fail if the strike/expiry combination has no data.
+    """
     print("\n" + "="*80)
-    print("TEST 3: Fetching Options Data (NIFTY 24500 CE)")
+    print("TEST 3: Fetching Options Data (NIFTY CE)")
     print("="*80)
 
-    # Use same expiry calculation as futures test
-    from calendar import monthrange
+    # Use next Thursday for weekly expiry
     today = datetime.now().date()
-    last_day = monthrange(today.year, today.month)[1]
-    last_date = datetime(today.year, today.month, last_day).date()
-    last_thursday = last_date
-    while last_thursday.weekday() != 3:
-        last_thursday -= timedelta(days=1)
+    days_to_thursday = (3 - today.weekday()) % 7
+    if days_to_thursday == 0 and datetime.now().hour >= 16:
+        days_to_thursday = 7  # Use next week if past market close
+    next_thursday = today + timedelta(days=days_to_thursday)
+    expiry_date = next_thursday.strftime('%Y-%m-%d')
 
-    if last_thursday <= today:
-        if today.month == 12:
-            next_month = 1
-            next_year = today.year + 1
-        else:
-            next_month = today.month + 1
-            next_year = today.year
-        last_day = monthrange(next_year, next_month)[1]
-        last_date = datetime(next_year, next_month, last_day).date()
-        last_thursday = last_date
-        while last_thursday.weekday() != 3:
-            last_thursday -= timedelta(days=1)
+    # Use ATM strike - round to nearest 100
+    # Note: You may need to adjust this based on current NIFTY level
+    strike_price = 23000
 
-    expiry_date = last_thursday.strftime('%Y-%m-%d')
+    print(f"\nNote: Options test uses expiry={expiry_date}, strike={strike_price}")
+    print("      If this fails, the strike/expiry combination may not have data.")
+    print("      Adjust strike_price based on current NIFTY level.\n")
 
     data = {
         'stock_code': 'NIFTY',
         'exchange_code': 'NFO',
         'product_type': 'options',
         'expiry_date': expiry_date,
-        'strike_price': 24500,
+        'strike_price': strike_price,
         'right': 'call',
         'from_date': (datetime.now() - timedelta(days=3)).strftime('%Y-%m-%d'),
         'to_date': datetime.now().strftime('%Y-%m-%d'),
         'interval': '1minute'
     }
 
-    print(f"\nRequest Data: {json.dumps(data, indent=2)}")
+    print(f"Request Data: {json.dumps(data, indent=2)}")
 
     request = create_test_request(user, data)
     response = get_breeze_historical_data(request)

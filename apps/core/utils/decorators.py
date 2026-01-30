@@ -342,3 +342,46 @@ def cache_result(timeout: int = 300):
 
         return wrapper
     return decorator
+
+
+def task_enabled_guard(task_key: str):
+    """
+    Decorator to check if a Celery task is enabled before executing.
+
+    Tasks are disabled by default and must be explicitly enabled via the
+    background tasks UI. If a task is disabled, execution is skipped and
+    a log message is recorded.
+
+    Args:
+        task_key: The task key from beat_schedule (e.g., 'fetch-trendlyne-data-daily')
+
+    Usage:
+        @shared_task(name='fetch_trendlyne_data', bind=True)
+        @task_enabled_guard('fetch-trendlyne-data-daily')
+        def fetch_trendlyne_data(self):
+            # Task logic - only runs if task is enabled
+            pass
+
+    Returns:
+        - If enabled: Executes the task normally
+        - If disabled: Returns {'status': 'skipped', 'reason': 'Task disabled'}
+    """
+    def decorator(task_func: Callable) -> Callable:
+        @functools.wraps(task_func)
+        def wrapper(*args, **kwargs):
+            from apps.core.models import CeleryTaskState
+
+            # Check if task is enabled
+            if not CeleryTaskState.is_task_enabled(task_key):
+                logger.info(f"Task '{task_key}' is disabled. Skipping execution.")
+                return {
+                    'status': 'skipped',
+                    'reason': 'Task disabled',
+                    'task_key': task_key
+                }
+
+            # Task is enabled, execute normally
+            return task_func(*args, **kwargs)
+
+        return wrapper
+    return decorator

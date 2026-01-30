@@ -29,9 +29,19 @@ class TelegramClient:
     """
 
     def __init__(self):
-        """Initialize Telegram client with credentials from environment"""
+        """Initialize Telegram client with credentials from environment or Django settings"""
+        # Try environment variables first, then fall back to Django settings
         self.bot_token = os.getenv('TELEGRAM_BOT_TOKEN')
         self.default_chat_id = os.getenv('TELEGRAM_CHAT_ID')
+
+        # Fall back to Django settings if environment variables are not set
+        if not self.bot_token:
+            try:
+                from django.conf import settings
+                self.bot_token = getattr(settings, 'TELEGRAM_BOT_TOKEN', None)
+                self.default_chat_id = self.default_chat_id or getattr(settings, 'TELEGRAM_CHAT_ID', None)
+            except Exception:
+                pass
 
         if not self.bot_token:
             logger.warning("TELEGRAM_BOT_TOKEN not set. Telegram notifications disabled.")

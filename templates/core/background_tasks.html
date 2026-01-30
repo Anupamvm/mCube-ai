@@ -303,6 +303,10 @@
     <div class="header">
         <h1>Background Tasks</h1>
         <p>Manage all background tasks - Celery scheduled tasks and Django background tasks</p>
+        <p style="color: #ed8936; font-size: 13px; margin-top: 10px;">
+            <strong>Note:</strong> All tasks are inactive by default. Activate only the tasks you need.
+            Changes to Celery tasks require a Celery Beat restart to take full effect.
+        </p>
     </div>
 
     {% if messages %}
@@ -316,7 +320,7 @@
     <div class="stats">
         <div class="stat-card celery">
             <h3>Celery Tasks</h3>
-            <div class="value">{{ celery_enabled_count }}/{{ celery_total_count }}</div>
+            <div class="value">{{ celery_active_count }}/{{ celery_total_count }}</div>
             <div class="label">
                 <span class="status-indicator {% if celery_worker_status.active %}online{% else %}offline{% endif %}"></span>
                 {% if celery_worker_status.active %}Workers Active{% else %}No Workers{% endif %}
@@ -360,12 +364,12 @@
                 <form method="post" action="{% url 'core:celery_control_all' %}" style="display: inline;">
                     {% csrf_token %}
                     <input type="hidden" name="action" value="start">
-                    <button type="submit" class="btn btn-sm btn-success" onclick="return confirm('Start ALL trading schedule tasks?')">Start All</button>
+                    <button type="submit" class="btn btn-sm btn-success" onclick="return confirm('Activate ALL trading schedule tasks?')">Activate All</button>
                 </form>
                 <form method="post" action="{% url 'core:celery_control_all' %}" style="display: inline;">
                     {% csrf_token %}
                     <input type="hidden" name="action" value="stop">
-                    <button type="submit" class="btn btn-sm btn-danger" onclick="return confirm('Stop ALL trading schedule tasks?')">Stop All</button>
+                    <button type="submit" class="btn btn-sm btn-danger" onclick="return confirm('Deactivate ALL trading schedule tasks?')">Deactivate All</button>
                 </form>
             </div>
         </div>
@@ -383,10 +387,10 @@
             </div>
             <div class="task-actions">
                 {% if task.is_enabled %}
-                <span class="badge badge-success status-badge">Running</span>
+                <span class="badge badge-success status-badge">Active</span>
                 <button class="btn btn-sm btn-danger" onclick="toggleCeleryTask({{ task.id }}, this, 'stop')">Stop</button>
                 {% else %}
-                <span class="badge badge-warning status-badge">Stopped</span>
+                <span class="badge badge-warning status-badge">Inactive</span>
                 <button class="btn btn-sm btn-success" onclick="toggleCeleryTask({{ task.id }}, this, 'start')">Start</button>
                 {% endif %}
             </div>
@@ -403,12 +407,12 @@
                 <form method="post" action="{% url 'core:control_all_static_tasks' %}" style="display: inline;">
                     {% csrf_token %}
                     <input type="hidden" name="action" value="start">
-                    <button type="submit" class="btn btn-sm btn-success" onclick="return confirm('Start ALL system tasks?')">Start All</button>
+                    <button type="submit" class="btn btn-sm btn-success" onclick="return confirm('Activate ALL system tasks?')">Activate All</button>
                 </form>
                 <form method="post" action="{% url 'core:control_all_static_tasks' %}" style="display: inline;">
                     {% csrf_token %}
                     <input type="hidden" name="action" value="stop">
-                    <button type="submit" class="btn btn-sm btn-danger" onclick="return confirm('Stop ALL system tasks?')">Stop All</button>
+                    <button type="submit" class="btn btn-sm btn-danger" onclick="return confirm('Deactivate ALL system tasks?')">Deactivate All</button>
                 </form>
             </div>
         </div>
@@ -424,11 +428,11 @@
                 </div>
             </div>
             <div class="task-actions">
-                {% if task.is_enabled %}
-                <span class="badge badge-success status-badge">Running</span>
+                {% if task.is_active %}
+                <span class="badge badge-success status-badge">Active</span>
                 <button class="btn btn-sm btn-danger" onclick="toggleStaticTask('{{ task.key }}', '{{ task.task }}', this, 'stop')">Stop</button>
                 {% else %}
-                <span class="badge badge-warning status-badge">Stopped</span>
+                <span class="badge badge-warning status-badge">Inactive</span>
                 <button class="btn btn-sm btn-success" onclick="toggleStaticTask('{{ task.key }}', '{{ task.task }}', this, 'start')">Start</button>
                 {% endif %}
             </div>
@@ -518,7 +522,7 @@
         const actionsDiv = taskItem.querySelector('.task-actions');
 
         button.disabled = true;
-        button.textContent = action === 'start' ? 'Starting...' : 'Stopping...';
+        button.textContent = action === 'start' ? 'Activating...' : 'Deactivating...';
         taskItem.classList.add('loading');
 
         fetch('{% url "core:toggle_celery_task" task_id=0 %}'.replace('0', taskId), {
@@ -531,12 +535,12 @@
             if (data.success) {
                 if (data.is_enabled) {
                     actionsDiv.innerHTML = `
-                        <span class="badge badge-success status-badge">Running</span>
+                        <span class="badge badge-success status-badge">Active</span>
                         <button class="btn btn-sm btn-danger" onclick="toggleCeleryTask(${taskId}, this, 'stop')">Stop</button>
                     `;
                 } else {
                     actionsDiv.innerHTML = `
-                        <span class="badge badge-warning status-badge">Stopped</span>
+                        <span class="badge badge-warning status-badge">Inactive</span>
                         <button class="btn btn-sm btn-success" onclick="toggleCeleryTask(${taskId}, this, 'start')">Start</button>
                     `;
                 }
@@ -559,7 +563,7 @@
         const actionsDiv = taskItem.querySelector('.task-actions');
 
         button.disabled = true;
-        button.textContent = action === 'start' ? 'Starting...' : 'Stopping...';
+        button.textContent = action === 'start' ? 'Activating...' : 'Deactivating...';
         taskItem.classList.add('loading');
 
         const formData = new FormData();
@@ -577,12 +581,12 @@
             if (data.success) {
                 if (data.is_enabled) {
                     actionsDiv.innerHTML = `
-                        <span class="badge badge-success status-badge">Running</span>
+                        <span class="badge badge-success status-badge">Active</span>
                         <button class="btn btn-sm btn-danger" onclick="toggleStaticTask('${taskKey}', '${taskPath}', this, 'stop')">Stop</button>
                     `;
                 } else {
                     actionsDiv.innerHTML = `
-                        <span class="badge badge-warning status-badge">Stopped</span>
+                        <span class="badge badge-warning status-badge">Inactive</span>
                         <button class="btn btn-sm btn-success" onclick="toggleStaticTask('${taskKey}', '${taskPath}', this, 'start')">Start</button>
                     `;
                 }

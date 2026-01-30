@@ -2,92 +2,433 @@
 
 {% block title %}Breeze Login - mCube{% endblock %}
 
+{% block extra_css %}
+<style>
+    .breeze-login-container {
+        max-width: 600px;
+        margin: 40px auto;
+        padding: 0 20px;
+    }
+
+    .breeze-card {
+        background: white;
+        border-radius: 12px;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+        overflow: hidden;
+    }
+
+    .breeze-header {
+        background: linear-gradient(135deg, #1a237e 0%, #3949ab 100%);
+        color: white;
+        padding: 24px 30px;
+        text-align: center;
+    }
+
+    .breeze-header h2 {
+        margin: 0;
+        font-size: 1.5em;
+        font-weight: 600;
+    }
+
+    .breeze-header .subtitle {
+        margin-top: 8px;
+        opacity: 0.9;
+        font-size: 0.9em;
+    }
+
+    .breeze-body {
+        padding: 30px;
+    }
+
+    .status-badge {
+        display: inline-flex;
+        align-items: center;
+        padding: 8px 16px;
+        border-radius: 20px;
+        font-size: 0.9em;
+        font-weight: 500;
+        margin-bottom: 20px;
+    }
+
+    .status-badge.expired {
+        background: #fff3cd;
+        color: #856404;
+        border: 1px solid #ffc107;
+    }
+
+    .status-badge.valid {
+        background: #d4edda;
+        color: #155724;
+        border: 1px solid #28a745;
+    }
+
+    .status-badge .icon {
+        margin-right: 8px;
+        font-size: 1.1em;
+    }
+
+    .login-section {
+        background: #f8f9fa;
+        border-radius: 8px;
+        padding: 24px;
+        margin-bottom: 20px;
+    }
+
+    .login-section.ready {
+        background: linear-gradient(135deg, #e8f5e9 0%, #c8e6c9 100%);
+        border: 1px solid #4caf50;
+    }
+
+    .login-section.setup {
+        background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%);
+        border: 1px solid #2196f3;
+    }
+
+    .section-title {
+        font-size: 1.1em;
+        font-weight: 600;
+        margin-bottom: 12px;
+        display: flex;
+        align-items: center;
+    }
+
+    .section-title .icon {
+        margin-right: 10px;
+        font-size: 1.3em;
+    }
+
+    .form-group {
+        margin-bottom: 20px;
+    }
+
+    .form-group label {
+        display: block;
+        font-weight: 500;
+        margin-bottom: 6px;
+        color: #333;
+    }
+
+    .form-group input {
+        width: 100%;
+        padding: 12px 16px;
+        border: 2px solid #e0e0e0;
+        border-radius: 8px;
+        font-size: 1em;
+        transition: border-color 0.2s, box-shadow 0.2s;
+    }
+
+    .form-group input:focus {
+        outline: none;
+        border-color: #3949ab;
+        box-shadow: 0 0 0 3px rgba(57, 73, 171, 0.1);
+    }
+
+    .form-group .hint {
+        margin-top: 6px;
+        font-size: 0.85em;
+        color: #666;
+    }
+
+    .btn-launch {
+        width: 100%;
+        padding: 14px 24px;
+        font-size: 1.1em;
+        font-weight: 600;
+        border: none;
+        border-radius: 8px;
+        cursor: pointer;
+        transition: transform 0.1s, box-shadow 0.2s;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .btn-launch:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    }
+
+    .btn-launch:active {
+        transform: translateY(0);
+    }
+
+    .btn-launch.primary {
+        background: linear-gradient(135deg, #3949ab 0%, #1a237e 100%);
+        color: white;
+    }
+
+    .btn-launch.success {
+        background: linear-gradient(135deg, #43a047 0%, #2e7d32 100%);
+        color: white;
+    }
+
+    .btn-launch .icon {
+        margin-right: 10px;
+        font-size: 1.2em;
+    }
+
+    .steps-list {
+        list-style: none;
+        padding: 0;
+        margin: 16px 0;
+    }
+
+    .steps-list li {
+        padding: 8px 0;
+        padding-left: 28px;
+        position: relative;
+        color: #555;
+    }
+
+    .steps-list li::before {
+        content: attr(data-step);
+        position: absolute;
+        left: 0;
+        width: 20px;
+        height: 20px;
+        background: #3949ab;
+        color: white;
+        border-radius: 50%;
+        font-size: 0.75em;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: 600;
+    }
+
+    .divider {
+        display: flex;
+        align-items: center;
+        margin: 24px 0;
+        color: #999;
+        font-size: 0.85em;
+    }
+
+    .divider::before,
+    .divider::after {
+        content: '';
+        flex: 1;
+        height: 1px;
+        background: #ddd;
+    }
+
+    .divider span {
+        padding: 0 16px;
+    }
+
+    .manual-section {
+        background: #fafafa;
+        border-radius: 8px;
+        overflow: hidden;
+    }
+
+    .manual-toggle {
+        width: 100%;
+        padding: 14px 20px;
+        background: none;
+        border: none;
+        text-align: left;
+        font-size: 0.95em;
+        color: #666;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+    }
+
+    .manual-toggle:hover {
+        background: #f0f0f0;
+    }
+
+    .manual-content {
+        padding: 20px;
+        border-top: 1px solid #eee;
+        display: none;
+    }
+
+    .manual-content.show {
+        display: block;
+    }
+
+    .redirect-notice {
+        background: #fff8e1;
+        border-radius: 6px;
+        padding: 12px 16px;
+        margin-top: 16px;
+        font-size: 0.85em;
+        color: #f57c00;
+        display: flex;
+        align-items: flex-start;
+    }
+
+    .redirect-notice .icon {
+        margin-right: 10px;
+        font-size: 1.2em;
+    }
+</style>
+{% endblock %}
+
 {% block content %}
-<div class="card">
-    <h2>ICICI Breeze - Session Token</h2>
+<div class="breeze-login-container">
+    <div class="breeze-card">
+        <div class="breeze-header">
+            <h2>ICICI Breeze Authentication</h2>
+            <div class="subtitle">Secure API Session Login</div>
+        </div>
 
-    {% if token_valid %}
-    <div class="alert alert-success">
-        <strong>Status:</strong> Session token is valid for today.
-        <a href="{% url 'brokers:breeze_data' %}" class="btn btn-sm btn-primary ml-2">View Data</a>
-    </div>
-    {% endif %}
+        <div class="breeze-body">
+            {% if session_expired %}
+            <div class="status-badge expired">
+                <span class="icon">&#9888;</span>
+                Session Expired - Please re-authenticate
+            </div>
+            {% endif %}
 
-    {% if auto_login_available %}
-    <div class="card mb-4" style="background-color: #f8f9fa; border: 1px solid #28a745;">
-        <div class="card-body">
-            <h4 class="card-title">Automated Login</h4>
-            <p class="card-text">
-                Click the button below to automatically fill in your credentials.
-                A browser window will open where you need to <strong>enter the OTP manually</strong>.
-            </p>
-            <form method="post" action="{% url 'brokers:breeze_auto_login' %}">
-                {% csrf_token %}
-                <button type="submit" class="btn btn-success btn-lg">
-                    <i class="fas fa-magic"></i> Auto Login (Enter OTP in Browser)
+            {% if token_valid %}
+            <div class="status-badge valid">
+                <span class="icon">&#10004;</span>
+                Session Active
+            </div>
+            <div style="text-align: center; padding: 20px 0;">
+                {% if next_url %}
+                <a href="{{ next_url }}" class="btn-launch success" style="display: inline-flex; width: auto; padding: 12px 32px;">
+                    <span class="icon">&#8594;</span>
+                    Continue to {{ next_url }}
+                </a>
+                {% else %}
+                <a href="{% url 'brokers:breeze_data' %}" class="btn-launch success" style="display: inline-flex; width: auto; padding: 12px 32px;">
+                    <span class="icon">&#128200;</span>
+                    View Breeze Data
+                </a>
+                {% endif %}
+            </div>
+            {% else %}
+
+            {% if auto_login_available %}
+            <!-- Auto-login ready -->
+            <div class="login-section ready">
+                <div class="section-title">
+                    <span class="icon">&#9889;</span>
+                    One-Click Login Ready
+                </div>
+                <p style="margin-bottom: 16px; color: #2e7d32;">
+                    Your credentials are saved. Click below to launch the browser - just enter the OTP!
+                </p>
+                <form method="post" action="{% url 'brokers:breeze_auto_login' %}">
+                    {% csrf_token %}
+                    {% if next_url %}
+                    <input type="hidden" name="next" value="{{ next_url }}">
+                    {% endif %}
+                    <button type="submit" class="btn-launch success">
+                        <span class="icon">&#128274;</span>
+                        Launch Auto-Login
+                    </button>
+                </form>
+            </div>
+
+            {% else %}
+            <!-- Setup required -->
+            <div class="login-section setup">
+                <div class="section-title">
+                    <span class="icon">&#128272;</span>
+                    Enter Login Credentials
+                </div>
+                <p style="margin-bottom: 16px; color: #1565c0;">
+                    Enter your ICICI Direct credentials to enable auto-login.
+                </p>
+
+                <form method="post" action="{% url 'brokers:breeze_update_credentials' %}">
+                    {% csrf_token %}
+                    {% if next_url %}
+                    <input type="hidden" name="next" value="{{ next_url }}">
+                    {% endif %}
+                    <input type="hidden" name="auto_login" value="true">
+
+                    <div class="form-group">
+                        <label for="username">Mobile Number</label>
+                        <input type="tel" id="username" name="username"
+                               required placeholder="e.g., 9890688965"
+                               value="{{ stored_username|default:'' }}"
+                               pattern="[0-9]{10}" maxlength="10">
+                        <div class="hint">Your registered ICICI Direct mobile number</div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="password">Trading Password</label>
+                        <input type="password" id="password" name="password"
+                               required placeholder="Enter your password">
+                    </div>
+
+                    <button type="submit" class="btn-launch primary">
+                        <span class="icon">&#128640;</span>
+                        Save & Launch Login
+                    </button>
+                </form>
+
+                <ul class="steps-list" style="margin-top: 20px;">
+                    <li data-step="1">Chrome browser will open</li>
+                    <li data-step="2">Credentials auto-filled</li>
+                    <li data-step="3">Enter OTP on your phone</li>
+                    <li data-step="4">Session captured automatically</li>
+                </ul>
+            </div>
+            {% endif %}
+
+            {% if next_url %}
+            <div class="redirect-notice">
+                <span class="icon">&#128279;</span>
+                <span>After login, you'll be redirected to: <strong>{{ next_url }}</strong></span>
+            </div>
+            {% endif %}
+
+            {% endif %}
+
+            <div class="divider"><span>or</span></div>
+
+            <!-- Manual token entry -->
+            <div class="manual-section">
+                <button class="manual-toggle" onclick="toggleManual()">
+                    <span>Manual Token Entry</span>
+                    <span id="manual-arrow">&#9662;</span>
                 </button>
-            </form>
-            <small class="text-muted mt-2 d-block">
-                This will open Chrome, fill credentials, and wait for you to enter OTP.
-            </small>
+                <div class="manual-content" id="manual-content">
+                    <form method="post">
+                        {% csrf_token %}
+                        {% if next_url %}
+                        <input type="hidden" name="next" value="{{ next_url }}">
+                        {% endif %}
+                        <div class="form-group">
+                            <label for="session_token">Session Token</label>
+                            <input type="text" id="session_token" name="session_token"
+                                   required placeholder="Paste your session token here">
+                        </div>
+                        <button type="submit" class="btn-launch primary" style="background: #666;">
+                            Save Token
+                        </button>
+                    </form>
+                    <div class="hint" style="margin-top: 16px;">
+                        <strong>To get token manually:</strong><br>
+                        1. <a href="https://api.icicidirect.com/apiuser/login?api_key={{ api_key|urlencode }}" target="_blank">Click here to open ICICI login</a><br>
+                        2. Login and enter OTP<br>
+                        3. Copy token from redirect URL (after <code>apisession=</code>)
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
-    {% else %}
-    <div class="alert alert-warning">
-        <strong>Auto-login not configured.</strong>
-        To enable auto-login, run:
-        <code>python manage.py setup_breeze_credentials</code>
-        or manually add username/password in CredentialStore for 'breeze' service.
-    </div>
-    {% endif %}
-
-    <hr>
-
-    <h4>Manual Token Entry</h4>
-    <p>Alternatively, enter your daily session token from ICICI Direct portal:</p>
-
-    <form method="post">
-        {% csrf_token %}
-        <div class="form-group">
-            <label for="session_token">Session Token:</label>
-            <input type="text" id="session_token" name="session_token" class="form-control"
-                   required placeholder="Enter session token from ICICI portal">
-        </div>
-
-        <button type="submit" class="btn btn-primary">Save Token</button>
-    </form>
 </div>
 
-<div class="card mt-4">
-    <h3>How to get Session Token Manually</h3>
-    <ol>
-        <li>Go to: <a href="https://api.icicidirect.com/apiuser/login" target="_blank">https://api.icicidirect.com/apiuser/login</a></li>
-        <li>Login with your ICICI Direct credentials</li>
-        <li>Enter the OTP sent to your registered mobile</li>
-        <li>After successful login, you'll be redirected to a URL like:<br>
-            <code>https://127.0.0.1/?apisession=XXXXXXXX</code></li>
-        <li>Copy the value after <code>apisession=</code> and paste it above</li>
-        <li><strong>Note:</strong> Session tokens expire daily and must be refreshed each day</li>
-    </ol>
-</div>
-
-{% if not auto_login_available %}
-<div class="card mt-4">
-    <h3>Setup Auto-Login</h3>
-    <p>To enable automated login (fills credentials, you only enter OTP):</p>
-    <ol>
-        <li>Ensure your Breeze credentials are stored in the database</li>
-        <li>Run: <code>python manage.py setup_credentials --setup-breeze</code></li>
-        <li>When prompted, enter your:
-            <ul>
-                <li>API Key (from ICICI API portal)</li>
-                <li>API Secret</li>
-                <li>ICICI Direct User ID (login username)</li>
-                <li>ICICI Direct Password</li>
-            </ul>
-        </li>
-        <li>Chrome browser must be installed on this machine</li>
-    </ol>
-</div>
-{% endif %}
+<script>
+function toggleManual() {
+    const content = document.getElementById('manual-content');
+    const arrow = document.getElementById('manual-arrow');
+    if (content.classList.contains('show')) {
+        content.classList.remove('show');
+        arrow.innerHTML = '&#9662;';
+    } else {
+        content.classList.add('show');
+        arrow.innerHTML = '&#9652;';
+    }
+}
+</script>
 {% endblock %}

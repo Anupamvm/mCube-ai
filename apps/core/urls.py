@@ -45,6 +45,9 @@ urlpatterns = [
     path('celery/toggle-static/', views.toggle_static_task, name='toggle_static_task'),
     path('celery/control-all/', views.celery_control_all, name='celery_control_all'),
     path('celery/control-all-static/', views.control_all_static_tasks, name='control_all_static_tasks'),
+    path('celery/control-category/', views.control_category_tasks, name='control_category_tasks'),
+    path('celery/task-logs/', views.get_task_logs, name='get_task_logs'),
+    path('celery/all-logs/', views.get_all_celery_logs, name='get_all_celery_logs'),
     path('celery/reload/', views.reload_celery_schedule, name='reload_celery_schedule'),
 
     # Django Background Tasks Control

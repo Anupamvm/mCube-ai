@@ -19,15 +19,20 @@ This guide covers everything you need to set up and run mCube for the first time
 # Navigate to project
 cd /path/to/mCube-ai
 
-# Create virtual environment
-python3 -m venv venv
-source venv/bin/activate
+# Run installation script (creates venv automatically)
+./install_and_run.sh
 
-# Run installation script
-./install.sh
+# Or install and start services immediately
+./install_and_run.sh --run
 ```
 
-The script handles dependencies, database setup, and creates an admin user.
+The script handles:
+- Virtual environment creation
+- Dependencies installation
+- Database setup
+- Admin user creation
+- Broker credentials setup
+- Optionally starts all services (Django server, Telegram bot)
 
 ---
 

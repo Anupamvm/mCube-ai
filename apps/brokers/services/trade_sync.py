@@ -116,8 +116,8 @@ class TradeSyncService:
         """
         Sync trades from Kotak Neo API.
 
-        Note: Kotak Neo trade_report() only returns today's trades,
-        so date range filtering is limited.
+        The Neo trade_report() API returns all available trades with fill dates.
+        We filter to the requested date range after fetching.
         """
         from apps.brokers.integrations.kotak_neo import get_trade_book
 

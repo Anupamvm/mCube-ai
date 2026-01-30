@@ -409,6 +409,340 @@
         min-width: 150px;
         justify-content: flex-end;
     }
+
+    .category-section {
+        border-radius: 10px;
+        overflow: hidden;
+    }
+
+    .category-header {
+        display: flex;
+        align-items: center;
+    }
+
+    .category-header h2 {
+        font-size: 20px;
+        font-weight: 700;
+    }
+
+    .category-icon {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 40px;
+        height: 40px;
+    }
+
+    /* Modal styles */
+    .modal-overlay {
+        display: none;
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0, 0, 0, 0.6);
+        z-index: 1000;
+        justify-content: center;
+        align-items: center;
+    }
+
+    .modal-overlay.active {
+        display: flex;
+    }
+
+    .modal-content {
+        background: white;
+        border-radius: 12px;
+        width: 90%;
+        max-width: 900px;
+        max-height: 80vh;
+        display: flex;
+        flex-direction: column;
+        box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+    }
+
+    .modal-header {
+        padding: 20px 24px;
+        border-bottom: 1px solid #e2e8f0;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+    .modal-header h3 {
+        margin: 0;
+        color: #2d3748;
+        font-size: 18px;
+    }
+
+    .modal-close {
+        background: none;
+        border: none;
+        font-size: 24px;
+        cursor: pointer;
+        color: #718096;
+        padding: 0;
+        line-height: 1;
+    }
+
+    .modal-close:hover {
+        color: #2d3748;
+    }
+
+    .modal-body {
+        padding: 20px 24px;
+        overflow-y: auto;
+        flex: 1;
+    }
+
+    .log-entry {
+        padding: 12px;
+        margin-bottom: 8px;
+        border-radius: 8px;
+        background: #f7fafc;
+        border-left: 4px solid #cbd5e0;
+    }
+
+    .log-entry.log-info { border-left-color: #3182ce; }
+    .log-entry.log-success { border-left-color: #38a169; background: #f0fff4; }
+    .log-entry.log-warning { border-left-color: #dd6b20; background: #fffaf0; }
+    .log-entry.log-error { border-left-color: #e53e3e; background: #fff5f5; }
+    .log-entry.log-critical { border-left-color: #9b2c2c; background: #fff5f5; }
+
+    .log-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 6px;
+    }
+
+    .log-time {
+        font-size: 12px;
+        color: #718096;
+    }
+
+    .log-level {
+        font-size: 11px;
+        font-weight: 600;
+        text-transform: uppercase;
+        padding: 2px 8px;
+        border-radius: 4px;
+    }
+
+    .log-level.info { background: #bee3f8; color: #2c5282; }
+    .log-level.success { background: #c6f6d5; color: #22543d; }
+    .log-level.warning { background: #feebc8; color: #744210; }
+    .log-level.error { background: #fed7d7; color: #742a2a; }
+    .log-level.critical { background: #feb2b2; color: #742a2a; }
+
+    .log-action {
+        font-weight: 600;
+        color: #2d3748;
+        margin-bottom: 4px;
+    }
+
+    .log-message {
+        color: #4a5568;
+        font-size: 14px;
+    }
+
+    .log-meta {
+        margin-top: 8px;
+        font-size: 12px;
+        color: #718096;
+    }
+
+    .log-meta span {
+        margin-right: 12px;
+    }
+
+    .log-error-details {
+        margin-top: 8px;
+        padding: 8px;
+        background: #fed7d7;
+        border-radius: 4px;
+        font-family: monospace;
+        font-size: 12px;
+        color: #742a2a;
+        white-space: pre-wrap;
+        word-break: break-word;
+    }
+
+    .logs-empty {
+        text-align: center;
+        padding: 40px;
+        color: #718096;
+    }
+
+    .logs-loading {
+        text-align: center;
+        padding: 40px;
+        color: #718096;
+    }
+
+    /* Log Filters */
+    .logs-filters {
+        display: flex;
+        gap: 16px;
+        padding: 12px 24px;
+        background: #f7fafc;
+        border-bottom: 1px solid #e2e8f0;
+        align-items: center;
+        flex-wrap: wrap;
+    }
+
+    .filter-group {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .filter-group label {
+        font-size: 13px;
+        font-weight: 600;
+        color: #4a5568;
+    }
+
+    .filter-group select {
+        padding: 6px 12px;
+        border: 1px solid #cbd5e0;
+        border-radius: 6px;
+        font-size: 13px;
+        background: white;
+        cursor: pointer;
+    }
+
+    .filter-group select:focus {
+        outline: none;
+        border-color: #667eea;
+        box-shadow: 0 0 0 2px rgba(102, 126, 234, 0.2);
+    }
+
+    .logs-status-bar {
+        display: flex;
+        gap: 20px;
+        padding: 12px 24px;
+        background: #edf2f7;
+        border-bottom: 1px solid #e2e8f0;
+        font-size: 13px;
+    }
+
+    .logs-status-bar .status-item {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+
+    /* Status Toast */
+    .status-toast {
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        min-width: 350px;
+        max-width: 450px;
+        background: white;
+        border-radius: 12px;
+        box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+        z-index: 2000;
+        transform: translateX(500px);
+        transition: transform 0.3s ease;
+        overflow: hidden;
+    }
+
+    .status-toast.show {
+        transform: translateX(0);
+    }
+
+    .status-toast-header {
+        padding: 16px 20px;
+        background: #667eea;
+        color: white;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+    .status-toast-header.success { background: #38a169; }
+    .status-toast-header.error { background: #e53e3e; }
+    .status-toast-header.warning { background: #dd6b20; }
+
+    .status-toast-header h4 {
+        margin: 0;
+        font-size: 16px;
+        font-weight: 600;
+    }
+
+    .status-toast-close {
+        background: none;
+        border: none;
+        color: white;
+        font-size: 20px;
+        cursor: pointer;
+        opacity: 0.8;
+    }
+
+    .status-toast-close:hover {
+        opacity: 1;
+    }
+
+    .status-toast-body {
+        padding: 16px 20px;
+    }
+
+    .status-item {
+        display: flex;
+        align-items: center;
+        padding: 8px 0;
+        border-bottom: 1px solid #e2e8f0;
+    }
+
+    .status-item:last-child {
+        border-bottom: none;
+    }
+
+    .status-icon {
+        width: 24px;
+        height: 24px;
+        margin-right: 12px;
+        font-size: 16px;
+    }
+
+    .status-label {
+        flex: 1;
+        color: #4a5568;
+        font-size: 14px;
+    }
+
+    .status-value {
+        font-weight: 600;
+        font-size: 14px;
+    }
+
+    .status-value.success { color: #38a169; }
+    .status-value.error { color: #e53e3e; }
+    .status-value.warning { color: #dd6b20; }
+    .status-value.info { color: #3182ce; }
+
+    .active-tasks-summary {
+        margin-top: 12px;
+        padding: 12px;
+        background: #f7fafc;
+        border-radius: 8px;
+    }
+
+    .active-tasks-summary h5 {
+        margin: 0 0 8px 0;
+        font-size: 13px;
+        color: #718096;
+        text-transform: uppercase;
+    }
+
+    .active-tasks-count {
+        font-size: 28px;
+        font-weight: 700;
+        color: #38a169;
+    }
 </style>
 {% endblock %}
 
@@ -417,6 +751,9 @@
     <div class="header">
         <h1>Celery Task Control</h1>
         <p>Manage scheduled background tasks for the mCube Trading System</p>
+        <p style="color: #ed8936; font-size: 13px; margin-top: 10px;">
+            <strong>Note:</strong> All tasks are inactive by default. Activate only the tasks you need.
+        </p>
     </div>
 
     {% if messages %}
@@ -445,14 +782,14 @@
             </div>
         </div>
         <div class="stat-card enabled">
-            <h3>Tasks Enabled</h3>
+            <h3>Tasks Active</h3>
             <div class="value">{{ enabled_count }}</div>
-            <div class="label">Active Scheduled Tasks</div>
+            <div class="label">Will Run on Schedule</div>
         </div>
         <div class="stat-card disabled">
-            <h3>Tasks Disabled</h3>
+            <h3>Tasks Inactive</h3>
             <div class="value">{{ disabled_count }}</div>
-            <div class="label">Paused Tasks</div>
+            <div class="label">Paused/Stopped</div>
         </div>
         <div class="stat-card redis">
             <h3>Redis Status</h3>
@@ -467,23 +804,26 @@
     <div class="action-bar">
         <div>
             <strong>Quick Actions:</strong>
-            <span style="color: #718096; margin-left: 10px;">Enable or disable all trading tasks at once</span>
+            <span style="color: #718096; margin-left: 10px;">Activate or deactivate all trading tasks at once</span>
         </div>
         <div class="btn-group">
             <form method="post" action="{% url 'core:celery_control_all' %}" style="display: inline;">
                 {% csrf_token %}
                 <input type="hidden" name="action" value="start">
-                <button type="submit" class="btn btn-success" onclick="return confirm('Enable ALL scheduled tasks?')">
-                    Start All Tasks
+                <button type="submit" class="btn btn-success" onclick="return confirm('Activate ALL scheduled tasks?')">
+                    Activate All Tasks
                 </button>
             </form>
             <form method="post" action="{% url 'core:celery_control_all' %}" style="display: inline;">
                 {% csrf_token %}
                 <input type="hidden" name="action" value="stop">
-                <button type="submit" class="btn btn-danger" onclick="return confirm('Disable ALL scheduled tasks? This will stop all automated trading.')">
-                    Stop All Tasks
+                <button type="submit" class="btn btn-danger" onclick="return confirm('Deactivate ALL scheduled tasks? This will stop all automated trading.')">
+                    Deactivate All Tasks
                 </button>
             </form>
+            <button class="btn btn-primary" onclick="showAllCeleryLogs()">
+                All Celery Logs
+            </button>
             <a href="{% url 'core:celery_task_control' %}" class="btn btn-secondary">
                 Refresh
             </a>
@@ -515,14 +855,14 @@
             </div>
             <div class="task-actions">
                 {% if task.is_enabled %}
-                <span class="badge badge-success status-badge">Running</span>
+                <span class="badge badge-success status-badge">Active</span>
                 <button class="btn btn-sm btn-danger" onclick="toggleTask({{ task.id }}, this, 'stop')">
-                    Stop
+                    Deactivate
                 </button>
                 {% else %}
-                <span class="badge badge-warning status-badge">Stopped</span>
+                <span class="badge badge-warning status-badge">Inactive</span>
                 <button class="btn btn-sm btn-success" onclick="toggleTask({{ task.id }}, this, 'start')">
-                    Start
+                    Activate
                 </button>
                 {% endif %}
             </div>
@@ -534,34 +874,43 @@
         {% endfor %}
     </div>
 
-    <!-- Static Tasks -->
-    <div class="task-section">
+    <!-- Categorized System Tasks -->
+    {% for category in task_categories %}
+    {% if category.tasks %}
+    <div class="task-section category-section" style="border-top: 4px solid {{ category.color }};">
         <div class="section-header">
-            <h2>System Tasks</h2>
+            <div class="category-header">
+                <span class="category-icon" style="font-size: 24px; margin-right: 12px;">{{ category.icon }}</span>
+                <div>
+                    <h2 style="margin: 0; color: {{ category.color }};">{{ category.name }}</h2>
+                    <p style="color: #718096; font-size: 13px; margin: 4px 0 0 0;">{{ category.description }}</p>
+                </div>
+            </div>
             <div class="header-actions-inline">
-                <span class="badge badge-info">{{ static_tasks|length }} Tasks</span>
-                <form method="post" action="{% url 'core:control_all_static_tasks' %}" style="display: inline; margin-left: 10px;">
+                <span class="badge" style="background: {{ category.color }}20; color: {{ category.color }};">
+                    {{ category.active }}/{{ category.total }} Active
+                </span>
+                <form method="post" action="{% url 'core:control_category_tasks' %}" style="display: inline; margin-left: 10px;">
                     {% csrf_token %}
                     <input type="hidden" name="action" value="start">
-                    <button type="submit" class="btn btn-sm btn-success" onclick="return confirm('Start ALL system tasks?')">
-                        Start All
+                    <input type="hidden" name="category" value="{{ category.key }}">
+                    <button type="submit" class="btn btn-sm btn-success" onclick="return confirm('Activate all {{ category.name }} tasks?')">
+                        Activate All
                     </button>
                 </form>
-                <form method="post" action="{% url 'core:control_all_static_tasks' %}" style="display: inline;">
+                <form method="post" action="{% url 'core:control_category_tasks' %}" style="display: inline;">
                     {% csrf_token %}
                     <input type="hidden" name="action" value="stop">
-                    <button type="submit" class="btn btn-sm btn-danger" onclick="return confirm('Stop ALL system tasks?')">
-                        Stop All
+                    <input type="hidden" name="category" value="{{ category.key }}">
+                    <button type="submit" class="btn btn-sm btn-danger" onclick="return confirm('Deactivate all {{ category.name }} tasks?')">
+                        Deactivate All
                     </button>
                 </form>
             </div>
         </div>
-        <p style="color: #718096; margin-bottom: 15px; font-size: 14px;">
-            These tasks are defined in code. Changes require Celery Beat restart to take effect.
-        </p>
 
-        {% for task in static_tasks %}
-        <div class="static-task-item" id="static-task-{{ forloop.counter }}">
+        {% for task in category.tasks %}
+        <div class="static-task-item" id="static-task-{{ category.key }}-{{ forloop.counter }}" style="border-left-color: {{ category.color }};">
             <div class="task-content">
                 <div class="task-name">{{ task.key }}</div>
                 <div class="task-meta">
@@ -572,27 +921,100 @@
             </div>
             <div class="task-actions">
                 {% if task.is_enabled %}
-                <span class="badge badge-success status-badge">Running</span>
+                <span class="badge badge-success status-badge">Active</span>
                 <button class="btn btn-sm btn-danger" onclick="toggleStaticTask('{{ task.key }}', '{{ task.task }}', this, 'stop')">
-                    Stop
+                    Deactivate
                 </button>
                 {% else %}
-                <span class="badge badge-warning status-badge">Stopped</span>
+                <span class="badge badge-warning status-badge">Inactive</span>
                 <button class="btn btn-sm btn-success" onclick="toggleStaticTask('{{ task.key }}', '{{ task.task }}', this, 'start')">
-                    Start
+                    Activate
                 </button>
                 {% endif %}
+                <button class="btn btn-sm btn-secondary" onclick="showTaskLogs('{{ task.key }}', '{{ task.task }}')" title="View Logs">
+                    Logs
+                </button>
             </div>
         </div>
-        {% empty %}
-        <p style="color: #718096; text-align: center; padding: 20px;">
-            No static tasks found.
-        </p>
         {% endfor %}
     </div>
+    {% endif %}
+    {% empty %}
+    <div class="task-section">
+        <p style="color: #718096; text-align: center; padding: 20px;">
+            No system tasks found in schedule. Check celery.py configuration.
+        </p>
+    </div>
+    {% endfor %}
 
     <div class="timestamp">
         Last updated: {{ timestamp|date:"Y-m-d H:i:s" }}
+    </div>
+</div>
+
+<!-- Status Toast -->
+<div id="statusToast" class="status-toast">
+    <div class="status-toast-header" id="toastHeader">
+        <h4 id="toastTitle">Task Updated</h4>
+        <button class="status-toast-close" onclick="hideStatusToast()">&times;</button>
+    </div>
+    <div class="status-toast-body" id="toastBody">
+        <!-- Populated by JavaScript -->
+    </div>
+</div>
+
+<!-- Task Logs Modal -->
+<div id="logsModal" class="modal-overlay" onclick="closeLogsModal(event)">
+    <div class="modal-content" onclick="event.stopPropagation()" style="max-width: 1100px;">
+        <div class="modal-header">
+            <h3 id="logsModalTitle">Task Logs</h3>
+            <button class="modal-close" onclick="closeLogsModal()">&times;</button>
+        </div>
+        <!-- Filters -->
+        <div id="logsFilters" class="logs-filters" style="display: none;">
+            <div class="filter-group">
+                <label>Status:</label>
+                <select id="filterStatus" onchange="applyLogFilters()">
+                    <option value="all">All</option>
+                    <option value="success">Success</option>
+                    <option value="error">Errors</option>
+                    <option value="received">Received</option>
+                    <option value="scheduled">Scheduled</option>
+                </select>
+            </div>
+            <div class="filter-group">
+                <label>Source:</label>
+                <select id="filterSource" onchange="applyLogFilters()">
+                    <option value="all">All</option>
+                    <option value="worker">Worker</option>
+                    <option value="beat">Beat</option>
+                </select>
+            </div>
+            <div class="filter-group">
+                <label>Level:</label>
+                <select id="filterLevel" onchange="applyLogFilters()">
+                    <option value="all">All</option>
+                    <option value="info">Info</option>
+                    <option value="warning">Warning</option>
+                    <option value="error">Error</option>
+                </select>
+            </div>
+            <div class="filter-group">
+                <label>Limit:</label>
+                <select id="filterLimit" onchange="reloadLogs()">
+                    <option value="50">50</option>
+                    <option value="100" selected>100</option>
+                    <option value="200">200</option>
+                    <option value="500">500</option>
+                </select>
+            </div>
+            <button class="btn btn-sm btn-secondary" onclick="reloadLogs()">Refresh</button>
+        </div>
+        <!-- Status bar for all logs -->
+        <div id="logsStatusBar" style="display: none;"></div>
+        <div class="modal-body" id="logsModalBody">
+            <div class="logs-loading">Loading logs...</div>
+        </div>
     </div>
 </div>
 {% endblock %}
@@ -605,7 +1027,7 @@
 
         // Disable button and show loading
         button.disabled = true;
-        button.textContent = action === 'start' ? 'Starting...' : 'Stopping...';
+        button.textContent = action === 'start' ? 'Activating...' : 'Deactivating...';
         taskItem.classList.add('loading');
 
         fetch('{% url "core:toggle_celery_task" task_id=0 %}'.replace('0', taskId), {
@@ -622,16 +1044,16 @@
                 // Update the actions div with new state
                 if (data.is_enabled) {
                     actionsDiv.innerHTML = `
-                        <span class="badge badge-success status-badge">Running</span>
+                        <span class="badge badge-success status-badge">Active</span>
                         <button class="btn btn-sm btn-danger" onclick="toggleTask(${taskId}, this, 'stop')">
-                            Stop
+                            Deactivate
                         </button>
                     `;
                 } else {
                     actionsDiv.innerHTML = `
-                        <span class="badge badge-warning status-badge">Stopped</span>
+                        <span class="badge badge-warning status-badge">Inactive</span>
                         <button class="btn btn-sm btn-success" onclick="toggleTask(${taskId}, this, 'start')">
-                            Start
+                            Activate
                         </button>
                     `;
                 }
@@ -641,14 +1063,14 @@
             } else {
                 alert('Error: ' + data.error);
                 button.disabled = false;
-                button.textContent = action === 'start' ? 'Start' : 'Stop';
+                button.textContent = action === 'start' ? 'Activate' : 'Deactivate';
             }
         })
         .catch(error => {
             taskItem.classList.remove('loading');
             alert('Error toggling task: ' + error);
             button.disabled = false;
-            button.textContent = action === 'start' ? 'Start' : 'Stop';
+            button.textContent = action === 'start' ? 'Activate' : 'Deactivate';
         });
     }
 
@@ -671,7 +1093,7 @@
 
         // Disable button and show loading
         button.disabled = true;
-        button.textContent = action === 'start' ? 'Starting...' : 'Stopping...';
+        button.textContent = action === 'start' ? 'Activating...' : 'Deactivating...';
         taskItem.classList.add('loading');
 
         const formData = new FormData();
@@ -692,34 +1114,432 @@
                 // Update the actions div with new state
                 if (data.is_enabled) {
                     actionsDiv.innerHTML = `
-                        <span class="badge badge-success status-badge">Running</span>
+                        <span class="badge badge-success status-badge">Active</span>
                         <button class="btn btn-sm btn-danger" onclick="toggleStaticTask('${taskKey}', '${taskPath}', this, 'stop')">
-                            Stop
+                            Deactivate
+                        </button>
+                        <button class="btn btn-sm btn-secondary" onclick="showTaskLogs('${taskKey}', '${taskPath}')" title="View Logs">
+                            Logs
                         </button>
                     `;
                     updateStats(1);
                 } else {
                     actionsDiv.innerHTML = `
-                        <span class="badge badge-warning status-badge">Stopped</span>
+                        <span class="badge badge-warning status-badge">Inactive</span>
                         <button class="btn btn-sm btn-success" onclick="toggleStaticTask('${taskKey}', '${taskPath}', this, 'start')">
-                            Start
+                            Activate
+                        </button>
+                        <button class="btn btn-sm btn-secondary" onclick="showTaskLogs('${taskKey}', '${taskPath}')" title="View Logs">
+                            Logs
                         </button>
                     `;
                     updateStats(-1);
                 }
+
+                // Show status toast with Celery info
+                showStatusToast(taskKey, data);
             } else {
-                alert('Error: ' + data.error);
+                showStatusToast(taskKey, data, true);
                 button.disabled = false;
-                button.textContent = action === 'start' ? 'Start' : 'Stop';
+                button.textContent = action === 'start' ? 'Activate' : 'Deactivate';
             }
         })
         .catch(error => {
             taskItem.classList.remove('loading');
-            alert('Error toggling task: ' + error);
+            showStatusToast(taskKey, {error: error.toString()}, true);
             button.disabled = false;
-            button.textContent = action === 'start' ? 'Start' : 'Stop';
+            button.textContent = action === 'start' ? 'Activate' : 'Deactivate';
         });
     }
+
+    // =========================================================================
+    // Status Toast Functions
+    // =========================================================================
+
+    function showStatusToast(taskKey, data, isError = false) {
+        const toast = document.getElementById('statusToast');
+        const header = document.getElementById('toastHeader');
+        const title = document.getElementById('toastTitle');
+        const body = document.getElementById('toastBody');
+
+        if (isError) {
+            header.className = 'status-toast-header error';
+            title.textContent = 'Error';
+            body.innerHTML = `
+                <div class="status-item">
+                    <span class="status-icon">❌</span>
+                    <span class="status-label">${data.error || 'Unknown error'}</span>
+                </div>
+            `;
+        } else {
+            const celery = data.celery || {};
+            const activeTasks = data.active_tasks || {};
+
+            header.className = 'status-toast-header ' + (celery.success ? 'success' : 'warning');
+            title.textContent = data.is_enabled ? 'Task Activated' : 'Task Deactivated';
+
+            // Worker status - keep icon, text, and class consistent
+            let workerIcon = '⏳';
+            let workerClass = 'warning';
+            let workerText = 'Unknown';
+
+            if (celery.worker_status === 'failed') {
+                workerIcon = '❌';
+                workerClass = 'error';
+                workerText = 'Failed';
+            } else if (celery.worker_status === 'running') {
+                workerIcon = '✅';
+                workerClass = 'success';
+                workerText = 'Running';
+            } else if (celery.worker_started || celery.worker_status === 'started') {
+                workerIcon = '🚀';
+                workerClass = 'success';
+                workerText = 'Started';
+            }
+
+            // Beat status - keep icon, text, and class consistent
+            let beatIcon = '⏳';
+            let beatClass = 'warning';
+            let beatText = 'Unknown';
+
+            if (celery.beat_status === 'failed') {
+                beatIcon = '❌';
+                beatClass = 'error';
+                beatText = 'Failed';
+            } else if (celery.beat_restarted || celery.beat_status === 'restarted') {
+                beatIcon = '🔄';
+                beatClass = 'success';
+                beatText = 'Restarted';
+            }
+
+            // Show error message if present
+            let errorHtml = '';
+            if (celery.message && (celery.worker_status === 'failed' || celery.beat_status === 'failed')) {
+                errorHtml = `
+                    <div class="status-item" style="background: #fff5f5; padding: 10px; border-radius: 6px; margin-bottom: 8px;">
+                        <span class="status-icon">⚠️</span>
+                        <span class="status-label" style="color: #c53030;">${celery.message}</span>
+                    </div>
+                `;
+            }
+
+            body.innerHTML = `
+                ${errorHtml}
+                <div class="status-item">
+                    <span class="status-icon">📋</span>
+                    <span class="status-label">Task: ${taskKey}</span>
+                    <span class="status-value ${data.is_enabled ? 'success' : 'warning'}">
+                        ${data.is_enabled ? 'Active' : 'Inactive'}
+                    </span>
+                </div>
+                <div class="status-item">
+                    <span class="status-icon">${workerIcon}</span>
+                    <span class="status-label">Celery Worker</span>
+                    <span class="status-value ${workerClass}">${workerText}</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-icon">${beatIcon}</span>
+                    <span class="status-label">Celery Beat (Scheduler)</span>
+                    <span class="status-value ${beatClass}">${beatText}</span>
+                </div>
+                <div class="active-tasks-summary">
+                    <h5>Active Tasks</h5>
+                    <span class="active-tasks-count">${activeTasks.total_active || 0}</span>
+                    <span style="color: #718096; font-size: 14px;"> tasks scheduled</span>
+                </div>
+            `;
+        }
+
+        // Show toast (stays until manually closed)
+        toast.classList.add('show');
+    }
+
+    function hideStatusToast() {
+        const toast = document.getElementById('statusToast');
+        toast.classList.remove('show');
+    }
+
+    // =========================================================================
+    // Task Logs Modal Functions
+    // =========================================================================
+
+    // Global state for logs
+    let currentLogs = [];
+    let currentLogMode = 'all'; // 'all' or 'task'
+    let currentTaskName = '';
+
+    function showTaskLogs(taskKey, taskPath) {
+        const modal = document.getElementById('logsModal');
+        const title = document.getElementById('logsModalTitle');
+        const body = document.getElementById('logsModalBody');
+        const filters = document.getElementById('logsFilters');
+        const statusBar = document.getElementById('logsStatusBar');
+
+        // Set mode and task
+        currentLogMode = 'task';
+        currentTaskName = taskKey;
+
+        // Set title
+        title.textContent = `Logs: ${taskKey}`;
+
+        // Show filters, hide status bar for task logs
+        filters.style.display = 'flex';
+        statusBar.style.display = 'none';
+
+        // Reset filters
+        document.getElementById('filterStatus').value = 'all';
+        document.getElementById('filterSource').value = 'all';
+        document.getElementById('filterLevel').value = 'all';
+
+        // Show loading
+        body.innerHTML = '<div class="logs-loading">Loading logs...</div>';
+
+        // Show modal
+        modal.classList.add('active');
+        document.body.style.overflow = 'hidden';
+
+        // Fetch logs
+        const limit = document.getElementById('filterLimit').value;
+        fetch(`{% url "core:get_task_logs" %}?task_name=${encodeURIComponent(taskKey)}&limit=${limit}`)
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    currentLogs = data.logs;
+                    if (data.logs.length > 0) {
+                        body.innerHTML = renderLogs(data.logs);
+                    } else {
+                        body.innerHTML = `
+                            <div class="logs-empty">
+                                <p style="font-size: 48px; margin-bottom: 16px;">📋</p>
+                                <p>No logs found for <strong>${taskKey}</strong></p>
+                                <p style="font-size: 13px; margin-top: 8px;">Logs will appear here once the task runs.</p>
+                                <p style="font-size: 12px; margin-top: 16px; color: #a0aec0;">
+                                    Task path: ${taskPath || 'N/A'}
+                                </p>
+                            </div>
+                        `;
+                    }
+                } else {
+                    body.innerHTML = `
+                        <div class="logs-empty">
+                            <p>Error loading logs: ${data.error || 'Unknown error'}</p>
+                        </div>
+                    `;
+                }
+            })
+            .catch(error => {
+                body.innerHTML = `
+                    <div class="logs-empty">
+                        <p>Error loading logs: ${error}</p>
+                    </div>
+                `;
+            });
+    }
+
+    function renderLogs(logs) {
+        if (!logs || logs.length === 0) {
+            return '<div class="logs-empty"><p>No logs to display</p></div>';
+        }
+
+        let html = '';
+
+        for (const log of logs) {
+            // Determine the CSS class based on status or level
+            let statusClass = log.status || log.level || 'info';
+            if (statusClass === 'received') statusClass = 'info';
+            if (statusClass === 'scheduled') statusClass = 'info';
+            if (statusClass === 'starting') statusClass = 'info';
+
+            // Get status icon
+            let statusIcon = '';
+            if (log.status === 'success') statusIcon = '✅';
+            else if (log.status === 'error') statusIcon = '❌';
+            else if (log.status === 'received') statusIcon = '📥';
+            else if (log.status === 'scheduled') statusIcon = '📅';
+            else if (log.status === 'starting') statusIcon = '🚀';
+            else statusIcon = 'ℹ️';
+
+            // Get source badge
+            let sourceBadge = '';
+            if (log.source) {
+                const sourceColor = log.source === 'worker' ? '#667eea' : '#ed8936';
+                sourceBadge = `<span style="background: ${sourceColor}; color: white; padding: 2px 6px; border-radius: 4px; font-size: 10px; margin-left: 8px;">${log.source.toUpperCase()}</span>`;
+            }
+
+            html += `
+                <div class="log-entry log-${statusClass}" data-status="${log.status || ''}" data-source="${log.source || ''}" data-level="${log.level || ''}">
+                    <div class="log-header">
+                        <span class="log-time">${log.timestamp || ''}</span>
+                        <span class="log-level ${statusClass}">
+                            ${statusIcon} ${log.level ? log.level.toUpperCase() : ''}
+                            ${log.process ? `/ ${log.process}` : ''}
+                        </span>
+                        ${sourceBadge}
+                    </div>
+                    <div class="log-message">${escapeHtml(log.message || '')}</div>
+                    <div class="log-meta">
+                        ${log.execution_time ? `<span>⏱️ ${log.execution_time}</span>` : ''}
+                        ${log.execution_time_ms ? `<span>⏱️ ${log.execution_time_ms}ms</span>` : ''}
+                    </div>
+                    ${log.error_details ? `<div class="log-error-details">${escapeHtml(log.error_details)}</div>` : ''}
+                </div>
+            `;
+        }
+
+        return html;
+    }
+
+    function applyLogFilters() {
+        const statusFilter = document.getElementById('filterStatus').value;
+        const sourceFilter = document.getElementById('filterSource').value;
+        const levelFilter = document.getElementById('filterLevel').value;
+
+        const entries = document.querySelectorAll('#logsModalBody .log-entry');
+        let visibleCount = 0;
+
+        entries.forEach(entry => {
+            const status = entry.dataset.status || '';
+            const source = entry.dataset.source || '';
+            const level = entry.dataset.level || '';
+
+            let show = true;
+
+            if (statusFilter !== 'all' && status !== statusFilter) show = false;
+            if (sourceFilter !== 'all' && source !== sourceFilter) show = false;
+            if (levelFilter !== 'all' && level !== levelFilter) show = false;
+
+            entry.style.display = show ? 'block' : 'none';
+            if (show) visibleCount++;
+        });
+
+        // Show message if no results
+        const body = document.getElementById('logsModalBody');
+        const existingMsg = body.querySelector('.filter-no-results');
+        if (existingMsg) existingMsg.remove();
+
+        if (visibleCount === 0 && entries.length > 0) {
+            const msg = document.createElement('div');
+            msg.className = 'filter-no-results logs-empty';
+            msg.innerHTML = '<p>No logs match the current filters</p>';
+            body.prepend(msg);
+        }
+    }
+
+    function reloadLogs() {
+        if (currentLogMode === 'task') {
+            showTaskLogs(currentTaskName, '');
+        } else {
+            showAllCeleryLogs();
+        }
+    }
+
+    function escapeHtml(text) {
+        if (!text) return '';
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    function showAllCeleryLogs() {
+        const modal = document.getElementById('logsModal');
+        const title = document.getElementById('logsModalTitle');
+        const body = document.getElementById('logsModalBody');
+        const filters = document.getElementById('logsFilters');
+        const statusBar = document.getElementById('logsStatusBar');
+
+        // Set mode
+        currentLogMode = 'all';
+        currentTaskName = '';
+
+        // Set title
+        title.textContent = 'All Celery Logs';
+
+        // Show filters
+        filters.style.display = 'flex';
+        statusBar.style.display = 'block';
+
+        // Show loading
+        body.innerHTML = '<div class="logs-loading">Loading celery logs...</div>';
+
+        // Show modal
+        modal.classList.add('active');
+        document.body.style.overflow = 'hidden';
+
+        // Fetch all logs with limit from filter
+        const limit = document.getElementById('filterLimit').value;
+        fetch(`{% url "core:get_all_celery_logs" %}?limit=${limit}`)
+            .then(response => response.json())
+            .then(data => {
+                currentLogs = data.logs || [];
+
+                // Update status bar
+                statusBar.innerHTML = `
+                    <div class="logs-status-bar">
+                        <div class="status-item">
+                            <strong>Worker:</strong>
+                            ${data.status?.worker_running ? '<span style="color: #38a169;">✅ Running</span>' : '<span style="color: #e53e3e;">❌ Not Running</span>'}
+                        </div>
+                        <div class="status-item">
+                            <strong>Beat:</strong>
+                            ${data.status?.beat_running ? '<span style="color: #38a169;">✅ Running</span>' : '<span style="color: #e53e3e;">❌ Not Running</span>'}
+                        </div>
+                        <div class="status-item">
+                            <strong>Log Entries:</strong> ${data.count || 0}
+                        </div>
+                    </div>
+                `;
+
+                if (data.success && data.logs.length > 0) {
+                    body.innerHTML = renderLogs(data.logs);
+                } else if (data.success && data.logs.length === 0) {
+                    body.innerHTML = `
+                        <div class="logs-empty">
+                            <p style="font-size: 48px; margin-bottom: 16px;">📋</p>
+                            <p>No celery logs found.</p>
+                            <p style="font-size: 13px; margin-top: 8px;">Make sure Celery worker and beat are running.</p>
+                        </div>
+                    `;
+                } else {
+                    body.innerHTML = `
+                        <div class="logs-empty">
+                            <p>Error loading logs: ${data.error || 'Unknown error'}</p>
+                        </div>
+                    `;
+                }
+            })
+            .catch(error => {
+                body.innerHTML = `
+                    <div class="logs-empty">
+                        <p>Error loading logs: ${error}</p>
+                    </div>
+                `;
+            });
+    }
+
+    function closeLogsModal(event) {
+        if (event && event.target !== event.currentTarget) return;
+
+        const modal = document.getElementById('logsModal');
+        const filters = document.getElementById('logsFilters');
+        const statusBar = document.getElementById('logsStatusBar');
+
+        modal.classList.remove('active');
+        filters.style.display = 'none';
+        statusBar.style.display = 'none';
+        document.body.style.overflow = '';
+
+        // Reset state
+        currentLogs = [];
+        currentLogMode = 'all';
+        currentTaskName = '';
+    }
+
+    // Close modal on Escape key
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') {
+            closeLogsModal();
+        }
+    });
 
     // Auto-refresh every 2 minutes
     setTimeout(function() {

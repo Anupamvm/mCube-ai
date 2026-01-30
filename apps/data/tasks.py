@@ -664,6 +664,177 @@ def process_analyst_report_pdfs(self, limit: int = 50):
         return {"status": "error", "error": str(e)}
 
 
+@shared_task(name='morning_data_sync', bind=True)
+def morning_data_sync(self):
+    """
+    Complete morning data sync (Daily - 7:00 AM)
+
+    Runs the full morning data synchronization sequence:
+    1. Fetch and import Trendlyne data (market snapshot, F&O, forecaster)
+    2. Fetch and process market news with LLM analysis
+
+    This ensures all data is fresh before the trading day begins.
+    """
+    logger = TaskLogger(
+        task_name='morning_data_sync',
+        task_category='data',
+        task_id=self.request.id
+    )
+
+    logger.start("Starting morning data sync - Trendlyne + Market News")
+
+    results = {
+        'trendlyne': None,
+        'news': None,
+        'timestamp': timezone.now().isoformat()
+    }
+
+    # ==========================================================================
+    # STEP 1: Fetch and Import Trendlyne Data
+    # ==========================================================================
+    logger.step('trendlyne', "Step 1/2: Fetching and importing Trendlyne data")
+
+    try:
+        from django.core.management import call_command
+        from io import StringIO
+        from apps.data.models import ContractData, ContractStockData, TLStockData
+
+        output = StringIO()
+        call_command('trendlyne_data_manager', '--full-cycle', stdout=output)
+
+        # Get statistics
+        trendlyne_stats = {
+            'ContractData': ContractData.objects.count(),
+            'ContractStockData': ContractStockData.objects.count(),
+            'TLStockData': TLStockData.objects.count(),
+        }
+
+        results['trendlyne'] = {
+            'status': 'success',
+            'stats': trendlyne_stats,
+            'output': output.getvalue()[:500]
+        }
+
+        logger.info('trendlyne_complete', "Trendlyne data sync completed", context=trendlyne_stats)
+
+    except Exception as e:
+        results['trendlyne'] = {
+            'status': 'error',
+            'error': str(e)
+        }
+        logger.error('trendlyne_failed', f"Trendlyne sync failed: {e}")
+
+    # ==========================================================================
+    # STEP 2: Fetch and Process Market News
+    # ==========================================================================
+    logger.step('news', "Step 2/2: Fetching and processing market news")
+
+    try:
+        from apps.data.services.gnews_client import GNewsClient
+        from apps.data.models import NewsArticle
+        from apps.llm.services.news_processor import get_news_processor
+        from datetime import datetime
+
+        gnews_client = GNewsClient()
+
+        # Check if GNews API is configured
+        if not gnews_client.api_key:
+            results['news'] = {
+                'status': 'skipped',
+                'reason': 'GNews API key not configured'
+            }
+            logger.warning('news_skipped', "GNews API key not configured, skipping news fetch")
+        else:
+            # Fetch market news
+            news_result = gnews_client.fetch_market_news(
+                max_results_per_keyword=5,
+                use_cache=False
+            )
+
+            if not news_result.get('success'):
+                results['news'] = {
+                    'status': 'error',
+                    'error': news_result.get('error', 'Unknown error')
+                }
+                logger.error('news_fetch_failed', f"News fetch failed: {news_result.get('error')}")
+            else:
+                articles = news_result.get('articles', [])
+                news_processor = get_news_processor()
+
+                news_stats = {
+                    'fetched': len(articles),
+                    'processed': 0,
+                    'skipped': 0,
+                    'errors': 0
+                }
+
+                for article in articles:
+                    try:
+                        url = article.get('url', '')
+                        if url and NewsArticle.objects.filter(url=url).exists():
+                            news_stats['skipped'] += 1
+                            continue
+
+                        published_at = None
+                        if article.get('publishedAt'):
+                            try:
+                                published_at = datetime.fromisoformat(
+                                    article['publishedAt'].replace('Z', '+00:00')
+                                )
+                            except (ValueError, AttributeError):
+                                published_at = timezone.now()
+
+                        success, _, _ = news_processor.process_article(
+                            title=article.get('title', 'No Title'),
+                            content=article.get('content') or article.get('description', ''),
+                            source=article.get('source', {}).get('name', 'GNews'),
+                            url=url,
+                            published_at=published_at,
+                            symbols=[],
+                            author=None
+                        )
+
+                        if success:
+                            news_stats['processed'] += 1
+                        else:
+                            news_stats['errors'] += 1
+
+                    except Exception:
+                        news_stats['errors'] += 1
+
+                results['news'] = {
+                    'status': 'success',
+                    'stats': news_stats
+                }
+
+                logger.info('news_complete', "Market news processing completed", context=news_stats)
+
+    except Exception as e:
+        results['news'] = {
+            'status': 'error',
+            'error': str(e)
+        }
+        logger.error('news_failed', f"News processing failed: {e}")
+
+    # ==========================================================================
+    # Final Summary
+    # ==========================================================================
+    trendlyne_ok = results['trendlyne'] and results['trendlyne'].get('status') == 'success'
+    news_ok = results['news'] and results['news'].get('status') in ['success', 'skipped']
+
+    if trendlyne_ok and news_ok:
+        logger.success("Morning data sync completed successfully", context={
+            'trendlyne': results['trendlyne'].get('stats'),
+            'news': results['news'].get('stats') if results['news'].get('status') == 'success' else results['news'].get('status')
+        })
+        results['status'] = 'success'
+    else:
+        logger.warning('partial_success', "Morning data sync completed with some errors")
+        results['status'] = 'partial'
+
+    return results
+
+
 # Celery Beat Schedule
 """
 Add to your settings.py or celeryconfig.py:

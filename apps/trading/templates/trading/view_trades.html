@@ -767,7 +767,17 @@ function displayPositions(broker, positions) {
         return;
     }
 
+    // Calculate total P&L for all positions
+    const totalPnL = positions.reduce((sum, pos) => sum + parseFloat(pos.total_pnl || 0), 0);
+
     const tableHTML = `
+        <!-- Total P&L Summary (like Telegram) -->
+        <div style="background: ${totalPnL >= 0 ? 'linear-gradient(135deg, #10b981 0%, #059669 100%)' : 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)'}; color: white; padding: 20px; border-radius: 8px; margin-bottom: 20px; text-align: center;">
+            <div style="font-size: 0.875rem; opacity: 0.9; margin-bottom: 5px;">Total P&L</div>
+            <div style="font-size: 2.5rem; font-weight: 700;">₹${formatIndianNumber(Math.abs(totalPnL).toFixed(0))}${totalPnL >= 0 ? '' : ' Loss'}</div>
+            <div style="font-size: 0.875rem; opacity: 0.9; margin-top: 5px;">${positions.length} position(s)</div>
+        </div>
+
         <div class="table-container">
         <table class="positions-table">
             <thead>
@@ -778,9 +788,7 @@ function displayPositions(broker, positions) {
                     <th>Qty</th>
                     <th>Avg Price</th>
                     <th>LTP</th>
-                    <th>Unrealized P&L</th>
-                    <th>Realized P&L</th>
-                    <th>Total P&L</th>
+                    <th>P&L</th>
                     <th>P&L %</th>
                 </tr>
             </thead>
@@ -795,17 +803,11 @@ function displayPositions(broker, positions) {
                         <td>${pos.quantity}</td>
                         <td>₹${parseFloat(pos.average_price).toFixed(2)}</td>
                         <td>${pos.ltp ? '₹' + parseFloat(pos.ltp).toFixed(2) : '<span style="color: var(--gray);">N/A</span>'}</td>
-                        <td class="${getPnLClass(pos.unrealized_pnl)}">
-                            ₹${parseFloat(pos.unrealized_pnl).toFixed(2)}
-                        </td>
-                        <td class="${getPnLClass(pos.realized_pnl)}">
-                            ₹${parseFloat(pos.realized_pnl).toFixed(2)}
-                        </td>
                         <td class="${getPnLClass(pos.total_pnl)}">
-                            <strong>₹${parseFloat(pos.total_pnl).toFixed(2)}</strong>
+                            <strong>${parseFloat(pos.total_pnl) >= 0 ? '+' : ''}₹${formatIndianNumber(Math.abs(parseFloat(pos.total_pnl)).toFixed(0))}</strong>
                         </td>
-                        <td class="${getPnLClass(pos.unrealized_pnl)}">
-                            ${parseFloat(pos.pnl_percentage).toFixed(2)}%
+                        <td class="${getPnLClass(pos.pnl_percentage)}">
+                            ${parseFloat(pos.pnl_percentage) >= 0 ? '+' : ''}${parseFloat(pos.pnl_percentage).toFixed(2)}%
                         </td>
                     </tr>
                 `).join('')}

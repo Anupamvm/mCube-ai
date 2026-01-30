@@ -1578,8 +1578,8 @@ def get_trade_list(from_date: str = None, to_date: str = None, exchange_code: st
     """
     Fetch executed trades from ICICI Breeze API for a date range.
 
-    Breeze doesn't have a separate trade report API. Instead, we filter
-    the order list for executed/filled orders to get trade details.
+    Uses the native Breeze SDK get_trade_list() method which directly hits
+    the TRADE API endpoint.
 
     Args:
         from_date: Start date in 'YYYY-MM-DD' format (default: today)
@@ -1602,6 +1602,207 @@ def get_trade_list(from_date: str = None, to_date: str = None, exchange_code: st
         - price: Trade price
         - trade_datetime: Time of trade
         - exchange: Exchange (NFO, NSE, etc.)
+    """
+    try:
+        breeze = get_breeze_client()
+
+        # Set default dates to today
+        if not from_date or not to_date:
+            today = date.today()
+            from_date = from_date or today.strftime('%Y-%m-%d')
+            to_date = to_date or today.strftime('%Y-%m-%d')
+
+        # Format dates for Breeze API: 'YYYY-MM-DDTHH:MM:SS.000Z'
+        from_datetime = f"{from_date}T00:00:00.000Z"
+        to_datetime = f"{to_date}T23:59:59.000Z"
+
+        logger.info(f"=== BREEZE TRADE LIST DEBUG ===")
+        logger.info(f"Requesting trades from {from_datetime} to {to_datetime}, exchange: {exchange_code}")
+
+        # Use native SDK method
+        response = breeze.get_trade_list(
+            exchange_code=exchange_code,
+            from_date=from_datetime,
+            to_date=to_datetime,
+            product_type="",
+            action="",
+            stock_code=""
+        )
+
+        logger.info(f"Breeze trade list RAW response: {response}")
+        logger.info(f"Breeze trade list response: Status={response.get('Status')}, Error={response.get('Error')}")
+
+        if not response:
+            return {'success': True, 'trades': [], 'message': 'No trades found'}
+
+        # Check for errors
+        if response.get('Status') != 200:
+            error_msg = response.get('Error', 'Unknown error')
+            # "No data" is not an error
+            if 'no data' in str(error_msg).lower() or 'no record' in str(error_msg).lower():
+                logger.info(f"No trades found for period {from_date} to {to_date}")
+                return {'success': True, 'trades': [], 'message': 'No trades for period'}
+            logger.error(f"Breeze trade list error: {error_msg}")
+            return {'success': False, 'error': error_msg, 'trades': []}
+
+        trades_data = response.get('Success', [])
+
+        if not trades_data:
+            logger.info(f"Empty trades data for period {from_date} to {to_date}")
+            return {'success': True, 'trades': [], 'message': 'No trades'}
+
+        # Parse trades
+        trades = []
+        for idx, trade in enumerate(trades_data):
+            # Log FULL raw data for first 3 trades to debug field names
+            if idx < 3:
+                logger.info(f"=== RAW BREEZE TRADE #{idx+1} ===")
+                logger.info(f"All keys: {list(trade.keys())}")
+                for key, value in trade.items():
+                    logger.info(f"  {key}: {value} (type: {type(value).__name__})")
+
+            # Parse trade datetime
+            # Breeze returns trade_date in format "29-Jan-2026"
+            trade_datetime = None
+            trade_datetime_str = trade.get('trade_date', '') or trade.get('order_datetime', '')
+            if trade_datetime_str:
+                try:
+                    # Try different formats - Breeze uses "29-Jan-2026" format
+                    for fmt in ['%d-%b-%Y', '%d-%B-%Y', '%Y-%m-%dT%H:%M:%S.%fZ', '%Y-%m-%dT%H:%M:%S', '%d-%b-%Y %H:%M:%S', '%Y-%m-%d']:
+                        try:
+                            trade_datetime = datetime.strptime(trade_datetime_str[:19], fmt[:min(len(fmt), 19)])
+                            break
+                        except ValueError:
+                            continue
+                except Exception as e:
+                    logger.warning(f"Could not parse trade datetime: {trade_datetime_str}")
+
+            # Extract symbol info
+            stock_code = trade.get('stock_code', '') or trade.get('scrip_name', '')
+            trading_symbol = stock_code
+
+            # Get strike and option type for F&O
+            strike_price = trade.get('strike_price', '')
+            right = trade.get('right', '')  # 'call', 'put', 'others'
+            option_type = ''
+            if right:
+                if right.lower() == 'call':
+                    option_type = 'CE'
+                elif right.lower() == 'put':
+                    option_type = 'PE'
+
+            # Parse quantity - try multiple field names
+            quantity = 0
+            for qty_field in ['traded_quantity', 'quantity', 'fillQty', 'fldQty', 'trade_quantity', 'executed_quantity']:
+                qty_val = trade.get(qty_field)
+                if qty_val is not None and qty_val != '' and qty_val != 0:
+                    try:
+                        quantity = int(qty_val)
+                        if quantity > 0:
+                            if idx < 3:
+                                logger.info(f"  -> Found quantity in field '{qty_field}': {quantity}")
+                            break
+                    except (ValueError, TypeError):
+                        continue
+
+            # Parse price - try MANY possible field names
+            # Breeze API actually returns 'average_cost' for trade execution price!
+            price = 0.0
+            price_fields_to_try = [
+                'average_cost',  # ACTUAL Breeze field for trade price!
+                'price', 'average_price', 'trade_price', 'execution_price',
+                'rate', 'trade_rate', 'exec_price', 'fillPrice', 'flPrc',
+                'avgPrc', 'avg_price', 'ltp', 'last_traded_price',
+                'executed_price', 'fill_price', 'market_price'
+            ]
+
+            for price_field in price_fields_to_try:
+                price_val = trade.get(price_field)
+                if price_val is not None and price_val != '' and price_val != 0:
+                    try:
+                        test_price = float(price_val)
+                        if test_price > 0:
+                            price = test_price
+                            if idx < 3:
+                                logger.info(f"  -> Found price in field '{price_field}': {price}")
+                            break
+                    except (ValueError, TypeError):
+                        continue
+
+            # If still no price, scan ALL numeric fields for potential price values
+            if price == 0:
+                numeric_fields = {}
+                for k, v in trade.items():
+                    if v is not None and v != '':
+                        try:
+                            num_val = float(v)
+                            # Price should be reasonable (0.01 to 500000 for Indian markets)
+                            if 0.01 <= num_val <= 500000:
+                                numeric_fields[k] = num_val
+                        except (ValueError, TypeError):
+                            pass
+
+                if idx < 5:
+                    logger.warning(f"Could not find price in known fields! Scanning all numeric fields: {numeric_fields}")
+
+                # Try to pick the most likely price field from numeric fields
+                # Prefer fields with 'price' or 'rate' in name
+                for key, val in numeric_fields.items():
+                    key_lower = key.lower()
+                    if 'price' in key_lower or 'rate' in key_lower or 'prc' in key_lower:
+                        price = val
+                        if idx < 3:
+                            logger.info(f"  -> Auto-detected price from field '{key}': {price}")
+                        break
+
+                # If still no price, just take the first reasonable numeric value
+                if price == 0 and numeric_fields:
+                    # Sort by value to pick something that looks like a price
+                    sorted_fields = sorted(numeric_fields.items(), key=lambda x: x[1], reverse=True)
+                    for key, val in sorted_fields:
+                        # Skip quantity-like fields
+                        if 'qty' not in key.lower() and 'quantity' not in key.lower():
+                            price = val
+                            if idx < 3:
+                                logger.info(f"  -> Fallback: using field '{key}' as price: {price}")
+                            break
+
+            parsed_trade = {
+                'trade_id': trade.get('trade_id', '') or trade.get('order_id', '') or f"{stock_code}_{trade_datetime_str}",
+                'order_id': trade.get('order_id', ''),
+                'trading_symbol': trading_symbol,
+                'symbol': stock_code,
+                'exchange': trade.get('exchange_code', exchange_code),
+                'transaction_type': (trade.get('action', '') or trade.get('transaction_type', '')).upper(),
+                'quantity': quantity,
+                'price': price,
+                'trade_datetime': trade_datetime,
+                'trade_date': trade_datetime.date() if trade_datetime else None,
+                'trade_time': trade_datetime.time() if trade_datetime else None,
+                'product': trade.get('product_type', '') or trade.get('product', ''),
+                'expiry_date': trade.get('expiry_date', ''),
+                'strike_price': strike_price,
+                'option_type': option_type,
+                'segment': trade.get('segment', ''),
+                'raw_data': trade
+            }
+            trades.append(parsed_trade)
+
+        logger.info(f"Parsed {len(trades)} trades from Breeze API")
+        return {'success': True, 'trades': trades}
+
+    except BreezeAuthenticationError:
+        raise
+    except Exception as e:
+        logger.exception(f"Error fetching Breeze trade list: {e}")
+        return {'success': False, 'error': str(e), 'trades': []}
+
+
+def get_trade_list_via_orders(from_date: str = None, to_date: str = None, exchange_code: str = 'NFO') -> dict:
+    """
+    Fallback method: Fetch trades by filtering executed orders.
+
+    Use this if the native get_trade_list() doesn't return data.
     """
     try:
         # Get all orders first
@@ -1646,9 +1847,9 @@ def get_trade_list(from_date: str = None, to_date: str = None, exchange_code: st
                 }
                 trades.append(trade)
 
-        logger.info(f"Found {len(trades)} executed trades from {len(orders)} orders")
+        logger.info(f"Found {len(trades)} executed trades from {len(orders)} orders (via order filtering)")
         return {'success': True, 'trades': trades}
 
     except Exception as e:
-        logger.exception(f"Error fetching Breeze trade list: {e}")
+        logger.exception(f"Error fetching Breeze trade list via orders: {e}")
         return {'success': False, 'error': str(e), 'trades': []}

@@ -4,6 +4,9 @@ Broker views for mCube Trading System
 This module contains views for broker authentication, data fetching, and display.
 """
 
+from functools import wraps
+from urllib.parse import urlencode
+
 from django.shortcuts import render, redirect
 from django.http import JsonResponse, HttpResponse
 from django.contrib import messages
@@ -11,9 +14,11 @@ from django.contrib.auth import authenticate, login as auth_login, logout as aut
 from django.contrib.auth.decorators import login_required, permission_required, user_passes_test
 from django.views.decorators.http import require_http_methods
 from django.core.paginator import Paginator
+from django.db import models
 
 from apps.core.models import CredentialStore
 from apps.brokers.models import BrokerLimit, BrokerPosition, OptionChainQuote, HistoricalPrice, NiftyOptionChain
+from apps.brokers.exceptions import BreezeAuthenticationError
 from apps.data.models import OptionChain
 from apps.brokers.integrations.kotak_neo import (
     fetch_and_save_kotakneo_data,
@@ -33,6 +38,79 @@ from apps.brokers.integrations.breeze import (
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# BREEZE AUTO-LOGIN DECORATOR
+# =============================================================================
+
+def breeze_auth_required(view_func):
+    """
+    Decorator that catches Breeze authentication errors and redirects to login page.
+
+    When a BreezeAuthenticationError is raised (or any error containing 'session'
+    or 'expired' keywords), this decorator:
+    1. Logs the error
+    2. Shows a user-friendly message
+    3. Redirects to the Breeze login page with the current URL as 'next' parameter
+
+    This enables automatic re-authentication flow across all Breeze-dependent views.
+
+    Usage:
+        @login_required
+        @breeze_auth_required
+        def my_view(request):
+            # Uses Breeze API
+            pass
+    """
+    @wraps(view_func)
+    def wrapper(request, *args, **kwargs):
+        try:
+            return view_func(request, *args, **kwargs)
+        except BreezeAuthenticationError as e:
+            logger.warning(f"Breeze auth error in {view_func.__name__}: {e}")
+            return _handle_breeze_auth_error(request, str(e))
+        except Exception as e:
+            error_str = str(e).lower()
+            # Check if this is a session/auth related error
+            if any(keyword in error_str for keyword in ['session', 'expired', 'authentication', 'unauthorized', 'login']):
+                logger.warning(f"Possible Breeze auth error in {view_func.__name__}: {e}")
+                return _handle_breeze_auth_error(request, str(e))
+            # Re-raise non-auth errors
+            raise
+    return wrapper
+
+
+def _handle_breeze_auth_error(request, error_message):
+    """
+    Handle Breeze authentication error by redirecting to login page.
+
+    For AJAX requests: Returns JSON with auth_required flag
+    For regular requests: Redirects to Breeze login page with next URL
+    """
+    # Check if this is an AJAX request
+    if request.headers.get('X-Requested-With') == 'XMLHttpRequest' or \
+       request.content_type == 'application/json' or \
+       request.headers.get('Accept', '').startswith('application/json'):
+        return JsonResponse({
+            'success': False,
+            'auth_required': True,
+            'error': error_message,
+            'message': 'Breeze session expired. Please re-authenticate.',
+            'login_url': '/brokers/breeze/login/'
+        }, status=401)
+
+    # For regular page requests, redirect to login with next parameter
+    messages.warning(
+        request,
+        f"Breeze session expired. Please complete auto-login to continue. ({error_message})"
+    )
+
+    # Build the login URL with next parameter
+    current_url = request.get_full_path()
+    login_url = f"/brokers/breeze/login/?{urlencode({'next': current_url})}"
+
+    return redirect(login_url)
 
 
 # =============================================================================
@@ -155,13 +233,22 @@ def kotakneo_data(request):
 def breeze_login(request):
     """
     Handle Breeze session token entry (Admin only).
+
+    Supports 'next' parameter for redirect after successful login/token entry.
+    This enables automatic re-authentication flow when session expires.
     """
+    # Get the return URL (where to redirect after successful login)
+    next_url = request.POST.get('next') or request.GET.get('next')
+
     if request.method == 'POST':
         session_token = request.POST.get('session_token')
         if session_token:
             try:
                 save_breeze_token(session_token)
                 messages.success(request, "Session token saved successfully!")
+                # Redirect to the original page if next_url is provided
+                if next_url:
+                    return redirect(next_url)
                 return redirect('brokers:breeze_data')
 
             except Exception as e:
@@ -170,13 +257,19 @@ def breeze_login(request):
 
     # Check if token is already valid
     token_valid = False
+    session_expired = False
     try:
         status = get_or_prompt_breeze_token()
         if status == 'ready':
             token_valid = True
-            messages.info(request, "Session token is already valid for today.")
+            # Only show message if not redirected from another page
+            if not next_url:
+                messages.info(request, "Session token is already valid for today.")
+        else:
+            # Session expired - user needs to re-authenticate
+            session_expired = True
     except:
-        pass
+        session_expired = True
 
     # Check if auto-login credentials are configured
     creds = CredentialStore.objects.filter(service='breeze').first()
@@ -185,7 +278,81 @@ def breeze_login(request):
     return render(request, 'brokers/breeze_login.html', {
         'token_valid': token_valid,
         'auto_login_available': auto_login_available,
+        'session_expired': session_expired,
+        'next_url': next_url,
+        'stored_username': creds.username if creds else '',
+        'api_key': creds.api_key if creds else '',
     })
+
+
+@login_required
+@user_passes_test(is_admin_user, login_url='/brokers/login/')
+@require_http_methods(["POST"])
+def breeze_update_credentials(request):
+    """
+    Update Breeze auto-login credentials (username/password) from the web UI
+    and immediately trigger auto-login.
+
+    This allows users to set up and login in one seamless step.
+    """
+    username = request.POST.get('username', '').strip()
+    password = request.POST.get('password', '').strip()
+    next_url = request.POST.get('next', '')
+    auto_login = request.POST.get('auto_login', 'true') == 'true'
+
+    if not username or not password:
+        messages.error(request, "Both username and password are required.")
+        return redirect('brokers:breeze_login')
+
+    try:
+        # Get or create the breeze credentials
+        creds = CredentialStore.objects.filter(service='breeze').first()
+
+        if not creds:
+            messages.error(request, "Breeze API credentials not found. Please set up API key first.")
+            return redirect('brokers:breeze_login')
+
+        # Update the username and password
+        creds.username = username
+        creds.password = password
+        creds.save()
+
+        messages.success(request, "Credentials saved successfully!")
+        logger.info(f"Breeze auto-login credentials updated for user: {request.user}")
+
+        # If auto_login is requested, trigger it immediately
+        if auto_login:
+            try:
+                from apps.brokers.services.breeze_auto_login import auto_login_breeze
+
+                # Run the auto-login process (skip validation since we know token is expired)
+                success, message = auto_login_breeze(headless=False, timeout=300, skip_validation=True)
+
+                if success:
+                    messages.success(request, f"Auto-login successful! {message}")
+                    # Redirect to the original page
+                    if next_url:
+                        return redirect(next_url)
+                    return redirect('brokers:breeze_data')
+                else:
+                    messages.error(request, f"Auto-login failed: {message}")
+
+            except ImportError as e:
+                logger.exception(f"Selenium not installed: {e}")
+                messages.error(request, "Auto-login requires Selenium. Install with: pip install selenium")
+
+            except Exception as e:
+                logger.exception(f"Error in auto-login: {e}")
+                messages.error(request, f"Auto-login error: {str(e)}")
+
+    except Exception as e:
+        logger.exception(f"Error updating Breeze credentials: {e}")
+        messages.error(request, f"Error saving credentials: {str(e)}")
+
+    # Redirect back to login page (with next parameter if provided)
+    if next_url:
+        return redirect(f"/brokers/breeze/login/?next={next_url}")
+    return redirect('brokers:breeze_login')
 
 
 @login_required
@@ -195,9 +362,15 @@ def breeze_auto_login(request):
     Automated Breeze login using Selenium (Admin only).
 
     Opens browser, fills credentials, waits for OTP, captures session token.
+
+    Supports 'next' parameter for redirect after successful login.
+    This enables automatic re-authentication flow when session expires.
     """
     if request.method != 'POST':
         return redirect('brokers:breeze_login')
+
+    # Get the return URL (where to redirect after successful login)
+    next_url = request.POST.get('next') or request.GET.get('next') or 'brokers:breeze_data'
 
     try:
         from apps.brokers.services.breeze_auto_login import auto_login_breeze
@@ -207,7 +380,10 @@ def breeze_auto_login(request):
 
         if success:
             messages.success(request, message)
-            return redirect('brokers:breeze_data')
+            # Redirect to the original page user was trying to access
+            if next_url.startswith('/'):
+                return redirect(next_url)
+            return redirect(next_url)
         else:
             messages.error(request, f"Auto-login failed: {message}")
 
@@ -223,7 +399,55 @@ def breeze_auto_login(request):
 
 
 @login_required
+@require_http_methods(["GET"])
+def breeze_session_status(request):
+    """
+    API endpoint to check Breeze session status.
+
+    Returns:
+        JsonResponse: {
+            'valid': bool,
+            'auto_login_available': bool,
+            'auto_login_url': str,
+            'message': str
+        }
+    """
+    from apps.brokers.utils.auth_manager import get_credentials, is_session_valid_breeze
+
+    try:
+        creds = get_credentials('breeze')
+
+        if not creds:
+            return JsonResponse({
+                'valid': False,
+                'auto_login_available': False,
+                'message': 'No Breeze credentials found',
+                'login_url': '/brokers/breeze/login/'
+            })
+
+        is_valid = is_session_valid_breeze(creds)
+        auto_login_available = creds.username and creds.password and creds.api_key
+
+        return JsonResponse({
+            'valid': is_valid,
+            'auto_login_available': auto_login_available,
+            'login_url': '/brokers/breeze/login/',
+            'message': 'Session valid' if is_valid else 'Session expired - please re-authenticate'
+        })
+
+    except Exception as e:
+        logger.exception(f"Error checking Breeze session status: {e}")
+        return JsonResponse({
+            'valid': False,
+            'auto_login_available': False,
+            'message': str(e),
+            'login_url': '/brokers/breeze/login/'
+        })
+
+
+@login_required
 @user_passes_test(is_trader_user, login_url='/brokers/login/')
+@breeze_auth_required
 def breeze_data(request):
     """
     Fetch and display Breeze funds and positions (Traders can view).
@@ -239,7 +463,14 @@ def breeze_data(request):
         messages.success(request, f"Fetched {len(pos_list)} positions from Breeze")
         return render(request, 'brokers/broker_data.html', context)
 
+    except BreezeAuthenticationError:
+        # Re-raise auth errors so the decorator can handle them
+        raise
     except Exception as e:
+        # Check if this is a session/auth error and re-raise it
+        error_str = str(e).lower()
+        if any(keyword in error_str for keyword in ['session', 'expired', 'authentication', 'unauthorized']):
+            raise BreezeAuthenticationError(str(e), original_error=e)
         logger.exception(f"Error fetching Breeze data: {e}")
         messages.error(request, f"Error: {str(e)}")
         return redirect('brokers:breeze_login')
@@ -247,6 +478,7 @@ def breeze_data(request):
 
 @login_required
 @user_passes_test(is_trader_user, login_url='/brokers/login/')
+@breeze_auth_required
 def nifty_quote(request):
     """
     Get current NIFTY spot price (Traders can access).
@@ -254,13 +486,21 @@ def nifty_quote(request):
     try:
         quote = get_nifty_quote()
         return JsonResponse(quote if quote else {'error': 'Failed to fetch quote'})
+    except BreezeAuthenticationError:
+        # Re-raise auth errors so the decorator can handle them
+        raise
     except Exception as e:
+        # Check if this is a session/auth error and re-raise it
+        error_str = str(e).lower()
+        if any(keyword in error_str for keyword in ['session', 'expired', 'authentication', 'unauthorized']):
+            raise BreezeAuthenticationError(str(e), original_error=e)
         logger.exception(f"Error fetching NIFTY quote: {e}")
         return JsonResponse({'error': str(e)}, status=500)
 
 
 @login_required
 @user_passes_test(is_trader_user, login_url='/brokers/login/')
+@breeze_auth_required
 def breeze_option_chain(request):
     """
     Fetch and display NIFTY option chain data for all expiries (Traders can access).
@@ -376,7 +616,14 @@ def breeze_option_chain(request):
         }
         return render(request, 'brokers/option_chain.html', context)
 
+    except BreezeAuthenticationError:
+        # Re-raise auth errors so the decorator can handle them
+        raise
     except Exception as e:
+        # Check if this is a session/auth error and re-raise it
+        error_str = str(e).lower()
+        if any(keyword in error_str for keyword in ['session', 'expired', 'authentication', 'unauthorized']):
+            raise BreezeAuthenticationError(str(e), original_error=e)
         logger.exception(f"Error with NIFTY option chain: {e}")
         messages.error(request, f"Error: {str(e)}")
         return render(request, 'brokers/option_chain.html', {'error': str(e)})
@@ -384,6 +631,7 @@ def breeze_option_chain(request):
 
 @login_required
 @user_passes_test(is_trader_user, login_url='/brokers/login/')
+@breeze_auth_required
 def breeze_historical(request):
     """
     Fetch and display historical data (Traders can access).
@@ -395,7 +643,14 @@ def breeze_historical(request):
         try:
             saved_count = get_nifty50_historical_days(days=days, interval=interval)
             messages.success(request, f"Saved {saved_count} historical records")
+        except BreezeAuthenticationError:
+            # Re-raise auth errors so the decorator can handle them
+            raise
         except Exception as e:
+            # Check if this is a session/auth error and re-raise it
+            error_str = str(e).lower()
+            if any(keyword in error_str for keyword in ['session', 'expired', 'authentication', 'unauthorized']):
+                raise BreezeAuthenticationError(str(e), original_error=e)
             logger.exception(f"Error fetching historical data: {e}")
             messages.error(request, f"Error: {str(e)}")
 
@@ -505,8 +760,330 @@ def broker_dashboard(request):
 # FUTURE TRADE VALIDATION VIEW
 # =============================================================================
 
+# =============================================================================
+# HISTORICAL TRADE SYNC VIEWS
+# =============================================================================
+
+@login_required
+@user_passes_test(is_admin_user, login_url='/brokers/login/')
+def trade_sync_dashboard(request):
+    """
+    Dashboard for syncing historical trades from broker APIs.
+    Shows sync status and provides action buttons for manual sync.
+    """
+    from apps.brokers.models import BrokerTradeHistory
+    from apps.accounts.models import BrokerAccount
+    from apps.brokers.services.trade_sync import TradeSyncService
+    from datetime import date, timedelta
+
+    # Get all active accounts
+    accounts = BrokerAccount.objects.filter(is_active=True)
+
+    # Get sync status for each account
+    sync_status = []
+    for account in accounts:
+        status = TradeSyncService.get_sync_status(account)
+        trade_count = BrokerTradeHistory.objects.filter(account=account).count()
+
+        # Get date range of synced trades
+        first_trade = BrokerTradeHistory.objects.filter(account=account).order_by('trade_date').first()
+        last_trade = BrokerTradeHistory.objects.filter(account=account).order_by('-trade_date').first()
+
+        sync_status.append({
+            'account': account,
+            'total_trades': trade_count,
+            'last_sync': status['last_sync'],
+            'unreconciled': status['unreconciled_count'],
+            'is_syncing': status['is_syncing'],
+            'first_trade_date': first_trade.trade_date if first_trade else None,
+            'last_trade_date': last_trade.trade_date if last_trade else None,
+        })
+
+    # Default date range (last 1 year)
+    default_from = date.today() - timedelta(days=365)
+    default_to = date.today()
+
+    context = {
+        'sync_status': sync_status,
+        'accounts': accounts,
+        'default_from': default_from.strftime('%Y-%m-%d'),
+        'default_to': default_to.strftime('%Y-%m-%d'),
+    }
+
+    return render(request, 'brokers/trade_sync_dashboard.html', context)
+
+
+@login_required
+@user_passes_test(is_admin_user, login_url='/brokers/login/')
+@require_http_methods(["POST"])
+def api_sync_trades(request):
+    """
+    API endpoint to sync trades from broker APIs.
+
+    POST params:
+        - broker: 'BREEZE', 'NEO', or 'BOTH'
+        - from_date: Start date (YYYY-MM-DD)
+        - to_date: End date (YYYY-MM-DD)
+        - account_id: Optional specific account ID
+    """
+    import json
+    from apps.brokers.services.trade_sync import TradeSyncService
+    from apps.accounts.models import BrokerAccount
+    from apps.core.constants import BROKER_KOTAK, BROKER_ICICI
+    from datetime import datetime
+
+    try:
+        # Parse request data
+        if request.content_type == 'application/json':
+            data = json.loads(request.body)
+        else:
+            data = request.POST
+
+        broker = data.get('broker', 'BOTH').upper()
+        from_date_str = data.get('from_date')
+        to_date_str = data.get('to_date')
+        account_id = data.get('account_id')
+
+        # Validate dates
+        if not from_date_str or not to_date_str:
+            return JsonResponse({
+                'success': False,
+                'error': 'from_date and to_date are required'
+            }, status=400)
+
+        from_date = datetime.strptime(from_date_str, '%Y-%m-%d').date()
+        to_date = datetime.strptime(to_date_str, '%Y-%m-%d').date()
+
+        if from_date > to_date:
+            return JsonResponse({
+                'success': False,
+                'error': 'from_date cannot be after to_date'
+            }, status=400)
+
+        results = []
+
+        # Determine which accounts to sync
+        if account_id:
+            accounts = BrokerAccount.objects.filter(id=account_id, is_active=True)
+        else:
+            if broker == 'BREEZE':
+                accounts = BrokerAccount.objects.filter(broker=BROKER_ICICI, is_active=True)
+            elif broker == 'NEO':
+                accounts = BrokerAccount.objects.filter(broker=BROKER_KOTAK, is_active=True)
+            else:  # BOTH
+                accounts = BrokerAccount.objects.filter(is_active=True)
+
+        # Sync each account
+        for account in accounts:
+            logger.info(f"Syncing trades for {account.account_name} from {from_date} to {to_date}")
+
+            result = TradeSyncService.sync_trades_for_date_range(
+                account=account,
+                from_date=from_date,
+                to_date=to_date
+            )
+
+            results.append({
+                'account_id': account.id,
+                'account_name': account.account_name,
+                'broker': account.get_broker_display(),
+                'success': result['success'],
+                'new_count': result['new_count'],
+                'updated_count': result['updated_count'],
+                'total_fetched': result['total_fetched'],
+                'errors': result['errors']
+            })
+
+        # Calculate totals
+        total_new = sum(r['new_count'] for r in results)
+        total_updated = sum(r['updated_count'] for r in results)
+        total_fetched = sum(r['total_fetched'] for r in results)
+        all_success = all(r['success'] for r in results)
+
+        return JsonResponse({
+            'success': all_success,
+            'message': f"Synced {total_new} new trades, {total_updated} updated from {total_fetched} total",
+            'results': results,
+            'totals': {
+                'new': total_new,
+                'updated': total_updated,
+                'fetched': total_fetched
+            }
+        })
+
+    except Exception as e:
+        logger.exception(f"Error syncing trades: {e}")
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=500)
+
+
+@login_required
+@user_passes_test(is_admin_user, login_url='/brokers/login/')
+@require_http_methods(["POST"])
+@breeze_auth_required
+def api_sync_breeze_trades(request):
+    """
+    Sync trades specifically from ICICI Breeze.
+    Supports date range for historical sync.
+    """
+    import json
+    from apps.brokers.services.trade_sync import TradeSyncService
+    from apps.accounts.models import BrokerAccount
+    from apps.core.constants import BROKER_ICICI
+    from datetime import datetime, date, timedelta
+
+    try:
+        # Parse request data
+        if request.content_type == 'application/json':
+            data = json.loads(request.body)
+        else:
+            data = request.POST
+
+        from_date_str = data.get('from_date')
+        to_date_str = data.get('to_date')
+
+        # Default to last 365 days if not provided
+        if from_date_str:
+            from_date = datetime.strptime(from_date_str, '%Y-%m-%d').date()
+        else:
+            from_date = date.today() - timedelta(days=365)
+
+        if to_date_str:
+            to_date = datetime.strptime(to_date_str, '%Y-%m-%d').date()
+        else:
+            to_date = date.today()
+
+        # Get ICICI account
+        account = BrokerAccount.objects.filter(broker=BROKER_ICICI, is_active=True).first()
+        if not account:
+            return JsonResponse({
+                'success': False,
+                'error': 'No active ICICI Breeze account found'
+            }, status=404)
+
+        # Sync trades
+        result = TradeSyncService.sync_trades_for_date_range(
+            account=account,
+            from_date=from_date,
+            to_date=to_date
+        )
+
+        return JsonResponse({
+            'success': result['success'],
+            'message': f"Synced {result['new_count']} new, {result['updated_count']} updated from Breeze",
+            'new_count': result['new_count'],
+            'updated_count': result['updated_count'],
+            'total_fetched': result['total_fetched'],
+            'errors': result['errors'],
+            'date_range': {
+                'from': from_date.strftime('%Y-%m-%d'),
+                'to': to_date.strftime('%Y-%m-%d')
+            }
+        })
+
+    except Exception as e:
+        logger.exception(f"Error syncing Breeze trades: {e}")
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=500)
+
+
+@login_required
+@user_passes_test(is_admin_user, login_url='/brokers/login/')
+@require_http_methods(["POST"])
+def api_sync_neo_trades(request):
+    """
+    Sync trades from Kotak Neo.
+    The Neo trade_report() API returns all available trades with fill dates.
+    """
+    from apps.brokers.services.trade_sync import TradeSyncService
+    from apps.accounts.models import BrokerAccount
+    from apps.core.constants import BROKER_KOTAK
+    from datetime import date
+
+    try:
+        # Get Kotak Neo account
+        account = BrokerAccount.objects.filter(broker=BROKER_KOTAK, is_active=True).first()
+        if not account:
+            return JsonResponse({
+                'success': False,
+                'error': 'No active Kotak Neo account found'
+            }, status=404)
+
+        # Sync trades from Neo
+        result = TradeSyncService.sync_today_trades(account)
+
+        return JsonResponse({
+            'success': result['success'],
+            'message': f"Synced {result['new_count']} new, {result['updated_count']} updated from Neo",
+            'new_count': result['new_count'],
+            'updated_count': result['updated_count'],
+            'total_fetched': result['total_fetched'],
+            'errors': result['errors'],
+            'date': date.today().strftime('%Y-%m-%d')
+        })
+
+    except Exception as e:
+        logger.exception(f"Error syncing Neo trades: {e}")
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=500)
+
+
+@login_required
+@user_passes_test(is_admin_user, login_url='/brokers/login/')
+@require_http_methods(["GET"])
+def api_trade_sync_status(request):
+    """
+    Get sync status for all accounts.
+    """
+    from apps.brokers.models import BrokerTradeHistory
+    from apps.accounts.models import BrokerAccount
+    from apps.brokers.services.trade_sync import TradeSyncService
+
+    try:
+        accounts = BrokerAccount.objects.filter(is_active=True)
+        status_list = []
+
+        for account in accounts:
+            status = TradeSyncService.get_sync_status(account)
+
+            # Get date range
+            first_trade = BrokerTradeHistory.objects.filter(account=account).order_by('trade_date').first()
+            last_trade = BrokerTradeHistory.objects.filter(account=account).order_by('-trade_date').first()
+
+            status_list.append({
+                'account_id': account.id,
+                'account_name': account.account_name,
+                'broker': account.get_broker_display(),
+                'total_trades': status['total_records'],
+                'last_sync': status['last_sync'].isoformat() if status['last_sync'] else None,
+                'unreconciled': status['unreconciled_count'],
+                'is_syncing': status['is_syncing'],
+                'first_trade_date': first_trade.trade_date.strftime('%Y-%m-%d') if first_trade and first_trade.trade_date else None,
+                'last_trade_date': last_trade.trade_date.strftime('%Y-%m-%d') if last_trade and last_trade.trade_date else None,
+            })
+
+        return JsonResponse({
+            'success': True,
+            'accounts': status_list
+        })
+
+    except Exception as e:
+        logger.exception(f"Error getting sync status: {e}")
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=500)
+
+
 @login_required
 @user_passes_test(is_trader_user, login_url='/brokers/login/')
+@breeze_auth_required
 def validate_future_trade(request):
     """
     Validate future trade logic by:
@@ -740,7 +1317,14 @@ Generated at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 
         messages.success(request, "Future trade validation completed successfully")
 
+    except BreezeAuthenticationError:
+        # Re-raise auth errors so the decorator can handle them
+        raise
     except Exception as e:
+        # Check if this is a session/auth error and re-raise it
+        error_str = str(e).lower()
+        if any(keyword in error_str for keyword in ['session', 'expired', 'authentication', 'unauthorized']):
+            raise BreezeAuthenticationError(str(e), original_error=e)
         logger.exception(f"Error validating future trade: {e}")
         error = str(e)
         messages.error(request, f"Validation error: {error}")
@@ -758,3 +1342,235 @@ Generated at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
     }
 
     return render(request, 'brokers/validate_future_trade.html', context)
+
+
+# =============================================================================
+# CSV UPLOAD VIEWS
+# =============================================================================
+
+@login_required
+@user_passes_test(is_admin_user, login_url='/brokers/login/')
+def csv_upload_dashboard(request):
+    """
+    Dashboard for uploading CSV trade history files.
+    Shows upload form, recent imports, and summary stats.
+    """
+    from apps.brokers.models import BrokerContractPnL, CSVImportLog
+    from apps.brokers.forms import CSVUploadForm
+    from django.db.models import Sum, Count
+
+    # Get recent imports
+    recent_imports = CSVImportLog.objects.all()[:10]
+
+    # Get summary stats
+    total_imports = CSVImportLog.objects.filter(status='SUCCESS').count()
+
+    kotak_summary = BrokerContractPnL.objects.filter(broker='KOTAK').aggregate(
+        total_records=Count('id'),
+        futures_pnl=Sum('net_pnl', filter=models.Q(segment='FUTURES')),
+        options_pnl=Sum('net_pnl', filter=models.Q(segment='OPTIONS')),
+        total_pnl=Sum('net_pnl'),
+    )
+
+    breeze_summary = BrokerContractPnL.objects.filter(broker='ICICI').aggregate(
+        total_records=Count('id'),
+        futures_pnl=Sum('net_pnl', filter=models.Q(segment='FUTURES')),
+        options_pnl=Sum('net_pnl', filter=models.Q(segment='OPTIONS')),
+        total_pnl=Sum('net_pnl'),
+    )
+
+    context = {
+        'form': CSVUploadForm(),
+        'recent_imports': recent_imports,
+        'total_imports': total_imports,
+        'kotak_summary': kotak_summary,
+        'breeze_summary': breeze_summary,
+    }
+
+    return render(request, 'brokers/csv_upload_dashboard.html', context)
+
+
+@login_required
+@user_passes_test(is_admin_user, login_url='/brokers/login/')
+@require_http_methods(["POST"])
+def api_upload_csv(request):
+    """
+    API endpoint to upload and process a CSV file.
+    """
+    import json
+    from apps.brokers.forms import CSVUploadForm
+    from apps.brokers.services.csv_importers import KotakFNOImporter, BreezeFNOImporter
+
+    try:
+        form = CSVUploadForm(request.POST, request.FILES)
+
+        if not form.is_valid():
+            return JsonResponse({
+                'success': False,
+                'error': 'Invalid form data',
+                'errors': form.errors,
+            }, status=400)
+
+        file_type = form.cleaned_data['file_type']
+        csv_file = form.cleaned_data['csv_file']
+
+        logger.info(f"Processing {file_type} CSV upload: {csv_file.name}")
+
+        # Select importer based on file type
+        if file_type == 'kotak_fno':
+            importer = KotakFNOImporter()
+        elif file_type == 'breeze_fno':
+            importer = BreezeFNOImporter()
+        else:
+            return JsonResponse({
+                'success': False,
+                'error': f'Unknown file type: {file_type}',
+            }, status=400)
+
+        # Import the file
+        result = importer.import_file(csv_file, user=request.user)
+
+        if result['success']:
+            return JsonResponse({
+                'success': True,
+                'message': f"Successfully imported {result['records_created']} records",
+                'batch_id': result['batch_id'],
+                'records_created': result['records_created'],
+                'records_updated': result['records_updated'],
+                'records_skipped': result['records_skipped'],
+                'errors': result.get('errors', []),
+            })
+        else:
+            return JsonResponse({
+                'success': False,
+                'error': result.get('error', 'Import failed'),
+                'batch_id': result.get('batch_id'),
+                'errors': result.get('errors', []),
+            }, status=400)
+
+    except Exception as e:
+        logger.exception(f"Error processing CSV upload: {e}")
+        return JsonResponse({
+            'success': False,
+            'error': str(e),
+        }, status=500)
+
+
+@login_required
+@user_passes_test(is_admin_user, login_url='/brokers/login/')
+@require_http_methods(["POST", "DELETE"])
+def api_delete_import_batch(request, batch_id):
+    """
+    API endpoint to delete an import batch and all its records.
+    """
+    from apps.brokers.services.csv_importers import delete_import_batch
+
+    try:
+        result = delete_import_batch(batch_id)
+
+        if result['success']:
+            return JsonResponse({
+                'success': True,
+                'message': f"Deleted {result['records_deleted']} records from batch {batch_id}",
+                'records_deleted': result['records_deleted'],
+            })
+        else:
+            return JsonResponse({
+                'success': False,
+                'error': result.get('error', 'Delete failed'),
+            }, status=400)
+
+    except Exception as e:
+        logger.exception(f"Error deleting batch {batch_id}: {e}")
+        return JsonResponse({
+            'success': False,
+            'error': str(e),
+        }, status=500)
+
+
+@login_required
+@user_passes_test(is_admin_user, login_url='/brokers/login/')
+@require_http_methods(["GET"])
+def api_import_logs(request):
+    """
+    API endpoint to get recent import logs.
+    """
+    from apps.brokers.models import CSVImportLog
+
+    try:
+        limit = int(request.GET.get('limit', 20))
+        logs = CSVImportLog.objects.all()[:limit]
+
+        data = [{
+            'batch_id': log.import_batch_id,
+            'file_type': log.file_type,
+            'file_type_display': log.get_file_type_display(),
+            'original_filename': log.original_filename,
+            'status': log.status,
+            'status_display': log.get_status_display(),
+            'records_created': log.records_created,
+            'records_updated': log.records_updated,
+            'records_skipped': log.records_skipped,
+            'errors': log.errors,
+            'imported_by': log.imported_by.username if log.imported_by else None,
+            'created_at': log.created_at.isoformat(),
+        } for log in logs]
+
+        return JsonResponse({
+            'success': True,
+            'logs': data,
+        })
+
+    except Exception as e:
+        logger.exception(f"Error fetching import logs: {e}")
+        return JsonResponse({
+            'success': False,
+            'error': str(e),
+        }, status=500)
+
+
+@login_required
+@user_passes_test(is_trader_user, login_url='/brokers/login/')
+@require_http_methods(["GET"])
+def api_imported_pnl_summary(request):
+    """
+    API endpoint to get summary of imported contract P&L.
+    """
+    from apps.brokers.models import BrokerContractPnL
+    from django.db.models import Sum, Count
+
+    try:
+        broker = request.GET.get('broker')
+
+        queryset = BrokerContractPnL.objects.all()
+        if broker:
+            queryset = queryset.filter(broker=broker)
+
+        # Aggregate by broker and segment
+        summary = queryset.values('broker', 'segment').annotate(
+            total_records=Count('id'),
+            total_pnl=Sum('net_pnl'),
+            total_charges=Sum('total_charges'),
+            total_buy=Sum('buy_amount'),
+            total_sell=Sum('sell_amount'),
+        ).order_by('broker', 'segment')
+
+        # Overall totals
+        overall = queryset.aggregate(
+            total_records=Count('id'),
+            total_pnl=Sum('net_pnl'),
+            total_charges=Sum('total_charges'),
+        )
+
+        return JsonResponse({
+            'success': True,
+            'summary': list(summary),
+            'overall': overall,
+        })
+
+    except Exception as e:
+        logger.exception(f"Error fetching imported P&L summary: {e}")
+        return JsonResponse({
+            'success': False,
+            'error': str(e),
+        }, status=500)

@@ -1,0 +1,699 @@
+{% extends "core/base.html" %}
+{% load static %}
+
+{% block title %}Trade Sync Dashboard - mCube{% endblock %}
+
+{% block extra_css %}
+<style>
+    .sync-dashboard {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 2rem;
+    }
+
+    .page-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 2rem;
+    }
+
+    .page-header h1 {
+        font-size: 1.75rem;
+        font-weight: 600;
+        color: var(--darker);
+        margin: 0;
+    }
+
+    .sync-controls {
+        background: var(--white);
+        border-radius: var(--radius-lg);
+        padding: 1.5rem;
+        box-shadow: var(--shadow-md);
+        margin-bottom: 2rem;
+    }
+
+    .sync-controls h2 {
+        font-size: 1.125rem;
+        font-weight: 600;
+        margin-bottom: 1rem;
+        color: var(--darker);
+    }
+
+    .date-range-picker {
+        display: flex;
+        gap: 1rem;
+        align-items: flex-end;
+        flex-wrap: wrap;
+        margin-bottom: 1.5rem;
+    }
+
+    .date-range-picker .form-group {
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+    }
+
+    .date-range-picker label {
+        font-size: 0.875rem;
+        font-weight: 500;
+        color: var(--gray);
+    }
+
+    .date-range-picker input[type="date"] {
+        padding: 0.625rem 1rem;
+        border: 1px solid var(--light);
+        border-radius: var(--radius-md);
+        font-size: 0.875rem;
+    }
+
+    .sync-buttons {
+        display: flex;
+        gap: 1rem;
+        flex-wrap: wrap;
+    }
+
+    .btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.75rem 1.5rem;
+        border-radius: var(--radius-md);
+        font-size: 0.875rem;
+        font-weight: 500;
+        cursor: pointer;
+        border: none;
+        transition: all 0.2s ease;
+    }
+
+    .btn-primary {
+        background: var(--primary);
+        color: white;
+    }
+
+    .btn-primary:hover {
+        background: var(--primary-dark);
+    }
+
+    .btn-success {
+        background: var(--success);
+        color: white;
+    }
+
+    .btn-success:hover {
+        opacity: 0.9;
+    }
+
+    .btn-warning {
+        background: var(--warning);
+        color: white;
+    }
+
+    .btn-warning:hover {
+        opacity: 0.9;
+    }
+
+    .btn:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+    }
+
+    .btn .spinner {
+        width: 16px;
+        height: 16px;
+        border: 2px solid transparent;
+        border-top-color: currentColor;
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+        display: none;
+    }
+
+    .btn.loading .spinner {
+        display: block;
+    }
+
+    .btn.loading .btn-text {
+        display: none;
+    }
+
+    @keyframes spin {
+        to { transform: rotate(360deg); }
+    }
+
+    .accounts-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+        gap: 1.5rem;
+        margin-bottom: 2rem;
+    }
+
+    .account-card {
+        background: var(--white);
+        border-radius: var(--radius-lg);
+        padding: 1.5rem;
+        box-shadow: var(--shadow-md);
+    }
+
+    .account-card-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 1rem;
+        padding-bottom: 1rem;
+        border-bottom: 1px solid var(--light);
+    }
+
+    .account-name {
+        font-size: 1.125rem;
+        font-weight: 600;
+        color: var(--darker);
+    }
+
+    .broker-badge {
+        padding: 0.25rem 0.75rem;
+        border-radius: 9999px;
+        font-size: 0.75rem;
+        font-weight: 500;
+    }
+
+    .broker-badge.icici {
+        background: #e0f2fe;
+        color: #0369a1;
+    }
+
+    .broker-badge.kotak {
+        background: #fef3c7;
+        color: #92400e;
+    }
+
+    .account-stats {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 1rem;
+    }
+
+    .stat-item {
+        text-align: center;
+        padding: 0.75rem;
+        background: var(--lighter);
+        border-radius: var(--radius-md);
+    }
+
+    .stat-value {
+        font-size: 1.25rem;
+        font-weight: 700;
+        color: var(--darker);
+    }
+
+    .stat-label {
+        font-size: 0.75rem;
+        color: var(--gray);
+        margin-top: 0.25rem;
+    }
+
+    .sync-info {
+        margin-top: 1rem;
+        padding-top: 1rem;
+        border-top: 1px solid var(--light);
+        font-size: 0.813rem;
+        color: var(--gray);
+    }
+
+    .sync-info p {
+        margin: 0.25rem 0;
+    }
+
+    .sync-status {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.25rem 0.75rem;
+        border-radius: 9999px;
+        font-size: 0.75rem;
+        font-weight: 500;
+    }
+
+    .sync-status.syncing {
+        background: #fef3c7;
+        color: #92400e;
+    }
+
+    .sync-status.synced {
+        background: #d1fae5;
+        color: #065f46;
+    }
+
+    .sync-status .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: currentColor;
+    }
+
+    .sync-status.syncing .dot {
+        animation: pulse 1s ease-in-out infinite;
+    }
+
+    @keyframes pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.4; }
+    }
+
+    .result-panel {
+        background: var(--white);
+        border-radius: var(--radius-lg);
+        padding: 1.5rem;
+        box-shadow: var(--shadow-md);
+        margin-top: 1.5rem;
+        display: none;
+    }
+
+    .result-panel.show {
+        display: block;
+    }
+
+    .result-panel h3 {
+        font-size: 1rem;
+        font-weight: 600;
+        margin-bottom: 1rem;
+        color: var(--darker);
+    }
+
+    .result-panel.success {
+        border-left: 4px solid var(--success);
+    }
+
+    .result-panel.error {
+        border-left: 4px solid var(--danger);
+    }
+
+    .result-summary {
+        display: flex;
+        gap: 2rem;
+        margin-bottom: 1rem;
+    }
+
+    .result-item {
+        text-align: center;
+    }
+
+    .result-value {
+        font-size: 1.5rem;
+        font-weight: 700;
+    }
+
+    .result-value.success { color: var(--success); }
+    .result-value.warning { color: var(--warning); }
+    .result-value.info { color: var(--primary); }
+
+    .result-label {
+        font-size: 0.75rem;
+        color: var(--gray);
+    }
+
+    .result-details {
+        background: var(--lighter);
+        padding: 1rem;
+        border-radius: var(--radius-md);
+        font-size: 0.875rem;
+    }
+
+    .result-details pre {
+        margin: 0;
+        white-space: pre-wrap;
+        word-break: break-word;
+    }
+
+    .info-banner {
+        background: #eff6ff;
+        border: 1px solid #bfdbfe;
+        border-radius: var(--radius-md);
+        padding: 1rem;
+        margin-bottom: 1.5rem;
+        display: flex;
+        gap: 0.75rem;
+    }
+
+    .info-banner svg {
+        flex-shrink: 0;
+        width: 20px;
+        height: 20px;
+        color: #3b82f6;
+    }
+
+    .info-banner p {
+        margin: 0;
+        font-size: 0.875rem;
+        color: #1e40af;
+    }
+
+    .quick-actions {
+        display: flex;
+        gap: 0.5rem;
+        margin-top: 1rem;
+    }
+
+    .btn-sm {
+        padding: 0.5rem 1rem;
+        font-size: 0.75rem;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="sync-dashboard">
+    <div class="page-header">
+        <h1>Historical Trade Sync</h1>
+        <a href="{% url 'analytics:dashboard' %}" class="btn btn-primary">
+            Back to Analytics
+        </a>
+    </div>
+
+    <div class="info-banner">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
+        <div>
+            <p><strong>ICICI Breeze:</strong> Supports historical date range sync. You can fetch trades for any period.</p>
+            <p><strong>Kotak Neo:</strong> Returns all available trades with their fill dates.</p>
+        </div>
+    </div>
+
+    <!-- Sync Controls -->
+    <div class="sync-controls">
+        <h2>Sync Historical Trades</h2>
+
+        <div class="date-range-picker">
+            <div class="form-group">
+                <label for="from-date">From Date</label>
+                <input type="date" id="from-date" value="{{ default_from }}">
+            </div>
+            <div class="form-group">
+                <label for="to-date">To Date</label>
+                <input type="date" id="to-date" value="{{ default_to }}">
+            </div>
+        </div>
+
+        <div class="sync-buttons">
+            <button id="sync-breeze-btn" class="btn btn-success" onclick="syncBreezeTrades()">
+                <span class="spinner"></span>
+                <span class="btn-text">Sync ICICI Breeze</span>
+            </button>
+
+            <button id="sync-neo-btn" class="btn btn-warning" onclick="syncNeoTrades()">
+                <span class="spinner"></span>
+                <span class="btn-text">Sync Kotak Neo (Today)</span>
+            </button>
+
+            <button id="sync-both-btn" class="btn btn-primary" onclick="syncAllTrades()">
+                <span class="spinner"></span>
+                <span class="btn-text">Sync Both Brokers</span>
+            </button>
+        </div>
+    </div>
+
+    <!-- Result Panel -->
+    <div id="result-panel" class="result-panel">
+        <h3>Sync Result</h3>
+        <div class="result-summary">
+            <div class="result-item">
+                <div class="result-value success" id="result-new">0</div>
+                <div class="result-label">New Trades</div>
+            </div>
+            <div class="result-item">
+                <div class="result-value warning" id="result-updated">0</div>
+                <div class="result-label">Updated</div>
+            </div>
+            <div class="result-item">
+                <div class="result-value info" id="result-total">0</div>
+                <div class="result-label">Total Fetched</div>
+            </div>
+        </div>
+        <div class="result-details">
+            <pre id="result-details"></pre>
+        </div>
+    </div>
+
+    <!-- Account Cards -->
+    <h2 style="margin-bottom: 1rem; font-size: 1.125rem; font-weight: 600;">Account Status</h2>
+    <div class="accounts-grid">
+        {% for status in sync_status %}
+        <div class="account-card">
+            <div class="account-card-header">
+                <span class="account-name">{{ status.account.account_name }}</span>
+                <span class="broker-badge {% if status.account.broker == 'ICICI' %}icici{% else %}kotak{% endif %}">
+                    {{ status.account.get_broker_display }}
+                </span>
+            </div>
+
+            <div class="account-stats">
+                <div class="stat-item">
+                    <div class="stat-value">{{ status.total_trades|default:"0" }}</div>
+                    <div class="stat-label">Total Trades</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value">{{ status.unreconciled|default:"0" }}</div>
+                    <div class="stat-label">Unreconciled</div>
+                </div>
+            </div>
+
+            <div class="sync-info">
+                {% if status.is_syncing %}
+                <span class="sync-status syncing">
+                    <span class="dot"></span>
+                    Syncing...
+                </span>
+                {% else %}
+                <span class="sync-status synced">
+                    <span class="dot"></span>
+                    Ready
+                </span>
+                {% endif %}
+
+                {% if status.last_sync %}
+                <p>Last sync: {{ status.last_sync|date:"M d, Y H:i" }}</p>
+                {% else %}
+                <p>Never synced</p>
+                {% endif %}
+
+                {% if status.first_trade_date and status.last_trade_date %}
+                <p>Data range: {{ status.first_trade_date|date:"M d, Y" }} - {{ status.last_trade_date|date:"M d, Y" }}</p>
+                {% endif %}
+            </div>
+
+            <div class="quick-actions">
+                <button class="btn btn-sm btn-primary" onclick="syncAccount({{ status.account.id }})">
+                    Sync This Account
+                </button>
+            </div>
+        </div>
+        {% empty %}
+        <div class="account-card">
+            <p>No active broker accounts found. Please configure accounts in Django admin.</p>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+const csrfToken = '{{ csrf_token }}';
+
+function showLoading(buttonId) {
+    const btn = document.getElementById(buttonId);
+    btn.classList.add('loading');
+    btn.disabled = true;
+}
+
+function hideLoading(buttonId) {
+    const btn = document.getElementById(buttonId);
+    btn.classList.remove('loading');
+    btn.disabled = false;
+}
+
+function showResult(data, isSuccess) {
+    const panel = document.getElementById('result-panel');
+    panel.classList.add('show');
+    panel.classList.remove('success', 'error');
+    panel.classList.add(isSuccess ? 'success' : 'error');
+
+    document.getElementById('result-new').textContent = data.totals?.new || data.new_count || 0;
+    document.getElementById('result-updated').textContent = data.totals?.updated || data.updated_count || 0;
+    document.getElementById('result-total').textContent = data.totals?.fetched || data.total_fetched || 0;
+
+    let details = data.message || '';
+    if (data.errors && data.errors.length > 0) {
+        details += '\n\nErrors:\n' + data.errors.join('\n');
+    }
+    if (data.results) {
+        details += '\n\nDetails:\n';
+        data.results.forEach(r => {
+            details += `- ${r.account_name} (${r.broker}): ${r.new_count} new, ${r.updated_count} updated\n`;
+        });
+    }
+    document.getElementById('result-details').textContent = details;
+
+    // Scroll to result
+    panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+async function syncBreezeTrades() {
+    showLoading('sync-breeze-btn');
+
+    const fromDate = document.getElementById('from-date').value;
+    const toDate = document.getElementById('to-date').value;
+
+    try {
+        const response = await fetch('{% url "brokers:api_sync_breeze_trades" %}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': csrfToken
+            },
+            body: JSON.stringify({
+                from_date: fromDate,
+                to_date: toDate
+            })
+        });
+
+        const data = await response.json();
+
+        if (response.status === 401 && data.auth_required) {
+            // Redirect to Breeze login
+            window.location.href = data.login_url + '?next=' + encodeURIComponent(window.location.pathname);
+            return;
+        }
+
+        showResult(data, data.success);
+
+        if (data.success) {
+            // Reload page to show updated stats
+            setTimeout(() => location.reload(), 2000);
+        }
+
+    } catch (error) {
+        showResult({ message: 'Error: ' + error.message, errors: [error.message] }, false);
+    } finally {
+        hideLoading('sync-breeze-btn');
+    }
+}
+
+async function syncNeoTrades() {
+    showLoading('sync-neo-btn');
+
+    try {
+        const response = await fetch('{% url "brokers:api_sync_neo_trades" %}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': csrfToken
+            }
+        });
+
+        const data = await response.json();
+        showResult(data, data.success);
+
+        if (data.success) {
+            setTimeout(() => location.reload(), 2000);
+        }
+
+    } catch (error) {
+        showResult({ message: 'Error: ' + error.message, errors: [error.message] }, false);
+    } finally {
+        hideLoading('sync-neo-btn');
+    }
+}
+
+async function syncAllTrades() {
+    showLoading('sync-both-btn');
+
+    const fromDate = document.getElementById('from-date').value;
+    const toDate = document.getElementById('to-date').value;
+
+    try {
+        const response = await fetch('{% url "brokers:api_sync_trades" %}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': csrfToken
+            },
+            body: JSON.stringify({
+                broker: 'BOTH',
+                from_date: fromDate,
+                to_date: toDate
+            })
+        });
+
+        const data = await response.json();
+
+        if (response.status === 401 && data.auth_required) {
+            window.location.href = data.login_url + '?next=' + encodeURIComponent(window.location.pathname);
+            return;
+        }
+
+        showResult(data, data.success);
+
+        if (data.success) {
+            setTimeout(() => location.reload(), 2000);
+        }
+
+    } catch (error) {
+        showResult({ message: 'Error: ' + error.message, errors: [error.message] }, false);
+    } finally {
+        hideLoading('sync-both-btn');
+    }
+}
+
+async function syncAccount(accountId) {
+    const fromDate = document.getElementById('from-date').value;
+    const toDate = document.getElementById('to-date').value;
+
+    try {
+        const response = await fetch('{% url "brokers:api_sync_trades" %}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': csrfToken
+            },
+            body: JSON.stringify({
+                account_id: accountId,
+                from_date: fromDate,
+                to_date: toDate
+            })
+        });
+
+        const data = await response.json();
+
+        if (response.status === 401 && data.auth_required) {
+            window.location.href = data.login_url + '?next=' + encodeURIComponent(window.location.pathname);
+            return;
+        }
+
+        showResult(data, data.success);
+
+        if (data.success) {
+            setTimeout(() => location.reload(), 2000);
+        }
+
+    } catch (error) {
+        showResult({ message: 'Error: ' + error.message, errors: [error.message] }, false);
+    }
+}
+
+// Refresh status periodically
+setInterval(async () => {
+    try {
+        const response = await fetch('{% url "brokers:api_trade_sync_status" %}');
+        const data = await response.json();
+
+        if (data.success) {
+            // Update UI with new status if needed
+            console.log('Sync status:', data.accounts);
+        }
+    } catch (error) {
+        console.error('Error fetching sync status:', error);
+    }
+}, 30000); // Every 30 seconds
+</script>
+{% endblock %}
