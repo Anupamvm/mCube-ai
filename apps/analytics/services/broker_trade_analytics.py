@@ -1,10 +1,8 @@
 """
 Broker Trade Analytics Service
 
-Calculates performance metrics directly from BrokerTradeHistory records
-(synced from broker APIs) rather than internal Position/TakenTrade records.
-
-This provides the authoritative view of actual broker performance.
+Calculates performance metrics from BrokerContractPnL records
+(imported from CSV files) for accurate P&L reporting.
 """
 
 import logging
@@ -13,17 +11,16 @@ from decimal import Decimal
 from typing import Dict, List, Optional, Tuple
 
 from django.db.models import Sum, Count, Avg, Q, F
-from django.db.models.functions import TruncDate, TruncWeek, TruncMonth
 
 from apps.accounts.models import BrokerAccount
-from apps.brokers.models import BrokerTradeHistory
+from apps.brokers.models import BrokerContractPnL
 
 logger = logging.getLogger(__name__)
 
 
 class BrokerTradeAnalytics:
     """
-    Analytics service that calculates metrics from actual broker trade data.
+    Analytics service that calculates metrics from CSV imported contract data.
     """
 
     def get_trade_summary(
@@ -33,61 +30,62 @@ class BrokerTradeAnalytics:
         to_date: Optional[date] = None,
     ) -> Dict:
         """
-        Get summary metrics from broker trade history.
+        Get summary metrics from CSV imported contract P&L.
 
         Args:
             account: Filter by specific account (None for all)
-            from_date: Start date filter
-            to_date: End date filter
+            from_date: Start date filter (by expiry date)
+            to_date: End date filter (by expiry date)
 
         Returns:
             Dict with summary metrics
         """
-        queryset = BrokerTradeHistory.objects.all()
-
-        if account:
-            queryset = queryset.filter(account=account)
+        queryset = BrokerContractPnL.objects.all()
 
         if from_date:
-            queryset = queryset.filter(trade_date__gte=from_date)
+            queryset = queryset.filter(
+                Q(expiry_date__gte=from_date) | Q(expiry_date__isnull=True)
+            )
 
         if to_date:
-            queryset = queryset.filter(trade_date__lte=to_date)
+            queryset = queryset.filter(
+                Q(expiry_date__lte=to_date) | Q(expiry_date__isnull=True)
+            )
 
         # Get basic counts
-        total_trades = queryset.count()
-        buy_trades = queryset.filter(trade_type='BUY').count()
-        sell_trades = queryset.filter(trade_type='SELL').count()
+        total_contracts = queryset.count()
 
-        # Calculate total value traded
-        buy_value = queryset.filter(trade_type='BUY').aggregate(
-            total=Sum(F('quantity') * F('price'))
-        )['total'] or Decimal('0')
-
-        sell_value = queryset.filter(trade_type='SELL').aggregate(
-            total=Sum(F('quantity') * F('price'))
-        )['total'] or Decimal('0')
-
-        # Get unique trading days
-        trading_days = queryset.values('trade_date').distinct().count()
+        # Aggregate P&L
+        aggregates = queryset.aggregate(
+            total_net_pnl=Sum('net_pnl'),
+            total_gross_pnl=Sum('gross_pnl'),
+            total_charges=Sum('total_charges'),
+            total_buy=Sum('buy_amount'),
+            total_sell=Sum('sell_amount'),
+        )
 
         # Get segment breakdown
         segment_breakdown = queryset.values('segment').annotate(
             count=Count('id'),
-            value=Sum(F('quantity') * F('price'))
+            net_pnl=Sum('net_pnl'),
+        )
+
+        # Get broker breakdown
+        broker_breakdown = queryset.values('broker').annotate(
+            count=Count('id'),
+            net_pnl=Sum('net_pnl'),
         )
 
         return {
-            'total_trades': total_trades,
-            'buy_trades': buy_trades,
-            'sell_trades': sell_trades,
-            'buy_value': float(buy_value),
-            'sell_value': float(sell_value),
-            'total_value': float(buy_value + sell_value),
-            'net_value': float(sell_value - buy_value),
-            'trading_days': trading_days,
-            'avg_trades_per_day': round(total_trades / trading_days, 2) if trading_days > 0 else 0,
+            'total_contracts': total_contracts,
+            'net_pnl': float(aggregates['total_net_pnl'] or 0),
+            'gross_pnl': float(aggregates['total_gross_pnl'] or 0),
+            'total_charges': float(aggregates['total_charges'] or 0),
+            'buy_value': float(aggregates['total_buy'] or 0),
+            'sell_value': float(aggregates['total_sell'] or 0),
             'segment_breakdown': list(segment_breakdown),
+            'broker_breakdown': list(broker_breakdown),
+            'data_source': 'csv_import',
         }
 
     def get_daily_pnl(
@@ -97,55 +95,31 @@ class BrokerTradeAnalytics:
         to_date: Optional[date] = None,
     ) -> List[Dict]:
         """
-        Calculate daily P&L from matched buy/sell trades.
-
-        This is a simplified calculation that pairs buys and sells
-        for the same symbol on the same day.
+        Get P&L grouped by expiry date (since CSV imports are per contract).
 
         Returns:
-            List of daily P&L records
+            List of P&L records grouped by expiry date
         """
-        queryset = BrokerTradeHistory.objects.all()
-
-        if account:
-            queryset = queryset.filter(account=account)
+        queryset = BrokerContractPnL.objects.exclude(expiry_date__isnull=True)
 
         if from_date:
-            queryset = queryset.filter(trade_date__gte=from_date)
+            queryset = queryset.filter(expiry_date__gte=from_date)
 
         if to_date:
-            queryset = queryset.filter(trade_date__lte=to_date)
+            queryset = queryset.filter(expiry_date__lte=to_date)
 
-        # Group by date and calculate net P&L
-        daily_data = queryset.annotate(
-            date=TruncDate('trade_date')
-        ).values('date').annotate(
-            buy_value=Sum(
-                F('quantity') * F('price'),
-                filter=Q(trade_type='BUY')
-            ),
-            sell_value=Sum(
-                F('quantity') * F('price'),
-                filter=Q(trade_type='SELL')
-            ),
-            trade_count=Count('id'),
-        ).order_by('date')
+        # Group by expiry date
+        daily_data = queryset.values('expiry_date').annotate(
+            net_pnl=Sum('net_pnl'),
+            contract_count=Count('id'),
+        ).order_by('expiry_date')
 
         results = []
         for day in daily_data:
-            buy_val = day['buy_value'] or Decimal('0')
-            sell_val = day['sell_value'] or Decimal('0')
-
-            # Simple P&L calculation: sell value - buy value
-            # This works for intraday/closed positions
-            pnl = sell_val - buy_val
-
             results.append({
-                'date': day['date'],
-                'buy_value': float(buy_val),
-                'sell_value': float(sell_val),
-                'pnl': float(pnl),
-                'trade_count': day['trade_count'],
+                'date': day['expiry_date'],
+                'pnl': float(day['net_pnl'] or 0),
+                'contract_count': day['contract_count'],
             })
 
         return results
@@ -158,60 +132,42 @@ class BrokerTradeAnalytics:
         limit: int = 20,
     ) -> List[Dict]:
         """
-        Get performance breakdown by trading symbol.
+        Get performance breakdown by trading symbol from CSV imports.
 
         Returns:
             List of symbol performance records
         """
-        queryset = BrokerTradeHistory.objects.all()
-
-        if account:
-            queryset = queryset.filter(account=account)
+        queryset = BrokerContractPnL.objects.all()
 
         if from_date:
-            queryset = queryset.filter(trade_date__gte=from_date)
+            queryset = queryset.filter(
+                Q(expiry_date__gte=from_date) | Q(expiry_date__isnull=True)
+            )
 
         if to_date:
-            queryset = queryset.filter(trade_date__lte=to_date)
+            queryset = queryset.filter(
+                Q(expiry_date__lte=to_date) | Q(expiry_date__isnull=True)
+            )
 
         symbol_data = queryset.values('symbol').annotate(
             trade_count=Count('id'),
-            buy_value=Sum(
-                F('quantity') * F('price'),
-                filter=Q(trade_type='BUY')
-            ),
-            sell_value=Sum(
-                F('quantity') * F('price'),
-                filter=Q(trade_type='SELL')
-            ),
-            buy_qty=Sum('quantity', filter=Q(trade_type='BUY')),
-            sell_qty=Sum('quantity', filter=Q(trade_type='SELL')),
+            net_pnl=Sum('net_pnl'),
+            gross_pnl=Sum('gross_pnl'),
+            total_charges=Sum('total_charges'),
+            futures_pnl=Sum('net_pnl', filter=Q(segment='FUTURES')),
+            options_pnl=Sum('net_pnl', filter=Q(segment='OPTIONS')),
         ).order_by('-trade_count')[:limit]
 
         results = []
         for item in symbol_data:
-            buy_val = item['buy_value'] or Decimal('0')
-            sell_val = item['sell_value'] or Decimal('0')
-            buy_qty = item['buy_qty'] or 0
-            sell_qty = item['sell_qty'] or 0
-
-            # Net P&L (positive = profit)
-            net_pnl = sell_val - buy_val
-
-            # Average prices
-            avg_buy = buy_val / buy_qty if buy_qty > 0 else Decimal('0')
-            avg_sell = sell_val / sell_qty if sell_qty > 0 else Decimal('0')
-
             results.append({
                 'symbol': item['symbol'],
                 'trade_count': item['trade_count'],
-                'buy_qty': buy_qty,
-                'sell_qty': sell_qty,
-                'buy_value': float(buy_val),
-                'sell_value': float(sell_val),
-                'net_pnl': float(net_pnl),
-                'avg_buy_price': float(avg_buy),
-                'avg_sell_price': float(avg_sell),
+                'net_pnl': float(item['net_pnl'] or 0),
+                'gross_pnl': float(item['gross_pnl'] or 0),
+                'total_charges': float(item['total_charges'] or 0),
+                'futures_pnl': float(item['futures_pnl'] or 0),
+                'options_pnl': float(item['options_pnl'] or 0),
             })
 
         return results
@@ -223,50 +179,38 @@ class BrokerTradeAnalytics:
         to_date: Optional[date] = None,
     ) -> List[Dict]:
         """
-        Get monthly trading summary.
+        Get monthly trading summary based on expiry months.
 
         Returns:
             List of monthly summary records
         """
-        queryset = BrokerTradeHistory.objects.all()
+        from django.db.models.functions import TruncMonth
 
-        if account:
-            queryset = queryset.filter(account=account)
+        queryset = BrokerContractPnL.objects.exclude(expiry_date__isnull=True)
 
         if from_date:
-            queryset = queryset.filter(trade_date__gte=from_date)
+            queryset = queryset.filter(expiry_date__gte=from_date)
 
         if to_date:
-            queryset = queryset.filter(trade_date__lte=to_date)
+            queryset = queryset.filter(expiry_date__lte=to_date)
 
         monthly_data = queryset.annotate(
-            month=TruncMonth('trade_date')
+            month=TruncMonth('expiry_date')
         ).values('month').annotate(
-            trade_count=Count('id'),
-            buy_value=Sum(
-                F('quantity') * F('price'),
-                filter=Q(trade_type='BUY')
-            ),
-            sell_value=Sum(
-                F('quantity') * F('price'),
-                filter=Q(trade_type='SELL')
-            ),
-            trading_days=Count('trade_date', distinct=True),
+            contract_count=Count('id'),
+            net_pnl=Sum('net_pnl'),
+            futures_pnl=Sum('net_pnl', filter=Q(segment='FUTURES')),
+            options_pnl=Sum('net_pnl', filter=Q(segment='OPTIONS')),
         ).order_by('month')
 
         results = []
         for item in monthly_data:
-            buy_val = item['buy_value'] or Decimal('0')
-            sell_val = item['sell_value'] or Decimal('0')
-            net_pnl = sell_val - buy_val
-
             results.append({
                 'month': item['month'].strftime('%Y-%m') if item['month'] else None,
-                'trade_count': item['trade_count'],
-                'buy_value': float(buy_val),
-                'sell_value': float(sell_val),
-                'net_pnl': float(net_pnl),
-                'trading_days': item['trading_days'],
+                'contract_count': item['contract_count'],
+                'net_pnl': float(item['net_pnl'] or 0),
+                'futures_pnl': float(item['futures_pnl'] or 0),
+                'options_pnl': float(item['options_pnl'] or 0),
             })
 
         return results
@@ -277,7 +221,7 @@ class BrokerTradeAnalytics:
         fy_year: Optional[int] = None,
     ) -> Dict:
         """
-        Get financial year summary (April to March).
+        Get financial year summary (April to March) from CSV imports.
 
         Args:
             account: Filter by account
@@ -299,7 +243,7 @@ class BrokerTradeAnalytics:
         summary = self.get_trade_summary(
             account=account,
             from_date=fy_start,
-            to_date=min(fy_end, today)  # Don't go beyond today
+            to_date=min(fy_end, today)
         )
 
         # Get monthly breakdown
@@ -324,22 +268,8 @@ class BrokerTradeAnalytics:
             'summary': summary,
             'monthly_breakdown': monthly_with_cumulative,
             'total_pnl': float(cumulative_pnl),
+            'data_source': 'csv_import',
         }
-
-    def reconcile_with_positions(
-        self,
-        account: BrokerAccount,
-    ) -> Dict:
-        """
-        Reconcile broker trade history with Position records.
-
-        Returns:
-            Dict with reconciliation results
-        """
-        from apps.brokers.services.trade_sync import TradeSyncService
-
-        result = TradeSyncService.reconcile_with_taken_trades(account)
-        return result
 
 
 # Singleton instance

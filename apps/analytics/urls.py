@@ -44,12 +44,11 @@ urlpatterns = [
     path('suggestions/<int:suggestion_id>/reject/', views.reject_suggestion, name='reject_suggestion'),
 
     # ==========================================================================
-    # LEGACY API ENDPOINTS
+    # API ENDPOINTS
     # ==========================================================================
     path('api/learning-status/', views.api_learning_status, name='api_learning_status'),
     path('api/performance-metrics/', views.api_performance_metrics, name='api_performance_metrics'),
     path('api/pnl-data/', views.api_pnl_data, name='api_pnl_data'),
-    path('api/sync-positions/', views.api_sync_positions, name='api_sync_positions'),
     path('api/positions-data/', views.api_positions_data, name='api_positions_data'),
 
     # ==========================================================================
@@ -85,18 +84,11 @@ urlpatterns = [
 
     # ==========================================================================
     # BROKER TRADE ANALYTICS API ENDPOINTS
-    # These endpoints use actual broker trade history (synced from APIs)
+    # These endpoints use CSV imported contract data (BrokerContractPnL)
     # ==========================================================================
     path('api/broker/summary/', views.api_broker_trade_summary, name='api_broker_trade_summary'),
     path('api/broker/daily-pnl/', views.api_broker_daily_pnl, name='api_broker_daily_pnl'),
     path('api/broker/symbol-performance/', views.api_broker_symbol_performance, name='api_broker_symbol_performance'),
     path('api/broker/fy-summary/', views.api_broker_fy_summary, name='api_broker_fy_summary'),
     path('api/broker/monthly-summary/', views.api_broker_monthly_summary, name='api_broker_monthly_summary'),
-
-    # ==========================================================================
-    # DEBUG ENDPOINTS
-    # ==========================================================================
-    path('api/debug/breeze-trades/', views.api_debug_breeze_trades, name='api_debug_breeze_trades'),
-    path('api/debug/stored-trades/', views.api_debug_stored_trades, name='api_debug_stored_trades'),
-    path('api/debug/resync-trades/', views.api_debug_resync_trades, name='api_debug_resync_trades'),
 ]

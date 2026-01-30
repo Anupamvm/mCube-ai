@@ -1535,6 +1535,7 @@ def api_import_logs(request):
 def api_imported_pnl_summary(request):
     """
     API endpoint to get summary of imported contract P&L.
+    Also returns list of contracts for display in dashboard.
     """
     from apps.brokers.models import BrokerContractPnL
     from django.db.models import Sum, Count
@@ -1562,10 +1563,26 @@ def api_imported_pnl_summary(request):
             total_charges=Sum('total_charges'),
         )
 
+        # Get list of contracts for display (ordered by net_pnl desc)
+        contracts = list(queryset.order_by('-net_pnl').values(
+            'symbol', 'trading_symbol', 'segment', 'broker',
+            'expiry_date', 'net_pnl', 'gross_pnl', 'total_charges',
+            'option_type', 'strike_price'
+        )[:100])
+
+        # Convert dates and decimals for JSON
+        for c in contracts:
+            c['net_pnl'] = float(c['net_pnl'] or 0)
+            c['gross_pnl'] = float(c['gross_pnl'] or 0)
+            c['total_charges'] = float(c['total_charges'] or 0)
+            c['strike_price'] = float(c['strike_price']) if c['strike_price'] else None
+            c['expiry_date'] = c['expiry_date'].strftime('%Y-%m-%d') if c['expiry_date'] else None
+
         return JsonResponse({
             'success': True,
             'summary': list(summary),
             'overall': overall,
+            'contracts': contracts,
         })
 
     except Exception as e:

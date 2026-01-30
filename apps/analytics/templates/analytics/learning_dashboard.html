@@ -24,26 +24,19 @@
     </div>
 </div>
 
-<!-- Sync Controls -->
+<!-- Data Import Controls -->
 <div class="card" style="margin-bottom: 24px; padding: 16px;">
     <div style="display: flex; justify-content: space-between; align-items: center;">
         <div>
-            <strong>Broker Sync</strong>
-            <span id="sync-status" style="margin-left: 12px; color: #718096; font-size: 13px;">Last sync: Never</span>
+            <strong>Trade Data</strong>
+            <span id="data-source-info" style="margin-left: 12px; color: #718096; font-size: 13px;">Source: CSV Imports</span>
         </div>
         <div style="display: flex; gap: 12px;">
             <a href="{% url 'brokers:csv_upload_dashboard' %}" class="btn" style="background: #6366f1; color: white;">
                 Import CSV
             </a>
-            <button id="btn-sync" class="btn btn-success" onclick="syncPositions(false)">
-                Sync from Brokers
-            </button>
-            <button id="btn-clear-sync" class="btn btn-warning" onclick="syncPositions(true)">
-                Clear & Sync
-            </button>
         </div>
     </div>
-    <div id="sync-result" style="margin-top: 12px; display: none;"></div>
 </div>
 
 <!-- Section 1: Open Positions (from Brokers) -->
@@ -150,22 +143,20 @@
     </div>
 </div>
 
-<!-- Section 3: Recent Trades -->
+<!-- Section 3: Imported Contracts -->
 <div class="card" id="history-card">
     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
-        <h3 style="margin: 0;">Recent Trades</h3>
+        <h3 style="margin: 0;">Imported Contracts</h3>
         <div style="display: flex; gap: 8px; align-items: center;">
-            <select id="broker-filter" onchange="filterTrades()" style="padding: 6px 12px; border-radius: 6px; border: 1px solid #e2e8f0; font-size: 13px;">
+            <select id="broker-filter" onchange="filterContracts()" style="padding: 6px 12px; border-radius: 6px; border: 1px solid #e2e8f0; font-size: 13px;">
                 <option value="all">All Brokers</option>
                 <option value="ICICI">ICICI Breeze</option>
                 <option value="KOTAK">Kotak Neo</option>
             </select>
-            <select id="trade-filter" onchange="filterTrades()" style="padding: 6px 12px; border-radius: 6px; border: 1px solid #e2e8f0; font-size: 13px;">
+            <select id="segment-filter" onchange="filterContracts()" style="padding: 6px 12px; border-radius: 6px; border: 1px solid #e2e8f0; font-size: 13px;">
                 <option value="all">All Types</option>
-                <option value="futures">Futures Only</option>
-                <option value="options">Options Only</option>
-                <option value="buy">Buys Only</option>
-                <option value="sell">Sells Only</option>
+                <option value="FUTURES">Futures Only</option>
+                <option value="OPTIONS">Options Only</option>
             </select>
         </div>
     </div>
@@ -255,7 +246,7 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script>
 let monthlyPnlChart = null;
-let allTrades = [];
+let allContracts = [];
 
 function toggleSection(section) {
     const content = document.getElementById(section + '-content');
@@ -296,88 +287,26 @@ function formatDate(dateStr) {
     return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
 }
 
-function syncPositions(clearFirst) {
-    const btn = document.getElementById(clearFirst ? 'btn-clear-sync' : 'btn-sync');
-    const resultDiv = document.getElementById('sync-result');
-
-    btn.disabled = true;
-    btn.textContent = 'Syncing...';
-    resultDiv.style.display = 'none';
-
-    const formData = new FormData();
-    formData.append('clear', clearFirst ? 'true' : 'false');
-
-    fetch('{% url "analytics:api_sync_positions" %}', {
-        method: 'POST',
-        headers: { 'X-CSRFToken': '{{ csrf_token }}' },
-        body: formData
-    })
-    .then(response => response.json())
-    .then(data => {
-        btn.disabled = false;
-        btn.textContent = clearFirst ? 'Clear & Sync' : 'Sync from Brokers';
-
-        resultDiv.style.display = 'block';
-        resultDiv.style.padding = '16px';
-        resultDiv.style.borderRadius = '8px';
-
-        if (data.success) {
-            resultDiv.style.background = 'linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%)';
-            resultDiv.innerHTML = `
-                <div style="display: flex; align-items: center; gap: 12px;">
-                    <span style="font-size: 24px;">✅</span>
-                    <div>
-                        <strong style="color: #065f46;">Sync Complete! ${data.fy_label || ''}</strong><br>
-                        <span style="font-size: 13px; color: #047857;">
-                            Positions: ${data.positions_created} new, ${data.positions_updated} updated<br>
-                            <strong>Trade History: ${data.history_synced || 0} trades synced</strong>
-                        </span>
-                    </div>
-                </div>`;
-            document.getElementById('sync-status').textContent = 'Last sync: Just now';
-            loadPositionsData();
-        } else {
-            resultDiv.style.background = 'linear-gradient(135deg, #fee2e2 0%, #fecaca 100%)';
-            resultDiv.innerHTML = `
-                <div style="display: flex; align-items: center; gap: 12px;">
-                    <span style="font-size: 24px;">❌</span>
-                    <div>
-                        <strong style="color: #991b1b;">Sync Failed</strong><br>
-                        <span style="font-size: 13px; color: #b91c1c;">${data.error || data.errors?.join(', ') || 'Unknown error'}</span>
-                    </div>
-                </div>`;
-        }
-    })
-    .catch(error => {
-        btn.disabled = false;
-        btn.textContent = clearFirst ? 'Clear & Sync' : 'Sync from Brokers';
-        resultDiv.style.display = 'block';
-        resultDiv.style.background = '#fee2e2';
-        resultDiv.style.padding = '16px';
-        resultDiv.innerHTML = `<strong>Error:</strong> ${error.message}`;
-    });
-}
-
 function loadPositionsData() {
+    // Load FY Performance from CSV imports (primary data source)
+    loadFYPerformance();
+
+    // Load current positions (if any)
     fetch('{% url "analytics:api_positions_data" %}')
         .then(response => response.json())
         .then(data => {
             if (data.success) {
                 document.getElementById('count-open').textContent = data.counts.open;
                 document.getElementById('count-suggestions').textContent = data.counts.suggested;
-                document.getElementById('count-closed').textContent = data.counts.closed;
                 document.getElementById('open-count-badge').textContent = data.counts.open;
                 document.getElementById('suggestions-count-badge').textContent = data.counts.suggested;
 
                 renderOpenPositions(data.open_positions);
                 renderSuggestions(data.suggestions);
-                allTrades = data.trade_history || [];
-                renderTradeHistory(allTrades, data.fy_start);
             }
         });
 
-    loadFYPerformance();
-
+    // Today's P&L from live positions
     fetch('{% url "analytics:api_pnl_data" %}')
         .then(response => response.json())
         .then(data => {
@@ -387,6 +316,8 @@ function loadPositionsData() {
                 const pnlColor = todaysPnl >= 0 ? '#10b981' : '#ef4444';
                 document.getElementById('todays-pnl').innerHTML =
                     `<span style="color: ${pnlColor}">${summary.todays_pnl_formatted}</span>`;
+            } else {
+                document.getElementById('todays-pnl').textContent = '₹0';
             }
         });
 }
@@ -703,73 +634,75 @@ function renderSuggestions(suggestions) {
     container.innerHTML = html + '</tbody></table>';
 }
 
-function renderTradeHistory(trades, fyStart) {
+function loadImportedContracts() {
+    fetch('{% url "brokers:api_imported_pnl_summary" %}')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                allContracts = data.contracts || [];
+                document.getElementById('count-closed').textContent = allContracts.length;
+                renderContracts(allContracts);
+            }
+        });
+}
+
+function renderContracts(contracts) {
     const container = document.getElementById('history-container');
 
-    if (!trades || trades.length === 0) {
-        container.innerHTML = '<div style="text-align: center; padding: 40px; color: #94a3b8;">No trade history. Click "Sync from Brokers".</div>';
+    if (!contracts || contracts.length === 0) {
+        container.innerHTML = '<div style="text-align: center; padding: 40px; color: #94a3b8;">No imported contracts. <a href="{% url \'brokers:csv_upload_dashboard\' %}">Import CSV</a> to get started.</div>';
         return;
     }
 
     let html = `<table><thead><tr>
-        <th>Date</th><th>Time</th><th>Symbol</th><th>Type</th><th>Qty</th><th>Price</th><th>Value</th><th>Broker</th>
+        <th>Symbol</th><th>Contract</th><th>Segment</th><th>Expiry</th><th>Net P&L</th><th>Broker</th>
     </tr></thead><tbody>`;
 
-    trades.forEach(t => {
-        const typeBadge = t.direction === 'BUY' ? 'success' : 'danger';
-        const value = t.trade_value || (t.quantity * (t.price || 0));
-        const priceDisplay = t.price ? `₹${t.price.toFixed(2)}` : '-';
+    contracts.slice(0, 50).forEach(c => {
+        const pnlColor = c.net_pnl >= 0 ? '#10b981' : '#ef4444';
+        const segmentBadge = c.segment === 'FUTURES' ? 'info' : 'secondary';
 
         html += `<tr>
-            <td style="font-size: 13px;">${t.trade_date || '-'}</td>
-            <td style="font-size: 12px; color: #64748b;">${t.trade_time || '-'}</td>
-            <td><strong>${t.instrument}</strong>
-                ${t.option_type ? `<span style="font-size: 10px; color: #94a3b8;"> ${t.option_type}</span>` : ''}
-            </td>
-            <td><span class="badge badge-${typeBadge}">${t.direction}</span></td>
-            <td>${t.quantity}</td>
-            <td>${priceDisplay}</td>
-            <td style="font-weight: 500;">${formatCurrency(value)}</td>
-            <td style="font-size: 12px; color: #64748b;">${t.broker || '-'}</td>
+            <td><strong>${c.symbol}</strong></td>
+            <td style="font-size: 12px; max-width: 200px; overflow: hidden; text-overflow: ellipsis;">${c.trading_symbol}</td>
+            <td><span class="badge badge-${segmentBadge}">${c.segment}</span></td>
+            <td style="font-size: 13px;">${c.expiry_date || '-'}</td>
+            <td style="color: ${pnlColor}; font-weight: 600;">${formatCurrency(c.net_pnl)}</td>
+            <td style="font-size: 12px; color: #64748b;">${c.broker || '-'}</td>
         </tr>`;
     });
 
     html += `</tbody></table>
         <div style="margin-top: 12px; font-size: 13px; color: #94a3b8; text-align: center;">
-            Showing ${trades.length} trades
+            Showing ${Math.min(contracts.length, 50)} of ${contracts.length} contracts
         </div>`;
 
     container.innerHTML = html;
 }
 
-function filterTrades() {
-    const typeFilter = document.getElementById('trade-filter').value;
+function filterContracts() {
+    const segmentFilter = document.getElementById('segment-filter').value;
     const brokerFilter = document.getElementById('broker-filter').value;
-    let filtered = allTrades;
+    let filtered = allContracts;
 
-    // Apply broker filter first
     if (brokerFilter !== 'all') {
-        filtered = filtered.filter(t => t.broker === brokerFilter);
+        filtered = filtered.filter(c => c.broker === brokerFilter);
     }
 
-    // Apply type filter
-    if (typeFilter === 'futures') {
-        filtered = filtered.filter(t => !t.option_type && !t.strike_price);
-    } else if (typeFilter === 'options') {
-        filtered = filtered.filter(t => t.option_type || t.strike_price);
-    } else if (typeFilter === 'buy') {
-        filtered = filtered.filter(t => t.direction === 'BUY');
-    } else if (typeFilter === 'sell') {
-        filtered = filtered.filter(t => t.direction === 'SELL');
+    if (segmentFilter !== 'all') {
+        filtered = filtered.filter(c => c.segment === segmentFilter);
     }
 
-    renderTradeHistory(filtered);
+    renderContracts(filtered);
 }
 
 function approveSuggestion(id) { alert('Approve suggestion ' + id); }
 function rejectSuggestion(id) { alert('Reject suggestion ' + id); }
 
-document.addEventListener('DOMContentLoaded', loadPositionsData);
+document.addEventListener('DOMContentLoaded', function() {
+    loadPositionsData();
+    loadImportedContracts();
+});
 setInterval(loadPositionsData, 60000);
 </script>
 {% endblock %}
