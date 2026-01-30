@@ -6,7 +6,7 @@ from django.contrib import admin
 from django.utils.html import format_html
 from django.urls import reverse
 from django.db.models import Q
-from apps.trading.models import TradeSuggestion, AutoTradeConfig, TradeSuggestionLog, PositionSize
+from apps.trading.models import TradeSuggestion, TradeSuggestionLog, PositionSize
 
 
 @admin.register(TradeSuggestion)
@@ -176,71 +176,6 @@ class TradeSuggestionAdmin(admin.ModelAdmin):
         if obj:
             return obj.status in ['EXECUTED', 'REJECTED', 'EXPIRED', 'CANCELLED']
         return True
-
-
-@admin.register(AutoTradeConfig)
-class AutoTradeConfigAdmin(admin.ModelAdmin):
-    """Admin interface for auto-trade configuration"""
-
-    list_display = [
-        'user_username',
-        'strategy',
-        'is_enabled_colored',
-        'auto_approve_threshold',
-        'max_daily_positions',
-        'max_daily_loss',
-    ]
-
-    list_filter = [
-        'is_enabled',
-        'strategy',
-        'updated_at',
-    ]
-
-    search_fields = [
-        'user__username',
-        'strategy',
-    ]
-
-    readonly_fields = [
-        'created_at',
-        'updated_at',
-    ]
-
-    fieldsets = (
-        ('User & Strategy', {
-            'fields': ('user', 'strategy')
-        }),
-        ('Auto-Trade Settings', {
-            'fields': ('is_enabled', 'auto_approve_threshold')
-        }),
-        ('Risk Controls', {
-            'fields': ('max_daily_positions', 'max_daily_loss')
-        }),
-        ('Special Rules', {
-            'fields': ('require_human_on_weekend', 'require_human_on_high_vix', 'vix_threshold')
-        }),
-        ('Timestamps', {
-            'fields': ('created_at', 'updated_at'),
-            'classes': ('collapse',),
-        }),
-    )
-
-    def user_username(self, obj):
-        """Display user username"""
-        return obj.user.username
-    user_username.short_description = 'User'
-
-    def is_enabled_colored(self, obj):
-        """Color-code enabled status"""
-        color = '#28a745' if obj.is_enabled else '#dc3545'
-        status = 'ENABLED' if obj.is_enabled else 'DISABLED'
-        return format_html(
-            '<span style="background-color: {}; color: white; padding: 3px 8px; border-radius: 3px;">{}</span>',
-            color,
-            status
-        )
-    is_enabled_colored.short_description = 'Status'
 
 
 @admin.register(TradeSuggestionLog)

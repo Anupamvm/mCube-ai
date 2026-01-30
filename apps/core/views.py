@@ -2425,24 +2425,32 @@ def test_redis():
 
 
 def test_background_tasks():
-    """Test background task system"""
+    """Test background task system (Celery)"""
     tests = []
 
-    # Test 1: Background task model access
+    # Test 1: Celery connection
     try:
-        from background_task.models import Task
-        pending = Task.objects.filter(locked_by__isnull=True).count()
-        completed = Task.objects.filter(failed_at__isnull=True).exclude(locked_by__isnull=True).count()
-        failed = Task.objects.filter(failed_at__isnull=False).count()
+        from mcube_ai.celery import app
+        inspect = app.control.inspect()
+        active = inspect.active()
 
-        tests.append({
-            'name': 'Background Tasks',
-            'status': 'pass',
-            'message': f'Pending: {pending}, Completed: {completed}, Failed: {failed}',
-        })
+        if active is not None:
+            worker_count = len(active)
+            total_active = sum(len(tasks) for tasks in active.values())
+            tests.append({
+                'name': 'Celery Workers',
+                'status': 'pass',
+                'message': f'{worker_count} workers, {total_active} active tasks',
+            })
+        else:
+            tests.append({
+                'name': 'Celery Workers',
+                'status': 'warning',
+                'message': 'No workers responding (may not be running)',
+            })
     except Exception as e:
         tests.append({
-            'name': 'Background Tasks',
+            'name': 'Celery Workers',
             'status': 'fail',
             'message': f'Error: {str(e)}',
         })
@@ -4492,53 +4500,9 @@ def background_tasks_control(request):
     celery_static_active = sum(1 for t in celery_static_tasks if t['is_active'])
     celery_static_total = len(celery_static_tasks)
 
-    # =========================================================================
-    # DJANGO BACKGROUND TASKS
-    # =========================================================================
-
-    bg_tasks = []
-    bg_task_stats = {'pending': 0, 'running': 0, 'failed': 0}
-
-    try:
-        from background_task.models import Task
-        from django.utils import timezone
-
-        # Get all background tasks
-        all_bg_tasks = Task.objects.all().order_by('run_at')
-
-        for task in all_bg_tasks:
-            # Determine status
-            if task.locked_by:
-                status = 'running'
-                bg_task_stats['running'] += 1
-            elif task.failed_at:
-                status = 'failed'
-                bg_task_stats['failed'] += 1
-            else:
-                status = 'pending'
-                bg_task_stats['pending'] += 1
-
-            bg_tasks.append({
-                'id': task.id,
-                'task_name': task.task_name,
-                'task_params': task.task_params,
-                'run_at': task.run_at,
-                'repeat': task.repeat,
-                'repeat_until': task.repeat_until,
-                'attempts': task.attempts,
-                'failed_at': task.failed_at,
-                'last_error': task.last_error,
-                'locked_by': task.locked_by,
-                'locked_at': task.locked_at,
-                'status': status,
-            })
-
-    except Exception as e:
-        logger.warning(f"Could not fetch background tasks: {e}")
-
-    # Total counts for all tasks
-    total_active = celery_dynamic_active + celery_static_active + bg_task_stats['pending'] + bg_task_stats['running']
-    total_tasks = celery_dynamic_total + celery_static_total + len(bg_tasks)
+    # Total counts for all tasks (Celery only - no longer using django-background-tasks)
+    total_active = celery_dynamic_active + celery_static_active
+    total_tasks = celery_dynamic_total + celery_static_total
 
     context = {
         # Celery data
@@ -4549,11 +4513,7 @@ def background_tasks_control(request):
         'celery_active_count': celery_dynamic_active + celery_static_active,
         'celery_total_count': celery_dynamic_total + celery_static_total,
 
-        # Background tasks data
-        'bg_tasks': bg_tasks,
-        'bg_task_stats': bg_task_stats,
-
-        # Overall stats
+        # Overall stats (Celery only)
         'total_active': total_active,
         'total_tasks': total_tasks,
         'timestamp': datetime.now(),
@@ -4565,45 +4525,43 @@ def background_tasks_control(request):
 @login_required
 @user_passes_test(is_admin_user)
 def toggle_bg_task(request, task_id):
-    """Toggle a Django background task (delete to stop, cannot restart once stopped)."""
+    """
+    Toggle/revoke a Celery task by ID.
+    Note: This is a placeholder - Celery task revocation requires the task ID from Celery.
+    """
     from django.contrib import messages
 
     if request.method != 'POST':
         return JsonResponse({'success': False, 'error': 'POST required'}, status=405)
 
     try:
-        from background_task.models import Task
+        from mcube_ai.celery import app
 
-        task = Task.objects.get(id=task_id)
-        task_name = task.task_name
+        # Revoke the task
+        app.control.revoke(task_id, terminate=True)
 
-        # Delete the task to stop it
-        task.delete()
-
-        messages.success(request, f"Task '{task_name}' stopped and removed.")
+        messages.success(request, f"Task '{task_id}' revoked.")
         return JsonResponse({
             'success': True,
             'task_id': task_id,
-            'message': f"Task '{task_name}' stopped"
+            'message': f"Task '{task_id}' revoked"
         })
-    except Task.DoesNotExist:
-        return JsonResponse({'success': False, 'error': 'Task not found'}, status=404)
     except Exception as e:
-        logger.error(f"Error stopping bg task {task_id}: {e}")
+        logger.error(f"Error revoking task {task_id}: {e}")
         return JsonResponse({'success': False, 'error': str(e)}, status=500)
 
 
 @login_required
 @user_passes_test(is_admin_user)
 def delete_bg_task(request, task_id):
-    """Delete a Django background task."""
-    return toggle_bg_task(request, task_id)  # Same as toggle for bg tasks
+    """Delete/revoke a Celery task."""
+    return toggle_bg_task(request, task_id)
 
 
 @login_required
 @user_passes_test(is_admin_user)
 def control_all_bg_tasks(request):
-    """Control all Django background tasks."""
+    """Control all Celery background tasks."""
     from django.contrib import messages
 
     if request.method != 'POST':
@@ -4612,26 +4570,25 @@ def control_all_bg_tasks(request):
     action = request.POST.get('action', 'stop')
 
     try:
-        from background_task.models import Task
+        from mcube_ai.celery import app
 
         if action == 'stop':
-            # Delete all pending/scheduled tasks
-            deleted_count, _ = Task.objects.all().delete()
-            messages.warning(request, f"All background tasks stopped ({deleted_count} removed).")
+            # Purge all pending tasks from Celery
+            app.control.purge()
+            messages.warning(request, "All pending Celery tasks purged.")
             return JsonResponse({
                 'success': True,
-                'message': f'All background tasks stopped ({deleted_count} removed)'
+                'message': 'All pending Celery tasks purged'
             })
         elif action == 'start':
-            # Re-install the scheduler
+            # Re-install the scheduler (creates default flags)
             from apps.core.background_tasks import install_daily_task_scheduler
             result = install_daily_task_scheduler()
             if result.get('status') == 'success':
-                messages.success(request, "Background task scheduler installed.")
+                messages.success(request, "Task scheduler initialized. Celery Beat handles scheduling.")
                 return JsonResponse({
                     'success': True,
-                    'message': 'Background task scheduler installed',
-                    'first_run': result.get('first_run')
+                    'message': 'Task scheduler initialized'
                 })
             else:
                 return JsonResponse({
@@ -4642,5 +4599,5 @@ def control_all_bg_tasks(request):
             return JsonResponse({'success': False, 'error': 'Invalid action'}, status=400)
 
     except Exception as e:
-        logger.error(f"Error controlling all bg tasks: {e}")
+        logger.error(f"Error controlling Celery tasks: {e}")
         return JsonResponse({'success': False, 'error': str(e)}, status=500)

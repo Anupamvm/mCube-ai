@@ -130,14 +130,25 @@ class BrokerTradeAnalytics:
         from_date: Optional[date] = None,
         to_date: Optional[date] = None,
         limit: int = 20,
+        broker: Optional[str] = None,
     ) -> List[Dict]:
         """
         Get performance breakdown by trading symbol from CSV imports.
+
+        Args:
+            account: Filter by specific account
+            from_date: Start date filter
+            to_date: End date filter
+            limit: Max number of symbols to return
+            broker: Filter by broker ('KOTAK' or 'ICICI')
 
         Returns:
             List of symbol performance records
         """
         queryset = BrokerContractPnL.objects.all()
+
+        if broker:
+            queryset = queryset.filter(broker=broker)
 
         if from_date:
             queryset = queryset.filter(

@@ -326,32 +326,29 @@
                 {% if celery_worker_status.active %}Workers Active{% else %}No Workers{% endif %}
             </div>
         </div>
-        <div class="stat-card bg-tasks">
-            <h3>Background Tasks</h3>
-            <div class="value">{{ bg_tasks|length }}</div>
-            <div class="label">Scheduled Tasks</div>
-        </div>
         <div class="stat-card pending">
-            <h3>Pending</h3>
-            <div class="value">{{ bg_task_stats.pending }}</div>
-            <div class="label">Waiting to Run</div>
+            <h3>Total Active</h3>
+            <div class="value">{{ total_active }}</div>
+            <div class="label">Active Tasks</div>
         </div>
         <div class="stat-card running">
-            <h3>Running</h3>
-            <div class="value">{{ bg_task_stats.running }}</div>
-            <div class="label">Currently Active</div>
+            <h3>Total Tasks</h3>
+            <div class="value">{{ total_tasks }}</div>
+            <div class="label">Configured</div>
         </div>
-        <div class="stat-card failed">
-            <h3>Failed</h3>
-            <div class="value">{{ bg_task_stats.failed }}</div>
-            <div class="label">Need Attention</div>
+        <div class="stat-card">
+            <h3>Redis</h3>
+            <div class="value">
+                <span class="status-indicator {% if redis_status.connected %}online{% else %}offline{% endif %}"></span>
+            </div>
+            <div class="label">{% if redis_status.connected %}Connected{% else %}Disconnected{% endif %}</div>
         </div>
     </div>
 
     <!-- Section Tabs -->
     <div class="section-tabs">
         <div class="section-tab active" onclick="showSection('celery')">Celery Tasks</div>
-        <div class="section-tab" onclick="showSection('background')">Django Background Tasks</div>
+        <div class="section-tab" onclick="showSection('background')">Task Management</div>
     </div>
 
     <!-- Celery Tasks Section -->
@@ -442,63 +439,35 @@
         {% endfor %}
     </div>
 
-    <!-- Django Background Tasks Section -->
+    <!-- Celery Task Management Section -->
     <div id="background-section" class="task-section">
         <div class="section-header">
-            <h2>Django Background Tasks</h2>
+            <h2>Celery Task Management</h2>
             <div class="header-actions-inline">
-                <span class="badge badge-purple">{{ bg_tasks|length }} Tasks</span>
                 <form method="post" action="{% url 'core:control_all_bg_tasks' %}" style="display: inline;">
                     {% csrf_token %}
                     <input type="hidden" name="action" value="start">
-                    <button type="submit" class="btn btn-sm btn-success" onclick="return confirm('Install/restart background task scheduler?')">Install Scheduler</button>
+                    <button type="submit" class="btn btn-sm btn-success" onclick="return confirm('Initialize task scheduler defaults?')">Initialize Scheduler</button>
                 </form>
                 <form method="post" action="{% url 'core:control_all_bg_tasks' %}" style="display: inline;">
                     {% csrf_token %}
                     <input type="hidden" name="action" value="stop">
-                    <button type="submit" class="btn btn-sm btn-danger" onclick="return confirm('Stop ALL background tasks? This will delete all scheduled tasks.')">Stop All</button>
+                    <button type="submit" class="btn btn-sm btn-danger" onclick="return confirm('Purge all pending Celery tasks?')">Purge Pending</button>
                 </form>
                 <a href="{% url 'core:background_tasks_control' %}" class="btn btn-sm btn-secondary">Refresh</a>
             </div>
         </div>
 
-        <p style="color: #718096; margin-bottom: 15px; font-size: 13px;">
-            These tasks are managed by django-background-tasks. Run <code>python manage.py process_tasks</code> to process them.
-        </p>
-
-        {% for task in bg_tasks %}
-        <div class="task-item bg-task-item" id="bg-task-{{ task.id }}">
-            <div class="task-content">
-                <div class="task-name">{{ task.task_name }}</div>
-                <div class="task-meta">
-                    <span>Run at: {{ task.run_at|date:"M d, H:i" }}</span>
-                    {% if task.repeat %}<span>Repeats: {{ task.repeat }}s</span>{% endif %}
-                    <span>Attempts: {{ task.attempts }}</span>
-                    {% if task.locked_by %}<span>Locked by: {{ task.locked_by }}</span>{% endif %}
-                    {% if task.last_error %}<span style="color: #e53e3e;">Error: {{ task.last_error|truncatewords:10 }}</span>{% endif %}
-                </div>
-            </div>
-            <div class="task-actions">
-                {% if task.status == 'running' %}
-                <span class="badge badge-success status-badge">Running</span>
-                {% elif task.status == 'failed' %}
-                <span class="badge badge-danger status-badge">Failed</span>
-                {% else %}
-                <span class="badge badge-info status-badge">Pending</span>
-                {% endif %}
-                <button class="btn btn-sm btn-danger" onclick="deleteBgTask({{ task.id }}, this)">Delete</button>
-            </div>
-        </div>
-        {% empty %}
         <div class="empty-state">
-            <p>No background tasks scheduled.</p>
-            <form method="post" action="{% url 'core:control_all_bg_tasks' %}">
-                {% csrf_token %}
-                <input type="hidden" name="action" value="start">
-                <button type="submit" class="btn btn-primary">Install Task Scheduler</button>
-            </form>
+            <p style="color: #718096; margin-bottom: 15px;">
+                All background tasks are managed by <strong>Celery</strong>. Scheduled tasks are configured in Celery Beat.
+            </p>
+            <p style="color: #718096; font-size: 13px;">
+                Make sure Celery worker and beat are running:<br>
+                <code>celery -A mcube_ai worker -l info</code><br>
+                <code>celery -A mcube_ai beat -l info</code>
+            </p>
         </div>
-        {% endfor %}
     </div>
 
     <div class="timestamp">Last updated: {{ timestamp|date:"Y-m-d H:i:s" }}</div>
@@ -601,37 +570,6 @@
             alert('Error: ' + error);
             button.disabled = false;
             button.textContent = action === 'start' ? 'Start' : 'Stop';
-        });
-    }
-
-    function deleteBgTask(taskId, button) {
-        if (!confirm('Delete this background task?')) return;
-
-        const taskItem = document.getElementById('bg-task-' + taskId);
-        button.disabled = true;
-        button.textContent = 'Deleting...';
-        taskItem.classList.add('loading');
-
-        fetch('{% url "core:delete_bg_task" task_id=0 %}'.replace('0', taskId), {
-            method: 'POST',
-            headers: { 'X-CSRFToken': '{{ csrf_token }}' },
-        })
-        .then(response => response.json())
-        .then(data => {
-            if (data.success) {
-                taskItem.remove();
-            } else {
-                alert('Error: ' + data.error);
-                taskItem.classList.remove('loading');
-                button.disabled = false;
-                button.textContent = 'Delete';
-            }
-        })
-        .catch(error => {
-            alert('Error: ' + error);
-            taskItem.classList.remove('loading');
-            button.disabled = false;
-            button.textContent = 'Delete';
         });
     }
 

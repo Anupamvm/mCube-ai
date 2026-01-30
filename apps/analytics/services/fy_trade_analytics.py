@@ -52,13 +52,17 @@ class FYTradeAnalytics:
     def __init__(self):
         self.fy_start, self.fy_end = get_financial_year_dates()
 
-    def get_monthly_performance(self, account=None) -> Dict:
+    def get_monthly_performance(self, account=None, broker: str = None) -> Dict:
         """
         Calculate monthly P&L performance for FY using CSV imported data.
         Separates Futures and Options.
 
         Uses BrokerContractPnL (CSV imports) which has accurate P&L per contract.
         Monthly breakdown is based on contract expiry date.
+
+        Args:
+            account: Optional account filter
+            broker: Optional broker filter ('KOTAK' or 'ICICI')
 
         Returns:
             dict with monthly breakdown for futures and options
@@ -70,6 +74,10 @@ class FYTradeAnalytics:
             models.Q(expiry_date__gte=self.fy_start, expiry_date__lte=self.fy_end) |
             models.Q(expiry_date__isnull=True)
         )
+
+        # Apply broker filter if provided
+        if broker:
+            queryset = queryset.filter(broker=broker)
 
         # Initialize result structure
         result = {
@@ -135,14 +143,17 @@ class FYTradeAnalytics:
                 'futures': {
                     'trades': data['futures']['contracts'],
                     'realized_pnl': float(futures_pnl),
+                    'net_pnl': float(futures_pnl),  # Alias for template compatibility
                 },
                 'options': {
                     'trades': data['options']['contracts'],
                     'realized_pnl': float(options_pnl),
+                    'net_pnl': float(options_pnl),  # Alias for template compatibility
                 },
                 'total': {
                     'trades': data['futures']['contracts'] + data['options']['contracts'],
                     'realized_pnl': float(total_pnl),
+                    'net_pnl': float(total_pnl),  # Alias for template compatibility
                 }
             }
 
@@ -169,11 +180,14 @@ class FYTradeAnalytics:
 
         return result
 
-    def get_broker_breakdown(self) -> Dict:
+    def get_broker_breakdown(self, broker: str = None) -> Dict:
         """
         Get performance breakdown by broker using CSV imported data.
 
         Uses BrokerContractPnL (CSV imports) which has accurate P&L per contract.
+
+        Args:
+            broker: Optional broker filter ('KOTAK' or 'ICICI')
         """
         from apps.brokers.models import BrokerContractPnL
 
@@ -182,6 +196,10 @@ class FYTradeAnalytics:
             models.Q(expiry_date__gte=self.fy_start, expiry_date__lte=self.fy_end) |
             models.Q(expiry_date__isnull=True)
         )
+
+        # Apply broker filter if provided
+        if broker:
+            queryset = queryset.filter(broker=broker)
 
         result = {
             'fy_label': get_fy_label(),

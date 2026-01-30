@@ -1553,6 +1553,9 @@ class BrokerContractPnL(TimeStampedModel):
     SEGMENT_CHOICES = [
         ('FUTURES', 'Futures'),
         ('OPTIONS', 'Options'),
+        ('EQUITY', 'Equity'),
+        ('MUTUAL_FUND', 'Mutual Fund'),
+        ('ETF', 'ETF'),
     ]
 
     SECURITY_TYPE_CHOICES = [
@@ -1560,6 +1563,9 @@ class BrokerContractPnL(TimeStampedModel):
         ('FUTIDX', 'Index Futures'),
         ('OPTSTK', 'Stock Options'),
         ('OPTIDX', 'Index Options'),
+        ('EQUITY_STOCK', 'Equity Stock'),
+        ('MUTUAL_FUND', 'Mutual Fund'),
+        ('ETF', 'ETF'),
     ]
 
     # Broker and import tracking
@@ -1587,13 +1593,13 @@ class BrokerContractPnL(TimeStampedModel):
     )
 
     segment = models.CharField(
-        max_length=10,
+        max_length=15,
         choices=SEGMENT_CHOICES,
-        help_text="FUTURES or OPTIONS"
+        help_text="FUTURES, OPTIONS, EQUITY, MUTUAL_FUND, or ETF"
     )
 
     security_type = models.CharField(
-        max_length=10,
+        max_length=15,
         choices=SECURITY_TYPE_CHOICES,
         blank=True,
         help_text="Detailed security type from Kotak CSV"

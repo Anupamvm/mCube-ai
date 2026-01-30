@@ -611,7 +611,6 @@ def execute_kotak_strangle_entry(account: BrokerAccount) -> Dict:
 
         logger.info(f"✅ Trade suggestion created successfully: {suggestion.id}")
         logger.info(f"   Status: {suggestion.get_status_display()}")
-        logger.info(f"   Auto-Trade: {suggestion.is_auto_trade}")
         logger.info(f"   Premium Collected: ₹{premium_collected:,.0f}")
         logger.info(f"   Margin Used: ₹{margin_used:,.0f}")
         logger.info("")
@@ -628,7 +627,6 @@ def execute_kotak_strangle_entry(account: BrokerAccount) -> Dict:
                 'margin_used': margin_used,
                 'quantity': quantity,
                 'suggestion_status': suggestion.get_status_display(),
-                'is_auto_trade': suggestion.is_auto_trade,
             }
         }
 

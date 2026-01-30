@@ -74,9 +74,6 @@ urlpatterns = [
     path('suggestion/<int:suggestion_id>/execute/', views.execute_suggestion, name='execute_suggestion'),
     path('suggestion/<int:suggestion_id>/confirm/', views.confirm_execution, name='confirm_execution'),
 
-    # Auto-Trade Configuration
-    path('config/auto-trade/', views.auto_trade_config, name='auto_trade_config'),
-
     # History and Export
     path('history/', views.suggestion_history, name='suggestion_history'),
     path('history/export/', views.export_suggestions_csv, name='export_csv'),

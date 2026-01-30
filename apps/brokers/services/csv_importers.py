@@ -79,20 +79,59 @@ def parse_int(value: str, default: int = 0) -> int:
 
 class KotakFNOImporter:
     """
-    Parse Kotak Gain/Loss CSV - Derivatives section only.
+    Parse Kotak Neo Gain/Loss CSV - ALL sections (Equity, Mutual Funds, ETF, Derivatives).
 
     CSV Format (actual structure):
-    - Rows 1-4: Client info header
+    - Rows 1-4: Client info header (Client Name, Client Code, Transaction Period, Transaction Type)
     - Row 5: Empty
     - Row 6: Column headers
-    - Row 7+: Data sections (Equity, Mutual Funds, ETF, Derivatives)
-    - "Derivatives" section marker indicates start of F&O data
+    - Row 7+: Data sections with section markers:
+        - "Equity" section -> Equity stocks
+        - "Mutual Funds" section -> MF holdings
+        - "ETF" section -> ETFs
+        - "Derivatives" section -> F&O (Futures & Options)
+    - Disclaimer at the end
 
-    Contract formats:
+    Column headers (Row 6):
+    Script Name, Security Type, ISIN, Quantity, Buy Amt. (A), Sell Amt. (B), Intraday, <1yr., >1yr.,
+    Total(T = B - A), GST (C), Brokerage (D), Misc. (E), STT/CTT (S), Total (C+D+E+S), Net P&L (T-S), Gross P&L (T+(C+D+E))
+
+    Security Types:
+    - EQUITY STOCK -> Equity segment
+    - MUTUAL FUND -> Mutual Fund segment
+    - ETF -> ETF segment
+    - FUTSTK, FUTIDX -> Futures segment
+    - OPTIDX, OPTSTK -> Options segment
+
+    Contract formats (Derivatives):
       - Futures: "BANKNIFTY 25NOV25 XX 0" (SYMBOL DDMMMYY XX 0)
       - Options: "NIFTY 02DEC25 CE 26850" (SYMBOL DDMMMYY CE/PE STRIKE)
-    - Security Types: FUTSTK, FUTIDX, OPTIDX, OPTSTK
     """
+
+    # Section markers in the CSV
+    SECTION_MARKERS = ['equity', 'mutual funds', 'etf', 'derivatives']
+
+    # Map security types to segments
+    SECURITY_TYPE_TO_SEGMENT = {
+        'EQUITY STOCK': 'EQUITY',
+        'MUTUAL FUND': 'MUTUAL_FUND',
+        'ETF': 'ETF',
+        'FUTSTK': 'FUTURES',
+        'FUTIDX': 'FUTURES',
+        'OPTIDX': 'OPTIONS',
+        'OPTSTK': 'OPTIONS',
+    }
+
+    # Map security types for model storage (normalize names)
+    SECURITY_TYPE_NORMALIZE = {
+        'EQUITY STOCK': 'EQUITY_STOCK',
+        'MUTUAL FUND': 'MUTUAL_FUND',
+        'ETF': 'ETF',
+        'FUTSTK': 'FUTSTK',
+        'FUTIDX': 'FUTIDX',
+        'OPTIDX': 'OPTIDX',
+        'OPTSTK': 'OPTSTK',
+    }
 
     def __init__(self):
         self.batch_id = None
@@ -100,28 +139,42 @@ class KotakFNOImporter:
         self.records_created = 0
         self.records_updated = 0
         self.records_skipped = 0
+        self.section_counts = {}  # Track records per section
 
     def parse_contract(self, script_name: str, security_type: str) -> Dict:
         """
-        Parse Kotak contract string to extract symbol, expiry, strike, option_type.
+        Parse Kotak contract/script name to extract symbol, expiry, strike, option_type.
 
-        Examples:
+        For Equity/MF/ETF:
+        - Symbol is the script name itself
+
+        For Derivatives:
         - "BANKNIFTY 25NOV25 XX 0" -> Futures
         - "NIFTY 02DEC25 CE 26850" -> Call Option
         - "RELIANCE 26DEC25 PE 1200" -> Put Option
         """
+        segment = self.SECURITY_TYPE_TO_SEGMENT.get(security_type, 'EQUITY')
+        normalized_security_type = self.SECURITY_TYPE_NORMALIZE.get(security_type, security_type)
+
         result = {
-            'symbol': '',
+            'symbol': script_name,
             'expiry_date': None,
             'strike_price': None,
             'option_type': '',
-            'segment': 'FUTURES',
-            'security_type': security_type,
+            'segment': segment,
+            'security_type': normalized_security_type,
+            'isin': '',
         }
 
         if not script_name:
             return result
 
+        # For non-derivatives, symbol is the full script name
+        if segment not in ['FUTURES', 'OPTIONS']:
+            result['symbol'] = script_name
+            return result
+
+        # Parse derivative contracts
         parts = script_name.strip().split()
         if len(parts) < 2:
             result['symbol'] = script_name
@@ -139,11 +192,8 @@ class KotakFNOImporter:
             except ValueError:
                 logger.warning(f"Could not parse expiry date: {parts[1]}")
 
-        # Determine if this is futures or options
-        if security_type in ['FUTSTK', 'FUTIDX']:
-            result['segment'] = 'FUTURES'
-        elif security_type in ['OPTIDX', 'OPTSTK']:
-            result['segment'] = 'OPTIONS'
+        # Determine if this is futures or options based on security_type
+        if segment == 'OPTIONS':
             # Third part is CE/PE, fourth is strike
             if len(parts) >= 3:
                 opt_type = parts[2].upper()
@@ -155,7 +205,7 @@ class KotakFNOImporter:
                 except (InvalidOperation, ValueError):
                     pass
         else:
-            # Fallback: check if third part is CE/PE
+            # Fallback: check if third part is CE/PE (in case security_type wasn't set)
             if len(parts) >= 3 and parts[2].upper() in ['CE', 'PE']:
                 result['segment'] = 'OPTIONS'
                 result['option_type'] = parts[2].upper()
@@ -169,28 +219,55 @@ class KotakFNOImporter:
 
         return result
 
+    def _find_data_start(self, rows: List[List[str]]) -> int:
+        """
+        Find where the actual data starts (after header rows).
+        The column headers row contains 'Script Name' as first column.
+        Returns the index of the first data row (after column headers).
+        """
+        for i, row in enumerate(rows):
+            if not row or len(row) == 0:
+                continue
+            first_cell = str(row[0]).strip().lower()
+            # Column headers row
+            if first_cell == 'script name':
+                logger.info(f"Found column headers at row {i+1}")
+                return i + 1  # Data starts on next row
+
+        # Fallback: assume data starts at row 7 (0-indexed row 6)
+        logger.warning("Could not find 'Script Name' header, assuming data starts at row 7")
+        return 6
+
     def import_file(self, file_obj, user=None) -> Dict:
         """
-        Import F&O data from Kotak Gain/Loss CSV file.
+        Import ALL data from Kotak Neo Gain/Loss CSV file.
+
+        Parses all sections: Equity, Mutual Funds, ETF, and Derivatives.
 
         Args:
             file_obj: File object or file path
             user: User performing the import
 
         Returns:
-            dict with import results
+            dict with import results including per-section counts
         """
         self.batch_id = f"KOTAK_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
         self.errors = []
         self.records_created = 0
         self.records_updated = 0
         self.records_skipped = 0
+        self.section_counts = {
+            'equity': 0,
+            'mutual_funds': 0,
+            'etf': 0,
+            'derivatives': 0,
+        }
 
         # Get filename
         if hasattr(file_obj, 'name'):
             filename = file_obj.name
         else:
-            filename = 'kotak_fno.csv'
+            filename = 'kotak_gainloss.csv'
 
         # Create import log
         import_log = CSVImportLog.objects.create(
@@ -215,57 +292,62 @@ class KotakFNOImporter:
             reader = csv.reader(io.StringIO(content))
             rows = list(reader)
 
-            logger.info(f"Read {len(rows)} rows from Kotak CSV")
+            logger.info(f"Read {len(rows)} rows from Kotak Neo CSV")
 
-            # Find the Derivatives section
-            derivatives_start = -1
-            in_derivatives = False
+            # Find where data starts
+            data_start = self._find_data_start(rows)
 
-            for i, row in enumerate(rows):
-                if not row or len(row) == 0:
-                    continue
-
-                first_cell = str(row[0]).strip().lower()
-
-                # Look for "Derivatives" section marker
-                if first_cell == 'derivatives':
-                    derivatives_start = i + 1  # Data starts after the marker
-                    in_derivatives = True
-                    logger.info(f"Found 'Derivatives' section at row {i+1}")
-                    continue
-
-                # If we're past derivatives and hit another section, stop
-                if in_derivatives and first_cell in ['', 'disclaimer']:
-                    logger.info(f"End of Derivatives section at row {i+1}")
-                    break
-
-            if derivatives_start == -1:
-                raise ValueError("Could not find 'Derivatives' section in the CSV. Make sure this is a Kotak Gain/Loss report.")
-
-            # Process data rows from Derivatives section
+            # Process all data rows
+            current_section = None
             with transaction.atomic():
-                for i in range(derivatives_start, len(rows)):
+                for i in range(data_start, len(rows)):
                     row = rows[i]
 
                     # Skip empty rows
-                    if not row or len(row) < 5:
+                    if not row or len(row) < 2:
                         continue
 
-                    script_name = str(row[0]).strip() if row[0] else ''
+                    first_cell = str(row[0]).strip()
+                    first_cell_lower = first_cell.lower()
 
-                    # Stop at empty row or disclaimer
-                    if not script_name or script_name.lower() in ['', 'disclaimer']:
+                    # Check if this is a section marker
+                    if first_cell_lower in self.SECTION_MARKERS:
+                        current_section = first_cell_lower.replace(' ', '_')
+                        logger.info(f"Entering section: {current_section} at row {i+1}")
+                        continue
+
+                    # Stop at disclaimer
+                    if first_cell_lower == 'disclaimer':
+                        logger.info(f"Reached disclaimer at row {i+1}, stopping")
                         break
 
+                    # Skip empty script names or section markers with no data
+                    if not first_cell:
+                        continue
+
+                    # Get security type from column 1
                     security_type = str(row[1]).strip() if len(row) > 1 else ''
 
-                    # Only process derivatives (FUTSTK, FUTIDX, OPTIDX, OPTSTK)
-                    if security_type not in ['FUTSTK', 'FUTIDX', 'OPTIDX', 'OPTSTK']:
+                    # Skip if no valid security type
+                    if not security_type or security_type not in self.SECURITY_TYPE_TO_SEGMENT:
+                        # Could be a header row or invalid row
+                        if first_cell_lower not in ['', 'script name']:
+                            logger.debug(f"Skipping row {i+1}: unknown security type '{security_type}'")
                         self.records_skipped += 1
                         continue
 
                     try:
-                        self._process_kotak_row(row)
+                        self._process_kotak_row(row, i + 1)
+                        # Track section counts
+                        segment = self.SECURITY_TYPE_TO_SEGMENT.get(security_type)
+                        if segment == 'EQUITY':
+                            self.section_counts['equity'] += 1
+                        elif segment == 'MUTUAL_FUND':
+                            self.section_counts['mutual_funds'] += 1
+                        elif segment == 'ETF':
+                            self.section_counts['etf'] += 1
+                        elif segment in ['FUTURES', 'OPTIONS']:
+                            self.section_counts['derivatives'] += 1
                     except Exception as e:
                         error_msg = f"Row {i+1}: {str(e)}"
                         self.errors.append(error_msg)
@@ -279,6 +361,10 @@ class KotakFNOImporter:
             import_log.status = 'SUCCESS' if not self.errors else 'PARTIAL'
             import_log.save()
 
+            total_records = self.records_created + self.records_updated
+            logger.info(f"Import complete: {total_records} records ({self.records_created} created, {self.records_updated} updated)")
+            logger.info(f"Section breakdown: {self.section_counts}")
+
             return {
                 'success': True,
                 'batch_id': self.batch_id,
@@ -286,6 +372,7 @@ class KotakFNOImporter:
                 'records_updated': self.records_updated,
                 'records_skipped': self.records_skipped,
                 'errors': self.errors,
+                'section_counts': self.section_counts,
             }
 
         except Exception as e:
@@ -301,46 +388,62 @@ class KotakFNOImporter:
                 'errors': [str(e)],
             }
 
-    def _process_kotak_row(self, row: List[str]):
+    def _process_kotak_row(self, row: List[str], row_num: int = 0):
         """
         Process a single row from Kotak CSV.
 
         Column mapping (0-indexed):
         0: Script Name
-        1: Security Type
+        1: Security Type (EQUITY STOCK, MUTUAL FUND, ETF, FUTSTK, FUTIDX, OPTIDX, OPTSTK)
         2: ISIN
         3: Quantity
         4: Buy Amt. (A)
         5: Sell Amt. (B)
         6: Intraday
-        7: <1yr.
-        8: >1yr.
+        7: <1yr. (Short-term P&L)
+        8: >1yr. (Long-term P&L)
         9: Total(T = B - A) - Gross P&L
         10: GST (C)
         11: Brokerage (D)
         12: Misc. (E)
         13: STT/CTT (S)
-        14: Total (C+D+E+S)
+        14: Total (C+D+E+S) - Total charges
         15: Net P&L (T-S)
         16: Gross P&L (T+(C+D+E))
         """
         script_name = str(row[0]).strip()
         security_type = str(row[1]).strip() if len(row) > 1 else ''
+        isin = str(row[2]).strip() if len(row) > 2 else ''
 
-        # Parse contract details
+        # Parse contract/script details
         contract = self.parse_contract(script_name, security_type)
 
         # Parse numeric values with correct column indices
         quantity = parse_int(row[3] if len(row) > 3 else '')
         buy_amount = parse_decimal(row[4] if len(row) > 4 else '')
         sell_amount = parse_decimal(row[5] if len(row) > 5 else '')
-        gross_pnl = parse_decimal(row[9] if len(row) > 9 else '')  # Total(T = B - A)
+
+        # P&L values
+        short_term_pnl = parse_decimal(row[7] if len(row) > 7 else '')  # <1yr
+        long_term_pnl = parse_decimal(row[8] if len(row) > 8 else '')   # >1yr
+        gross_pnl = parse_decimal(row[9] if len(row) > 9 else '')       # Total(T = B - A)
+
+        # Charges
         gst = parse_decimal(row[10] if len(row) > 10 else '')
         brokerage = parse_decimal(row[11] if len(row) > 11 else '')
         misc_charges = parse_decimal(row[12] if len(row) > 12 else '')
         stt = parse_decimal(row[13] if len(row) > 13 else '')
         total_charges = parse_decimal(row[14] if len(row) > 14 else '')
         net_pnl = parse_decimal(row[15] if len(row) > 15 else '')
+
+        # Store additional data in raw_data
+        raw_data = {
+            'row': row,
+            'row_number': row_num,
+            'isin': isin,
+            'short_term_pnl': str(short_term_pnl),
+            'long_term_pnl': str(long_term_pnl),
+        }
 
         # Create or update record
         obj, created = BrokerContractPnL.objects.update_or_create(
@@ -364,7 +467,7 @@ class KotakFNOImporter:
                 'stt': stt,
                 'misc_charges': misc_charges,
                 'total_charges': total_charges,
-                'raw_data': {'row': row},
+                'raw_data': raw_data,
             }
         )
 
@@ -373,7 +476,7 @@ class KotakFNOImporter:
         else:
             self.records_updated += 1
 
-        logger.debug(f"{'Created' if created else 'Updated'} record for {script_name}: Net P&L = {net_pnl}")
+        logger.debug(f"{'Created' if created else 'Updated'} record for {script_name} ({contract['segment']}): Net P&L = {net_pnl}")
 
 
 class BreezeFNOImporter:

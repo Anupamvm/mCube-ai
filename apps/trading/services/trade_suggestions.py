@@ -1,5 +1,5 @@
 """
-Trading Services - Trade Suggestion Generation and Auto-Approval Logic
+Trading Services - Trade Suggestion Generation
 """
 
 from django.contrib.auth.models import User
@@ -8,7 +8,7 @@ from datetime import timedelta
 from decimal import Decimal
 import logging
 
-from apps.trading.models import TradeSuggestion, AutoTradeConfig, TradeSuggestionLog
+from apps.trading.models import TradeSuggestion, TradeSuggestionLog
 
 logger = logging.getLogger(__name__)
 
@@ -63,83 +63,9 @@ class TradeSuggestionService:
             notes=f"Suggestion created by {strategy} algorithm"
         )
 
-        # Check if should auto-approve
-        should_auto_approve = TradeSuggestionService.should_auto_approve(user, strategy, algorithm_reasoning)
-
-        if should_auto_approve:
-            TradeSuggestionService.auto_approve(suggestion)
-
         logger.info(f"Trade suggestion created: {suggestion.id} - {instrument} {direction}")
 
         return suggestion
-
-    @staticmethod
-    def should_auto_approve(user: User, strategy: str, reasoning: dict) -> bool:
-        """
-        Determine if suggestion should be auto-approved based on configuration
-        """
-        try:
-            config = AutoTradeConfig.objects.get(user=user, strategy=strategy)
-
-            if not config.is_enabled:
-                return False
-
-            # Check daily position limit
-            daily_suggestions = TradeSuggestion.objects.filter(
-                user=user,
-                strategy=strategy,
-                status__in=['APPROVED', 'AUTO_APPROVED', 'EXECUTED'],
-                created_at__date=timezone.now().date()
-            ).count()
-
-            if daily_suggestions >= config.max_daily_positions:
-                logger.warning(f"Daily position limit reached for {user.username} - {strategy}")
-                return False
-
-            # Strategy-specific checks
-            if strategy == 'kotak_strangle':
-                # For options: check LLM confidence
-                llm_confidence = reasoning.get('filters', {}).get('llm_validation', {}).get('confidence', 0)
-                if llm_confidence >= float(config.auto_approve_threshold):
-                    return True
-
-            elif strategy == 'icici_futures':
-                # For futures: check composite score
-                composite_score = reasoning.get('scoring', {}).get('composite', {}).get('total', 0)
-                if composite_score >= float(config.auto_approve_threshold):
-                    return True
-
-            return False
-
-        except AutoTradeConfig.DoesNotExist:
-            return False
-        except Exception as e:
-            logger.error(f"Error checking auto-approval: {e}")
-            return False
-
-    @staticmethod
-    def auto_approve(suggestion: TradeSuggestion):
-        """
-        Automatically approve a suggestion
-        """
-        try:
-            suggestion.status = 'AUTO_APPROVED'
-            suggestion.approved_by = suggestion.user  # System auto-approved
-            suggestion.approval_timestamp = timezone.now()
-            suggestion.is_auto_trade = True
-            suggestion.save()
-
-            # Log auto-approval
-            TradeSuggestionLog.objects.create(
-                suggestion=suggestion,
-                action='AUTO_APPROVED',
-                notes="Auto-approved by system based on configuration"
-            )
-
-            logger.info(f"Suggestion {suggestion.id} auto-approved")
-
-        except Exception as e:
-            logger.error(f"Error auto-approving suggestion: {e}")
 
 
 class OptionsSuggestionFormatter:

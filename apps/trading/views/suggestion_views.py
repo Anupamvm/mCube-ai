@@ -8,7 +8,6 @@ Handles the complete lifecycle of trade suggestions:
 - Execute approved suggestions
 - View suggestion history
 - Export suggestions to CSV
-- Configure auto-trade settings
 
 Extracted from apps/trading/views.py as part of refactoring.
 Business logic will be moved to service layer in Phase 2.2.
@@ -25,10 +24,9 @@ from django.views.decorators.http import require_POST
 from django.utils import timezone
 from django.core.paginator import Paginator, EmptyPage, PageNotAnInteger
 
-from apps.trading.models import TradeSuggestion, AutoTradeConfig, TradeSuggestionLog
+from apps.trading.models import TradeSuggestion, TradeSuggestionLog
 from apps.positions.models import Position
 from apps.accounts.models import BrokerAccount
-from apps.strategies.models import StrategyConfig
 
 logger = logging.getLogger(__name__)
 
@@ -39,28 +37,27 @@ def pending_suggestions(request):
     List all pending trade suggestions for current user.
 
     Displays suggestions that need user decision (PENDING) or have been
-    approved but not yet executed (APPROVED, AUTO_APPROVED).
+    approved but not yet executed (APPROVED).
 
     Template: trading/suggestions_list.html
 
     Context:
         suggestions: QuerySet of TradeSuggestion objects
         total_pending: Count of PENDING suggestions
-        total_approved: Count of APPROVED + AUTO_APPROVED suggestions
+        total_approved: Count of APPROVED suggestions
 
     Returns:
         HttpResponse: Rendered template with suggestion list
     """
     suggestions = TradeSuggestion.objects.filter(
         user=request.user,
-        status__in=['PENDING', 'APPROVED', 'AUTO_APPROVED']
+        status__in=['PENDING', 'APPROVED']
     ).order_by('-created_at')
 
     context = {
         'suggestions': suggestions,
         'total_pending': suggestions.filter(status='PENDING').count(),
-        'total_approved': suggestions.filter(status__in=['APPROVED', 'AUTO_APPROVED']).count(),
-        'total_auto_approved': suggestions.filter(status='AUTO_APPROVED').count(),
+        'total_approved': suggestions.filter(status='APPROVED').count(),
     }
 
     return render(request, 'trading/suggestions_list.html', context)
@@ -347,70 +344,6 @@ def confirm_execution(request, suggestion_id):
 
 
 @login_required
-def auto_trade_config(request):
-    """
-    View and manage auto-trade configuration.
-
-    Allows users to enable/disable auto-trading per strategy and set
-    auto-approval thresholds.
-
-    Template: trading/auto_trade_config.html
-
-    Context:
-        configs: Dict of {strategy_name: AutoTradeConfig} mappings
-
-    POST Parameters:
-        strategy: Strategy code
-        is_enabled: Boolean (checkbox 'on' = True)
-        auto_approve_threshold: Integer (0-100)
-
-    Returns:
-        HttpResponse: Configuration page
-        HttpResponseRedirect: After POST to same page
-
-    Note:
-        Creates AutoTradeConfig records if they don't exist for each strategy.
-    """
-    strategies = StrategyConfig.objects.all()
-    configs = {}
-
-    # Get or create config for each strategy
-    for strategy_obj in strategies:
-        config, created = AutoTradeConfig.objects.get_or_create(
-            user=request.user,
-            strategy=strategy_obj.strategy_code if hasattr(strategy_obj, 'strategy_code') else ''
-        )
-        configs[strategy_obj.name] = config
-
-    if request.method == 'POST':
-        strategy_code = request.POST.get('strategy')
-        is_enabled = request.POST.get('is_enabled') == 'on'
-        threshold = request.POST.get('auto_approve_threshold', 95)
-
-        try:
-            config, _ = AutoTradeConfig.objects.get_or_create(
-                user=request.user,
-                strategy=strategy_code
-            )
-            config.is_enabled = is_enabled
-            config.auto_approve_threshold = threshold
-            config.save()
-
-            messages.success(request, "Auto-trade configuration updated")
-            return redirect('trading:auto_trade_config')
-
-        except Exception as e:
-            logger.error(f"Error updating auto-trade config: {e}", exc_info=True)
-            messages.error(request, f"Error updating configuration: {str(e)}")
-
-    context = {
-        'configs': configs,
-    }
-
-    return render(request, 'trading/auto_trade_config.html', context)
-
-
-@login_required
 def suggestion_history(request):
     """
     View history of all trade suggestions with pagination and filters.
@@ -514,7 +447,7 @@ def export_suggestions_csv(request):
 
     CSV Columns:
         ID, Created At, Strategy, Instrument, Direction, Type, Status,
-        Approved By, Approval Timestamp, Executed At, Auto Trade,
+        Approved By, Approval Timestamp, Executed At,
         Entry Price, Stop Loss, Target, Margin Required
 
     Returns:
@@ -535,7 +468,7 @@ def export_suggestions_csv(request):
     writer.writerow([
         'ID', 'Created At', 'Strategy', 'Instrument', 'Direction', 'Type',
         'Status', 'Approved By', 'Approval Timestamp', 'Executed At',
-        'Auto Trade', 'Entry Price', 'Stop Loss', 'Target', 'Margin Required'
+        'Entry Price', 'Stop Loss', 'Target', 'Margin Required'
     ])
 
     # Get filtered suggestions (same logic as history view)
@@ -582,7 +515,6 @@ def export_suggestions_csv(request):
             suggestion.approved_by.get_full_name() if suggestion.approved_by else '',
             suggestion.approval_timestamp.strftime('%Y-%m-%d %H:%M:%S') if suggestion.approval_timestamp else '',
             suggestion.executed_at.strftime('%Y-%m-%d %H:%M:%S') if suggestion.executed_at else '',
-            'Yes' if suggestion.is_auto_trade else 'No',
             position_details.get('entry_price', ''),
             position_details.get('stop_loss', ''),
             position_details.get('target', ''),

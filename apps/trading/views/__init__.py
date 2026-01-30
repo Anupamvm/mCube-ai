@@ -29,7 +29,6 @@ from .suggestion_views import (
     confirm_execution,
     suggestion_history,
     export_suggestions_csv,
-    auto_trade_config,
 )
 
 from .algorithm_views import (
@@ -85,7 +84,6 @@ __all__ = [
     'confirm_execution',
     'suggestion_history',
     'export_suggestions_csv',
-    'auto_trade_config',
 
     # Algorithm views
     'trigger_futures_algorithm',

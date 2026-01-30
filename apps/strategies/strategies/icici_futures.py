@@ -768,7 +768,6 @@ def execute_icici_futures_entry(
 
         logger.info(f"✅ Trade suggestion created successfully: {suggestion.id}")
         logger.info(f"   Status: {suggestion.get_status_display()}")
-        logger.info(f"   Auto-Trade: {suggestion.is_auto_trade}")
         logger.info(f"   Symbol: {symbol}")
         logger.info(f"   Direction: {direction}")
         logger.info(f"   Entry Price: ₹{current_price:,.2f}")
@@ -788,7 +787,6 @@ def execute_icici_futures_entry(
                 'expiry': selected_expiry,
                 'margin_used': margin_used,
                 'suggestion_status': suggestion.get_status_display(),
-                'is_auto_trade': suggestion.is_auto_trade,
             }
         }
 

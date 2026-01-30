@@ -189,11 +189,8 @@
                 <div class="card-body">
                     <p class="text-muted mb-1">Status</p>
                     <p class="mb-3">
-                        {% if suggestion.is_auto_trade %}
-                            <span class="badge bg-success">Auto-Approved</span>
-                            <small class="text-muted d-block mt-1">Automatically approved by system based on configuration</small>
-                        {% else %}
-                            <span class="badge bg-info">Manually Approved</span>
+                        <span class="badge bg-info">Approved</span>
+                        {% if suggestion.approved_by %}
                             <small class="text-muted d-block mt-1">Approved by {{ suggestion.approved_by.get_full_name|default:suggestion.approved_by.username }}</small>
                         {% endif %}
                     </p>

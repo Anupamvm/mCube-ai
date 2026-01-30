@@ -91,4 +91,10 @@ urlpatterns = [
     path('api/broker/symbol-performance/', views.api_broker_symbol_performance, name='api_broker_symbol_performance'),
     path('api/broker/fy-summary/', views.api_broker_fy_summary, name='api_broker_fy_summary'),
     path('api/broker/monthly-summary/', views.api_broker_monthly_summary, name='api_broker_monthly_summary'),
+
+    # ==========================================================================
+    # SMART TRADING INTELLIGENCE API
+    # Data scientist + trader perspective analysis with actionable conclusions
+    # ==========================================================================
+    path('api/smart-suggestions/', views.api_smart_suggestions, name='api_smart_suggestions'),
 ]

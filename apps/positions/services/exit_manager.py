@@ -276,7 +276,7 @@ def check_expiry_exit(position: Position, current_time) -> Dict[str, any]:
             'message': 'No expiry exit condition', 'is_mandatory': False}
 
 
-def should_exit_position(position: Position) -> Tuple[bool, str, Decimal]:
+def should_exit_position(position: Position, current_time=None) -> Tuple[bool, str, Decimal]:
     """
     Determine if position should be exited
 
@@ -284,6 +284,7 @@ def should_exit_position(position: Position) -> Tuple[bool, str, Decimal]:
 
     Args:
         position: Position instance
+        current_time: Optional datetime (unused, kept for API compatibility)
 
     Returns:
         Tuple[bool, str, Decimal]: (should_exit, exit_reason, exit_price)

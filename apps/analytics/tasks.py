@@ -9,7 +9,7 @@ Daily Tasks (4:00-5:00 PM, Mon-Fri):
 - daily_data_aggregation: Sync trades and update DailyPnL (4:30 PM)
 - update_equity_curves: Update DailyEquityCurve (5:00 PM)
 
-Background Tasks (On-demand, django-background-tasks):
+On-demand Tasks (Celery):
 - run_learning_analysis: Analyze learning sessions
 - analyze_single_trade: Analyze individual trades
 - calculate_session_metrics: Calculate session metrics
@@ -19,7 +19,6 @@ Background Tasks (On-demand, django-background-tasks):
 import logging
 from decimal import Decimal
 from datetime import timedelta
-from background_task import background
 from celery import shared_task
 from django.utils import timezone
 from django.db.models import Sum
@@ -161,11 +160,11 @@ def generate_daily_pnl_report():
 
 
 # =============================================================================
-# BACKGROUND TASKS (On-demand, using django-background-tasks)
+# ON-DEMAND CELERY TASKS
 # =============================================================================
 
 
-@background(schedule=0)
+@shared_task(name='apps.analytics.tasks.run_learning_analysis')
 def run_learning_analysis(session_id):
     """
     Run complete learning analysis for a session.
@@ -186,36 +185,39 @@ def run_learning_analysis(session_id):
             logger.warning(f"Session {session.name} is not active, skipping analysis")
             return
 
-        logger.info(f"=� Starting learning analysis for session: {session.name}")
+        logger.info(f"=🔬 Starting learning analysis for session: {session.name}")
 
         engine = LearningEngine()
 
         # Step 1: Analyze trades
         logger.info("Step 1: Analyzing trades...")
         trades_analyzed = engine.analyze_trades(session)
-        logger.info(f"   Analyzed {trades_analyzed} trades")
+        logger.info(f"   Analyzed {trades_analyzed} trades")
 
         # Step 2: Discover patterns
         logger.info("Step 2: Discovering patterns...")
         patterns_found = engine.discover_patterns(session)
-        logger.info(f"   Discovered {patterns_found} patterns")
+        logger.info(f"   Discovered {patterns_found} patterns")
 
         # Step 3: Generate suggestions
         logger.info("Step 3: Generating parameter suggestions...")
         suggestions_count = engine.suggest_improvements(session)
-        logger.info(f"   Created {suggestions_count} suggestions")
+        logger.info(f"   Created {suggestions_count} suggestions")
 
         # Step 4: Calculate metrics
         logger.info("Step 4: Calculating performance metrics...")
         metrics = engine.calculate_metrics(session, time_period='all')
-        logger.info(f"   Calculated metrics: {metrics}")
+        logger.info(f"   Calculated metrics: {metrics}")
 
-        logger.info(f" Learning analysis complete for session: {session.name}")
+        logger.info(f"✅ Learning analysis complete for session: {session.name}")
 
         # Schedule next analysis if session is still running
         if session.is_active():
-            # Run again in 1 hour (3600 seconds)
-            schedule_next_learning_analysis(session_id, schedule=3600)
+            # Run again in 1 hour
+            schedule_next_learning_analysis.apply_async(
+                args=[session_id],
+                countdown=3600
+            )
 
     except LearningSession.DoesNotExist:
         logger.error(f"Learning session {session_id} not found")
@@ -223,7 +225,7 @@ def run_learning_analysis(session_id):
         logger.error(f"Error in learning analysis: {e}", exc_info=True)
 
 
-@background(schedule=0)
+@shared_task(name='apps.analytics.tasks.schedule_next_learning_analysis')
 def schedule_next_learning_analysis(session_id, schedule=3600):
     """
     Schedule the next learning analysis.
@@ -236,8 +238,11 @@ def schedule_next_learning_analysis(session_id, schedule=3600):
         session = LearningSession.objects.get(id=session_id)
 
         if session.is_active():
-            logger.info(f"=� Scheduling next analysis for {session.name} in {schedule} seconds")
-            run_learning_analysis(session_id, schedule=schedule)
+            logger.info(f"=📅 Scheduling next analysis for {session.name} in {schedule} seconds")
+            run_learning_analysis.apply_async(
+                args=[session_id],
+                countdown=schedule
+            )
         else:
             logger.info(f"Session {session.name} is no longer active, stopping scheduled analysis")
 
@@ -247,7 +252,7 @@ def schedule_next_learning_analysis(session_id, schedule=3600):
         logger.error(f"Error scheduling next analysis: {e}", exc_info=True)
 
 
-@background(schedule=0)
+@shared_task(name='apps.analytics.tasks.analyze_single_trade')
 def analyze_single_trade(position_id):
     """
     Analyze a single trade in the background.
@@ -269,13 +274,13 @@ def analyze_single_trade(position_id):
         engine = LearningEngine()
         performance = engine._analyze_single_trade(position)
 
-        logger.info(f" Created performance analysis for {position.symbol}: Score {performance.entry_score}")
+        logger.info(f"✅ Created performance analysis for {position.symbol}: Score {performance.entry_score}")
 
     except Exception as e:
         logger.error(f"Error analyzing position {position_id}: {e}", exc_info=True)
 
 
-@background(schedule=0)
+@shared_task(name='apps.analytics.tasks.calculate_session_metrics')
 def calculate_session_metrics(session_id, time_period='all'):
     """
     Calculate and save performance metrics for a session.
@@ -287,12 +292,12 @@ def calculate_session_metrics(session_id, time_period='all'):
     try:
         session = LearningSession.objects.get(id=session_id)
 
-        logger.info(f"=� Calculating {time_period} metrics for {session.name}")
+        logger.info(f"=📊 Calculating {time_period} metrics for {session.name}")
 
         engine = LearningEngine()
         metrics = engine.calculate_metrics(session, time_period=time_period)
 
-        logger.info(f" Metrics calculated: {metrics}")
+        logger.info(f"✅ Metrics calculated: {metrics}")
 
     except LearningSession.DoesNotExist:
         logger.error(f"Learning session {session_id} not found")
@@ -300,7 +305,7 @@ def calculate_session_metrics(session_id, time_period='all'):
         logger.error(f"Error calculating metrics: {e}", exc_info=True)
 
 
-@background(schedule=0)
+@shared_task(name='apps.analytics.tasks.validate_patterns')
 def validate_patterns(session_id):
     """
     Validate existing patterns with recent data.
@@ -315,7 +320,7 @@ def validate_patterns(session_id):
         session = LearningSession.objects.get(id=session_id)
         patterns = LearningPattern.objects.filter(session=session, validation_status='TESTING')
 
-        logger.info(f"=, Validating {patterns.count()} patterns for {session.name}")
+        logger.info(f"=🔍 Validating {patterns.count()} patterns for {session.name}")
 
         recognizer = PatternRecognizer(session)
         validated_count = 0
@@ -328,7 +333,7 @@ def validate_patterns(session_id):
                 pattern.save()
                 validated_count += 1
 
-        logger.info(f" Validated {validated_count} patterns")
+        logger.info(f"✅ Validated {validated_count} patterns")
 
     except LearningSession.DoesNotExist:
         logger.error(f"Learning session {session_id} not found")
@@ -346,12 +351,12 @@ def start_continuous_learning(session_id):
     Args:
         session_id: ID of the LearningSession
     """
-    logger.info(f"<� Starting continuous learning for session {session_id}")
+    logger.info(f"🚀 Starting continuous learning for session {session_id}")
 
     # Run initial analysis immediately
-    run_learning_analysis(session_id, schedule=0)
+    run_learning_analysis.delay(session_id)
 
-    logger.info(f" Continuous learning started for session {session_id}")
+    logger.info(f"✅ Continuous learning started for session {session_id}")
 
 
 # Utility function to stop continuous learning
@@ -364,12 +369,12 @@ def stop_continuous_learning(session_id):
     Args:
         session_id: ID of the LearningSession
     """
-    logger.info(f"� Stopping continuous learning for session {session_id}")
+    logger.info(f"🛑 Stopping continuous learning for session {session_id}")
 
     # The session's is_active() status will be checked in the next task run
     # and will prevent further scheduling
 
-    logger.info(f" Continuous learning stopped for session {session_id}")
+    logger.info(f"✅ Continuous learning stopped for session {session_id}")
 
 
 # =============================================================================
@@ -527,5 +532,3 @@ def update_equity_curves():
     except Exception as e:
         logger.error(f"Error updating equity curves: {e}", exc_info=True)
         return {'success': False, 'error': str(e)}
-
-

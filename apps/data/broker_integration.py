@@ -25,20 +25,18 @@ class BreezeDataFetcher:
     """Fetch real-time data from ICICI Breeze API"""
 
     def __init__(self):
-        from apps.core.models import CredentialStore
+        """
+        Initialize with authenticated Breeze client.
 
-        # Get Breeze credentials
-        creds = CredentialStore.objects.filter(service='breeze').first()
-        if not creds:
-            raise Exception("Breeze credentials not found")
+        Uses centralized BreezeSessionManager which handles:
+        - Session validation
+        - Auto-refresh if session expired
+        - Consistent error handling
+        """
+        from apps.brokers.integrations.breeze import get_breeze_client
 
-        # Initialize Breeze
-        from breeze_connect import BreezeConnect
-        self.breeze = BreezeConnect(api_key=creds.api_key)
-        self.breeze.generate_session(
-            api_secret=creds.api_secret,
-            session_token=creds.session_token
-        )
+        # Get authenticated client (auto-refreshes if session expired)
+        self.breeze = get_breeze_client()
 
     def fetch_stock_quote(self, symbol: str, exchange: str = 'NSE') -> Optional[Dict]:
         """

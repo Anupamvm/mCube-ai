@@ -26,7 +26,7 @@ Example:
 import logging
 import jwt
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Optional, Tuple
 from django.utils import timezone
 from apps.core.models import CredentialStore
 
@@ -282,7 +282,7 @@ def extract_sid_from_jwt(token: str) -> Optional[str]:
         return 'unknown'
 
 
-def should_refresh_session(service: str) -> tuple[bool, str]:
+def should_refresh_session(service: str) -> Tuple[bool, str]:
     """
     Determine if broker session should be refreshed.
 

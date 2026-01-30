@@ -1701,7 +1701,14 @@ def get_active_positions(request):
 
     Returns:
         JSON with live positions list including LTP and real-time P&L
+
+    Auth Handling:
+        - On Breeze session expiry, returns auth_required=True with login_url
+        - Frontend should redirect to login_url for re-authentication
     """
+    from apps.brokers.decorators import handle_breeze_auth_error
+    from apps.brokers.exceptions import BreezeAuthenticationError
+
     try:
         broker = request.GET.get('broker', '').lower()
 
@@ -1753,12 +1760,13 @@ def get_active_positions(request):
                         'expiry_date': None,  # BrokerPosition doesn't have expiry field
                     })
 
+            except BreezeAuthenticationError as e:
+                # Use centralized auth error handler
+                return handle_breeze_auth_error(request, e, is_ajax=True)
+
             except Exception as e:
-                logger.error(f"Error fetching Breeze positions: {e}", exc_info=True)
-                return JsonResponse({
-                    'success': False,
-                    'error': f'Failed to fetch Breeze positions: {str(e)}'
-                })
+                # Use centralized handler for any session-related errors
+                return handle_breeze_auth_error(request, e, is_ajax=True)
 
         elif broker == 'neo':
             # Use unified Neo integration for consistent data (includes avg price overrides)

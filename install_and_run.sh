@@ -300,7 +300,8 @@ EOF
 # Create broker accounts and API credentials
 python manage.py shell <<'EOF'
 from decimal import Decimal
-from apps.accounts.models import BrokerAccount, APICredential
+from apps.accounts.models import BrokerAccount
+from apps.core.models import CredentialStore
 from apps.core.constants import BROKER_KOTAK, BROKER_ICICI
 
 print("Setting up broker accounts...")
@@ -322,24 +323,10 @@ kotak_account, created = BrokerAccount.objects.update_or_create(
     }
 )
 
-# Update or create API credentials for Kotak
-kotak_api_cred, api_created = APICredential.objects.update_or_create(
-    account=kotak_account,
-    defaults={
-        'consumer_key': 'NkmJfGnAehLpdDm3wSPFR7iCMj4a',
-        'consumer_secret': 'H8Q60_oBa2PkSOBJXnk7zbOvGqUa',
-        'access_token': '284321',
-        'mobile_number': 'AAQHA1835B',
-        'password': 'Anupamvm2@',
-        'is_valid': False  # Needs authentication
-    }
-)
-
 if created:
     print(f'✓ Created Kotak account: {kotak_account.account_name}')
 else:
     print(f'✓ Updated Kotak account: {kotak_account.account_name}')
-print(f'  ✓ {"Created" if api_created else "Updated"} API credentials for Kotak')
 
 # ============================================================================
 # ICICI Breeze Account
@@ -358,27 +345,14 @@ icici_account, created = BrokerAccount.objects.update_or_create(
     }
 )
 
-# Update or create API credentials for ICICI
-icici_api_cred, api_created = APICredential.objects.update_or_create(
-    account=icici_account,
-    defaults={
-        'consumer_key': '6561_m2784f16J&R88P3429@66Y89^46',
-        'consumer_secret': 'l6_(162788u1p629549_)499O158881c',
-        'access_token': '52780531',
-        'is_valid': False  # Needs authentication
-    }
-)
-
 if created:
     print(f'✓ Created ICICI account: {icici_account.account_name}')
 else:
     print(f'✓ Updated ICICI account: {icici_account.account_name}')
-print(f'  ✓ {"Created" if api_created else "Updated"} API credentials for ICICI')
 
 # ============================================================================
-# CredentialStore - Broker API Credentials
+# CredentialStore - Broker API Credentials (replaces old APICredential model)
 # ============================================================================
-from apps.core.models import CredentialStore
 
 print("\nSetting up CredentialStore for broker APIs...")
 
@@ -401,20 +375,41 @@ if created:
 else:
     print('✓ Updated Kotak Neo CredentialStore')
 
-# ICICI Breeze CredentialStore
-breeze_creds, created = CredentialStore.objects.update_or_create(
+# ICICI Breeze CredentialStore (API credentials + Login credentials for auto-login)
+# Only set defaults for new entries - don't overwrite existing session tokens
+breeze_creds, created = CredentialStore.objects.get_or_create(
     service='breeze',
     name='default',
     defaults={
         'api_key': '6561_m2784f16J&R88P3429@66Y89^46',
         'api_secret': 'l6_(162788u1p629549_)499O158881c',
+        'username': '9890688965',
+        'password': 'Anupamvm2@',
     }
 )
 
 if created:
-    print('✓ Created ICICI Breeze CredentialStore')
+    print('✓ Created ICICI Breeze CredentialStore (with auto-login credentials)')
 else:
-    print('✓ Updated ICICI Breeze CredentialStore')
+    # Update only API key/secret if missing, preserve session_token and login credentials
+    updated = False
+    if not breeze_creds.api_key:
+        breeze_creds.api_key = '6561_m2784f16J&R88P3429@66Y89^46'
+        updated = True
+    if not breeze_creds.api_secret:
+        breeze_creds.api_secret = 'l6_(162788u1p629549_)499O158881c'
+        updated = True
+    if not breeze_creds.username:
+        breeze_creds.username = '9890688965'
+        updated = True
+    if not breeze_creds.password:
+        breeze_creds.password = 'Anupamvm2@'
+        updated = True
+    if updated:
+        breeze_creds.save()
+        print('✓ Updated ICICI Breeze CredentialStore (filled missing fields)')
+    else:
+        print('✓ ICICI Breeze CredentialStore exists (preserved existing credentials)')
 
 # ============================================================================
 # Trendlyne Credentials (Market Data Provider)
@@ -541,14 +536,23 @@ echo "Stopping any existing services..."
 # Kill existing Django server
 pkill -f "manage.py runserver" 2>/dev/null || true
 
-# Kill existing Telegram bot
+# Kill existing Telegram bot (all possible patterns)
 pkill -f "run_telegram_bot" 2>/dev/null || true
+pkill -f "telegram_bot" 2>/dev/null || true
+
+# Delete existing Telegram webhook (prevents conflicts)
+echo "Clearing Telegram webhook..."
+curl -s "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/deleteWebhook" > /dev/null 2>&1 || true
+
+# IMPORTANT: Telegram polling only allows ONE bot instance globally
+echo ""
+echo "⚠️  TELEGRAM BOT WARNING:"
+echo "   Only ONE polling bot instance can run at a time (across ALL machines)."
+echo "   If the bot is running on another machine (office/home), it will conflict!"
+echo ""
 
 # Kill existing Celery workers
 pkill -f "celery.*mcube" 2>/dev/null || true
-
-# Kill existing background tasks
-pkill -f "process_tasks" 2>/dev/null || true
 
 # Remove stale lock file
 rm -f /tmp/mcube_telegram_bot.lock
@@ -625,17 +629,6 @@ APPLESCRIPT
 
     sleep 1
 
-    # Terminal 5: Background Tasks (Django Background Tasks)
-    osascript <<APPLESCRIPT
-    tell application "Terminal"
-        activate
-        do script "cd '$SCRIPT_DIR' && source venv/bin/activate && echo '============================================' && echo 'mCube Background Tasks' && echo '============================================' && echo '' && python manage.py process_tasks"
-        set custom title of front window to "mCube - Background Tasks"
-    end tell
-APPLESCRIPT
-
-    echo "✓ Background tasks processor starting in new terminal..."
-
 else
     # Linux - Use gnome-terminal or xterm
 
@@ -656,10 +649,6 @@ else
 
         # Celery Beat (use python -m celery for correct venv)
         gnome-terminal --title="mCube - Celery Beat" -- bash -c "cd '$SCRIPT_DIR' && ./venv/bin/python -m celery -A mcube_ai beat -l info; exec bash"
-        sleep 1
-
-        # Background Tasks
-        gnome-terminal --title="mCube - Background Tasks" -- bash -c "cd '$SCRIPT_DIR' && ./venv/bin/python manage.py process_tasks; exec bash"
 
     elif command -v xterm &> /dev/null; then
         echo "Opening xterm windows for each service..."
@@ -671,8 +660,6 @@ else
         xterm -title "mCube - Celery Worker" -e "cd '$SCRIPT_DIR' && ./venv/bin/python -m celery -A mcube_ai worker -l info -Q data,strategies,monitoring,risk,reports,celery --concurrency=2" &
         sleep 1
         xterm -title "mCube - Celery Beat" -e "cd '$SCRIPT_DIR' && ./venv/bin/python -m celery -A mcube_ai beat -l info" &
-        sleep 1
-        xterm -title "mCube - Background Tasks" -e "cd '$SCRIPT_DIR' && ./venv/bin/python manage.py process_tasks" &
 
     else
         echo "No supported terminal emulator found (gnome-terminal or xterm)"
@@ -682,7 +669,6 @@ else
         nohup ./venv/bin/python manage.py run_telegram_bot > logs/telegram_bot.log 2>&1 &
         nohup ./venv/bin/python -m celery -A mcube_ai worker -l info -Q data,strategies,monitoring,risk,reports,celery --concurrency=2 > logs/celery_worker.log 2>&1 &
         nohup ./venv/bin/python -m celery -A mcube_ai beat -l info > logs/celery_beat.log 2>&1 &
-        nohup ./venv/bin/python manage.py process_tasks > logs/background_tasks.log 2>&1 &
 
         echo "Services started in background. Check logs/ directory for output."
     fi

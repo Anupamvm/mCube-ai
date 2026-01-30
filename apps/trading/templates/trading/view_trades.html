@@ -732,6 +732,17 @@ async function loadPositions(broker) {
 
         if (data.success) {
             displayPositions(broker, data.positions);
+        } else if (data.auth_required) {
+            // Session expired - show login link
+            const loginUrl = data.login_url + '?next=' + encodeURIComponent(window.location.pathname);
+            container.innerHTML = `
+                <div class="error-message" style="text-align: center; padding: 2rem;">
+                    <div style="font-size: 2rem; margin-bottom: 1rem;">🔐</div>
+                    <p style="margin-bottom: 1rem;">${data.error}</p>
+                    <a href="${loginUrl}" class="refresh-btn" style="display: inline-block; text-decoration: none;">
+                        Login to ${broker === 'breeze' ? 'Breeze' : 'Neo'}
+                    </a>
+                </div>`;
         } else {
             container.innerHTML = `<div class="error-message">Error: ${data.error}</div>`;
         }

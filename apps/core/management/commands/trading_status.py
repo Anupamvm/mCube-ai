@@ -4,7 +4,6 @@ Management command to view trading system status
 
 from django.core.management.base import BaseCommand
 from apps.core.models import NseFlag, DayReport
-from background_task.models import Task
 from datetime import datetime, timedelta
 import pytz
 
@@ -51,22 +50,29 @@ class Command(BaseCommand):
         except:
             self.stdout.write(f'  Current P&L: {current_pnl}')
 
-        # Scheduled Tasks
-        self.stdout.write(self.style.HTTP_INFO('\nScheduled Tasks:'))
+        # Celery Worker Status
+        self.stdout.write(self.style.HTTP_INFO('\nCelery Workers:'))
         try:
-            pending_tasks = Task.objects.filter(failed_at__isnull=True).count()
-            self.stdout.write(f'  Pending Tasks: {pending_tasks}')
+            from mcube_ai.celery import app
+            inspect = app.control.inspect()
+            active = inspect.active()
 
-            next_task = Task.objects.filter(
-                failed_at__isnull=True,
-                run_at__gt=datetime.now()
-            ).order_by('run_at').first()
+            if active:
+                for worker, tasks in active.items():
+                    self.stdout.write(f'  {worker}: {len(tasks)} active tasks')
+            else:
+                self.stdout.write(self.style.WARNING('  No workers responding'))
 
-            if next_task:
-                self.stdout.write(f'  Next Task: {next_task.task_name}')
-                self.stdout.write(f'  Scheduled: {next_task.run_at.astimezone(IST).strftime("%Y-%m-%d %H:%M:%S IST")}')
+            # Get scheduled tasks count
+            scheduled = inspect.scheduled()
+            if scheduled:
+                total_scheduled = sum(len(tasks) for tasks in scheduled.values())
+                self.stdout.write(f'  Scheduled Tasks: {total_scheduled}')
+            else:
+                self.stdout.write('  Scheduled Tasks: 0')
+
         except Exception as e:
-            self.stdout.write(f'  Error loading tasks: {e}')
+            self.stdout.write(f'  Error checking Celery: {e}')
 
         # Recent Reports
         self.stdout.write(self.style.HTTP_INFO('\nRecent Reports (Last 5 days):'))

@@ -13,7 +13,7 @@ from django.utils import timezone
 from django.db.models import Q
 import logging
 
-from apps.trading.models import TradeSuggestion, AutoTradeConfig, TradeSuggestionLog
+from apps.trading.models import TradeSuggestion, TradeSuggestionLog
 from apps.positions.models import Position
 from apps.brokers.integrations.breeze import get_india_vix
 
@@ -250,49 +250,6 @@ def confirm_execution(request, suggestion_id):
 
 
 @login_required
-def auto_trade_config(request):
-    """
-    View and manage auto-trade configuration
-    """
-    from apps.strategies.models import StrategyConfig
-
-    strategies = StrategyConfig.objects.all()
-    configs = {}
-
-    for strategy_obj in strategies:
-        config, created = AutoTradeConfig.objects.get_or_create(
-            user=request.user,
-            strategy=strategy_obj.strategy_code if hasattr(strategy_obj, 'strategy_code') else ''
-        )
-        configs[strategy_obj.name] = config
-
-    if request.method == 'POST':
-        strategy_code = request.POST.get('strategy')
-        is_enabled = request.POST.get('is_enabled') == 'on'
-        threshold = request.POST.get('auto_approve_threshold', 95)
-
-        try:
-            config, _ = AutoTradeConfig.objects.get_or_create(
-                user=request.user,
-                strategy=strategy_code
-            )
-            config.is_enabled = is_enabled
-            config.auto_approve_threshold = threshold
-            config.save()
-
-            messages.success(request, f"Auto-trade configuration updated")
-            return redirect('trading:auto_trade_config')
-        except Exception as e:
-            messages.error(request, f"Error updating configuration: {str(e)}")
-
-    context = {
-        'configs': configs,
-    }
-
-    return render(request, 'trading/auto_trade_config.html', context)
-
-
-@login_required
 def suggestion_history(request):
     """
     View history of all trade suggestions and decisions with pagination and filters
@@ -384,7 +341,6 @@ def export_suggestions_csv(request):
         'Approved By',
         'Approval Timestamp',
         'Executed At',
-        'Auto Trade',
         'Entry Price',
         'Stop Loss',
         'Target',

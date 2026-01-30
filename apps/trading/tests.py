@@ -3,10 +3,8 @@ Trading App Tests - Trade Suggestion Approval Workflow
 
 Tests for:
 1. TradeSuggestion model creation
-2. AutoTradeConfig management
-3. Approval/Rejection workflow
-4. Auto-approval logic
-5. Execution flow
+2. Approval/Rejection workflow
+3. Execution flow
 """
 
 from django.test import TestCase, Client
@@ -15,7 +13,7 @@ from django.utils import timezone
 from decimal import Decimal
 from datetime import timedelta, date
 
-from apps.trading.models import TradeSuggestion, AutoTradeConfig, TradeSuggestionLog
+from apps.trading.models import TradeSuggestion, TradeSuggestionLog
 from apps.trading.services import TradeSuggestionService
 from apps.accounts.models import BrokerAccount
 
@@ -42,7 +40,6 @@ class TradeSuggestionModelTests(TestCase):
         self.assertEqual(suggestion.instrument, 'NIFTY')
         self.assertEqual(suggestion.direction, 'LONG')
         self.assertEqual(suggestion.status, 'PENDING')
-        self.assertFalse(suggestion.is_auto_trade)
 
     def test_suggestion_properties(self):
         """Test suggestion property methods"""
@@ -96,47 +93,6 @@ class TradeSuggestionModelTests(TestCase):
         )
 
         self.assertTrue(suggestion2.is_actionable)
-
-
-class AutoTradeConfigTests(TestCase):
-    """Test AutoTradeConfig model"""
-
-    def setUp(self):
-        """Set up test user"""
-        self.user = User.objects.create_user(username='testuser', password='testpass123')
-
-    def test_create_config(self):
-        """Test creating auto-trade configuration"""
-        config = AutoTradeConfig.objects.create(
-            user=self.user,
-            strategy='kotak_strangle',
-            is_enabled=True,
-            auto_approve_threshold=Decimal('95.00'),
-            max_daily_positions=2,
-            max_daily_loss=Decimal('25000.00')
-        )
-
-        self.assertTrue(config.is_enabled)
-        self.assertEqual(config.auto_approve_threshold, Decimal('95.00'))
-        self.assertEqual(config.status_display, 'ENABLED')
-
-    def test_unique_together_constraint(self):
-        """Test unique_together constraint on user and strategy"""
-        config1 = AutoTradeConfig.objects.create(
-            user=self.user,
-            strategy='kotak_strangle',
-            is_enabled=True,
-            auto_approve_threshold=Decimal('95.00')
-        )
-
-        # Try to create duplicate
-        with self.assertRaises(Exception):
-            config2 = AutoTradeConfig.objects.create(
-                user=self.user,
-                strategy='kotak_strangle',
-                is_enabled=False,
-                auto_approve_threshold=Decimal('90.00')
-            )
 
 
 class TradeSuggestionServiceTests(TestCase):
@@ -194,159 +150,6 @@ class TradeSuggestionServiceTests(TestCase):
         logs = TradeSuggestionLog.objects.filter(suggestion=suggestion)
         self.assertEqual(logs.count(), 1)
         self.assertEqual(logs.first().action, 'CREATED')
-
-    def test_auto_approve_disabled(self):
-        """Test that auto-approval doesn't happen without config"""
-        suggestion = TradeSuggestionService.create_suggestion(
-            user=self.user,
-            strategy='kotak_strangle',
-            suggestion_type='OPTIONS',
-            instrument='NIFTY',
-            direction='LONG',
-            algorithm_reasoning={'filters': {'llm_validation': {'confidence': 99}}},
-            position_details={}
-        )
-
-        # Should remain PENDING if no auto-trade config
-        self.assertEqual(suggestion.status, 'PENDING')
-
-    def test_auto_approve_options_high_confidence(self):
-        """Test auto-approval for options with high LLM confidence"""
-        # Create auto-trade config with high confidence threshold
-        config = AutoTradeConfig.objects.create(
-            user=self.user,
-            strategy='kotak_strangle',
-            is_enabled=True,
-            auto_approve_threshold=Decimal('90.00')
-        )
-
-        # Create suggestion with 95% LLM confidence
-        suggestion = TradeSuggestionService.create_suggestion(
-            user=self.user,
-            strategy='kotak_strangle',
-            suggestion_type='OPTIONS',
-            instrument='NIFTY',
-            direction='LONG',
-            algorithm_reasoning={
-                'filters': {
-                    'llm_validation': {
-                        'confidence': 95
-                    }
-                }
-            },
-            position_details={}
-        )
-
-        # Should be auto-approved
-        self.assertEqual(suggestion.status, 'AUTO_APPROVED')
-        self.assertTrue(suggestion.is_auto_trade)
-
-    def test_auto_approve_options_low_confidence(self):
-        """Test that options with low LLM confidence don't auto-approve"""
-        config = AutoTradeConfig.objects.create(
-            user=self.user,
-            strategy='kotak_strangle',
-            is_enabled=True,
-            auto_approve_threshold=Decimal('90.00')
-        )
-
-        suggestion = TradeSuggestionService.create_suggestion(
-            user=self.user,
-            strategy='kotak_strangle',
-            suggestion_type='OPTIONS',
-            instrument='NIFTY',
-            direction='LONG',
-            algorithm_reasoning={
-                'filters': {
-                    'llm_validation': {
-                        'confidence': 85  # Below 90 threshold
-                    }
-                }
-            },
-            position_details={}
-        )
-
-        # Should remain PENDING
-        self.assertEqual(suggestion.status, 'PENDING')
-
-    def test_auto_approve_futures_high_score(self):
-        """Test auto-approval for futures with high composite score"""
-        config = AutoTradeConfig.objects.create(
-            user=self.user,
-            strategy='icici_futures',
-            is_enabled=True,
-            auto_approve_threshold=Decimal('65.00')
-        )
-
-        suggestion = TradeSuggestionService.create_suggestion(
-            user=self.user,
-            strategy='icici_futures',
-            suggestion_type='FUTURES',
-            instrument='RELIANCE',
-            direction='LONG',
-            algorithm_reasoning={
-                'scoring': {
-                    'composite': {
-                        'total': 75  # Above 65 threshold
-                    }
-                }
-            },
-            position_details={}
-        )
-
-        # Should be auto-approved
-        self.assertEqual(suggestion.status, 'AUTO_APPROVED')
-
-    def test_daily_position_limit(self):
-        """Test daily position limit enforcement"""
-        config = AutoTradeConfig.objects.create(
-            user=self.user,
-            strategy='kotak_strangle',
-            is_enabled=True,
-            auto_approve_threshold=Decimal('90.00'),
-            max_daily_positions=1
-        )
-
-        # Create and approve first suggestion
-        suggestion1 = TradeSuggestionService.create_suggestion(
-            user=self.user,
-            strategy='kotak_strangle',
-            suggestion_type='OPTIONS',
-            instrument='NIFTY',
-            direction='LONG',
-            algorithm_reasoning={
-                'filters': {
-                    'llm_validation': {
-                        'confidence': 95
-                    }
-                }
-            },
-            position_details={}
-        )
-
-        # First suggestion should be auto-approved
-        self.assertEqual(suggestion1.status, 'AUTO_APPROVED')
-
-        # Create second suggestion
-        suggestion2 = TradeSuggestionService.create_suggestion(
-            user=self.user,
-            strategy='kotak_strangle',
-            suggestion_type='OPTIONS',
-            instrument='RELIANCE',
-            direction='SHORT',
-            algorithm_reasoning={
-                'filters': {
-                    'llm_validation': {
-                        'confidence': 95
-                    }
-                }
-            },
-            position_details={}
-        )
-
-        # Second suggestion should NOT be auto-approved (daily limit reached)
-        self.assertEqual(suggestion2.status, 'PENDING')
-
 
 class TradeSuggestionAuthorizationTests(TestCase):
     """Test authorization and access control"""

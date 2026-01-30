@@ -4,11 +4,7 @@ django-environ==0.11.2
 
 # Database (SQLite is default, no extra driver needed)
 
-# Background Tasks
-django-background-tasks==1.2.8  # For on-demand background tasks
-django-compat==1.0.15
-
-# Celery & Task Queue
+# Celery & Task Queue (used for all background tasks)
 celery==5.3.4  # Distributed task queue
 redis==5.0.1  # Redis client for Celery broker/backend
 
@@ -42,7 +38,7 @@ chromedriver-autoinstaller>=0.6.4
 pdfplumber>=0.10.0  # PDF text extraction for analyst reports
 
 # Alerts & Notifications
-python-telegram-bot==20.7
+python-telegram-bot>=21.0  # Requires v21+ for Python 3.13 compatibility
 telethon==1.33.1  # For advanced Telegram features
 twilio==8.10.0
 

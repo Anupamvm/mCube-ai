@@ -33,22 +33,15 @@ class BreezeAPI:
         """Initialize Breeze API wrapper"""
         from apps.core.models import CredentialStore
         self.breeze = None
-        self.session_token = None
-        self._load_credentials()
-
-    def _load_credentials(self):
-        """Load Breeze credentials from database"""
-        from apps.core.models import CredentialStore
-        try:
-            creds = CredentialStore.objects.filter(service='breeze').first()
-            if creds:
-                self.session_token = creds.session_token
-        except Exception as e:
-            logger.error(f"Error loading Breeze credentials: {e}")
 
     def login(self) -> bool:
         """
-        Authenticate with Breeze API using stored session token.
+        Authenticate with Breeze API.
+
+        Uses centralized BreezeSessionManager which handles:
+        - Session validation
+        - Auto-refresh if expired
+        - Consistent error handling
 
         Returns:
             bool: True if login successful, False otherwise

@@ -1521,11 +1521,26 @@ class TelegramBotHandler:
     # BOT RUN METHOD
     # =========================================================================
 
+    async def error_handler(self, update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle errors in the bot"""
+        logger.error(f"Bot error: {context.error}")
+
+        # Check for conflict error (another bot instance running)
+        if "Conflict" in str(context.error):
+            logger.error(
+                "CONFLICT ERROR: Another bot instance is running! "
+                "This could be on another machine or process. "
+                "Stop the other instance before running this one."
+            )
+
     def run(self):
         """Run the bot"""
         logger.info("Starting Telegram bot...")
 
         application = Application.builder().token(self.bot_token).build()
+
+        # Add error handler
+        application.add_error_handler(self.error_handler)
 
         # Add command handlers
         application.add_handler(CommandHandler("start", self.start_command))
@@ -1538,10 +1553,13 @@ class TelegramBotHandler:
         logger.info("Telegram bot started successfully")
         logger.info("Bot is polling for updates...")
 
-        # Start polling
-        # NOTE: This will conflict if a webhook is already configured.
-        # If using webhook, do NOT run this bot - use telegram_client.py for sending messages instead.
-        application.run_polling(allowed_updates=Update.ALL_TYPES)
+        # Start polling with drop_pending_updates to avoid conflicts with stale updates
+        # NOTE: This will conflict if another bot instance is already polling.
+        # Make sure only ONE instance runs at a time (check office vs home machine).
+        application.run_polling(
+            allowed_updates=Update.ALL_TYPES,
+            drop_pending_updates=True  # Drop updates from previous/other instances
+        )
 
 
 def acquire_bot_lock() -> bool:

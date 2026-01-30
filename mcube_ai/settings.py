@@ -67,7 +67,7 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
 
     # Third-party apps
-    'background_task',  # Django background tasks (simpler than Celery)
+    # Using Celery for background tasks (configured via CELERY_* settings below)
 
     # mCube Trading System Apps
     'apps.core.apps.CoreConfig',

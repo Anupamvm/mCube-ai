@@ -204,7 +204,7 @@ def update_position_price(
         old_price = position.current_price
         old_pnl = position.unrealized_pnl
 
-        position.update_current_price(current_price)
+        position.update_price(current_price)
 
         logger.debug(
             f"Price updated for {position.instrument}: "

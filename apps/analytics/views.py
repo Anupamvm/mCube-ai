@@ -174,23 +174,84 @@ def resume_learning(request, session_id):
 
 @login_required
 def view_patterns(request):
-    """View all discovered patterns."""
-    patterns = LearningPattern.objects.all().order_by('-confidence_score', '-success_rate')
+    """View comprehensive trading patterns analysis."""
+    from apps.analytics.services.trading_patterns import get_trading_patterns, TradingPatternsAnalyzer
+
+    # Get broker filter
+    broker = request.GET.get('broker')
+    if broker == 'ALL':
+        broker = None
+
+    # Get pattern analysis data
+    try:
+        patterns_data = get_trading_patterns(broker=broker)
+    except Exception as e:
+        logger.error(f"Error loading patterns: {e}")
+        patterns_data = {
+            'overview': {},
+            'monthly': [],
+            'symbols': {'best': [], 'worst': [], 'most_traded': []},
+            'segments': [],
+            'brokers': [],
+            'streaks': {},
+            'distribution': {'buckets': [], 'stats': {}},
+            'consistency': {},
+        }
+
+    # Get broker-specific segment data for tax calculator
+    tax_data = {}
+    try:
+        for broker_code in ['KOTAK', 'ICICI']:
+            analyzer = TradingPatternsAnalyzer(broker=broker_code)
+            segments = analyzer.get_segment_analysis()
+            tax_data[broker_code] = {
+                'segments': segments,
+                'entity': 'HUF' if broker_code == 'KOTAK' else 'Individual',
+                'name': 'Kotak Neo' if broker_code == 'KOTAK' else 'ICICI Breeze',
+            }
+    except Exception as e:
+        logger.error(f"Error loading tax data: {e}")
+        tax_data = {
+            'KOTAK': {'segments': [], 'entity': 'HUF', 'name': 'Kotak Neo'},
+            'ICICI': {'segments': [], 'entity': 'Individual', 'name': 'ICICI Breeze'},
+        }
+
+    # Get timeline data with Nifty overlay
+    timeline_data = {}
+    try:
+        all_analyzer = TradingPatternsAnalyzer(broker=broker)
+        timeline_data = all_analyzer.get_timeline_data()
+    except Exception as e:
+        logger.error(f"Error loading timeline data: {e}")
+        timeline_data = {
+            'critical_trades': [],
+            'nifty_data': [],
+            'fy_start': '',
+            'fy_end': '',
+            'has_nifty_data': False,
+        }
+
+    # Also get learning patterns for the patterns table
+    learning_patterns = LearningPattern.objects.all().order_by('-confidence_score', '-success_rate')
 
     # Filter by type if specified
     pattern_type = request.GET.get('type')
     if pattern_type:
-        patterns = patterns.filter(pattern_type=pattern_type)
+        learning_patterns = learning_patterns.filter(pattern_type=pattern_type)
 
     # Filter by actionable status
     actionable_only = request.GET.get('actionable')
     if actionable_only:
-        patterns = patterns.filter(is_actionable=True)
+        learning_patterns = learning_patterns.filter(is_actionable=True)
 
     context = {
-        'patterns': patterns,
+        'patterns_data': patterns_data,
+        'tax_data': tax_data,
+        'timeline_data': timeline_data,
+        'learning_patterns': learning_patterns,
         'pattern_type': pattern_type,
         'actionable_only': actionable_only,
+        'broker_filter': broker or 'ALL',
     }
 
     return render(request, 'analytics/patterns_list.html', context)
@@ -209,22 +270,28 @@ def view_pattern_detail(request, pattern_id):
 
 
 @login_required
-@user_passes_test(is_admin_user, login_url='/brokers/login/')
 def view_suggestions(request):
-    """View all parameter suggestions."""
-    suggestions = ParameterAdjustment.objects.all().order_by('-confidence', '-expected_improvement_pct')
+    """
+    Smart Trading Intelligence - Data Scientist + Trader Analysis.
 
-    # Filter by status
-    status = request.GET.get('status')
-    if status:
-        suggestions = suggestions.filter(status=status)
+    Provides comprehensive trading analysis with actionable conclusions.
+    """
+    from apps.analytics.services.trading_intelligence import get_trading_intelligence
+
+    # Get broker filter
+    broker = request.GET.get('broker', 'ALL')
+    if broker == 'ALL':
+        broker = None
+
+    # Get smart analysis
+    analysis = get_trading_intelligence(broker=broker)
 
     context = {
-        'suggestions': suggestions,
-        'status': status,
+        'analysis': analysis,
+        'broker_filter': request.GET.get('broker', 'ALL'),
     }
 
-    return render(request, 'analytics/suggestions_list.html', context)
+    return render(request, 'analytics/smart_suggestions.html', context)
 
 
 @login_required
@@ -440,34 +507,15 @@ def api_pnl_data(request):
 @require_http_methods(["GET"])
 def api_positions_data(request):
     """
-    API endpoint to get current positions data organized by status.
-    Returns: open positions and suggestions.
-    Trade history is now sourced from CSV imports (BrokerContractPnL).
+    API endpoint to get system suggestions.
+    Note: Open positions are now fetched directly from brokers API (/brokers/api/positions/).
+    This endpoint is primarily used for suggestions from the learning engine.
     """
     try:
         from apps.positions.services.position_sync import get_position_summary
         from apps.core.utils.formatting import format_indian_currency
 
         summary = get_position_summary()
-
-        # Format open positions
-        open_positions = []
-        for pos in summary['open_positions']:
-            open_positions.append({
-                'id': pos.id,
-                'instrument': pos.instrument,
-                'direction': pos.direction,
-                'quantity': pos.quantity,
-                'entry_price': float(pos.entry_price),
-                'current_price': float(pos.current_price),
-                'unrealized_pnl': float(pos.unrealized_pnl),
-                'pnl_formatted': format_indian_currency(pos.unrealized_pnl),
-                'entry_time': pos.entry_time.isoformat() if pos.entry_time else None,
-                'account': pos.account.account_name if pos.account else None,
-                'broker': pos.account.broker if pos.account else None,
-                'source': pos.source,
-                'last_synced': pos.last_synced_at.isoformat() if pos.last_synced_at else None,
-            })
 
         # Format suggestions
         suggestions = []
@@ -487,10 +535,8 @@ def api_positions_data(request):
 
         return JsonResponse({
             'success': True,
-            'open_positions': open_positions,
             'suggestions': suggestions,
             'counts': {
-                'open': summary['counts']['open'],
                 'suggested': summary['counts']['suggested'],
             },
             'timestamp': timezone.now().isoformat()
@@ -1047,6 +1093,7 @@ def api_fy_monthly_performance(request):
 
     Query params:
     - account_id: Optional specific account ID
+    - broker: Optional broker filter ('KOTAK', 'ICICI', or 'ALL')
     """
     try:
         from apps.analytics.services.fy_trade_analytics import get_fy_analytics
@@ -1056,8 +1103,12 @@ def api_fy_monthly_performance(request):
         if account_id:
             account = get_object_or_404(BrokerAccount, id=account_id)
 
+        broker = request.GET.get('broker', 'ALL')
+        if broker == 'ALL':
+            broker = None
+
         analytics = get_fy_analytics()
-        performance = analytics.get_monthly_performance(account)
+        performance = analytics.get_monthly_performance(account, broker=broker)
 
         return JsonResponse({
             'success': True,
@@ -1078,12 +1129,19 @@ def api_fy_monthly_performance(request):
 def api_fy_broker_breakdown(request):
     """
     API endpoint to get FY performance by broker.
+
+    Query params:
+    - broker: Optional broker filter ('KOTAK', 'ICICI', or 'ALL')
     """
     try:
         from apps.analytics.services.fy_trade_analytics import get_fy_analytics
 
+        broker = request.GET.get('broker', 'ALL')
+        if broker == 'ALL':
+            broker = None
+
         analytics = get_fy_analytics()
-        breakdown = analytics.get_broker_breakdown()
+        breakdown = analytics.get_broker_breakdown(broker=broker)
 
         return JsonResponse({
             'success': True,
@@ -1212,6 +1270,7 @@ def api_broker_symbol_performance(request):
     - from_date: Start date (YYYY-MM-DD)
     - to_date: End date (YYYY-MM-DD)
     - limit: Number of symbols to return (default 20)
+    - broker: Optional broker filter ('KOTAK' or 'ICICI')
     """
     try:
         from apps.analytics.services.broker_trade_analytics import get_broker_analytics
@@ -1231,8 +1290,12 @@ def api_broker_symbol_performance(request):
 
         limit = int(request.GET.get('limit', 20))
 
+        broker = request.GET.get('broker')
+        if broker == 'ALL':
+            broker = None
+
         analytics = get_broker_analytics()
-        symbol_data = analytics.get_symbol_performance(account, from_date, to_date, limit)
+        symbol_data = analytics.get_symbol_performance(account, from_date, to_date, limit, broker=broker)
 
         return JsonResponse({
             'success': True,
@@ -1359,4 +1422,49 @@ def dashboard(request):
     }
 
     return render(request, 'analytics/dashboard.html', context)
+
+
+# =============================================================================
+# SMART TRADING INTELLIGENCE API
+# =============================================================================
+
+@login_required
+@require_http_methods(["GET"])
+def api_smart_suggestions(request):
+    """
+    API endpoint to get smart trading suggestions and conclusions.
+
+    This endpoint provides comprehensive trading analysis like a data scientist
+    and trader would, including:
+    - Statistical edge analysis
+    - Risk metrics and VaR
+    - Behavioral patterns
+    - Symbol performance insights
+    - Time-based patterns
+    - Actionable recommendations
+
+    Query params:
+    - broker: Optional broker filter ('KOTAK', 'ICICI', or 'ALL')
+    """
+    try:
+        from apps.analytics.services.trading_intelligence import get_trading_intelligence
+
+        broker = request.GET.get('broker', 'ALL')
+        if broker == 'ALL':
+            broker = None
+
+        analysis = get_trading_intelligence(broker=broker)
+
+        return JsonResponse({
+            'success': True,
+            'data': analysis,
+            'timestamp': timezone.now().isoformat()
+        })
+
+    except Exception as e:
+        logger.error(f"Error in api_smart_suggestions: {e}", exc_info=True)
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=500)
 

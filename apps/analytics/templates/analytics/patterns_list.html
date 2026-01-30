@@ -1,109 +1,1511 @@
 {% extends 'analytics/base.html' %}
 
-{% block title %}Patterns - mCube Analytics{% endblock %}
+{% block title %}Trading Patterns Analysis - mCube Analytics{% endblock %}
 
-{% block content %}
-<div class="card">
-    <h2>Discovered Trading Patterns</h2>
+{% block page_title %}Trading Patterns Analysis{% endblock %}
+{% block page_description %}Discover actionable insights from your trading data{% endblock %}
 
-    <div style="margin-bottom: 20px;">
-        <form method="get" style="display: flex; gap: 10px; align-items: end;">
-            <div class="form-group" style="margin-bottom: 0;">
-                <label for="type">Pattern Type:</label>
-                <select name="type" id="type" style="width: 200px;">
-                    <option value="">All Types</option>
-                    <option value="ENTRY_TIMING" {% if pattern_type == 'ENTRY_TIMING' %}selected{% endif %}>Entry Timing</option>
-                    <option value="EXIT_TIMING" {% if pattern_type == 'EXIT_TIMING' %}selected{% endif %}>Exit Timing</option>
-                    <option value="STRIKE_SELECTION" {% if pattern_type == 'STRIKE_SELECTION' %}selected{% endif %}>Strike Selection</option>
-                    <option value="MARKET_CONDITION" {% if pattern_type == 'MARKET_CONDITION' %}selected{% endif %}>Market Condition</option>
-                    <option value="DELTA_BEHAVIOR" {% if pattern_type == 'DELTA_BEHAVIOR' %}selected{% endif %}>Delta Behavior</option>
-                    <option value="VIX_PATTERN" {% if pattern_type == 'VIX_PATTERN' %}selected{% endif %}>VIX Pattern</option>
-                    <option value="OTHER" {% if pattern_type == 'OTHER' %}selected{% endif %}>Other</option>
-                </select>
-            </div>
-            <div class="form-group" style="margin-bottom: 0;">
-                <label>
-                    <input type="checkbox" name="actionable" value="1" {% if actionable_only %}checked{% endif %}>
-                    Actionable Only
-                </label>
-            </div>
-            <button type="submit" class="btn">Filter</button>
-            {% if pattern_type or actionable_only %}
-            <a href="{% url 'analytics:view_patterns' %}" class="btn">Clear Filters</a>
-            {% endif %}
-        </form>
-    </div>
+{% block extra_css %}
+{{ block.super }}
+<style>
+    /* Overview Stats Grid - Fixed 4 columns */
+    .stats-grid {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 1rem;
+        margin-bottom: 2rem;
+    }
 
-    {% if patterns %}
-    <table>
-        <thead>
-            <tr>
-                <th>Pattern Name</th>
-                <th>Type</th>
-                <th>Occurrences</th>
-                <th>Success Rate</th>
-                <th>Confidence</th>
-                <th>Avg Profit</th>
-                <th>Avg Loss</th>
-                <th>Status</th>
-                <th>Actionable</th>
-                <th>Action</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for pattern in patterns %}
-            <tr>
-                <td><strong>{{ pattern.name }}</strong></td>
-                <td><span class="badge badge-info">{{ pattern.get_pattern_type_display }}</span></td>
-                <td>
-                    {{ pattern.occurrences }}
-                    <small style="color: #718096;">
-                        ({{ pattern.profitable_occurrences }} wins / {{ pattern.unprofitable_occurrences }} losses)
-                    </small>
-                </td>
-                <td>
-                    <strong style="color: {% if pattern.success_rate >= 65 %}#38a169{% elif pattern.success_rate >= 50 %}#ed8936{% else %}#f56565{% endif %}">
-                        {{ pattern.success_rate }}%
-                    </strong>
-                </td>
-                <td>{{ pattern.confidence_score }}%</td>
-                <td style="color: #38a169;">¹{{ pattern.avg_profit|floatformat:2 }}</td>
-                <td style="color: #f56565;">¹{{ pattern.avg_loss|floatformat:2 }}</td>
-                <td>
-                    <span class="badge badge-{% if pattern.validation_status == 'ACTIVE' %}success{% elif pattern.validation_status == 'TESTING' %}warning{% else %}danger{% endif %}">
-                        {{ pattern.get_validation_status_display }}
-                    </span>
-                </td>
-                <td>
-                    {% if pattern.is_actionable %}
-                    <span class="badge badge-success">Yes</span>
-                    {% else %}
-                    <span class="badge badge-warning">No</span>
-                    {% endif %}
-                </td>
-                <td>
-                    <a href="{% url 'analytics:view_pattern_detail' pattern.id %}" class="btn btn-sm">View Details</a>
-                </td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
-    {% else %}
-    <div style="background-color: #e2e8f0; padding: 30px; text-align: center; border-radius: 4px;">
-        <p style="margin: 0; color: #718096;">No patterns found. Start a learning session to discover patterns.</p>
-    </div>
-    {% endif %}
+    .stat-card {
+        background: var(--white);
+        padding: 1.25rem 1rem;
+        border-radius: var(--radius-lg);
+        box-shadow: var(--shadow-md);
+        text-align: center;
+        position: relative;
+        overflow: hidden;
+    }
+
+    .stat-card::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 4px;
+    }
+
+    .stat-card.positive::before { background: linear-gradient(90deg, #10b981, #34d399); }
+    .stat-card.negative::before { background: linear-gradient(90deg, #ef4444, #f87171); }
+    .stat-card.neutral::before { background: linear-gradient(90deg, #6366f1, #818cf8); }
+    .stat-card.warning::before { background: linear-gradient(90deg, #f59e0b, #fbbf24); }
+
+    .stat-value {
+        font-size: 1.5rem;
+        font-weight: 700;
+        color: var(--darker);
+        margin-bottom: 0.25rem;
+    }
+
+    .stat-label {
+        font-size: 0.7rem;
+        color: var(--gray);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+
+    .stat-subtitle {
+        font-size: 0.65rem;
+        color: var(--gray);
+        margin-top: 0.25rem;
+    }
+
+    /* Section Cards */
+    .section-card {
+        background: rgba(255, 255, 255, 0.95);
+        backdrop-filter: blur(10px);
+        border-radius: var(--radius-lg);
+        box-shadow: var(--shadow-lg);
+        margin-bottom: 1.5rem;
+        overflow: hidden;
+    }
+
+    .section-header {
+        padding: 1rem 1.5rem;
+        border-bottom: 1px solid var(--light);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+    .section-title {
+        font-size: 1.125rem;
+        font-weight: 600;
+        color: var(--darker);
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+    }
+
+    .section-body {
+        padding: 1.5rem;
+    }
+
+    /* Performance Table */
+    .performance-table {
+        width: 100%;
+        border-collapse: collapse;
+    }
+
+    .performance-table th {
+        text-align: left;
+        padding: 0.75rem;
+        font-size: 0.75rem;
+        text-transform: uppercase;
+        color: var(--gray);
+        border-bottom: 2px solid var(--light);
+    }
+
+    .performance-table td {
+        padding: 0.75rem;
+        border-bottom: 1px solid var(--lighter);
+    }
+
+    .performance-table tr:hover {
+        background: var(--lighter);
+    }
+
+    .pnl-positive { color: #10b981; font-weight: 600; }
+    .pnl-negative { color: #ef4444; font-weight: 600; }
+
+    /* Grid Layouts */
+    .two-col-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+        gap: 1.5rem;
+    }
+
+    .three-col-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+        gap: 1.5rem;
+    }
+
+    /* Progress Bars */
+    .progress-bar {
+        height: 8px;
+        background: var(--lighter);
+        border-radius: var(--radius-full);
+        overflow: hidden;
+    }
+
+    .progress-fill {
+        height: 100%;
+        border-radius: var(--radius-full);
+        transition: width 0.3s ease;
+    }
+
+    .progress-fill.green { background: linear-gradient(90deg, #10b981, #34d399); }
+    .progress-fill.red { background: linear-gradient(90deg, #ef4444, #f87171); }
+    .progress-fill.blue { background: linear-gradient(90deg, #6366f1, #818cf8); }
+
+    /* Streak Display */
+    .streak-display {
+        display: flex;
+        gap: 1rem;
+        flex-wrap: wrap;
+    }
+
+    .streak-item {
+        flex: 1;
+        min-width: 120px;
+        padding: 1rem;
+        background: var(--lighter);
+        border-radius: var(--radius-md);
+        text-align: center;
+    }
+
+    .streak-value {
+        font-size: 1.5rem;
+        font-weight: 700;
+    }
+
+    .streak-label {
+        font-size: 0.75rem;
+        color: var(--gray);
+        margin-top: 0.25rem;
+    }
+
+    /* Broker/Segment Cards */
+    .comparison-card {
+        background: var(--lighter);
+        border-radius: var(--radius-md);
+        padding: 1rem;
+        margin-bottom: 1rem;
+    }
+
+    .comparison-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 0.75rem;
+    }
+
+    .comparison-name {
+        font-weight: 600;
+        color: var(--darker);
+    }
+
+    .comparison-pnl {
+        font-weight: 700;
+        font-size: 1.125rem;
+    }
+
+    .comparison-stats {
+        display: flex;
+        gap: 1rem;
+        font-size: 0.813rem;
+        color: var(--gray);
+    }
+
+    /* Filter Bar */
+    .pattern-filter-bar {
+        background: rgba(255, 255, 255, 0.95);
+        backdrop-filter: blur(10px);
+        padding: 1rem 1.5rem;
+        border-radius: var(--radius-lg);
+        margin-bottom: 1.5rem;
+        display: flex;
+        gap: 1rem;
+        align-items: center;
+        flex-wrap: wrap;
+    }
+
+    .filter-label {
+        font-weight: 600;
+        color: var(--darker);
+    }
+
+    /* Distribution Chart Container */
+    .distribution-bars {
+        display: flex;
+        align-items: flex-end;
+        height: 150px;
+        gap: 4px;
+        padding: 1rem 0;
+    }
+
+    .dist-bar {
+        flex: 1;
+        background: linear-gradient(180deg, #6366f1, #818cf8);
+        border-radius: 4px 4px 0 0;
+        min-width: 20px;
+        transition: all 0.3s ease;
+        position: relative;
+    }
+
+    .dist-bar:hover {
+        background: linear-gradient(180deg, #4f46e5, #6366f1);
+    }
+
+    .dist-bar-label {
+        position: absolute;
+        bottom: -20px;
+        left: 50%;
+        transform: translateX(-50%);
+        font-size: 0.6rem;
+        color: var(--gray);
+        white-space: nowrap;
+    }
+
+    /* Consistency Gauge */
+    .consistency-gauge {
+        text-align: center;
+        padding: 1.5rem;
+    }
+
+    .gauge-circle {
+        width: 120px;
+        height: 120px;
+        border-radius: 50%;
+        background: conic-gradient(#10b981 var(--percentage), #e5e7eb var(--percentage));
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin: 0 auto 1rem;
+    }
+
+    .gauge-inner {
+        width: 90px;
+        height: 90px;
+        border-radius: 50%;
+        background: white;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.5rem;
+        font-weight: 700;
+        color: var(--darker);
+    }
+
+    /* Tabs */
+    .symbol-tabs {
+        display: flex;
+        gap: 0.5rem;
+        margin-bottom: 1rem;
+        border-bottom: 2px solid var(--light);
+        padding-bottom: 0.5rem;
+    }
+
+    .symbol-tab {
+        padding: 0.5rem 1rem;
+        background: none;
+        border: none;
+        cursor: pointer;
+        font-size: 0.875rem;
+        color: var(--gray);
+        border-radius: var(--radius-md);
+        transition: all 0.2s;
+    }
+
+    .symbol-tab:hover {
+        background: var(--lighter);
+    }
+
+    .symbol-tab.active {
+        background: var(--primary);
+        color: white;
+    }
+
+    .symbol-content {
+        display: none;
+    }
+
+    .symbol-content.active {
+        display: block;
+    }
+
+    /* Insights Box */
+    .insights-box {
+        background: linear-gradient(135deg, #eff6ff, #e0f2fe);
+        border-left: 4px solid #3b82f6;
+        padding: 1rem 1.5rem;
+        border-radius: var(--radius-md);
+        margin-top: 1rem;
+    }
+
+    .insights-title {
+        font-weight: 600;
+        color: #1e40af;
+        margin-bottom: 0.5rem;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+    }
+
+    .insights-list {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+    }
+
+    .insights-list li {
+        padding: 0.375rem 0;
+        color: #1e3a8a;
+        font-size: 0.875rem;
+    }
+
+    .insights-list li::before {
+        content: "→";
+        margin-right: 0.5rem;
+        color: #3b82f6;
+    }
+
+    /* Tooltip Styles */
+    .stat-tooltip {
+        position: relative;
+    }
+
+    .stat-tooltip .tooltip-content {
+        visibility: hidden;
+        opacity: 0;
+        position: absolute;
+        bottom: 100%;
+        left: 50%;
+        transform: translateX(-50%);
+        background: #1e293b;
+        color: #f8fafc;
+        padding: 0.75rem 1rem;
+        border-radius: 8px;
+        font-size: 0.75rem;
+        line-height: 1.5;
+        width: 220px;
+        text-align: left;
+        z-index: 100;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+        transition: opacity 0.2s, visibility 0.2s;
+        margin-bottom: 8px;
+    }
+
+    .stat-tooltip .tooltip-content::after {
+        content: '';
+        position: absolute;
+        top: 100%;
+        left: 50%;
+        transform: translateX(-50%);
+        border: 6px solid transparent;
+        border-top-color: #1e293b;
+    }
+
+    .stat-tooltip:hover .tooltip-content {
+        visibility: visible;
+        opacity: 1;
+    }
+
+    .stat-tooltip .tooltip-content strong {
+        color: #60a5fa;
+        display: block;
+        margin-bottom: 0.5rem;
+    }
+
+    @media (max-width: 992px) {
+        .stats-grid {
+            grid-template-columns: repeat(4, 1fr);
+            gap: 0.75rem;
+        }
+
+        .stat-value {
+            font-size: 1.25rem;
+        }
+    }
+
+    @media (max-width: 768px) {
+        .stats-grid {
+            grid-template-columns: repeat(2, 1fr);
+        }
+
+        .two-col-grid,
+        .three-col-grid {
+            grid-template-columns: 1fr;
+        }
+    }
+</style>
+{% endblock %}
+
+{% block page_content %}
+{% with overview=patterns_data.overview streaks=patterns_data.streaks consistency=patterns_data.consistency %}
+
+<!-- Broker Filter -->
+<div class="pattern-filter-bar">
+    <span class="filter-label">Broker:</span>
+    <select id="brokerFilter" onchange="updateBrokerFilter(this.value)" style="padding: 0.5rem 1rem; border-radius: var(--radius-md); border: 1px solid var(--light);">
+        <option value="ALL" {% if broker_filter == 'ALL' %}selected{% endif %}>All Brokers</option>
+        <option value="KOTAK" {% if broker_filter == 'KOTAK' %}selected{% endif %}>Kotak Neo</option>
+        <option value="ICICI" {% if broker_filter == 'ICICI' %}selected{% endif %}>ICICI Breeze</option>
+    </select>
 </div>
 
-<div class="card">
-    <h3>About Pattern Recognition</h3>
-    <p>
-        The learning engine analyzes historical trade data to discover patterns that correlate with profitable or unprofitable outcomes.
-    </p>
-    <ul>
-        <li><strong>Success Rate:</strong> Percentage of profitable trades when this pattern occurs</li>
-        <li><strong>Confidence:</strong> Statistical confidence in this pattern based on sample size</li>
-        <li><strong>Actionable:</strong> Whether this pattern should influence trading decisions (high confidence + high success rate)</li>
+<!-- Overview Stats -->
+<div class="stats-grid">
+    <div class="stat-card neutral">
+        <div class="stat-value">{{ overview.total_trades|default:0 }}</div>
+        <div class="stat-label">Total Trades</div>
+        <div class="stat-subtitle">{{ overview.winners|default:0 }}W / {{ overview.losers|default:0 }}L</div>
+    </div>
+
+    <div class="stat-card {% if overview.win_rate >= 50 %}positive{% else %}negative{% endif %}">
+        <div class="stat-value">{{ overview.win_rate|default:0 }}%</div>
+        <div class="stat-label">Win Rate</div>
+        <div class="stat-subtitle">Target: 50%+</div>
+    </div>
+
+    <div class="stat-card {% if overview.profit_factor >= 1 %}positive{% else %}negative{% endif %}">
+        <div class="stat-value">{{ overview.profit_factor|default:0 }}</div>
+        <div class="stat-label">Profit Factor</div>
+        <div class="stat-subtitle">Target: 1.5+</div>
+    </div>
+
+    <div class="stat-card {% if overview.total_pnl >= 0 %}positive{% else %}negative{% endif %}">
+        <div class="stat-value">₹{{ overview.total_pnl|floatformat:0|default:0 }}</div>
+        <div class="stat-label">Total P&L</div>
+    </div>
+
+    <div class="stat-card {% if overview.expectancy >= 0 %}positive{% else %}negative{% endif %}">
+        <div class="stat-value">₹{{ overview.expectancy|floatformat:0|default:0 }}</div>
+        <div class="stat-label">Expectancy</div>
+        <div class="stat-subtitle">Per Trade</div>
+    </div>
+
+    <div class="stat-card {% if overview.risk_reward >= 1 %}positive{% else %}warning{% endif %}">
+        <div class="stat-value">{{ overview.risk_reward|default:0 }}</div>
+        <div class="stat-label">Risk/Reward</div>
+        <div class="stat-subtitle">Target: 1.5+</div>
+    </div>
+
+    <div class="stat-card positive">
+        <div class="stat-value">₹{{ overview.avg_profit|floatformat:0|default:0 }}</div>
+        <div class="stat-label">Avg Win</div>
+        <div class="stat-subtitle">Max: ₹{{ overview.max_profit|floatformat:0|default:0 }}</div>
+    </div>
+
+    <div class="stat-card negative">
+        <div class="stat-value">₹{{ overview.avg_loss|floatformat:0|default:0 }}</div>
+        <div class="stat-label">Avg Loss</div>
+        <div class="stat-subtitle">Max: ₹{{ overview.max_loss|floatformat:0|default:0 }}</div>
+    </div>
+</div>
+
+<!-- Key Insights -->
+{% if overview and overview.total_trades and overview.total_trades > 0 %}
+<div class="insights-box">
+    <div class="insights-title">Key Trading Insights</div>
+    <ul class="insights-list">
+        {% if overview.win_rate >= 60 %}
+        <li>Strong win rate of {{ overview.win_rate }}% - You're selecting good entry points</li>
+        {% elif overview.win_rate >= 50 %}
+        <li>Win rate of {{ overview.win_rate }}% is above breakeven - Focus on improving risk/reward</li>
+        {% else %}
+        <li>Win rate of {{ overview.win_rate }}% needs improvement - Review your entry criteria</li>
+        {% endif %}
+
+        {% if overview.profit_factor >= 2 %}
+        <li>Excellent profit factor of {{ overview.profit_factor }} - Your winners outpace losers significantly</li>
+        {% elif overview.profit_factor >= 1.5 %}
+        <li>Good profit factor of {{ overview.profit_factor }} - Maintain this edge</li>
+        {% elif overview.profit_factor >= 1 %}
+        <li>Profit factor of {{ overview.profit_factor }} is profitable but thin - Consider tighter stop losses</li>
+        {% else %}
+        <li>Profit factor below 1 - Losses exceed profits, review position sizing</li>
+        {% endif %}
+
+        {% if overview.risk_reward >= 2 %}
+        <li>Risk/Reward of {{ overview.risk_reward }} is excellent - You're letting winners run</li>
+        {% elif overview.risk_reward < 1 %}
+        <li>Risk/Reward below 1 - Consider holding winners longer or cutting losses sooner</li>
+        {% endif %}
     </ul>
 </div>
+{% endif %}
+
+<!-- Streak Analysis -->
+<div class="section-card" style="margin-top: 1.5rem;">
+        <div class="section-header">
+            <h3 class="section-title">Streak Analysis</h3>
+        </div>
+        <div class="section-body">
+            <div class="streak-display">
+                <div class="streak-item" style="{% if streaks.current_streak_type == 'win' %}background: #d1fae5;{% else %}background: #fee2e2;{% endif %}">
+                    <div class="streak-value" style="{% if streaks.current_streak_type == 'win' %}color: #065f46;{% else %}color: #991b1b;{% endif %}">
+                        {{ streaks.current_streak|default:0 }}
+                    </div>
+                    <div class="streak-label">Current {{ streaks.current_streak_type|default:'—'|title }} Streak</div>
+                </div>
+
+                <div class="streak-item" style="background: #d1fae5;">
+                    <div class="streak-value" style="color: #065f46;">{{ streaks.max_win_streak|default:0 }}</div>
+                    <div class="streak-label">Best Win Streak</div>
+                </div>
+
+                <div class="streak-item" style="background: #fee2e2;">
+                    <div class="streak-value" style="color: #991b1b;">{{ streaks.max_loss_streak|default:0 }}</div>
+                    <div class="streak-label">Worst Loss Streak</div>
+                </div>
+            </div>
+
+            <div style="margin-top: 1.5rem; display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+                <div style="text-align: center; padding: 1rem; background: var(--lighter); border-radius: var(--radius-md);">
+                    <div style="font-size: 1.25rem; font-weight: 600; color: #065f46;">{{ streaks.avg_win_streak|default:0 }}</div>
+                    <div style="font-size: 0.75rem; color: var(--gray);">Avg Win Streak</div>
+                </div>
+                <div style="text-align: center; padding: 1rem; background: var(--lighter); border-radius: var(--radius-md);">
+                    <div style="font-size: 1.25rem; font-weight: 600; color: #991b1b;">{{ streaks.avg_loss_streak|default:0 }}</div>
+                    <div style="font-size: 0.75rem; color: var(--gray);">Avg Loss Streak</div>
+                </div>
+            </div>
+
+            {% if streaks.max_loss_streak >= 5 %}
+            <div class="insights-box" style="margin-top: 1rem;">
+                <div class="insights-title">Streak Insight</div>
+                <ul class="insights-list">
+                    <li>Max loss streak of {{ streaks.max_loss_streak }} trades - Consider taking a break after 3 consecutive losses</li>
+                </ul>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+<div class="two-col-grid">
+    <!-- Segment Analysis (Futures vs Options) -->
+    <div class="section-card">
+        <div class="section-header">
+            <h3 class="section-title">Segment Analysis</h3>
+        </div>
+        <div class="section-body">
+            {% if patterns_data.segments %}
+            {% for seg in patterns_data.segments %}
+            <div class="comparison-card">
+                <div class="comparison-header">
+                    <span class="comparison-name">{{ seg.segment|default:'Unknown' }}</span>
+                    <span class="comparison-pnl {% if seg.total_pnl >= 0 %}pnl-positive{% else %}pnl-negative{% endif %}">
+                        ₹{{ seg.total_pnl|floatformat:0 }}
+                    </span>
+                </div>
+                <div class="comparison-stats">
+                    <span>{{ seg.trades }} trades</span>
+                    <span>{{ seg.win_rate }}% win rate</span>
+                    <span>PF: {{ seg.profit_factor }}</span>
+                </div>
+                <div class="progress-bar" style="margin-top: 0.75rem;">
+                    <div class="progress-fill {% if seg.total_pnl >= 0 %}green{% else %}red{% endif %}" style="width: {{ seg.win_rate }}%;"></div>
+                </div>
+            </div>
+            {% endfor %}
+            {% else %}
+            <p style="text-align: center; color: var(--gray); padding: 2rem;">No segment data available</p>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Broker Comparison -->
+    <div class="section-card">
+        <div class="section-header">
+            <h3 class="section-title">Broker Comparison</h3>
+        </div>
+        <div class="section-body">
+            {% if patterns_data.brokers %}
+            {% for broker in patterns_data.brokers %}
+            <div class="comparison-card">
+                <div class="comparison-header">
+                    <span class="comparison-name">{{ broker.broker_name }}</span>
+                    <span class="comparison-pnl {% if broker.total_pnl >= 0 %}pnl-positive{% else %}pnl-negative{% endif %}">
+                        ₹{{ broker.total_pnl|floatformat:0 }}
+                    </span>
+                </div>
+                <div class="comparison-stats">
+                    <span>{{ broker.trades }} trades</span>
+                    <span>{{ broker.win_rate }}% win rate</span>
+                    <span>Charges: ₹{{ broker.total_charges|floatformat:0 }}</span>
+                </div>
+                <div class="progress-bar" style="margin-top: 0.75rem;">
+                    <div class="progress-fill {% if broker.total_pnl >= 0 %}green{% else %}red{% endif %}" style="width: {{ broker.win_rate }}%;"></div>
+                </div>
+            </div>
+            {% endfor %}
+            {% else %}
+            <p style="text-align: center; color: var(--gray); padding: 2rem;">No broker data available</p>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<!-- Tax Calculation Section -->
+<div class="section-card" style="margin-top: 1.5rem;">
+    <div class="section-header">
+        <h3 class="section-title">Capital Gains Tax Calculator</h3>
+    </div>
+    <div class="section-body">
+        <!-- Account Selector -->
+        <div style="display: flex; gap: 1rem; align-items: center; margin-bottom: 1.5rem; flex-wrap: wrap;">
+            <div style="display: flex; align-items: center; gap: 0.5rem;">
+                <label style="font-weight: 600; color: var(--darker);">Account:</label>
+                <select id="taxAccountSelect" onchange="switchTaxAccount(this.value)" style="padding: 0.5rem 1rem; border: 1px solid var(--light); border-radius: var(--radius-md); font-size: 1rem;">
+                    <option value="KOTAK">Kotak Neo (HUF)</option>
+                    <option value="ICICI">ICICI Breeze (Individual)</option>
+                </select>
+            </div>
+            <div style="display: flex; align-items: center; gap: 0.5rem;">
+                <label style="font-weight: 600; color: var(--darker);">Expenses:</label>
+                <span style="font-size: 1rem;">₹</span>
+                <input type="number" id="taxExpenses" value="0" min="0" step="1000"
+                       style="padding: 0.5rem; border: 1px solid var(--light); border-radius: var(--radius-md); width: 120px; font-size: 1rem;"
+                       onchange="recalculateTaxes()" oninput="recalculateTaxes()">
+            </div>
+            <div id="accountEntityBadge" style="padding: 0.375rem 0.75rem; border-radius: var(--radius-full); font-size: 0.813rem; font-weight: 600; background: #fef3c7; color: #92400e;">
+                HUF Account
+            </div>
+        </div>
+
+        <!-- Segment-wise Tax Table -->
+        <div style="overflow-x: auto;">
+            <table class="performance-table" id="taxTable">
+                <thead>
+                    <tr>
+                        <th>Segment</th>
+                        <th>Trades</th>
+                        <th>Win Rate</th>
+                        <th>Gross P&L</th>
+                        <th>Tax Type</th>
+                        <th>Tax Rate</th>
+                        <th>Taxable Amount</th>
+                        <th>Tax Liability</th>
+                    </tr>
+                </thead>
+                <tbody id="taxTableBody">
+                    <!-- Populated by JavaScript -->
+                </tbody>
+                <tfoot style="background: var(--lighter); font-weight: 600;">
+                    <tr>
+                        <td colspan="3">TOTAL</td>
+                        <td id="totalGrossPnl">₹0</td>
+                        <td colspan="2"></td>
+                        <td id="totalTaxableAmount">₹0</td>
+                        <td id="totalTaxLiability">₹0</td>
+                    </tr>
+                </tfoot>
+            </table>
+        </div>
+
+        <!-- Summary Cards -->
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1rem; margin-top: 1.5rem;">
+            <div style="background: var(--lighter); padding: 1rem; border-radius: var(--radius-md); text-align: center;">
+                <div id="summaryGrossPnl" style="font-size: 1.25rem; font-weight: 700; color: var(--darker);">₹0</div>
+                <div style="font-size: 0.75rem; color: var(--gray); text-transform: uppercase;">Gross P&L</div>
+            </div>
+            <div style="background: var(--lighter); padding: 1rem; border-radius: var(--radius-md); text-align: center;">
+                <div id="summaryExpenses" style="font-size: 1.25rem; font-weight: 700; color: var(--gray);">₹0</div>
+                <div style="font-size: 0.75rem; color: var(--gray); text-transform: uppercase;">Expenses</div>
+            </div>
+            <div style="background: var(--lighter); padding: 1rem; border-radius: var(--radius-md); text-align: center;">
+                <div id="summaryTaxable" style="font-size: 1.25rem; font-weight: 700; color: var(--darker);">₹0</div>
+                <div style="font-size: 0.75rem; color: var(--gray); text-transform: uppercase;">Taxable</div>
+            </div>
+            <div style="background: #fee2e2; padding: 1rem; border-radius: var(--radius-md); text-align: center;">
+                <div id="summaryTax" style="font-size: 1.25rem; font-weight: 700; color: #991b1b;">₹0</div>
+                <div style="font-size: 0.75rem; color: #991b1b; text-transform: uppercase;">Tax Payable</div>
+            </div>
+            <div style="background: #d1fae5; padding: 1rem; border-radius: var(--radius-md); text-align: center;">
+                <div id="summaryNet" style="font-size: 1.25rem; font-weight: 700; color: #065f46;">₹0</div>
+                <div style="font-size: 0.75rem; color: #065f46; text-transform: uppercase;">Net After Tax</div>
+            </div>
+        </div>
+
+        <div style="margin-top: 1.5rem; padding: 1rem; background: #eff6ff; border-radius: var(--radius-md); border-left: 4px solid #3b82f6;">
+            <div style="font-weight: 600; color: #1e40af; margin-bottom: 0.5rem;">Tax Rules Applied:</div>
+            <ul style="margin: 0; padding-left: 1.25rem; font-size: 0.875rem; color: #1e3a8a;">
+                <li><strong>F&O (Futures/Options):</strong> Business Income - 30% slab rate (HUF/Individual), 25% (Company)</li>
+                <li><strong>Equity/ETF/MF:</strong> STCG - 15% flat rate for all</li>
+                <li><strong>Expenses:</strong> Deducted proportionally from F&O income only (business expense)</li>
+                <li><strong>Losses:</strong> Can be carried forward for 8 years</li>
+            </ul>
+        </div>
+    </div>
+</div>
+
+<!-- Symbol Performance -->
+<div class="section-card">
+    <div class="section-header">
+        <h3 class="section-title">Symbol Performance</h3>
+    </div>
+    <div class="section-body">
+        <div class="symbol-tabs">
+            <button class="symbol-tab active" onclick="showSymbolTab('best')">Top Performers</button>
+            <button class="symbol-tab" onclick="showSymbolTab('worst')">Needs Improvement</button>
+            <button class="symbol-tab" onclick="showSymbolTab('most')">Most Traded</button>
+        </div>
+
+        {% with symbols=patterns_data.symbols %}
+        <!-- Best Performers -->
+        <div id="best-content" class="symbol-content active">
+            {% if symbols.best %}
+            <table class="performance-table">
+                <thead>
+                    <tr>
+                        <th>Symbol</th>
+                        <th>Trades</th>
+                        <th>Win Rate</th>
+                        <th>Avg P&L</th>
+                        <th>Total P&L</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for s in symbols.best %}
+                    <tr>
+                        <td><strong>{{ s.symbol }}</strong></td>
+                        <td>{{ s.trades }}</td>
+                        <td>{{ s.win_rate }}%</td>
+                        <td class="{% if s.avg_pnl >= 0 %}pnl-positive{% else %}pnl-negative{% endif %}">₹{{ s.avg_pnl|floatformat:0 }}</td>
+                        <td class="{% if s.total_pnl >= 0 %}pnl-positive{% else %}pnl-negative{% endif %}">₹{{ s.total_pnl|floatformat:0 }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <p style="text-align: center; color: var(--gray); padding: 2rem;">No data available</p>
+            {% endif %}
+        </div>
+
+        <!-- Worst Performers -->
+        <div id="worst-content" class="symbol-content">
+            {% if symbols.worst %}
+            <table class="performance-table">
+                <thead>
+                    <tr>
+                        <th>Symbol</th>
+                        <th>Trades</th>
+                        <th>Win Rate</th>
+                        <th>Avg P&L</th>
+                        <th>Total P&L</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for s in symbols.worst %}
+                    <tr>
+                        <td><strong>{{ s.symbol }}</strong></td>
+                        <td>{{ s.trades }}</td>
+                        <td>{{ s.win_rate }}%</td>
+                        <td class="{% if s.avg_pnl >= 0 %}pnl-positive{% else %}pnl-negative{% endif %}">₹{{ s.avg_pnl|floatformat:0 }}</td>
+                        <td class="{% if s.total_pnl >= 0 %}pnl-positive{% else %}pnl-negative{% endif %}">₹{{ s.total_pnl|floatformat:0 }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <p style="text-align: center; color: var(--gray); padding: 2rem;">No data available</p>
+            {% endif %}
+        </div>
+
+        <!-- Most Traded -->
+        <div id="most-content" class="symbol-content">
+            {% if symbols.most_traded %}
+            <table class="performance-table">
+                <thead>
+                    <tr>
+                        <th>Symbol</th>
+                        <th>Trades</th>
+                        <th>Win Rate</th>
+                        <th>Avg P&L</th>
+                        <th>Total P&L</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for s in symbols.most_traded %}
+                    <tr>
+                        <td><strong>{{ s.symbol }}</strong></td>
+                        <td>{{ s.trades }}</td>
+                        <td>{{ s.win_rate }}%</td>
+                        <td class="{% if s.avg_pnl >= 0 %}pnl-positive{% else %}pnl-negative{% endif %}">₹{{ s.avg_pnl|floatformat:0 }}</td>
+                        <td class="{% if s.total_pnl >= 0 %}pnl-positive{% else %}pnl-negative{% endif %}">₹{{ s.total_pnl|floatformat:0 }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <p style="text-align: center; color: var(--gray); padding: 2rem;">No data available</p>
+            {% endif %}
+        </div>
+        {% endwith %}
+    </div>
+</div>
+
+<div class="two-col-grid">
+    <!-- P&L Distribution -->
+    <div class="section-card">
+        <div class="section-header">
+            <h3 class="section-title">P&L Distribution</h3>
+        </div>
+        <div class="section-body">
+            <div style="height: 220px;">
+                <canvas id="distributionChart"></canvas>
+            </div>
+            {% with dist=patterns_data.distribution.stats %}
+            {% if dist %}
+            <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; margin-top: 1rem;">
+                <div class="stat-tooltip" style="text-align: center; cursor: help;">
+                    <div style="font-size: 1rem; font-weight: 600;">₹{{ dist.p25|floatformat:0|default:0 }}</div>
+                    <div style="font-size: 0.7rem; color: var(--gray);">25th Percentile</div>
+                    <div class="tooltip-content">
+                        <strong>25th Percentile</strong><br>
+                        25% of your trades made less than this amount.<br><br>
+                        This is your "bad trade" threshold - 1 in 4 trades falls below this value.
+                    </div>
+                </div>
+                <div class="stat-tooltip" style="text-align: center; cursor: help;">
+                    <div style="font-size: 1rem; font-weight: 600;">₹{{ dist.median|floatformat:0|default:0 }}</div>
+                    <div style="font-size: 0.7rem; color: var(--gray);">Median</div>
+                    <div class="tooltip-content">
+                        <strong>Median (50th Percentile)</strong><br>
+                        The middle value - half your trades made more, half made less.<br><br>
+                        More reliable than average as it's not skewed by outliers. This is your "typical" trade result.
+                    </div>
+                </div>
+                <div class="stat-tooltip" style="text-align: center; cursor: help;">
+                    <div style="font-size: 1rem; font-weight: 600;">₹{{ dist.p75|floatformat:0|default:0 }}</div>
+                    <div style="font-size: 0.7rem; color: var(--gray);">75th Percentile</div>
+                    <div class="tooltip-content">
+                        <strong>75th Percentile</strong><br>
+                        75% of trades made less than this amount.<br><br>
+                        Your top 25% of trades exceed this value - these are your "big winners".
+                    </div>
+                </div>
+                <div class="stat-tooltip" style="text-align: center; cursor: help;">
+                    <div style="font-size: 1rem; font-weight: 600;">₹{{ dist.std_dev|floatformat:0|default:0 }}</div>
+                    <div style="font-size: 0.7rem; color: var(--gray);">Std Deviation</div>
+                    <div class="tooltip-content">
+                        <strong>Standard Deviation</strong><br>
+                        Measures how much your P&L varies from trade to trade.<br><br>
+                        A HIGH value means inconsistent results - some big wins, some big losses. Consider tighter position sizing to reduce variance.
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+            {% endwith %}
+        </div>
+    </div>
+
+    <!-- Consistency Score -->
+    <div class="section-card">
+        <div class="section-header">
+            <h3 class="section-title">Trading Consistency</h3>
+        </div>
+        <div class="section-body">
+            <div class="consistency-gauge">
+                <div class="gauge-circle" style="--percentage: {{ consistency.consistency_score|default:0 }}%;">
+                    <div class="gauge-inner">{{ consistency.consistency_score|default:0 }}%</div>
+                </div>
+                <div style="font-weight: 600; color: var(--darker); margin-bottom: 0.5rem;">Consistency Score</div>
+                <div style="font-size: 0.875rem; color: var(--gray);">
+                    {{ consistency.profitable_months|default:0 }} profitable out of {{ consistency.total_months|default:0 }} months
+                </div>
+            </div>
+
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-top: 1rem;">
+                <div style="text-align: center; padding: 1rem; background: var(--lighter); border-radius: var(--radius-md);">
+                    <div style="font-size: 1.25rem; font-weight: 600;">₹{{ consistency.avg_monthly_pnl|floatformat:0|default:0 }}</div>
+                    <div style="font-size: 0.75rem; color: var(--gray);">Avg Monthly P&L</div>
+                </div>
+                <div style="text-align: center; padding: 1rem; background: var(--lighter); border-radius: var(--radius-md);">
+                    <div style="font-size: 1.25rem; font-weight: 600;">₹{{ consistency.monthly_volatility|floatformat:0|default:0 }}</div>
+                    <div style="font-size: 0.75rem; color: var(--gray);">Monthly Volatility</div>
+                </div>
+            </div>
+
+            {% if consistency.consistency_score < 50 %}
+            <div class="insights-box" style="margin-top: 1rem;">
+                <div class="insights-title">Consistency Insight</div>
+                <ul class="insights-list">
+                    <li>Consistency below 50% - Focus on developing a systematic approach</li>
+                    <li>Consider keeping a trading journal to identify patterns in losing months</li>
+                </ul>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<!-- Trading Timeline with Nifty Overlay -->
+<div class="section-card" style="margin-top: 1.5rem;">
+    <div class="section-header">
+        <h3 class="section-title">Trading Timeline vs Nifty</h3>
+        <div style="display: flex; align-items: center; gap: 1rem;">
+            <span style="font-size: 0.813rem; color: var(--gray);">FY {{ timeline_data.fy_start|slice:":4" }}-{{ timeline_data.fy_end|slice:"2:4" }}</span>
+            <a href="{% url 'brokers:historical' %}" style="font-size: 0.75rem; color: var(--primary); text-decoration: none;" title="Sync Nifty Data">
+                ↻ Sync
+            </a>
+        </div>
+    </div>
+    <div class="section-body">
+        {% if timeline_data.has_nifty_data or timeline_data.critical_trades %}
+        <!-- Filter Controls -->
+        <div style="display: flex; flex-wrap: wrap; gap: 1rem; align-items: center; margin-bottom: 1rem; padding: 0.75rem 1rem; background: var(--lighter); border-radius: var(--radius-md);">
+            <div style="display: flex; align-items: center; gap: 0.5rem;">
+                <label style="font-size: 0.813rem; font-weight: 600; color: var(--darker);">Broker:</label>
+                <select id="timelineBrokerFilter" onchange="updateTimelineFilters()" style="padding: 0.375rem 0.75rem; border: 1px solid var(--light); border-radius: var(--radius-md); font-size: 0.875rem;">
+                    <option value="ALL">All Brokers</option>
+                    <option value="KOTAK">Kotak Neo</option>
+                    <option value="ICICI">ICICI Breeze</option>
+                </select>
+            </div>
+            <div style="display: flex; align-items: center; gap: 0.5rem;">
+                <label style="font-size: 0.813rem; font-weight: 600; color: var(--darker);">Segment:</label>
+                <select id="timelineSegmentFilter" onchange="updateTimelineFilters()" style="padding: 0.375rem 0.75rem; border: 1px solid var(--light); border-radius: var(--radius-md); font-size: 0.875rem;">
+                    <option value="ALL">All Segments</option>
+                    <option value="FUT">Futures Only</option>
+                    <option value="OPT">Options Only</option>
+                </select>
+            </div>
+            <div style="flex: 1;"></div>
+            <!-- Legend -->
+            <div style="display: flex; flex-wrap: wrap; gap: 0.75rem; font-size: 0.75rem;">
+                <div style="display: flex; align-items: center; gap: 0.25rem;">
+                    <span style="width: 10px; height: 10px; border-radius: 50%; background: #6366f1;"></span>
+                    <span>Nifty</span>
+                </div>
+                <div style="display: flex; align-items: center; gap: 0.25rem;">
+                    <span style="width: 10px; height: 10px; border-radius: 50%; background: #10b981;"></span>
+                    <span>Win</span>
+                </div>
+                <div style="display: flex; align-items: center; gap: 0.25rem;">
+                    <span style="width: 10px; height: 10px; border-radius: 50%; background: #ef4444;"></span>
+                    <span>Loss</span>
+                </div>
+                <div style="display: flex; align-items: center; gap: 0.25rem;">
+                    <span style="width: 10px; height: 10px; border-radius: 50%; background: #f97316;"></span>
+                    <span>Streak</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Chart Container -->
+        <div style="height: 350px; position: relative;">
+            <canvas id="timelineChart"></canvas>
+        </div>
+
+        <!-- Critical Events List -->
+        <div style="margin-top: 1.5rem;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+                <div style="font-weight: 600; color: var(--darker);">Key Events <span id="eventsCount">({{ timeline_data.critical_trades|length }})</span></div>
+            </div>
+            <div id="eventsContainer" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 0.75rem; max-height: 300px; overflow-y: auto;">
+                <!-- Events populated by JavaScript -->
+            </div>
+        </div>
+
+        {% else %}
+        <div style="text-align: center; padding: 3rem; color: var(--gray);">
+            <div style="font-size: 3rem; margin-bottom: 1rem;">📊</div>
+            <p>No timeline data available yet.</p>
+            <p style="font-size: 0.875rem; margin-bottom: 1rem;">Nifty historical data needs to be synced from Breeze.</p>
+            <a href="{% url 'brokers:historical' %}" class="btn btn-primary" style="display: inline-flex; align-items: center; gap: 0.5rem; padding: 0.75rem 1.5rem; background: var(--primary); color: white; border-radius: var(--radius-md); text-decoration: none; font-weight: 600;">
+                Sync Nifty Data
+            </a>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+{% endwith %}
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+{% with dist=patterns_data.distribution %}
+{% if dist and dist.buckets %}
+{{ dist.buckets|json_script:"distribution-data" }}
+{% endif %}
+{% endwith %}
+{{ tax_data|json_script:"tax-data" }}
+{{ timeline_data|json_script:"timeline-data" }}
+<script>
+// Initialize data from Django context
+try {
+    const distDataEl = document.getElementById('distribution-data');
+    const distributionData = distDataEl ? JSON.parse(distDataEl.textContent) : [];
+
+    // P&L Distribution Chart
+    const distCtx = document.getElementById('distributionChart');
+    if (distCtx && distributionData.length > 0) {
+        // Filter out buckets with 0 count for cleaner visualization
+        const filteredData = distributionData.filter(d => d.count > 0);
+
+        new Chart(distCtx, {
+            type: 'bar',
+            data: {
+                labels: filteredData.map(d => d.label),
+                datasets: [{
+                    label: 'Trades',
+                    data: filteredData.map(d => d.count),
+                    backgroundColor: filteredData.map(d =>
+                        d.start < 0 ? 'rgba(239, 68, 68, 0.8)' : 'rgba(16, 185, 129, 0.8)'
+                    ),
+                    borderRadius: 4,
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false }
+                },
+                scales: {
+                    x: {
+                        ticks: {
+                            maxRotation: 45,
+                            minRotation: 45,
+                            font: { size: 9 }
+                        }
+                    },
+                    y: {
+                        beginAtZero: true,
+                        ticks: {
+                            stepSize: 10
+                        }
+                    }
+                }
+            }
+        });
+    }
+} catch (e) {
+    console.error('Error rendering distribution chart:', e);
+}
+
+// Symbol Tabs
+function showSymbolTab(tab) {
+    // Remove active from all tabs and contents
+    document.querySelectorAll('.symbol-tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.symbol-content').forEach(c => c.classList.remove('active'));
+
+    // Add active to selected
+    event.target.classList.add('active');
+    document.getElementById(tab + '-content').classList.add('active');
+}
+
+// Broker Filter
+function updateBrokerFilter(broker) {
+    const url = new URL(window.location.href);
+    url.searchParams.set('broker', broker);
+    window.location.href = url.toString();
+}
+
+// Tax Calculation Functions
+const taxDataEl = document.getElementById('tax-data');
+const TAX_DATA = taxDataEl ? JSON.parse(taxDataEl.textContent) : {
+    'KOTAK': { name: 'Kotak Neo', entity: 'HUF', segments: [] },
+    'ICICI': { name: 'ICICI Breeze', entity: 'Individual', segments: [] }
+};
+
+// F&O segments get business income tax rate, others get STCG
+const FO_SEGMENTS = ['Futures', 'Options', 'FUT', 'OPT'];
+const STCG_RATE = 0.15;  // 15% for equity STCG
+const BUSINESS_RATE = 0.30;  // 30% for F&O business income
+
+let currentBroker = 'KOTAK';
+
+function formatCurrency(amount) {
+    const absAmount = Math.abs(amount);
+    if (absAmount >= 10000000) {
+        return '₹' + (amount / 10000000).toFixed(2) + ' Cr';
+    } else if (absAmount >= 100000) {
+        return '₹' + (amount / 100000).toFixed(2) + ' L';
+    } else {
+        return '₹' + Math.round(amount).toLocaleString('en-IN');
+    }
+}
+
+function isFOSegment(segment) {
+    if (!segment) return false;
+    const upperSeg = segment.toUpperCase();
+    return FO_SEGMENTS.some(fo => upperSeg.includes(fo.toUpperCase()));
+}
+
+function switchTaxAccount(broker) {
+    currentBroker = broker;
+    const data = TAX_DATA[broker];
+
+    // Update entity badge
+    const badge = document.getElementById('accountEntityBadge');
+    if (badge) {
+        if (data.entity === 'HUF') {
+            badge.style.background = '#fef3c7';
+            badge.style.color = '#92400e';
+            badge.textContent = 'HUF Account';
+        } else {
+            badge.style.background = '#dbeafe';
+            badge.style.color = '#1e40af';
+            badge.textContent = 'Individual Account';
+        }
+    }
+
+    // Reset expenses when switching
+    document.getElementById('taxExpenses').value = 0;
+
+    recalculateTaxes();
+}
+
+function recalculateTaxes() {
+    const data = TAX_DATA[currentBroker];
+    const segments = data.segments || [];
+    const expenses = parseFloat(document.getElementById('taxExpenses')?.value) || 0;
+
+    const tbody = document.getElementById('taxTableBody');
+    if (!tbody) return;
+
+    // Calculate total F&O P&L for expense allocation
+    let totalFOPnl = 0;
+    segments.forEach(seg => {
+        if (isFOSegment(seg.segment) && seg.total_pnl > 0) {
+            totalFOPnl += seg.total_pnl;
+        }
+    });
+
+    let totalGrossPnl = 0;
+    let totalTaxableAmount = 0;
+    let totalTaxLiability = 0;
+    let totalExpenseAllocated = 0;
+
+    // Build table rows
+    let html = '';
+    segments.forEach(seg => {
+        const pnl = seg.total_pnl || 0;
+        const isFO = isFOSegment(seg.segment);
+        const taxType = isFO ? 'Business Income' : 'STCG';
+        const taxRate = isFO ? BUSINESS_RATE : STCG_RATE;
+
+        // Allocate expenses proportionally to F&O segments with profit
+        let segmentExpense = 0;
+        if (isFO && pnl > 0 && totalFOPnl > 0) {
+            segmentExpense = (pnl / totalFOPnl) * expenses;
+            totalExpenseAllocated += segmentExpense;
+        }
+
+        // Calculate taxable amount
+        let taxableAmount = pnl;
+        if (pnl > 0) {
+            taxableAmount = Math.max(0, pnl - segmentExpense);
+        }
+
+        // Calculate tax
+        let tax = 0;
+        if (taxableAmount > 0) {
+            tax = taxableAmount * taxRate;
+        }
+
+        totalGrossPnl += pnl;
+        if (pnl > 0) {
+            totalTaxableAmount += taxableAmount;
+            totalTaxLiability += tax;
+        }
+
+        const pnlClass = pnl >= 0 ? 'pnl-positive' : 'pnl-negative';
+        const taxTypeColor = isFO ? '#f59e0b' : '#3b82f6';
+
+        html += `
+            <tr>
+                <td><strong>${seg.segment || 'Unknown'}</strong></td>
+                <td>${seg.trades || 0}</td>
+                <td>${seg.win_rate || 0}%</td>
+                <td class="${pnlClass}">${formatCurrency(pnl)}</td>
+                <td><span style="background: ${isFO ? '#fef3c7' : '#dbeafe'}; color: ${isFO ? '#92400e' : '#1e40af'}; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem;">${taxType}</span></td>
+                <td>${Math.round(taxRate * 100)}%</td>
+                <td>${pnl > 0 ? formatCurrency(taxableAmount) : '<span style="color: var(--gray);">Loss</span>'}</td>
+                <td>${tax > 0 ? '<span class="pnl-negative">' + formatCurrency(tax) + '</span>' : (pnl < 0 ? '<span style="color: var(--gray);">₹0 (c/f)</span>' : '₹0')}</td>
+            </tr>
+        `;
+    });
+
+    if (segments.length === 0) {
+        html = '<tr><td colspan="8" style="text-align: center; color: var(--gray); padding: 2rem;">No segment data available for this account</td></tr>';
+    }
+
+    tbody.innerHTML = html;
+
+    // Update footer totals
+    document.getElementById('totalGrossPnl').innerHTML = `<span class="${totalGrossPnl >= 0 ? 'pnl-positive' : 'pnl-negative'}">${formatCurrency(totalGrossPnl)}</span>`;
+    document.getElementById('totalTaxableAmount').textContent = formatCurrency(totalTaxableAmount);
+    document.getElementById('totalTaxLiability').innerHTML = totalTaxLiability > 0 ?
+        `<span class="pnl-negative">${formatCurrency(totalTaxLiability)}</span>` : '₹0';
+
+    // Update summary cards
+    const summaryGross = document.getElementById('summaryGrossPnl');
+    const summaryExp = document.getElementById('summaryExpenses');
+    const summaryTaxable = document.getElementById('summaryTaxable');
+    const summaryTax = document.getElementById('summaryTax');
+    const summaryNet = document.getElementById('summaryNet');
+
+    if (summaryGross) {
+        summaryGross.textContent = formatCurrency(totalGrossPnl);
+        summaryGross.style.color = totalGrossPnl >= 0 ? '#065f46' : '#991b1b';
+    }
+    if (summaryExp) summaryExp.textContent = formatCurrency(totalExpenseAllocated);
+    if (summaryTaxable) summaryTaxable.textContent = formatCurrency(totalTaxableAmount);
+    if (summaryTax) summaryTax.textContent = formatCurrency(totalTaxLiability);
+
+    const netAfterTax = totalGrossPnl - totalTaxLiability;
+    if (summaryNet) {
+        summaryNet.textContent = formatCurrency(netAfterTax);
+        summaryNet.style.color = netAfterTax >= 0 ? '#065f46' : '#991b1b';
+        summaryNet.parentElement.style.background = netAfterTax >= 0 ? '#d1fae5' : '#fee2e2';
+    }
+}
+
+// Timeline Chart with Nifty Overlay
+let timelineChart = null;
+let allTimelineData = null;
+
+function initTimelineChart() {
+    const timelineDataEl = document.getElementById('timeline-data');
+    if (!timelineDataEl) return;
+
+    allTimelineData = JSON.parse(timelineDataEl.textContent);
+    renderTimelineChart();
+    renderEventsGrid();
+}
+
+function getFilteredTrades() {
+    if (!allTimelineData) return [];
+
+    const brokerFilter = document.getElementById('timelineBrokerFilter')?.value || 'ALL';
+    const segmentFilter = document.getElementById('timelineSegmentFilter')?.value || 'ALL';
+
+    let trades = allTimelineData.critical_trades || [];
+
+    // Filter by broker
+    if (brokerFilter !== 'ALL') {
+        trades = trades.filter(t => t.broker === brokerFilter);
+    }
+
+    // Filter by segment
+    if (segmentFilter !== 'ALL') {
+        trades = trades.filter(t => {
+            const seg = (t.segment || '').toUpperCase();
+            if (segmentFilter === 'FUT') {
+                return seg.includes('FUT') || seg.includes('FUTURES');
+            } else if (segmentFilter === 'OPT') {
+                return seg.includes('OPT') || seg.includes('OPTIONS');
+            }
+            return true;
+        });
+    }
+
+    return trades;
+}
+
+function updateTimelineFilters() {
+    renderTimelineChart();
+    renderEventsGrid();
+}
+
+function renderTimelineChart() {
+    if (!allTimelineData) return;
+
+    const niftyData = allTimelineData.nifty_data || [];
+    const filteredTrades = getFilteredTrades();
+
+    const ctx = document.getElementById('timelineChart');
+    if (!ctx) return;
+
+    // Destroy existing chart
+    if (timelineChart) {
+        timelineChart.destroy();
+        timelineChart = null;
+    }
+
+    if (niftyData.length === 0) return;
+
+    // Prepare Nifty line data
+    const niftyLabels = niftyData.map(d => d.date);
+    const niftyValues = niftyData.map(d => d.close);
+
+    // Create datasets
+    const datasets = [{
+        label: 'Nifty 50',
+        data: niftyValues,
+        borderColor: '#6366f1',
+        backgroundColor: 'rgba(99, 102, 241, 0.1)',
+        fill: true,
+        tension: 0.3,
+        pointRadius: 0,
+        pointHoverRadius: 4,
+        yAxisID: 'y',
+    }];
+
+    // Add filtered trades as scatter points
+    const tradePoints = filteredTrades.map(trade => {
+        const tradeDate = trade.date;
+        const niftyIdx = niftyLabels.findIndex(d => d >= tradeDate);
+        const niftyValue = niftyIdx >= 0 ? niftyValues[niftyIdx] : niftyValues[niftyValues.length - 1];
+
+        return {
+            x: tradeDate,
+            y: niftyValue,
+            trade: trade,
+        };
+    });
+
+    // Group by type for coloring
+    const tradeTypes = {
+        'big_win': { color: '#10b981', label: 'Big Wins', points: [] },
+        'big_loss': { color: '#ef4444', label: 'Big Losses', points: [] },
+        'win_streak_start': { color: '#22c55e', label: 'Win Streaks', points: [] },
+        'loss_streak_start': { color: '#f97316', label: 'Loss Streaks', points: [] },
+        'monthly_best': { color: '#84cc16', label: 'Monthly Best', points: [] },
+        'monthly_worst': { color: '#fb923c', label: 'Monthly Worst', points: [] },
+    };
+
+    tradePoints.forEach(pt => {
+        const type = pt.trade.type;
+        if (tradeTypes[type]) {
+            tradeTypes[type].points.push(pt);
+        }
+    });
+
+    // Add scatter datasets for each trade type
+    Object.entries(tradeTypes).forEach(([type, config]) => {
+        if (config.points.length > 0) {
+            datasets.push({
+                label: config.label,
+                data: config.points.map(p => ({ x: p.x, y: p.y })),
+                backgroundColor: config.color,
+                borderColor: config.color,
+                pointRadius: 8,
+                pointHoverRadius: 12,
+                pointStyle: 'circle',
+                showLine: false,
+                type: 'scatter',
+                yAxisID: 'y',
+                _trades: config.points.map(p => p.trade),
+            });
+        }
+    });
+
+    timelineChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: niftyLabels,
+            datasets: datasets,
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: {
+                mode: 'nearest',
+                intersect: true,
+            },
+            plugins: {
+                legend: {
+                    display: false,
+                },
+                tooltip: {
+                    callbacks: {
+                        title: function(context) {
+                            return context[0].label || context[0].raw.x;
+                        },
+                        label: function(context) {
+                            if (context.dataset.label === 'Nifty 50') {
+                                return `Nifty: ${context.parsed.y.toLocaleString('en-IN')}`;
+                            }
+                            const trades = context.dataset._trades;
+                            if (trades && trades[context.dataIndex]) {
+                                const trade = trades[context.dataIndex];
+                                const brokerName = trade.broker === 'KOTAK' ? 'Kotak Neo' : (trade.broker === 'ICICI' ? 'ICICI Breeze' : trade.broker);
+                                return [
+                                    trade.label,
+                                    `P&L: ₹${Math.round(trade.pnl).toLocaleString('en-IN')}`,
+                                    trade.segment ? `${trade.segment}` : '',
+                                    brokerName ? `${brokerName}` : '',
+                                ].filter(Boolean);
+                            }
+                            return context.dataset.label;
+                        },
+                    },
+                },
+            },
+            scales: {
+                x: {
+                    type: 'category',
+                    ticks: {
+                        maxTicksLimit: 12,
+                        maxRotation: 45,
+                        font: { size: 10 },
+                    },
+                    grid: {
+                        display: false,
+                    },
+                },
+                y: {
+                    position: 'left',
+                    title: {
+                        display: true,
+                        text: 'Nifty 50',
+                        font: { size: 11 },
+                    },
+                    ticks: {
+                        callback: function(value) {
+                            return value.toLocaleString('en-IN');
+                        },
+                    },
+                    grid: {
+                        color: 'rgba(0,0,0,0.05)',
+                    },
+                },
+            },
+        },
+    });
+}
+
+function renderEventsGrid() {
+    const container = document.getElementById('eventsContainer');
+    const countEl = document.getElementById('eventsCount');
+    if (!container) return;
+
+    const filteredTrades = getFilteredTrades();
+
+    // Update count
+    if (countEl) {
+        countEl.textContent = `(${filteredTrades.length})`;
+    }
+
+    // Render events
+    if (filteredTrades.length === 0) {
+        container.innerHTML = '<div style="grid-column: 1/-1; text-align: center; color: var(--gray); padding: 2rem;">No events match the selected filters</div>';
+        return;
+    }
+
+    container.innerHTML = filteredTrades.map(event => {
+        const brokerName = event.broker === 'KOTAK' ? 'Kotak' : (event.broker === 'ICICI' ? 'ICICI' : '');
+        return `
+        <div style="display: flex; gap: 0.75rem; padding: 0.75rem; background: var(--lighter); border-radius: var(--radius-md); border-left: 3px solid ${event.color};">
+            <div style="font-size: 1.5rem;">${event.icon}</div>
+            <div style="flex: 1; min-width: 0;">
+                <div style="font-weight: 600; color: var(--darker); font-size: 0.875rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+                    ${event.label}
+                </div>
+                <div style="font-size: 0.75rem; color: var(--gray);">
+                    ${event.date} &bull;
+                    <span class="${event.pnl >= 0 ? 'pnl-positive' : 'pnl-negative'}">
+                        ₹${Math.round(event.pnl).toLocaleString('en-IN')}
+                    </span>
+                    ${event.segment ? `&bull; ${event.segment}` : ''}
+                    ${brokerName ? `&bull; ${brokerName}` : ''}
+                </div>
+            </div>
+        </div>
+    `}).join('');
+}
+
+// Initialize on page load
+document.addEventListener('DOMContentLoaded', function() {
+    switchTaxAccount('KOTAK');
+    initTimelineChart();
+});
+</script>
 {% endblock %}

@@ -404,36 +404,22 @@ def breeze_session_status(request):
     """
     API endpoint to check Breeze session status.
 
+    Uses centralized BreezeSessionManager for consistent status checks.
+
     Returns:
         JsonResponse: {
             'valid': bool,
             'auto_login_available': bool,
-            'auto_login_url': str,
-            'message': str
+            'login_url': str,
+            'message': str,
+            'last_update': datetime or null
         }
     """
-    from apps.brokers.utils.auth_manager import get_credentials, is_session_valid_breeze
+    from apps.brokers.services.breeze_session import check_breeze_session
 
     try:
-        creds = get_credentials('breeze')
-
-        if not creds:
-            return JsonResponse({
-                'valid': False,
-                'auto_login_available': False,
-                'message': 'No Breeze credentials found',
-                'login_url': '/brokers/breeze/login/'
-            })
-
-        is_valid = is_session_valid_breeze(creds)
-        auto_login_available = creds.username and creds.password and creds.api_key
-
-        return JsonResponse({
-            'valid': is_valid,
-            'auto_login_available': auto_login_available,
-            'login_url': '/brokers/breeze/login/',
-            'message': 'Session valid' if is_valid else 'Session expired - please re-authenticate'
-        })
+        status = check_breeze_session()
+        return JsonResponse(status)
 
     except Exception as e:
         logger.exception(f"Error checking Breeze session status: {e}")
@@ -683,7 +669,8 @@ def breeze_historical(request):
 @require_http_methods(["GET"])
 def api_positions(request):
     """
-    API endpoint to get all positions (Traders can access).
+    API endpoint to get positions from BrokerPosition model (Traders can access).
+    Note: For live positions with accurate P&L, use /trading/api/get-positions/ instead.
     """
     broker = request.GET.get('broker')
     query = BrokerPosition.objects.all()
@@ -1536,16 +1523,54 @@ def api_imported_pnl_summary(request):
     """
     API endpoint to get summary of imported contract P&L.
     Also returns list of contracts for display in dashboard.
+
+    Query params:
+    - broker: Filter by broker (KOTAK, ICICI)
+    - segment: Filter by segment (FUTURES, OPTIONS)
+    - symbol: Filter by symbol
+    - pnl: Filter by P&L (winners, losers)
+    - month: Filter by expiry month (YYYY-MM format)
+    - limit: Max contracts to return (default: 500)
     """
     from apps.brokers.models import BrokerContractPnL
     from django.db.models import Sum, Count
 
     try:
+        # Get filter parameters
         broker = request.GET.get('broker')
+        segment = request.GET.get('segment')
+        symbol = request.GET.get('symbol')
+        pnl_filter = request.GET.get('pnl')
+        month = request.GET.get('month')
+        limit = int(request.GET.get('limit', 500))
 
         queryset = BrokerContractPnL.objects.all()
-        if broker:
+
+        # Apply filters
+        if broker and broker not in ('all', 'ALL'):
             queryset = queryset.filter(broker=broker)
+
+        if segment and segment not in ('all', 'ALL'):
+            queryset = queryset.filter(segment=segment)
+
+        if symbol and symbol not in ('all', 'ALL'):
+            queryset = queryset.filter(symbol=symbol)
+
+        if pnl_filter == 'winners':
+            queryset = queryset.filter(net_pnl__gt=0)
+        elif pnl_filter == 'losers':
+            queryset = queryset.filter(net_pnl__lt=0)
+
+        if month and month not in ('all', 'ALL'):
+            # month format: YYYY-MM
+            try:
+                year, month_num = month.split('-')
+                queryset = queryset.filter(
+                    expiry_date__year=int(year),
+                    expiry_date__month=int(month_num)
+                )
+            except (ValueError, AttributeError):
+                pass
 
         # Aggregate by broker and segment
         summary = queryset.values('broker', 'segment').annotate(
@@ -1556,7 +1581,7 @@ def api_imported_pnl_summary(request):
             total_sell=Sum('sell_amount'),
         ).order_by('broker', 'segment')
 
-        # Overall totals
+        # Overall totals (after filters applied)
         overall = queryset.aggregate(
             total_records=Count('id'),
             total_pnl=Sum('net_pnl'),
@@ -1568,7 +1593,7 @@ def api_imported_pnl_summary(request):
             'symbol', 'trading_symbol', 'segment', 'broker',
             'expiry_date', 'net_pnl', 'gross_pnl', 'total_charges',
             'option_type', 'strike_price'
-        )[:100])
+        )[:limit])
 
         # Convert dates and decimals for JSON
         for c in contracts:
@@ -1578,11 +1603,34 @@ def api_imported_pnl_summary(request):
             c['strike_price'] = float(c['strike_price']) if c['strike_price'] else None
             c['expiry_date'] = c['expiry_date'].strftime('%Y-%m-%d') if c['expiry_date'] else None
 
+        # Get all unique symbols and months for filter dropdowns (from ALL contracts, not filtered)
+        all_contracts = BrokerContractPnL.objects.all()
+        all_symbols = sorted(list(all_contracts.values_list('symbol', flat=True).distinct()))
+        all_months = sorted(list(all_contracts.exclude(expiry_date__isnull=True)
+                                 .values_list('expiry_date', flat=True)
+                                 .distinct()), reverse=True)
+        # Convert months to YYYY-MM format
+        unique_months = sorted(list(set(
+            d.strftime('%Y-%m') for d in all_months if d
+        )), reverse=True)
+
+        # Count winners/losers in filtered results
+        winners_count = queryset.filter(net_pnl__gt=0).count()
+        losers_count = queryset.filter(net_pnl__lt=0).count()
+
         return JsonResponse({
             'success': True,
             'summary': list(summary),
-            'overall': overall,
+            'overall': {
+                **overall,
+                'winners_count': winners_count,
+                'losers_count': losers_count,
+            },
             'contracts': contracts,
+            'filter_options': {
+                'symbols': all_symbols,
+                'months': unique_months,
+            }
         })
 
     except Exception as e:

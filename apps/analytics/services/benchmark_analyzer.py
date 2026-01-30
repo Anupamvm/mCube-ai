@@ -68,7 +68,7 @@ class BenchmarkAnalyzer:
             int: Number of records created/updated
         """
         try:
-            from apps.brokers.services.breeze_client import get_breeze_client
+            from apps.brokers.integrations.breeze import get_breeze_client
 
             client = get_breeze_client()
             if not client:

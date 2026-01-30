@@ -42,8 +42,17 @@
 <!-- Section 1: Open Positions (from Brokers) -->
 <div class="card" id="open-positions-card">
     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
-        <h3 style="margin: 0;">Open Positions</h3>
-        <span class="badge badge-info" id="open-count-badge">0</span>
+        <div style="display: flex; align-items: center; gap: 12px;">
+            <h3 style="margin: 0;">Open Positions</h3>
+            <span class="badge badge-info" id="open-count-badge">0</span>
+            <span id="positions-sync-status" style="font-size: 12px; color: #94a3b8;"></span>
+        </div>
+        <div style="display: flex; align-items: center; gap: 8px;">
+            <span id="active-brokers-badge" style="font-size: 12px; color: #64748b;"></span>
+            <button onclick="refreshPositions()" id="refresh-positions-btn" class="btn" style="background: #10b981; color: white; padding: 6px 12px; font-size: 13px;">
+                <span id="refresh-icon">&#x21bb;</span> Refresh
+            </button>
+        </div>
     </div>
     <div id="open-positions-container">
         <div style="text-align: center; padding: 40px; color: #718096;">Loading...</div>
@@ -57,7 +66,14 @@
             <h3 style="margin: 0; display: inline-block;">Financial Year Analytics</h3>
             <span id="fy-label" style="margin-left: 12px; font-size: 14px; color: #6366f1; font-weight: 600;">(Loading...)</span>
         </div>
-        <span class="badge badge-secondary" id="history-count-badge">0 trades</span>
+        <div style="display: flex; align-items: center; gap: 12px;">
+            <select id="fy-broker-filter" onchange="loadFYPerformance()" style="padding: 6px 12px; border-radius: 6px; border: 1px solid #e2e8f0; font-size: 13px;">
+                <option value="ALL">All Brokers</option>
+                <option value="KOTAK">Kotak Neo</option>
+                <option value="ICICI">ICICI Breeze</option>
+            </select>
+            <span class="badge badge-secondary" id="history-count-badge">0 trades</span>
+        </div>
     </div>
 
     <!-- FY Summary Cards - 2x2 Grid -->
@@ -99,8 +115,22 @@
     <div style="display: grid; grid-template-columns: 3fr 2fr; gap: 20px; margin-bottom: 24px;">
         <!-- Monthly P&L Chart -->
         <div style="background: #f8fafc; border-radius: 16px; padding: 24px; border: 1px solid #e2e8f0;">
-            <h4 style="margin: 0 0 20px 0; font-size: 15px; color: #334155; font-weight: 600;">Monthly P&L Trend</h4>
-            <div style="height: 280px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+                <h4 style="margin: 0; font-size: 15px; color: #334155; font-weight: 600;">Monthly P&L Trend</h4>
+                <div style="display: flex; gap: 8px;">
+                    <select id="chart-type-filter" onchange="updateChart()" style="padding: 4px 8px; border-radius: 4px; border: 1px solid #e2e8f0; font-size: 12px;">
+                        <option value="both">Futures + Options</option>
+                        <option value="futures">Futures Only</option>
+                        <option value="options">Options Only</option>
+                    </select>
+                    <select id="chart-broker-filter" onchange="loadFYPerformance()" style="padding: 4px 8px; border-radius: 4px; border: 1px solid #e2e8f0; font-size: 12px;">
+                        <option value="ALL">All Brokers</option>
+                        <option value="KOTAK">Kotak Neo</option>
+                        <option value="ICICI">ICICI Breeze</option>
+                    </select>
+                </div>
+            </div>
+            <div style="height: 260px;">
                 <canvas id="monthly-pnl-chart"></canvas>
             </div>
         </div>
@@ -147,7 +177,7 @@
 <div class="card" id="history-card">
     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
         <h3 style="margin: 0;">Imported Contracts</h3>
-        <div style="display: flex; gap: 8px; align-items: center;">
+        <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
             <select id="broker-filter" onchange="filterContracts()" style="padding: 6px 12px; border-radius: 6px; border: 1px solid #e2e8f0; font-size: 13px;">
                 <option value="all">All Brokers</option>
                 <option value="ICICI">ICICI Breeze</option>
@@ -158,7 +188,27 @@
                 <option value="FUTURES">Futures Only</option>
                 <option value="OPTIONS">Options Only</option>
             </select>
+            <select id="symbol-filter" onchange="filterContracts()" style="padding: 6px 12px; border-radius: 6px; border: 1px solid #e2e8f0; font-size: 13px;">
+                <option value="all">All Symbols</option>
+                <!-- Populated dynamically -->
+            </select>
+            <select id="pnl-filter" onchange="filterContracts()" style="padding: 6px 12px; border-radius: 6px; border: 1px solid #e2e8f0; font-size: 13px;">
+                <option value="all">All P&L</option>
+                <option value="winners">Winners Only</option>
+                <option value="losers">Losers Only</option>
+            </select>
+            <select id="month-filter" onchange="filterContracts()" style="padding: 6px 12px; border-radius: 6px; border: 1px solid #e2e8f0; font-size: 13px;">
+                <option value="all">All Months</option>
+                <!-- Populated dynamically -->
+            </select>
+            <button onclick="resetFilters()" style="padding: 6px 12px; border-radius: 6px; border: 1px solid #e2e8f0; font-size: 13px; background: #f1f5f9; cursor: pointer;">Reset</button>
         </div>
+    </div>
+    <div id="contracts-summary" style="display: flex; gap: 16px; margin-bottom: 12px; font-size: 13px; color: #64748b;">
+        <span>Total: <strong id="filter-total">0</strong></span>
+        <span>Winners: <strong id="filter-winners" style="color: #10b981;">0</strong></span>
+        <span>Losers: <strong id="filter-losers" style="color: #ef4444;">0</strong></span>
+        <span>Net P&L: <strong id="filter-pnl">₹0</strong></span>
     </div>
     <div id="history-container">
         <div style="text-align: center; padding: 40px; color: #718096;">Loading...</div>
@@ -243,10 +293,20 @@
 {% endblock %}
 
 {% block extra_js %}
+<style>
+@keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+#refresh-icon {
+    display: inline-block;
+}
+</style>
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script>
 let monthlyPnlChart = null;
 let allContracts = [];
+let currentMonthlyData = [];  // Store monthly data for chart filtering
 
 function toggleSection(section) {
     const content = document.getElementById(section + '-content');
@@ -258,6 +318,105 @@ function toggleSection(section) {
         content.style.display = 'none';
         toggle.textContent = '+';
     }
+}
+
+function fetchPositions(refresh = true) {
+    const refreshBtn = document.getElementById('refresh-positions-btn');
+    const refreshIcon = document.getElementById('refresh-icon');
+    const syncStatus = document.getElementById('positions-sync-status');
+
+    if (refresh && refreshBtn) {
+        refreshBtn.disabled = true;
+        refreshIcon.style.animation = 'spin 1s linear infinite';
+        syncStatus.textContent = 'Fetching from brokers...';
+    }
+
+    // Use the SAME API as Open Positions page - fetches LIVE data from broker APIs
+    // Fetch from both brokers in parallel
+    const breezePromise = fetch('/trading/api/get-positions/?broker=breeze').then(r => r.json()).catch(() => ({positions: []}));
+    const neoPromise = fetch('/trading/api/get-positions/?broker=neo').then(r => r.json()).catch(() => ({positions: []}));
+
+    Promise.all([breezePromise, neoPromise])
+        .then(([breezeData, neoData]) => {
+            const allPositions = [];
+
+            // Add Breeze positions
+            if (breezeData.success && breezeData.positions) {
+                breezeData.positions.forEach(p => {
+                    allPositions.push({
+                        instrument: p.symbol,
+                        direction: p.direction,
+                        quantity: p.quantity,
+                        entry_price: p.average_price,
+                        current_price: p.ltp,
+                        unrealized_pnl: p.unrealized_pnl || p.total_pnl,
+                        pnl_formatted: formatCurrency(p.unrealized_pnl || p.total_pnl),
+                        broker: 'ICICI Breeze'
+                    });
+                });
+            }
+
+            // Add Neo positions
+            if (neoData.success && neoData.positions) {
+                neoData.positions.forEach(p => {
+                    allPositions.push({
+                        instrument: p.symbol,
+                        direction: p.direction,
+                        quantity: p.quantity,
+                        entry_price: p.average_price,
+                        current_price: p.ltp,
+                        unrealized_pnl: p.unrealized_pnl || p.total_pnl,
+                        pnl_formatted: formatCurrency(p.unrealized_pnl || p.total_pnl),
+                        broker: 'Kotak Neo'
+                    });
+                });
+            }
+
+            document.getElementById('count-open').textContent = allPositions.length;
+            document.getElementById('open-count-badge').textContent = allPositions.length;
+
+            renderOpenPositions(allPositions);
+
+            // Show sync status
+            const syncTime = new Date();
+            syncStatus.textContent = 'Live at ' + syncTime.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
+            syncStatus.style.color = '#10b981';
+
+            // Show active brokers
+            const brokers = [...new Set(allPositions.map(p => p.broker))];
+            const brokersEl = document.getElementById('active-brokers-badge');
+            if (brokers.length > 0) {
+                brokersEl.innerHTML = brokers.map(b => `<span class="badge badge-secondary" style="margin-right: 4px;">${b}</span>`).join('');
+            } else {
+                brokersEl.innerHTML = '<span class="badge badge-secondary">No positions</span>';
+            }
+        })
+        .catch(error => {
+            console.error('Error fetching positions:', error);
+            syncStatus.textContent = 'Error';
+            syncStatus.style.color = '#ef4444';
+        })
+        .finally(() => {
+            if (refreshBtn) {
+                refreshBtn.disabled = false;
+                refreshIcon.style.animation = '';
+            }
+        });
+
+    // Also fetch suggestions from analytics API (separate call)
+    fetch('{% url "analytics:api_positions_data" %}?refresh=false')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                document.getElementById('count-suggestions').textContent = data.counts.suggested;
+                document.getElementById('suggestions-count-badge').textContent = data.counts.suggested;
+                renderSuggestions(data.suggestions);
+            }
+        });
+}
+
+function refreshPositions() {
+    fetchPositions(true);
 }
 
 function formatCurrency(value) {
@@ -291,20 +450,8 @@ function loadPositionsData() {
     // Load FY Performance from CSV imports (primary data source)
     loadFYPerformance();
 
-    // Load current positions (if any)
-    fetch('{% url "analytics:api_positions_data" %}')
-        .then(response => response.json())
-        .then(data => {
-            if (data.success) {
-                document.getElementById('count-open').textContent = data.counts.open;
-                document.getElementById('count-suggestions').textContent = data.counts.suggested;
-                document.getElementById('open-count-badge').textContent = data.counts.open;
-                document.getElementById('suggestions-count-badge').textContent = data.counts.suggested;
-
-                renderOpenPositions(data.open_positions);
-                renderSuggestions(data.suggestions);
-            }
-        });
+    // Load current positions (fetches live from brokers)
+    fetchPositions(true);
 
     // Today's P&L from live positions
     fetch('{% url "analytics:api_pnl_data" %}')
@@ -322,12 +469,31 @@ function loadPositionsData() {
         });
 }
 
+let currentFYData = null;  // Store full FY data for filtering
+
 function loadFYPerformance() {
-    fetch('{% url "analytics:api_fy_monthly_performance" %}')
+    // Use chart broker filter if available, otherwise fall back to FY broker filter
+    const chartBrokerFilter = document.getElementById('chart-broker-filter')?.value;
+    const fyBrokerFilter = document.getElementById('fy-broker-filter')?.value;
+    const brokerFilter = chartBrokerFilter || fyBrokerFilter || 'ALL';
+
+    // Sync both dropdowns
+    if (chartBrokerFilter && document.getElementById('fy-broker-filter')) {
+        document.getElementById('fy-broker-filter').value = chartBrokerFilter;
+    }
+    if (fyBrokerFilter && document.getElementById('chart-broker-filter')) {
+        document.getElementById('chart-broker-filter').value = fyBrokerFilter;
+    }
+
+    const url = '{% url "analytics:api_fy_monthly_performance" %}' + `?broker=${brokerFilter}`;
+
+    fetch(url)
         .then(response => response.json())
         .then(data => {
             if (data.success) {
-                renderFYPerformance(data.data);
+                currentFYData = data.data;  // Store full data
+                currentMonthlyData = data.data.months || [];
+                updateFYDisplay();  // Unified update function
             } else {
                 document.getElementById('monthly-performance-container').innerHTML =
                     `<div style="text-align: center; padding: 40px; color: #94a3b8;">
@@ -337,45 +503,88 @@ function loadFYPerformance() {
         });
 }
 
-function renderFYPerformance(data) {
-    document.getElementById('fy-label').textContent = `(${data.fy_label})`;
-    document.getElementById('history-count-badge').textContent = `${data.total_trades} trades`;
+function updateFYDisplay() {
+    if (!currentFYData) return;
 
-    // Futures
+    const typeFilter = document.getElementById('chart-type-filter')?.value || 'both';
+    const data = currentFYData;
+    const months = currentMonthlyData;
+
+    // Calculate filtered totals based on type filter
+    let displayPnl, displayTrades, winMonths, totalMonths;
+
+    if (typeFilter === 'futures') {
+        displayPnl = data.futures?.net_pnl || 0;
+        displayTrades = data.futures?.total_trades || 0;
+        winMonths = months.filter(m => (m.futures?.net_pnl || 0) > 0).length;
+    } else if (typeFilter === 'options') {
+        displayPnl = data.options?.net_pnl || 0;
+        displayTrades = data.options?.total_trades || 0;
+        winMonths = months.filter(m => (m.options?.net_pnl || 0) > 0).length;
+    } else {
+        displayPnl = data.overall?.net_pnl || 0;
+        displayTrades = data.overall?.total_trades || 0;
+        winMonths = months.filter(m => (m.total?.net_pnl || 0) > 0).length;
+    }
+    totalMonths = months.length;
+
+    // Update FY label and trade count
+    document.getElementById('fy-label').textContent = `(${data.fy_label})`;
+    document.getElementById('history-count-badge').textContent = `${displayTrades} trades`;
+
+    // Update summary cards based on type filter
+    const futuresCard = document.getElementById('futures-pnl').parentElement;
+    const optionsCard = document.getElementById('options-pnl').parentElement;
+
+    if (typeFilter === 'futures') {
+        // Show only Futures, hide Options
+        futuresCard.style.display = 'block';
+        optionsCard.style.opacity = '0.3';
+    } else if (typeFilter === 'options') {
+        // Show only Options, hide Futures
+        futuresCard.style.opacity = '0.3';
+        optionsCard.style.display = 'block';
+    } else {
+        // Show both
+        futuresCard.style.opacity = '1';
+        optionsCard.style.opacity = '1';
+    }
+
+    // Futures card
     const futuresPnl = data.futures?.net_pnl || 0;
     const futuresEl = document.getElementById('futures-pnl');
     futuresEl.textContent = formatCurrency(futuresPnl);
     futuresEl.style.color = futuresPnl >= 0 ? '#047857' : '#dc2626';
-    const futuresOpen = data.futures?.open_positions || 0;
-    document.getElementById('futures-trades').textContent = `${data.futures?.total_trades || 0} trades` + (futuresOpen > 0 ? ` (${futuresOpen} open)` : '');
+    document.getElementById('futures-trades').textContent = `${data.futures?.total_trades || 0} trades`;
 
-    // Options
+    // Options card
     const optionsPnl = data.options?.net_pnl || 0;
     const optionsEl = document.getElementById('options-pnl');
     optionsEl.textContent = formatCurrency(optionsPnl);
     optionsEl.style.color = optionsPnl >= 0 ? '#4338ca' : '#dc2626';
-    const optionsOpen = data.options?.open_positions || 0;
-    document.getElementById('options-trades').textContent = `${data.options?.total_trades || 0} trades` + (optionsOpen > 0 ? ` (${optionsOpen} open)` : '');
+    document.getElementById('options-trades').textContent = `${data.options?.total_trades || 0} trades`;
 
-    // Total
-    const totalPnl = data.overall?.net_pnl || 0;
+    // Total card - shows filtered total
     const totalEl = document.getElementById('total-pnl-fy');
-    totalEl.textContent = formatCurrency(totalPnl);
-    totalEl.style.color = totalPnl >= 0 ? '#7c3aed' : '#dc2626';
-    const totalOpen = data.overall?.open_positions || 0;
-    document.getElementById('total-trades-fy').textContent = `${data.overall?.total_trades || 0} trades` + (totalOpen > 0 ? ` (${totalOpen} open)` : '');
+    totalEl.textContent = formatCurrency(displayPnl);
+    totalEl.style.color = displayPnl >= 0 ? '#7c3aed' : '#dc2626';
+    document.getElementById('total-trades-fy').textContent = `${displayTrades} trades`;
 
-    // Win Rate
-    const winMonths = data.months ? data.months.filter(m => m.total.net_pnl > 0).length : 0;
-    const totalMonths = data.months ? data.months.length : 0;
+    // Win Rate - based on filtered type
     const winRate = totalMonths > 0 ? ((winMonths / totalMonths) * 100).toFixed(0) : '--';
     document.getElementById('win-rate').textContent = winRate !== '--' ? `${winRate}%` : '--';
     document.getElementById('win-loss-count').textContent = totalMonths > 0 ? `${winMonths}W / ${totalMonths - winMonths}L months` : '--';
 
-    renderMonthlyChart(data.months || []);
+    // Render chart and table
+    renderMonthlyChart(months);
     renderMonthlyTable(data);
     loadBrokerBreakdown();
     loadSymbolPerformance();
+}
+
+function updateChart() {
+    // Update entire FY display when type filter changes
+    updateFYDisplay();
 }
 
 function renderMonthlyChart(months) {
@@ -393,26 +602,37 @@ function renderMonthlyChart(months) {
         return;
     }
 
+    // Get chart type filter
+    const typeFilter = document.getElementById('chart-type-filter')?.value || 'both';
+
+    // Build datasets based on filter
+    const datasets = [];
+
+    if (typeFilter === 'both' || typeFilter === 'futures') {
+        datasets.push({
+            label: 'Futures',
+            data: months.map(m => m.futures?.net_pnl || 0),
+            backgroundColor: months.map(m => (m.futures?.net_pnl || 0) >= 0 ? 'rgba(16, 185, 129, 0.8)' : 'rgba(239, 68, 68, 0.8)'),
+            borderRadius: 6,
+            barPercentage: typeFilter === 'both' ? 0.7 : 0.5
+        });
+    }
+
+    if (typeFilter === 'both' || typeFilter === 'options') {
+        datasets.push({
+            label: 'Options',
+            data: months.map(m => m.options?.net_pnl || 0),
+            backgroundColor: months.map(m => (m.options?.net_pnl || 0) >= 0 ? 'rgba(99, 102, 241, 0.8)' : 'rgba(239, 68, 68, 0.8)'),
+            borderRadius: 6,
+            barPercentage: typeFilter === 'both' ? 0.7 : 0.5
+        });
+    }
+
     monthlyPnlChart = new Chart(ctx, {
         type: 'bar',
         data: {
             labels: months.map(m => m.month_label),
-            datasets: [
-                {
-                    label: 'Futures',
-                    data: months.map(m => m.futures.net_pnl),
-                    backgroundColor: months.map(m => m.futures.net_pnl >= 0 ? 'rgba(16, 185, 129, 0.8)' : 'rgba(239, 68, 68, 0.8)'),
-                    borderRadius: 6,
-                    barPercentage: 0.7
-                },
-                {
-                    label: 'Options',
-                    data: months.map(m => m.options.net_pnl),
-                    backgroundColor: months.map(m => m.options.net_pnl >= 0 ? 'rgba(99, 102, 241, 0.8)' : 'rgba(239, 68, 68, 0.8)'),
-                    borderRadius: 6,
-                    barPercentage: 0.7
-                }
-            ]
+            datasets: datasets
         },
         options: {
             responsive: true,
@@ -429,7 +649,7 @@ function renderMonthlyChart(months) {
                 y: {
                     beginAtZero: true,
                     grid: { color: '#f1f5f9' },
-                    ticks: { callback: v => '₹' + (v/1000).toFixed(0) + 'K', font: { size: 11 } }
+                    ticks: { callback: v => '₹' + (v/100000).toFixed(1) + 'L', font: { size: 11 } }
                 },
                 x: { grid: { display: false }, ticks: { font: { size: 11 } } }
             }
@@ -439,60 +659,112 @@ function renderMonthlyChart(months) {
 
 function renderMonthlyTable(data) {
     const container = document.getElementById('monthly-performance-container');
+    const typeFilter = document.getElementById('chart-type-filter')?.value || 'both';
+
     if (!data.months || data.months.length === 0) {
         container.innerHTML = `<div style="text-align: center; padding: 40px; color: #94a3b8;">No trade data for ${data.fy_label}.</div>`;
         return;
     }
 
+    // Build table headers based on type filter
+    let headers = '<th style="padding: 14px 16px; text-align: left; font-weight: 600; color: #475569;">Month</th>';
+
+    if (typeFilter === 'both' || typeFilter === 'futures') {
+        headers += `
+            <th style="padding: 14px 16px; text-align: right; font-weight: 600; color: #059669;">Futures P&L</th>
+            <th style="padding: 14px 16px; text-align: center; color: #64748b;">Trades</th>`;
+    }
+    if (typeFilter === 'both' || typeFilter === 'options') {
+        headers += `
+            <th style="padding: 14px 16px; text-align: right; font-weight: 600; color: #4f46e5;">Options P&L</th>
+            <th style="padding: 14px 16px; text-align: center; color: #64748b;">Trades</th>`;
+    }
+    headers += '<th style="padding: 14px 16px; text-align: right; font-weight: 600; color: #7c3aed;">Total P&L</th>';
+
     let html = `<div style="overflow-x: auto;"><table style="width: 100%; font-size: 14px; border-collapse: collapse;">
-        <thead>
-            <tr style="background: #f8fafc;">
-                <th style="padding: 14px 16px; text-align: left; font-weight: 600; color: #475569;">Month</th>
-                <th style="padding: 14px 16px; text-align: right; font-weight: 600; color: #059669;">Futures P&L</th>
-                <th style="padding: 14px 16px; text-align: center; color: #64748b;">Trades</th>
-                <th style="padding: 14px 16px; text-align: right; font-weight: 600; color: #4f46e5;">Options P&L</th>
-                <th style="padding: 14px 16px; text-align: center; color: #64748b;">Trades</th>
-                <th style="padding: 14px 16px; text-align: right; font-weight: 600; color: #7c3aed;">Total P&L</th>
-            </tr>
-        </thead><tbody>`;
+        <thead><tr style="background: #f8fafc;">${headers}</tr></thead><tbody>`;
 
     data.months.forEach(month => {
-        const fColor = month.futures.net_pnl >= 0 ? '#059669' : '#dc2626';
-        const oColor = month.options.net_pnl >= 0 ? '#4f46e5' : '#dc2626';
-        const tColor = month.total.net_pnl >= 0 ? '#7c3aed' : '#dc2626';
+        const fColor = (month.futures?.net_pnl || 0) >= 0 ? '#059669' : '#dc2626';
+        const oColor = (month.options?.net_pnl || 0) >= 0 ? '#4f46e5' : '#dc2626';
 
-        html += `<tr style="border-bottom: 1px solid #f1f5f9;">
-            <td style="padding: 14px 16px; font-weight: 500;">${month.month_label}</td>
-            <td style="padding: 14px 16px; text-align: right; color: ${fColor}; font-weight: 600;">${formatCurrency(month.futures.net_pnl)}</td>
-            <td style="padding: 14px 16px; text-align: center; color: #94a3b8;">${month.futures.trades}</td>
-            <td style="padding: 14px 16px; text-align: right; color: ${oColor}; font-weight: 600;">${formatCurrency(month.options.net_pnl)}</td>
-            <td style="padding: 14px 16px; text-align: center; color: #94a3b8;">${month.options.trades}</td>
-            <td style="padding: 14px 16px; text-align: right; color: ${tColor}; font-weight: 700;">${formatCurrency(month.total.net_pnl)}</td>
-        </tr>`;
+        // Calculate total based on filter
+        let totalPnl;
+        if (typeFilter === 'futures') {
+            totalPnl = month.futures?.net_pnl || 0;
+        } else if (typeFilter === 'options') {
+            totalPnl = month.options?.net_pnl || 0;
+        } else {
+            totalPnl = month.total?.net_pnl || 0;
+        }
+        const tColor = totalPnl >= 0 ? '#7c3aed' : '#dc2626';
+
+        let row = `<td style="padding: 14px 16px; font-weight: 500;">${month.month_label}</td>`;
+
+        if (typeFilter === 'both' || typeFilter === 'futures') {
+            row += `
+                <td style="padding: 14px 16px; text-align: right; color: ${fColor}; font-weight: 600;">${formatCurrency(month.futures?.net_pnl || 0)}</td>
+                <td style="padding: 14px 16px; text-align: center; color: #94a3b8;">${month.futures?.trades || 0}</td>`;
+        }
+        if (typeFilter === 'both' || typeFilter === 'options') {
+            row += `
+                <td style="padding: 14px 16px; text-align: right; color: ${oColor}; font-weight: 600;">${formatCurrency(month.options?.net_pnl || 0)}</td>
+                <td style="padding: 14px 16px; text-align: center; color: #94a3b8;">${month.options?.trades || 0}</td>`;
+        }
+        row += `<td style="padding: 14px 16px; text-align: right; color: ${tColor}; font-weight: 700;">${formatCurrency(totalPnl)}</td>`;
+
+        html += `<tr style="border-bottom: 1px solid #f1f5f9;">${row}</tr>`;
     });
 
     // Totals row
-    const fTotal = data.futures?.net_pnl >= 0 ? '#059669' : '#dc2626';
-    const oTotal = data.options?.net_pnl >= 0 ? '#4f46e5' : '#dc2626';
-    const gTotal = data.overall?.net_pnl >= 0 ? '#7c3aed' : '#dc2626';
+    let fyTotalPnl, fyTotalTrades;
+    if (typeFilter === 'futures') {
+        fyTotalPnl = data.futures?.net_pnl || 0;
+        fyTotalTrades = data.futures?.total_trades || 0;
+    } else if (typeFilter === 'options') {
+        fyTotalPnl = data.options?.net_pnl || 0;
+        fyTotalTrades = data.options?.total_trades || 0;
+    } else {
+        fyTotalPnl = data.overall?.net_pnl || 0;
+        fyTotalTrades = data.overall?.total_trades || 0;
+    }
 
-    html += `<tr style="background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%); font-weight: 700;">
-        <td style="padding: 16px;">FY TOTAL</td>
-        <td style="padding: 16px; text-align: right; color: ${fTotal};">${formatCurrency(data.futures?.net_pnl || 0)}</td>
-        <td style="padding: 16px; text-align: center;">${data.futures?.total_trades || 0}</td>
-        <td style="padding: 16px; text-align: right; color: ${oTotal};">${formatCurrency(data.options?.net_pnl || 0)}</td>
-        <td style="padding: 16px; text-align: center;">${data.options?.total_trades || 0}</td>
-        <td style="padding: 16px; text-align: right; color: ${gTotal}; font-size: 16px;">${formatCurrency(data.overall?.net_pnl || 0)}</td>
-    </tr></tbody></table></div>`;
+    const fTotal = (data.futures?.net_pnl || 0) >= 0 ? '#059669' : '#dc2626';
+    const oTotal = (data.options?.net_pnl || 0) >= 0 ? '#4f46e5' : '#dc2626';
+    const gTotal = fyTotalPnl >= 0 ? '#7c3aed' : '#dc2626';
+
+    let totalRow = '<td style="padding: 16px;">FY TOTAL</td>';
+
+    if (typeFilter === 'both' || typeFilter === 'futures') {
+        totalRow += `
+            <td style="padding: 16px; text-align: right; color: ${fTotal};">${formatCurrency(data.futures?.net_pnl || 0)}</td>
+            <td style="padding: 16px; text-align: center;">${data.futures?.total_trades || 0}</td>`;
+    }
+    if (typeFilter === 'both' || typeFilter === 'options') {
+        totalRow += `
+            <td style="padding: 16px; text-align: right; color: ${oTotal};">${formatCurrency(data.options?.net_pnl || 0)}</td>
+            <td style="padding: 16px; text-align: center;">${data.options?.total_trades || 0}</td>`;
+    }
+    totalRow += `<td style="padding: 16px; text-align: right; color: ${gTotal}; font-size: 16px;">${formatCurrency(fyTotalPnl)}</td>`;
+
+    html += `<tr style="background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%); font-weight: 700;">${totalRow}</tr></tbody></table></div>`;
 
     container.innerHTML = html;
 }
 
 function loadBrokerBreakdown() {
-    fetch('{% url "analytics:api_fy_broker_breakdown" %}')
+    const brokerFilter = document.getElementById('fy-broker-filter')?.value || 'ALL';
+    const url = '{% url "analytics:api_fy_broker_breakdown" %}' + `?broker=${brokerFilter}`;
+
+    fetch(url)
         .then(r => r.json())
         .then(data => {
             if (data.success) renderBrokerBreakdown(data.data);
+        })
+        .catch(error => {
+            console.error('Error loading broker breakdown:', error);
+            document.getElementById('broker-breakdown-container').innerHTML =
+                '<div style="text-align: center; padding: 40px; color: #94a3b8;">Error loading data</div>';
         });
 }
 
@@ -526,10 +798,30 @@ function renderBrokerBreakdown(data) {
 }
 
 function loadSymbolPerformance() {
-    fetch('{% url "analytics:api_broker_symbol_performance" %}')
+    const brokerFilter = document.getElementById('fy-broker-filter')?.value || 'ALL';
+    let url = '{% url "analytics:api_broker_symbol_performance" %}';
+    if (brokerFilter !== 'ALL') {
+        url += `?broker=${brokerFilter}`;
+    }
+
+    fetch(url)
         .then(r => r.json())
         .then(data => {
-            if (data.success && data.data) renderSymbolPerformance(data.data);
+            if (data.success && data.data) {
+                renderSymbolPerformance(data.data);
+            } else {
+                document.getElementById('top-symbols-container').innerHTML =
+                    '<div style="text-align: center; padding: 20px; color: #86efac;">No symbol data</div>';
+                document.getElementById('worst-symbols-container').innerHTML =
+                    '<div style="text-align: center; padding: 20px; color: #fca5a5;">No symbol data</div>';
+            }
+        })
+        .catch(error => {
+            console.error('Error loading symbol performance:', error);
+            document.getElementById('top-symbols-container').innerHTML =
+                '<div style="text-align: center; padding: 20px; color: #86efac;">Error loading data</div>';
+            document.getElementById('worst-symbols-container').innerHTML =
+                '<div style="text-align: center; padding: 20px; color: #fca5a5;">Error loading data</div>';
         });
 }
 
@@ -582,14 +874,13 @@ function renderOpenPositions(positions) {
     }
 
     let html = `<table><thead><tr>
-        <th>Entry</th><th>Instrument</th><th>Dir</th><th>Qty</th><th>Entry</th><th>LTP</th><th>P&L</th><th>Broker</th>
+        <th>Instrument</th><th>Dir</th><th>Qty</th><th>Avg Price</th><th>LTP</th><th>P&L</th><th>Broker</th>
     </tr></thead><tbody>`;
 
     positions.forEach(pos => {
         const pnlColor = pos.unrealized_pnl >= 0 ? '#10b981' : '#ef4444';
         const dirBadge = pos.direction === 'LONG' ? 'success' : 'danger';
         html += `<tr>
-            <td style="font-size: 12px;">${formatDate(pos.entry_time)}</td>
             <td><strong>${pos.instrument}</strong></td>
             <td><span class="badge badge-${dirBadge}">${pos.direction}</span></td>
             <td>${pos.quantity}</td>
@@ -634,23 +925,124 @@ function renderSuggestions(suggestions) {
     container.innerHTML = html + '</tbody></table>';
 }
 
-function loadImportedContracts() {
-    fetch('{% url "brokers:api_imported_pnl_summary" %}')
+function loadImportedContracts(useFilters = false) {
+    // Build URL with filter parameters for server-side filtering
+    let url = '{% url "brokers:api_imported_pnl_summary" %}';
+    const params = new URLSearchParams();
+
+    const brokerFilter = document.getElementById('broker-filter')?.value;
+    const segmentFilter = document.getElementById('segment-filter')?.value;
+    const symbolFilter = document.getElementById('symbol-filter')?.value;
+    const pnlFilter = document.getElementById('pnl-filter')?.value;
+    const monthFilter = document.getElementById('month-filter')?.value;
+
+    // Always pass filter params to server (server-side filtering)
+    if (brokerFilter && brokerFilter !== 'all') params.append('broker', brokerFilter);
+    if (segmentFilter && segmentFilter !== 'all') params.append('segment', segmentFilter);
+    if (symbolFilter && symbolFilter !== 'all') params.append('symbol', symbolFilter);
+    if (pnlFilter && pnlFilter !== 'all') params.append('pnl', pnlFilter);
+    if (monthFilter && monthFilter !== 'all') params.append('month', monthFilter);
+
+    if (params.toString()) {
+        url += '?' + params.toString();
+    }
+
+    fetch(url)
         .then(response => response.json())
         .then(data => {
             if (data.success) {
                 allContracts = data.contracts || [];
-                document.getElementById('count-closed').textContent = allContracts.length;
+                const totalTrades = data.overall?.total_records || allContracts.length;
+                document.getElementById('count-closed').textContent = totalTrades;
+
+                // Populate filter dropdowns from server-provided options (always complete list)
+                if (data.filter_options) {
+                    populateSymbolFilterFromOptions(data.filter_options.symbols || []);
+                    populateMonthFilterFromOptions(data.filter_options.months || []);
+                }
+
                 renderContracts(allContracts);
+
+                // Use server-side counts for summary
+                document.getElementById('filter-total').textContent = data.overall?.total_records || allContracts.length;
+                document.getElementById('filter-winners').textContent = data.overall?.winners_count || 0;
+                document.getElementById('filter-losers').textContent = data.overall?.losers_count || 0;
+
+                const pnlEl = document.getElementById('filter-pnl');
+                const totalPnl = data.overall?.total_pnl || 0;
+                pnlEl.textContent = formatCurrency(totalPnl);
+                pnlEl.style.color = totalPnl >= 0 ? '#10b981' : '#ef4444';
             }
         });
+}
+
+function populateSymbolFilterFromOptions(symbols) {
+    const select = document.getElementById('symbol-filter');
+    const currentValue = select.value;
+
+    // Keep first option (All Symbols)
+    select.innerHTML = '<option value="all">All Symbols</option>';
+
+    symbols.forEach(symbol => {
+        if (symbol) {
+            const option = document.createElement('option');
+            option.value = symbol;
+            option.textContent = symbol;
+            select.appendChild(option);
+        }
+    });
+
+    // Restore selected value if it exists
+    if (currentValue && currentValue !== 'all') {
+        select.value = currentValue;
+    }
+}
+
+function populateMonthFilterFromOptions(months) {
+    const select = document.getElementById('month-filter');
+    const currentValue = select.value;
+
+    // Keep first option (All Months)
+    select.innerHTML = '<option value="all">All Months</option>';
+
+    months.forEach(monthKey => {
+        if (monthKey) {
+            const [year, month] = monthKey.split('-');
+            const date = new Date(year, month - 1);
+            const label = date.toLocaleString('en-IN', { month: 'short', year: 'numeric' });
+
+            const option = document.createElement('option');
+            option.value = monthKey;
+            option.textContent = label;
+            select.appendChild(option);
+        }
+    });
+
+    // Restore selected value if it exists
+    if (currentValue && currentValue !== 'all') {
+        select.value = currentValue;
+    }
+}
+
+function updateFilterSummary(contracts) {
+    const winners = contracts.filter(c => c.net_pnl > 0);
+    const losers = contracts.filter(c => c.net_pnl < 0);
+    const totalPnl = contracts.reduce((sum, c) => sum + (c.net_pnl || 0), 0);
+
+    document.getElementById('filter-total').textContent = contracts.length;
+    document.getElementById('filter-winners').textContent = winners.length;
+    document.getElementById('filter-losers').textContent = losers.length;
+
+    const pnlEl = document.getElementById('filter-pnl');
+    pnlEl.textContent = formatCurrency(totalPnl);
+    pnlEl.style.color = totalPnl >= 0 ? '#10b981' : '#ef4444';
 }
 
 function renderContracts(contracts) {
     const container = document.getElementById('history-container');
 
     if (!contracts || contracts.length === 0) {
-        container.innerHTML = '<div style="text-align: center; padding: 40px; color: #94a3b8;">No imported contracts. <a href="{% url \'brokers:csv_upload_dashboard\' %}">Import CSV</a> to get started.</div>';
+        container.innerHTML = '<div style="text-align: center; padding: 40px; color: #94a3b8;">No imported contracts. <a href="{% url "brokers:csv_upload_dashboard" %}">Import CSV</a> to get started.</div>';
         return;
     }
 
@@ -681,19 +1073,19 @@ function renderContracts(contracts) {
 }
 
 function filterContracts() {
-    const segmentFilter = document.getElementById('segment-filter').value;
-    const brokerFilter = document.getElementById('broker-filter').value;
-    let filtered = allContracts;
+    // Use server-side filtering for accurate results
+    loadImportedContracts(true);
+}
 
-    if (brokerFilter !== 'all') {
-        filtered = filtered.filter(c => c.broker === brokerFilter);
-    }
+function resetFilters() {
+    document.getElementById('broker-filter').value = 'all';
+    document.getElementById('segment-filter').value = 'all';
+    document.getElementById('symbol-filter').value = 'all';
+    document.getElementById('pnl-filter').value = 'all';
+    document.getElementById('month-filter').value = 'all';
 
-    if (segmentFilter !== 'all') {
-        filtered = filtered.filter(c => c.segment === segmentFilter);
-    }
-
-    renderContracts(filtered);
+    // Reload all contracts without filters
+    loadImportedContracts(false);
 }
 
 function approveSuggestion(id) { alert('Approve suggestion ' + id); }
@@ -703,6 +1095,7 @@ document.addEventListener('DOMContentLoaded', function() {
     loadPositionsData();
     loadImportedContracts();
 });
-setInterval(loadPositionsData, 60000);
+// Auto-refresh positions from brokers every 60 seconds
+setInterval(() => fetchPositions(true), 60000);
 </script>
 {% endblock %}

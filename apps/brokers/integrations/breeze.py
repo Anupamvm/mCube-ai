@@ -20,11 +20,9 @@ from datetime import datetime, timezone as dt_timezone, timedelta, date
 from typing import List, Optional, Dict
 from django.core.cache import cache
 
-from breeze_connect import BreezeConnect
 from django.utils import timezone as dj_timezone
 from decimal import Decimal
 
-from apps.core.models import CredentialStore
 from apps.core.constants import BROKER_ICICI
 from apps.brokers.models import BrokerLimit, BrokerPosition, OptionChainQuote, HistoricalPrice, NiftyOptionChain
 from apps.data.models import OptionChain
@@ -33,7 +31,6 @@ from apps.brokers.utils.common import parse_float as _parse_float, parse_decimal
 from apps.brokers.utils.auth_manager import (
     get_credentials,
     save_session_token,
-    is_session_valid_breeze
 )
 from apps.brokers.utils.api_patterns import (
     get_breeze_customer_details,
@@ -60,21 +57,15 @@ class BreezeAPI:
     def __init__(self):
         """Initialize Breeze API wrapper"""
         self.breeze = None
-        self.session_token = None
-        self._load_credentials()
-
-    def _load_credentials(self):
-        """Load Breeze credentials from database"""
-        try:
-            creds = CredentialStore.objects.filter(service='breeze').first()
-            if creds:
-                self.session_token = creds.session_token
-        except Exception as e:
-            logger.error(f"Error loading Breeze credentials: {e}")
 
     def login(self) -> bool:
         """
-        Authenticate with Breeze API using stored session token.
+        Authenticate with Breeze API.
+
+        Uses centralized BreezeSessionManager which handles:
+        - Session validation
+        - Auto-refresh if expired
+        - Consistent error handling
 
         Returns:
             bool: True if login successful, False otherwise
@@ -405,7 +396,7 @@ def get_or_prompt_breeze_token():
     """
     Check if Breeze session token is valid.
 
-    Uses centralized auth_manager for session validation.
+    Uses centralized BreezeSessionManager for session validation.
 
     Returns:
         str: 'prompt' if token needs to be entered, 'ready' if valid
@@ -413,13 +404,10 @@ def get_or_prompt_breeze_token():
     Raises:
         Exception: If credentials not found
     """
-    # Use centralized credential loading
-    creds = get_credentials('breeze')
-    if not creds:
-        raise Exception("No Breeze credentials found in DB")
+    from apps.brokers.services.breeze_session import check_breeze_session
 
-    # Use centralized session validation
-    if is_session_valid_breeze(creds):
+    status = check_breeze_session()
+    if status['valid']:
         return 'ready'
     return 'prompt'
 
@@ -442,68 +430,37 @@ def save_breeze_token(session_token):
         raise Exception("Failed to save Breeze session token")
 
 
-def get_breeze_client():
+def get_breeze_client(auto_refresh: bool = True):
     """
-    Get authenticated Breeze API client.
+    Get authenticated Breeze API client with automatic session refresh.
 
-    Uses centralized auth_manager for credential management.
+    This function uses the centralized BreezeSessionManager which:
+    - Validates session before returning client
+    - Automatically attempts re-login if session expired
+    - Opens browser for OTP entry when needed
+
+    Args:
+        auto_refresh: If True, attempt auto-login when session expired (default: True)
 
     Returns:
         BreezeConnect: Authenticated client instance
 
     Raises:
-        BreezeAuthenticationError: If credentials not found or authentication fails
+        BreezeAuthenticationError: If authentication fails (includes login_url for redirect)
+
+    Usage:
+        from apps.brokers.integrations.breeze import get_breeze_client
+
+        try:
+            client = get_breeze_client()
+            positions = client.get_portfolio_positions()
+        except BreezeAuthenticationError as e:
+            if e.requires_login:
+                # Redirect to e.login_url
+                pass
     """
-    try:
-        # Use centralized credential loading
-        creds = get_credentials('breeze')
-        if not creds:
-            raise BreezeAuthenticationError("No Breeze credentials found in database")
-
-        if not creds.session_token:
-            raise BreezeAuthenticationError("Breeze session token not found. Please login to continue.")
-
-        logger.info(f"Attempting Breeze authentication with token from {creds.last_session_update}")
-        logger.info(f"Using API Key: {creds.api_key[:10]}... Session Token: {creds.session_token[:20]}...")
-
-        breeze = BreezeConnect(api_key=creds.api_key)
-        breeze.generate_session(
-            api_secret=creds.api_secret,
-            session_token=creds.session_token
-        )
-
-        # Workaround for breeze-connect v1.0.62 bug where get_names() expects error_exception attribute
-        if not hasattr(breeze, 'error_exception'):
-            breeze.error_exception = None
-
-        logger.info("✅ Breeze authentication successful")
-        return breeze
-    except BreezeAuthenticationError:
-        raise
-    except Exception as e:
-        error_msg = str(e).lower()
-        logger.error(f"❌ Breeze client error: {str(e)}")
-
-        # Provide specific guidance for common errors
-        if 'resource not available' in error_msg or 'customer details' in error_msg:
-            raise BreezeAuthenticationError(
-                "Breeze session token validation failed - 'Resource not available' error.\n\n"
-                "This usually means:\n"
-                "1. The session token doesn't match your API key\n"
-                "2. The session token has expired (tokens expire daily)\n"
-                "3. You need to get a fresh token from the Breeze portal\n\n"
-                "Steps to fix:\n"
-                "1. Go to: https://api.icicidirect.com/apiuser/login?api_key=YOUR_API_KEY\n"
-                "2. Login with your ICICI Direct credentials\n"
-                "3. Copy the NEW session token\n"
-                "4. Update it in the database\n"
-                "5. Ensure the API key in the URL matches the one in your database\n\n"
-                f"Original error: {str(e)}",
-                original_error=e
-            )
-        elif any(keyword in error_msg for keyword in ['session', 'authentication', 'unauthorized', 'invalid token', 'expired', 'login']):
-            raise BreezeAuthenticationError(f"Breeze authentication failed: {str(e)}", original_error=e)
-        raise
+    from apps.brokers.services.breeze_session import get_authenticated_breeze_client
+    return get_authenticated_breeze_client(auto_refresh=auto_refresh)
 
 
 def get_nifty_quote():
