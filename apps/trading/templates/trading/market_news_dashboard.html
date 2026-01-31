@@ -474,6 +474,10 @@
         loadMarketNews();
     });
 
+    // Store articles as they stream in
+    let streamedArticles = [];
+    let eventSource = null;
+
     function loadMarketNews() {
         const refreshBtn = document.getElementById('refreshBtn');
         const loadingState = document.getElementById('loadingState');
@@ -482,53 +486,151 @@
         const emptyState = document.getElementById('emptyState');
         const summarySection = document.getElementById('summarySection');
         const categorySection = document.getElementById('categorySection');
+        const loadingText = loadingState.querySelector('.loading-text');
+        const loadingSubtext = loadingState.querySelector('.loading-subtext');
 
-        // Show loading state
+        // Close any existing event source
+        if (eventSource) {
+            eventSource.close();
+            eventSource = null;
+        }
+
+        // Reset state
+        streamedArticles = [];
         refreshBtn.disabled = true;
         refreshBtn.classList.add('loading');
         loadingState.style.display = 'block';
         errorState.style.display = 'none';
+        articlesGrid.innerHTML = '';
         articlesGrid.style.display = 'none';
         emptyState.style.display = 'none';
         summarySection.style.display = 'none';
         categorySection.style.display = 'none';
+        document.getElementById('historicalSection').style.display = 'none';
+        document.getElementById('articleCount').textContent = 'Loading...';
 
-        fetch(window.location.href, {
-            method: 'GET',
-            headers: {
-                'X-Requested-With': 'XMLHttpRequest'
+        // Use SSE streaming endpoint
+        eventSource = new EventSource('{% url "trading:stream_market_news" %}');
+
+        eventSource.onmessage = function(event) {
+            try {
+                const data = JSON.parse(event.data);
+
+                if (data.type === 'status') {
+                    // Update loading message
+                    loadingText.textContent = data.message;
+                    if (data.total) {
+                        loadingSubtext.textContent = `Processing ${data.total} articles...`;
+                    }
+                }
+                else if (data.type === 'batch') {
+                    // Hide loading, show articles grid
+                    loadingState.style.display = 'none';
+                    articlesGrid.style.display = 'flex';
+
+                    // Append new articles
+                    streamedArticles = streamedArticles.concat(data.articles);
+                    appendArticles(data.articles);
+
+                    // Update progress
+                    const progress = data.progress;
+                    document.getElementById('articleCount').textContent =
+                        `${streamedArticles.length} articles (${progress.processed}/${progress.total} analyzed)`;
+                }
+                else if (data.type === 'complete') {
+                    // Stream complete - update with final sorted articles
+                    eventSource.close();
+                    eventSource = null;
+
+                    refreshBtn.disabled = false;
+                    refreshBtn.classList.remove('loading');
+                    loadingState.style.display = 'none';
+
+                    if (data.articles && data.articles.length > 0) {
+                        // Replace with sorted final articles
+                        displaySummary(data.summary);
+                        displayCategories(data.category_breakdown);
+                        if (data.historical_news && data.historical_news.articles && data.historical_news.articles.length > 0) {
+                            displayHistoricalNews(data.historical_news);
+                        }
+                        displayArticles(data.articles);
+                    } else if (streamedArticles.length === 0) {
+                        emptyState.style.display = 'block';
+                        document.getElementById('articleCount').textContent = '0 articles';
+                    }
+                }
+                else if (data.type === 'error') {
+                    eventSource.close();
+                    eventSource = null;
+                    refreshBtn.disabled = false;
+                    refreshBtn.classList.remove('loading');
+                    loadingState.style.display = 'none';
+                    errorState.style.display = 'block';
+                    document.getElementById('errorDetails').textContent = data.error || 'Unknown error';
+                }
+            } catch (e) {
+                console.error('Error parsing SSE data:', e);
             }
-        })
-        .then(response => response.json())
-        .then(data => {
+        };
+
+        eventSource.onerror = function(error) {
+            console.error('SSE connection error:', error);
+            if (eventSource) {
+                eventSource.close();
+                eventSource = null;
+            }
             refreshBtn.disabled = false;
             refreshBtn.classList.remove('loading');
             loadingState.style.display = 'none';
 
-            if (data.success) {
-                if (data.articles && data.articles.length > 0) {
-                    displaySummary(data.summary);
-                    displayCategories(data.category_breakdown);
-                    if (data.historical_news && data.historical_news.articles && data.historical_news.articles.length > 0) {
-                        displayHistoricalNews(data.historical_news);
-                    }
-                    displayArticles(data.articles);
-                } else {
-                    emptyState.style.display = 'block';
-                    document.getElementById('articleCount').textContent = '0 articles';
-                }
+            // If we already have articles, show them
+            if (streamedArticles.length > 0) {
+                document.getElementById('articleCount').textContent = `${streamedArticles.length} articles (connection lost)`;
             } else {
                 errorState.style.display = 'block';
-                document.getElementById('errorDetails').textContent = data.error || 'Unknown error';
+                document.getElementById('errorDetails').textContent = 'Connection lost while loading news';
             }
-        })
-        .catch(error => {
-            console.error('Error loading market news:', error);
-            refreshBtn.disabled = false;
-            refreshBtn.classList.remove('loading');
-            loadingState.style.display = 'none';
-            errorState.style.display = 'block';
-            document.getElementById('errorDetails').textContent = error.message;
+        };
+    }
+
+    function appendArticles(articles) {
+        const articlesGrid = document.getElementById('articlesGrid');
+
+        articles.forEach((article) => {
+            const direction = article.market_direction || 'NEUTRAL';
+            const directionClass = direction.toLowerCase();
+
+            const articleDiv = document.createElement('div');
+            articleDiv.className = `article-card ${directionClass}`;
+            articleDiv.innerHTML = `
+                <div class="article-badges">
+                    <span class="impact-badge ${article.impact_label}">${article.impact_label}</span>
+                    <span class="direction-badge ${direction}">${direction}</span>
+                    <span class="category-tag ${article.impact_category}" style="padding: 3px 8px; font-size: 0.65rem;">
+                        ${article.impact_category}
+                    </span>
+                    <span style="background: #f3f4f6; padding: 3px 8px; border-radius: 8px; font-size: 0.65rem; color: #6b7280;">
+                        Score: ${article.impact_score >= 0 ? '+' : ''}${article.impact_score.toFixed(2)}
+                    </span>
+                </div>
+                <h3 class="article-title">
+                    <a href="${article.url}" target="_blank">${article.title}</a>
+                </h3>
+                ${article.impact_reasoning ? `
+                    <div class="article-reasoning">
+                        <strong>Impact Analysis:</strong> ${article.impact_reasoning}
+                    </div>
+                ` : ''}
+                <div class="article-meta">
+                    <span>📅 ${formatDate(article.publishedAt)}</span>
+                    ${article.source?.name ? `<span>📰 ${article.source.name}</span>` : ''}
+                    <span>📈 Relevance: ${(article.relevance * 100).toFixed(0)}%</span>
+                    <a href="${article.url}" target="_blank" style="color: #3b82f6; text-decoration: none; font-weight: 600;">
+                        Read more →
+                    </a>
+                </div>
+            `;
+            articlesGrid.appendChild(articleDiv);
         });
     }
 

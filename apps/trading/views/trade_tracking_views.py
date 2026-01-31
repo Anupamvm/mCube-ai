@@ -15,9 +15,10 @@ from django.core.paginator import Paginator
 
 from apps.trading.models import TakenTrade
 from apps.trading.services.trade_action_service import TradeActionService
-from apps.brokers.models import BrokerTradeHistory
+from apps.brokers.models import BrokerTradeHistory, BrokerContractPnL
 from apps.brokers.services.trade_sync import TradeSyncService
 from apps.analytics.services.fy_analytics import FYAnalyticsService
+from apps.analytics.services.broker_analytics import BrokerAnalyticsService
 from apps.accounts.models import BrokerAccount
 
 logger = logging.getLogger(__name__)
@@ -108,6 +109,8 @@ def performance(request):
     """
     FY Performance Report page.
 
+    Shows performance analytics from broker contract P&L data.
+
     GET /trading/performance/
     """
     user = request.user
@@ -117,29 +120,32 @@ def performance(request):
     if fy_year:
         fy_year = int(fy_year)
     else:
-        fy_year = FYAnalyticsService.get_current_fy_year()
+        fy_year = BrokerAnalyticsService.get_current_fy_year()
 
-    # Get account filter
-    account_id = request.GET.get('account_id')
-    account = None
-    if account_id:
-        account = get_object_or_404(BrokerAccount, id=account_id)
+    # Get broker filter
+    broker = request.GET.get('broker')  # 'KOTAK', 'ICICI', or None for all
 
-    # Get FY report
-    report = FYAnalyticsService.get_fy_report(
-        user=user,
+    # Get segment filter
+    segment = request.GET.get('segment')  # 'OPTIONS', 'FUTURES', or None for all
+
+    # Get FY report from broker contract P&L data
+    report = BrokerAnalyticsService.get_fy_report(
         fy_year=fy_year,
-        account=account
+        broker=broker,
+        segment=segment
     )
 
     # Get available FY years
-    available_years = FYAnalyticsService.get_available_fy_years(user)
+    available_years = BrokerAnalyticsService.get_available_fy_years()
 
-    # Get accounts for dropdown (accounts are shared, not user-specific)
+    # Get accounts for dropdown
     accounts = BrokerAccount.objects.filter(is_active=True)
 
+    # Get broker summary for comparison
+    broker_summary = BrokerAnalyticsService.get_broker_summary(fy_year)
+
     # Get broker trade history stats for the FY
-    fy_start, fy_end, _ = FYAnalyticsService.get_fy_dates(fy_year)
+    fy_start, fy_end, _ = BrokerAnalyticsService.get_fy_dates(fy_year)
     broker_trade_stats = {}
     for acc in accounts:
         trades = BrokerTradeHistory.objects.filter(
@@ -155,7 +161,7 @@ def performance(request):
             'last_sync': last_trade.created_at.isoformat() if last_trade else None
         }
 
-    # Get TakenTrade stats
+    # Get TakenTrade stats (mCube trades)
     taken_trade_count = TakenTrade.objects.filter(
         user=user,
         status='CLOSED',
@@ -163,14 +169,21 @@ def performance(request):
         closed_at__date__lte=fy_end
     ).count()
 
+    # Get contract P&L count
+    fy_label = BrokerAnalyticsService.get_fy_label(fy_year)
+    contract_pnl_count = BrokerContractPnL.objects.filter(fy=fy_label).count()
+
     context = {
         'report': report,
         'current_fy_year': fy_year,
         'available_years': available_years,
         'accounts': accounts,
-        'selected_account_id': int(account_id) if account_id else None,
+        'selected_broker': broker,
+        'selected_segment': segment,
+        'broker_summary': broker_summary,
         'broker_trade_stats': json.dumps(broker_trade_stats),
         'taken_trade_count': taken_trade_count,
+        'contract_pnl_count': contract_pnl_count,
         'today': date.today().isoformat(),
         'fy_start': fy_start.isoformat(),
         'fy_end': fy_end.isoformat(),

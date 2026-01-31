@@ -743,12 +743,20 @@ class SystemSettings(TimeStampedModel):
 
 class CeleryTaskState(TimeStampedModel):
     """
-    Tracks enabled/disabled state for individual Celery tasks.
+    Tracks enabled/disabled state and schedule configuration for individual Celery tasks.
 
     Used to control static tasks defined in code (celery.py beat_schedule).
     Tasks not in this table are considered DISABLED by default.
     Users must explicitly enable tasks they want to run.
+
+    Schedule configuration allows UI-based customization of task timing.
     """
+
+    SCHEDULE_TYPE_CHOICES = [
+        ('crontab', 'Fixed Time (Crontab)'),
+        ('interval', 'Interval'),
+        ('recurring', 'Recurring Window'),
+    ]
 
     task_key = models.CharField(
         max_length=100,
@@ -766,6 +774,10 @@ class CeleryTaskState(TimeStampedModel):
         blank=True,
         help_text="Human-readable task name"
     )
+    description = models.TextField(
+        blank=True,
+        help_text="Task description"
+    )
     is_enabled = models.BooleanField(
         default=False,
         help_text="Whether this task should run (default: disabled)"
@@ -779,6 +791,83 @@ class CeleryTaskState(TimeStampedModel):
         max_length=100,
         blank=True,
         help_text="User who last toggled this task"
+    )
+
+    # =========================================================================
+    # SCHEDULE CONFIGURATION
+    # =========================================================================
+
+    schedule_type = models.CharField(
+        max_length=20,
+        choices=SCHEDULE_TYPE_CHOICES,
+        default='crontab',
+        help_text="Type of schedule: crontab (fixed time), interval, or recurring window"
+    )
+
+    # Crontab fields (for fixed time tasks)
+    schedule_hour = models.IntegerField(
+        default=9,
+        validators=[MinValueValidator(0), MaxValueValidator(23)],
+        help_text="Hour to run (0-23) for crontab tasks"
+    )
+    schedule_minute = models.IntegerField(
+        default=0,
+        validators=[MinValueValidator(0), MaxValueValidator(59)],
+        help_text="Minute to run (0-59) for crontab tasks"
+    )
+
+    # Interval fields (for recurring tasks)
+    interval_seconds = models.IntegerField(
+        default=60,
+        validators=[MinValueValidator(1), MaxValueValidator(86400)],
+        help_text="Interval in seconds for interval tasks"
+    )
+
+    # Recurring window fields
+    recurring_start_hour = models.IntegerField(
+        default=9,
+        validators=[MinValueValidator(0), MaxValueValidator(23)],
+        help_text="Start hour for recurring window (0-23)"
+    )
+    recurring_start_minute = models.IntegerField(
+        default=0,
+        validators=[MinValueValidator(0), MaxValueValidator(59)],
+        help_text="Start minute for recurring window (0-59)"
+    )
+    recurring_end_hour = models.IntegerField(
+        default=15,
+        validators=[MinValueValidator(0), MaxValueValidator(23)],
+        help_text="End hour for recurring window (0-23)"
+    )
+    recurring_end_minute = models.IntegerField(
+        default=30,
+        validators=[MinValueValidator(0), MaxValueValidator(59)],
+        help_text="End minute for recurring window (0-59)"
+    )
+    recurring_interval_minutes = models.IntegerField(
+        default=5,
+        validators=[MinValueValidator(1), MaxValueValidator(60)],
+        help_text="Interval in minutes within the recurring window"
+    )
+
+    # Days of week (JSON array: 0=Monday, 6=Sunday)
+    days_of_week = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="Days of week to run (0=Mon, 1=Tue, ..., 6=Sun). Empty = all weekdays."
+    )
+
+    # Whether to use custom schedule (if False, use defaults from celery.py)
+    use_custom_schedule = models.BooleanField(
+        default=False,
+        help_text="Use custom schedule instead of system defaults"
+    )
+
+    # Category for grouping
+    category = models.CharField(
+        max_length=50,
+        blank=True,
+        help_text="Task category for grouping (data, strategies, monitoring, risk, reports)"
     )
 
     class Meta:
@@ -802,20 +891,93 @@ class CeleryTaskState(TimeStampedModel):
 
     @classmethod
     def set_task_state(cls, task_key: str, enabled: bool, task_path: str = '',
-                       display_name: str = '', user: str = ''):
-        """Set or create task state"""
+                       display_name: str = '', user: str = '', **schedule_kwargs):
+        """Set or create task state with optional schedule configuration"""
         from django.utils import timezone
+
+        defaults = {
+            'is_enabled': enabled,
+            'last_toggled_at': timezone.now(),
+            'last_toggled_by': user,
+        }
+
+        # Only update these if provided
+        if task_path:
+            defaults['task_path'] = task_path
+        if display_name:
+            defaults['display_name'] = display_name
+
+        # Add schedule configuration if provided
+        schedule_fields = [
+            'schedule_type', 'schedule_hour', 'schedule_minute',
+            'interval_seconds', 'recurring_start_hour', 'recurring_start_minute',
+            'recurring_end_hour', 'recurring_end_minute', 'recurring_interval_minutes',
+            'days_of_week', 'use_custom_schedule', 'category', 'description'
+        ]
+        for field in schedule_fields:
+            if field in schedule_kwargs and schedule_kwargs[field] is not None:
+                defaults[field] = schedule_kwargs[field]
+
         state, created = cls.objects.update_or_create(
             task_key=task_key,
-            defaults={
-                'is_enabled': enabled,
-                'task_path': task_path,
-                'display_name': display_name or task_key,
-                'last_toggled_at': timezone.now(),
-                'last_toggled_by': user,
-            }
+            defaults=defaults
         )
         return state
+
+    @classmethod
+    def get_task_schedule(cls, task_key: str) -> dict:
+        """Get schedule configuration for a task"""
+        try:
+            state = cls.objects.get(task_key=task_key)
+            return {
+                'schedule_type': state.schedule_type,
+                'schedule_hour': state.schedule_hour,
+                'schedule_minute': state.schedule_minute,
+                'interval_seconds': state.interval_seconds,
+                'recurring_start_hour': state.recurring_start_hour,
+                'recurring_start_minute': state.recurring_start_minute,
+                'recurring_end_hour': state.recurring_end_hour,
+                'recurring_end_minute': state.recurring_end_minute,
+                'recurring_interval_minutes': state.recurring_interval_minutes,
+                'days_of_week': state.days_of_week or [0, 1, 2, 3, 4],  # Default weekdays
+                'use_custom_schedule': state.use_custom_schedule,
+                'category': state.category,
+                'description': state.description,
+            }
+        except cls.DoesNotExist:
+            return None
+
+    @classmethod
+    def update_schedule(cls, task_key: str, user: str = '', **schedule_kwargs):
+        """Update schedule configuration for a task"""
+        from django.utils import timezone
+
+        try:
+            state = cls.objects.get(task_key=task_key)
+
+            # Update schedule fields
+            schedule_fields = [
+                'schedule_type', 'schedule_hour', 'schedule_minute',
+                'interval_seconds', 'recurring_start_hour', 'recurring_start_minute',
+                'recurring_end_hour', 'recurring_end_minute', 'recurring_interval_minutes',
+                'days_of_week', 'use_custom_schedule', 'category', 'description'
+            ]
+
+            updated = False
+            for field in schedule_fields:
+                if field in schedule_kwargs and schedule_kwargs[field] is not None:
+                    setattr(state, field, schedule_kwargs[field])
+                    updated = True
+
+            if updated:
+                state.use_custom_schedule = True
+                state.last_toggled_at = timezone.now()
+                state.last_toggled_by = user
+                state.save()
+
+            return state
+        except cls.DoesNotExist:
+            return None
 
     @classmethod
     def get_all_states(cls) -> dict:

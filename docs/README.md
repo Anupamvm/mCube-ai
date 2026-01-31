@@ -247,6 +247,17 @@ tail -f logs/mcube_ai.log
 7. **[apps/](apps/)** - Detailed documentation for each Django app
 8. **[ALGORITHMS.md](ALGORITHMS.md)** - Algorithm study guide
 
+### For Modifying Code (RECOMMENDED)
+
+9. **[DETAILED_TECHNICAL_REFERENCE.md](DETAILED_TECHNICAL_REFERENCE.md)** - **Complete module-by-module reference for understanding AND modifying code**. This is the definitive technical reference with:
+   - Module classification by function and complexity
+   - Every model field explained with types and purposes
+   - Every service function documented with parameters
+   - Common modification scenarios with exact file locations
+   - Data flow diagrams
+   - Debugging guide
+   - Testing strategy
+
 ---
 
 ## Access Points

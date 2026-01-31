@@ -401,6 +401,22 @@
 
 <!-- Broker Authentication Modals will be dynamically created by broker-auth.js -->
 
+<!-- Global Loading Overlay -->
+<div id="globalLoadingOverlay" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.8); z-index: 99999; justify-content: center; align-items: center;">
+    <div style="background: white; border-radius: 16px; padding: 40px 60px; text-align: center; box-shadow: 0 20px 60px rgba(0,0,0,0.3);">
+        <div class="loading-spinner-animation" style="margin-bottom: 20px;">
+            <div style="width: 60px; height: 60px; border: 4px solid #e5e7eb; border-top-color: #3b82f6; border-radius: 50%; animation: spin 1s linear infinite; margin: 0 auto;"></div>
+        </div>
+        <div id="loadingOverlayTitle" style="font-size: 1.5rem; font-weight: 700; color: #1f2937; margin-bottom: 10px;">Processing...</div>
+        <div id="loadingOverlayMessage" style="font-size: 1rem; color: #6b7280;">Please wait while we process your request</div>
+    </div>
+</div>
+<style>
+    @keyframes spin {
+        to { transform: rotate(360deg); }
+    }
+</style>
+
 <!-- Full-Screen Modal for Futures Contract Details -->
 <div id="futuresDetailModal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7); z-index: 9999; overflow-y: auto;" onclick="if(event.target.id === 'futuresDetailModal') FuturesAlgorithm.closeDetailModal();">
     <div style="min-height: 100vh; padding: 20px;">
@@ -432,7 +448,7 @@
 
 <!-- Component Modules -->
 <script src="{% static 'js/trading/components/position-sizing.js' %}"></script>
-<script src="{% static 'js/trading/components/ui-builders.js' %}"></script>
+<script src="{% static 'js/trading/components/ui-builders.js' %}?v=2"></script>
 
 <!-- Feature Modules (to be created) -->
 <script>
@@ -771,12 +787,10 @@ const FuturesAlgorithm = {
 
         console.log('[Futures] Showing details for contract:', contract);
 
-        // Show loading notification
-        UIBuilders.showNotification({
-            type: 'info',
-            message: 'Loading contract details...',
-            icon: '⏳',
-            timeout: 2000
+        // Show loading overlay
+        UIBuilders.showLoadingOverlay({
+            title: 'Loading Contract Details',
+            message: `Fetching position sizing and risk analysis for ${contract.symbol}...`
         });
 
         try {
@@ -803,12 +817,15 @@ const FuturesAlgorithm = {
 
             // Check for auth error
             if ((data.auth_required === true || data.authenticated === false)) {
+                UIBuilders.hideLoadingOverlay();
                 ApiClient.handleAuthError(data, 'verify');
                 return;
             }
 
             if (data.success) {
                 console.log('[Futures] ✅ Contract data received successfully');
+                // Hide loading overlay before showing modal
+                UIBuilders.hideLoadingOverlay();
 
                 // Store the contract exactly as Verify Trade does
                 TradeVerification.currentContract = data;
@@ -853,6 +870,7 @@ const FuturesAlgorithm = {
             }
         } catch (error) {
             console.error('[Futures] Error loading contract details:', error);
+            UIBuilders.hideLoadingOverlay();
             UIBuilders.showNotification({
                 type: 'error',
                 message: `Failed to load contract details\n\n${error.message}`,
@@ -1787,14 +1805,13 @@ const NiftyStrangle = {
 
         this.closeConfirmation();
 
-        try {
-            // Show loading state
-            UIBuilders.showNotification({
-                type: 'info',
-                message: 'Placing strangle orders on Kotak Neo...',
-                icon: '⏳'
-            });
+        // Show loading overlay while placing orders
+        UIBuilders.showLoadingOverlay({
+            title: 'Placing Orders',
+            message: 'Executing strangle orders on Kotak Neo... Please wait.'
+        });
 
+        try {
             console.log('[Strangle] Executing strangle orders:', {
                 suggestion_id: this.currentData.strangle.suggestion_id,
                 total_lots: callLots,
@@ -1811,6 +1828,9 @@ const NiftyStrangle = {
             console.log('[Strangle] Order response:', response);
 
             if (response && response.success) {
+                // Hide loading overlay on success
+                UIBuilders.hideLoadingOverlay();
+
                 const batchInfo = response.batch_result || {};
                 const successCount = batchInfo.batches_completed || 0;
                 const totalBatches = batchInfo.total_batches || 0;
@@ -1858,6 +1878,9 @@ const NiftyStrangle = {
             }
         } catch (error) {
             console.error('[Strangle] Order placement error:', error);
+
+            // Hide loading overlay on error
+            UIBuilders.hideLoadingOverlay();
 
             // Show detailed error with API response details
             UIBuilders.showNotification({
@@ -5093,14 +5116,13 @@ const TradeVerification = {
 
         this.closeConfirmation();
 
-        try {
-            // Show loading state
-            UIBuilders.showNotification({
-                type: 'info',
-                message: 'Placing order on ICICI Breeze...',
-                icon: '⏳'
-            });
+        // Show loading overlay while placing order
+        UIBuilders.showLoadingOverlay({
+            title: 'Placing Order',
+            message: 'Executing futures order on ICICI Breeze... Please wait.'
+        });
 
+        try {
             const analysis = this.currentContract.analysis || {};
 
             // CRITICAL: Validate expiry date exists
@@ -5136,6 +5158,9 @@ const TradeVerification = {
             console.log('[Verify Trade] Order response:', response);
 
             if (response && response.success) {
+                // Hide loading overlay on success
+                UIBuilders.hideLoadingOverlay();
+
                 UIBuilders.showNotification({
                     type: 'success',
                     message: `✅ Futures order placed successfully on ICICI Breeze! Order ID: ${response.order_id || 'N/A'}`,
@@ -5181,6 +5206,9 @@ const TradeVerification = {
             }
         } catch (error) {
             console.error('[Verify Trade] Order placement error:', error);
+
+            // Hide loading overlay on error
+            UIBuilders.hideLoadingOverlay();
 
             // Show detailed error with API response details
             UIBuilders.showNotification({

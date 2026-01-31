@@ -569,6 +569,142 @@ Return ONLY valid JSON (no markdown):
             'category_breakdown': category_counts
         }
 
+    def analyze_market_news_streaming(
+        self,
+        articles: List[Dict],
+        batch_size: int = 5,
+        top_n: int = 20
+    ):
+        """
+        Analyze market news articles and yield batches as they're processed.
+
+        This is a generator that yields batches of analyzed articles for
+        progressive display in the UI.
+
+        Args:
+            articles: List of article dicts
+            batch_size: Number of articles per batch (default: 5)
+            top_n: Maximum number of articles to return in final result
+
+        Yields:
+            Dict with:
+                - type: 'batch' or 'complete'
+                - articles: List of analyzed articles in this batch
+                - progress: Dict with current/total counts
+                - summary: (only for 'complete') Overall summary
+                - category_breakdown: (only for 'complete') Category counts
+        """
+        analyzed_articles = []
+        current_batch = []
+
+        logger.info(f"[Market News Streaming] Analyzing {len(articles)} articles in batches of {batch_size}")
+
+        for i, article in enumerate(articles):
+            try:
+                impact = self.analyze_market_article_impact(article)
+
+                # Filter out low-relevance articles
+                if impact['relevance'] < 0.2:
+                    continue
+
+                enriched_article = {
+                    **article,
+                    'impact_score': impact['impact_score'],
+                    'impact_label': impact['impact_label'],
+                    'impact_category': impact['category'],
+                    'impact_reasoning': impact['reasoning'],
+                    'market_direction': impact['market_direction'],
+                    'relevance': impact['relevance']
+                }
+                analyzed_articles.append(enriched_article)
+                current_batch.append(enriched_article)
+
+                # Yield batch when we have enough articles
+                if len(current_batch) >= batch_size:
+                    logger.info(f"[Market News Streaming] Yielding batch of {len(current_batch)} articles ({i + 1}/{len(articles)} processed)")
+                    yield {
+                        'type': 'batch',
+                        'articles': current_batch.copy(),
+                        'progress': {
+                            'processed': i + 1,
+                            'total': len(articles),
+                            'relevant_so_far': len(analyzed_articles)
+                        }
+                    }
+                    current_batch = []
+
+            except Exception as e:
+                logger.warning(f"Error analyzing article {i}: {e}")
+                continue
+
+        # Yield any remaining articles in the last batch
+        if current_batch:
+            logger.info(f"[Market News Streaming] Yielding final batch of {len(current_batch)} articles")
+            yield {
+                'type': 'batch',
+                'articles': current_batch.copy(),
+                'progress': {
+                    'processed': len(articles),
+                    'total': len(articles),
+                    'relevant_so_far': len(analyzed_articles)
+                }
+            }
+
+        # Sort all analyzed articles by combined score
+        analyzed_articles.sort(
+            key=lambda x: abs(x['impact_score']) * x['relevance'],
+            reverse=True
+        )
+
+        # Take top N
+        top_articles = analyzed_articles[:top_n]
+
+        # Calculate summary
+        if top_articles:
+            avg_score = sum(a['impact_score'] for a in top_articles) / len(top_articles)
+            bearish_count = len([a for a in top_articles if a['market_direction'] == 'BEARISH'])
+            bullish_count = len([a for a in top_articles if a['market_direction'] == 'BULLISH'])
+            neutral_count = len(top_articles) - bearish_count - bullish_count
+        else:
+            avg_score = 0.0
+            bearish_count = bullish_count = neutral_count = 0
+
+        # Category breakdown
+        category_counts = {}
+        for article in top_articles:
+            cat = article.get('impact_category', 'OTHER')
+            category_counts[cat] = category_counts.get(cat, 0) + 1
+
+        # Determine overall market outlook
+        if avg_score <= -0.3:
+            outlook = 'BEARISH'
+        elif avg_score >= 0.3:
+            outlook = 'BULLISH'
+        else:
+            outlook = 'NEUTRAL'
+
+        summary = {
+            'total_analyzed': len(articles),
+            'relevant_articles': len(analyzed_articles),
+            'top_articles_count': len(top_articles),
+            'average_impact_score': round(avg_score, 3),
+            'overall_sentiment': self._get_impact_label(avg_score),
+            'market_outlook': outlook,
+            'bearish_count': bearish_count,
+            'bullish_count': bullish_count,
+            'neutral_count': neutral_count
+        }
+
+        logger.info(f"[Market News Streaming] Complete: {len(top_articles)} top articles, outlook: {outlook}")
+
+        # Yield final complete result with sorted top articles
+        yield {
+            'type': 'complete',
+            'articles': top_articles,
+            'summary': summary,
+            'category_breakdown': category_counts
+        }
+
 
 # Global instance
 _news_impact_analyzer = None

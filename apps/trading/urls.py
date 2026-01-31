@@ -22,6 +22,7 @@ urlpatterns = [
     path('trigger/trendlyne-logs/<str:session_id>/', views.stream_trendlyne_logs, name='stream_trendlyne_logs'),
     path('trigger/fetch-news/', views.fetch_trade_news, name='fetch_trade_news'),
     path('news-details/', views.news_details_page, name='news_details'),
+    path('stream-market-news/', views.stream_market_news, name='stream_market_news'),
     path('trigger/update-breeze-session/', views.update_breeze_session, name='update_breeze_session'),
     path('trigger/update-neo-session/', views.update_neo_session, name='update_neo_session'),
     path('trigger/calculate-position-sizing/', views.calculate_position_sizing, name='calculate_position_sizing'),

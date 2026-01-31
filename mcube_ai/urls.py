@@ -19,11 +19,14 @@ from django.urls import path, include
 from django.conf import settings
 from django.conf.urls.static import static
 from django.views.generic import RedirectView
-from apps.core.views import home_page
+from apps.core.views import home_page, documentation_dashboard
 
 urlpatterns = [
     # Home page
     path('', home_page, name='home'),
+
+    # Documentation
+    path('docs/', documentation_dashboard, name='docs'),
 
     # Admin interface
     path('admin/', admin.site.urls),

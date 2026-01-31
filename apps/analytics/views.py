@@ -193,8 +193,9 @@ def view_patterns(request):
     # Get pattern analysis data
     try:
         patterns_data = get_trading_patterns(broker=broker, fy=fy)
+        logger.info(f"[Patterns] Loaded patterns_data overview: {patterns_data.get('overview', {})}")
     except Exception as e:
-        logger.error(f"Error loading patterns: {e}")
+        logger.error(f"Error loading patterns: {e}", exc_info=True)
         patterns_data = {
             'overview': {},
             'monthly': [],
@@ -254,6 +255,8 @@ def view_patterns(request):
 
     context = {
         'patterns_data': patterns_data,
+        'overview': patterns_data.get('overview', {}),
+        'streaks': patterns_data.get('streaks', {}),
         'tax_data': tax_data,
         'timeline_data': timeline_data,
         'learning_patterns': learning_patterns,

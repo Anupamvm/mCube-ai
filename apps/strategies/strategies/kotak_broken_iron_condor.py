@@ -10,7 +10,7 @@ Account: Kotak Securities
 Risk Profile: Defined risk on downside (unlike unlimited risk strangle)
 
 Insurance Put Calculation:
-    - Risk Budget = Max Profit × Risk Multiplier (default 2.0)
+    - Risk Budget = Max Profit * Risk Multiplier (default 2.0)
     - Insurance Strike = Put Strike - (Risk Budget / Lot Size)
     - The insurance put caps maximum loss on the downside
 
@@ -27,8 +27,16 @@ Configurable Parameters:
 
 import logging
 from decimal import Decimal
-from datetime import date
-from typing import Dict, Tuple, Optional
+from datetime import time
+from typing import Dict, Tuple, List
+
+from django.utils import timezone
+
+from apps.strategies.core.base_strategy import BaseStrategy
+from apps.strategies.core.result_types import StrategyConfig, EntryResult
+from apps.strategies.shared.strike_calculator import calculate_strangle_strikes
+from apps.strategies.shared.market_data import get_nifty_price, get_vix, get_option_premiums, get_put_premium
+from apps.trading.risk_calculator import SupportResistanceCalculator
 
 logger = logging.getLogger(__name__)
 
@@ -36,77 +44,229 @@ logger = logging.getLogger(__name__)
 DEFAULT_RISK_MULTIPLIER = Decimal('2.0')
 
 
-def calculate_strikes(spot_price: Decimal, days_to_expiry: int, vix: Decimal) -> Dict:
+class KotakBrokenIronCondorStrategy(BaseStrategy):
     """
-    Calculate OTM call and put strikes for short strangle (same as strangle)
+    Broken Iron Condor strategy - strangle with protective put.
 
-    Formula:
-        strike_distance = spot × (adjusted_delta / 100) × days_to_expiry
+    Unique Logic:
+    - Insurance put calculation based on risk multiplier
+    - 3-leg position (sell CE, sell PE, buy PE insurance)
+    - Defined max loss on downside
+    """
 
-    Where adjusted_delta adjusts for volatility regime:
-        - Normal VIX (< 15): 0.5% base delta
-        - Elevated VIX (15-18): 0.5% × 1.10 = 0.55%
-        - High VIX (> 18): 0.5% × 1.20 = 0.6%
+    def __init__(self, account, risk_multiplier: Decimal = DEFAULT_RISK_MULTIPLIER):
+        """
+        Initialize strategy with account and risk multiplier.
 
-    Args:
-        spot_price: Current Nifty spot price
-        days_to_expiry: Days remaining to expiry
-        vix: India VIX value
+        Args:
+            account: BrokerAccount instance
+            risk_multiplier: How many times max profit to risk (default 2.0)
+        """
+        self.risk_multiplier = risk_multiplier
+        super().__init__(account)
 
-    Returns:
-        dict: {
-            'call_strike': int,
-            'put_strike': int,
-            'strike_distance': Decimal,
-            'adjusted_delta': Decimal,
-            'adjustment_reason': str
+    def get_config(self) -> StrategyConfig:
+        """Return strategy configuration."""
+        return StrategyConfig(
+            name="Kotak Broken Iron Condor Strategy",
+            strategy_type='OPTIONS',
+            direction='NEUTRAL',
+            entry_start_time=time(9, 0),
+            entry_end_time=time(11, 30),
+            min_days_to_expiry=1,
+            margin_usage_pct=Decimal('0.50'),
+            extra={
+                'risk_multiplier': self.risk_multiplier,
+            }
+        )
+
+    def calculate_entry_parameters(self, market_data: Dict) -> Dict:
+        """Calculate strikes, premiums, and insurance for iron condor."""
+        spot_price = market_data.get('spot_price') or get_nifty_price()
+        vix = market_data.get('vix') or get_vix()
+
+        # Calculate strangle strikes (same as strangle)
+        strikes = calculate_strangle_strikes(
+            spot_price=spot_price,
+            days_to_expiry=market_data['days_to_expiry'],
+            vix=vix
+        )
+
+        # Get option premiums
+        call_premium, put_premium = get_option_premiums(
+            strikes['call_strike'],
+            strikes['put_strike'],
+            market_data['expiry']
+        )
+
+        total_premium = call_premium + put_premium
+
+        # Calculate insurance strike (UNIQUE TO THIS STRATEGY)
+        # Assuming 1 lot = 50 qty for initial calculation
+        quantity = 50
+        max_profit = total_premium * quantity
+
+        insurance = calculate_insurance_strike(
+            put_strike=strikes['put_strike'],
+            max_profit=max_profit,
+            risk_multiplier=self.risk_multiplier,
+            lot_size=50,
+            quantity=quantity
+        )
+
+        # Get insurance premium
+        insurance_premium = get_put_premium(
+            insurance['insurance_strike'],
+            market_data['expiry']
+        )
+
+        return {
+            'spot_price': spot_price,
+            'vix': vix,
+            'strikes': strikes,
+            'call_premium': call_premium,
+            'put_premium': put_premium,
+            'total_strangle_premium': total_premium,
+            'insurance': insurance,
+            'insurance_premium': insurance_premium,
+            'net_premium': total_premium - insurance_premium,
+            'expiry': market_data['expiry'],
+            'days_to_expiry': market_data['days_to_expiry']
         }
-    """
 
-    # Base delta: 0.5% of spot price per day to expiry
-    base_delta = Decimal('0.5')
+    def build_position_details(self, entry_params: Dict, sizing: Dict) -> Dict:
+        """Build 3-leg position details."""
+        strikes = entry_params['strikes']
+        insurance = entry_params['insurance']
+        quantity = sizing['quantity']
+        lot_size = sizing['lot_size']
+        margin_used = sizing['margin_used']
 
-    # VIX-based adjustment: Higher volatility = wider strikes for safety
-    if vix > 18:
-        adjusted_delta = base_delta * Decimal('1.20')  # +20% buffer
-        reason = f"High VIX ({vix:.1f}) - increasing strike distance for safety (+20%)"
-    elif vix > 15:
-        adjusted_delta = base_delta * Decimal('1.10')  # +10% buffer
-        reason = f"Elevated VIX ({vix:.1f}) - slight increase in strike distance (+10%)"
-    else:
-        adjusted_delta = base_delta  # Standard distance
-        reason = f"Normal VIX ({vix:.1f}) - standard strike distance"
+        # Recalculate net premium with actual quantity
+        net_premium_per_qty = entry_params['net_premium'] / 50 * quantity  # Adjust for sizing
 
-    logger.info(f"Strike Selection Parameters:")
-    logger.info(f"  Spot Price: ₹{spot_price:,.2f}")
-    logger.info(f"  Days to Expiry: {days_to_expiry}")
-    logger.info(f"  VIX: {vix:.2f}")
-    logger.info(f"  Adjusted Delta: {adjusted_delta:.3f}% ({reason})")
+        # Support and Resistance
+        support_resistance = SupportResistanceCalculator.calculate_next_levels(
+            current_price=entry_params['spot_price'],
+            support_level=entry_params['spot_price'] * Decimal('0.99'),
+            resistance_level=entry_params['spot_price'] * Decimal('1.01')
+        )
 
-    # Calculate strike distance in points from spot
-    strike_distance = spot_price * (adjusted_delta / Decimal('100')) * Decimal(str(days_to_expiry))
+        return {
+            'instrument': 'NIFTY',
+            'strategy': 'Broken Iron Condor',
+            'legs': [
+                {
+                    'leg_number': 1,
+                    'action': 'SELL',
+                    'option_type': 'CE',
+                    'strike': strikes['call_strike'],
+                    'premium': str(entry_params['call_premium']),
+                    'quantity': quantity,
+                },
+                {
+                    'leg_number': 2,
+                    'action': 'SELL',
+                    'option_type': 'PE',
+                    'strike': strikes['put_strike'],
+                    'premium': str(entry_params['put_premium']),
+                    'quantity': quantity,
+                },
+                {
+                    'leg_number': 3,
+                    'action': 'BUY',
+                    'option_type': 'PE',
+                    'strike': insurance['insurance_strike'],
+                    'premium': str(entry_params['insurance_premium']),
+                    'quantity': quantity,
+                    'purpose': 'Insurance'
+                }
+            ],
+            'call_strike': strikes['call_strike'],
+            'put_strike': strikes['put_strike'],
+            'insurance_strike': insurance['insurance_strike'],
+            'quantity': quantity,
+            'lot_size': lot_size,
+            'net_premium': str(entry_params['net_premium'] * quantity),
+            'max_loss_on_put_side': str(insurance['max_loss_on_put_side']),
+            'margin_required': str(margin_used),
+            'expiry_date': str(entry_params['expiry']),
+            'support_level': str(support_resistance['support']),
+            'resistance_level': str(support_resistance['resistance']),
+        }
 
-    # Calculate raw strike prices (before rounding)
-    call_strike_raw = spot_price + strike_distance  # OTM call above spot
-    put_strike_raw = spot_price - strike_distance   # OTM put below spot
+    def build_algorithm_reasoning(self, entry_params: Dict, filters_result: Dict, sizing: Dict) -> Dict:
+        """Build algorithm reasoning including insurance details."""
+        strikes = entry_params['strikes']
+        insurance = entry_params['insurance']
+        quantity = sizing['quantity']
+        lot_size = sizing['lot_size']
 
-    # Round to nearest 100 (Nifty strike interval is 100 points)
-    call_strike = round(float(call_strike_raw) / 100) * 100
-    put_strike = round(float(put_strike_raw) / 100) * 100
+        # Calculate risk scenarios
+        risk_scenarios = calculate_broken_iron_condor_scenarios(
+            current_price=entry_params['spot_price'],
+            call_strike=strikes['call_strike'],
+            put_strike=strikes['put_strike'],
+            insurance_strike=insurance['insurance_strike'],
+            call_premium=entry_params['call_premium'],
+            put_premium=entry_params['put_premium'],
+            insurance_premium=entry_params['insurance_premium'],
+            quantity=quantity,
+            lot_size=lot_size
+        )
 
-    logger.info(f"Strike Calculation:")
-    logger.info(f"  Strike Distance: {strike_distance:.2f} points")
-    logger.info(f"  Call Strike (OTM): {call_strike:,.0f}")
-    logger.info(f"  Put Strike (OTM): {put_strike:,.0f}")
+        # Support and Resistance
+        support_resistance = SupportResistanceCalculator.calculate_next_levels(
+            current_price=entry_params['spot_price'],
+            support_level=entry_params['spot_price'] * Decimal('0.99'),
+            resistance_level=entry_params['spot_price'] * Decimal('1.01')
+        )
 
-    return {
-        'call_strike': int(call_strike),
-        'put_strike': int(put_strike),
-        'strike_distance': strike_distance,
-        'adjusted_delta': adjusted_delta,
-        'adjustment_reason': reason
-    }
+        return {
+            'title': 'Kotak Broken Iron Condor Strategy',
+            'summary': 'Short Strangle with protective put (insurance) for defined downside risk',
+            'strategy_type': 'BROKEN_IRON_CONDOR',
+            'calculations': {
+                'spot_price': str(entry_params['spot_price']),
+                'vix': str(entry_params['vix']),
+                'days_to_expiry': entry_params['days_to_expiry'],
+                'strike_distance': str(strikes['strike_distance']),
+                'adjusted_delta': str(strikes['adjusted_delta']),
+                'adjustment_reason': strikes['adjustment_reason'],
+                'call_premium': str(entry_params['call_premium']),
+                'put_premium': str(entry_params['put_premium']),
+                'total_strangle_premium': str(entry_params['total_strangle_premium']),
+            },
+            'insurance': {
+                'insurance_strike': insurance['insurance_strike'],
+                'insurance_premium': str(entry_params['insurance_premium']),
+                'risk_multiplier': str(insurance['risk_multiplier_used']),
+                'max_loss_on_put_side': str(insurance['max_loss_on_put_side']),
+                'spread_width': insurance['spread_width'],
+            },
+            'filters': {
+                'filters_passed': filters_result.get('filters_passed', []),
+                'filters_failed': filters_result.get('filters_failed', []),
+                'entry_time_valid': True,
+            },
+            'position_sizing': {
+                'usable_margin': str(sizing['usable_margin']),
+                'lot_size': lot_size,
+                'lots': sizing['lots'],
+                'quantity': quantity,
+                'margin_used': str(sizing['margin_used']),
+            },
+            'risk_scenarios': risk_scenarios,
+            'support_resistance': {
+                'support_level': str(support_resistance['support']),
+                'resistance_level': str(support_resistance['resistance']),
+            }
+        }
 
+
+# ============================================================================
+# INSURANCE CALCULATION FUNCTIONS (UNIQUE TO THIS STRATEGY)
+# ============================================================================
 
 def calculate_insurance_strike(
     put_strike: int,
@@ -116,17 +276,17 @@ def calculate_insurance_strike(
     quantity: int
 ) -> Dict:
     """
-    Calculate the insurance put strike based on risk budget
+    Calculate the insurance put strike based on risk budget.
 
     Insurance Logic:
-        - Risk Budget = Max Profit × Risk Multiplier
+        - Risk Budget = Max Profit * Risk Multiplier
         - The insurance put should be bought at a strike that limits
           our maximum loss to the risk budget
 
     For a broken iron condor:
         - We sell a put at put_strike
         - We buy a put at insurance_strike (further OTM)
-        - Maximum loss on put side = (put_strike - insurance_strike) × quantity - premium received
+        - Maximum loss on put side = (put_strike - insurance_strike) * quantity - premium received
 
     To achieve Risk Budget as max loss:
         insurance_strike = put_strike - (risk_budget / quantity)
@@ -142,11 +302,11 @@ def calculate_insurance_strike(
         dict: {
             'insurance_strike': int,
             'risk_budget': Decimal,
-            'estimated_insurance_premium': Decimal,
-            'max_loss_on_put_side': Decimal
+            'spread_width': int,
+            'max_loss_on_put_side': Decimal,
+            'risk_multiplier_used': Decimal
         }
     """
-
     # Calculate risk budget
     risk_budget = max_profit * risk_multiplier
 
@@ -170,12 +330,12 @@ def calculate_insurance_strike(
 
     logger.info(f"Insurance Strike Calculation:")
     logger.info(f"  Sold Put Strike: {put_strike}")
-    logger.info(f"  Max Profit (Premium): ₹{max_profit:,.2f}")
+    logger.info(f"  Max Profit (Premium): Rs.{max_profit:,.2f}")
     logger.info(f"  Risk Multiplier: {risk_multiplier}x")
-    logger.info(f"  Risk Budget: ₹{risk_budget:,.2f}")
+    logger.info(f"  Risk Budget: Rs.{risk_budget:,.2f}")
     logger.info(f"  Insurance Strike (OTM Put Buy): {insurance_strike}")
     logger.info(f"  Spread Width: {actual_spread} points")
-    logger.info(f"  Max Loss on Put Side: ₹{max_loss_on_put_side:,.2f}")
+    logger.info(f"  Max Loss on Put Side: Rs.{max_loss_on_put_side:,.2f}")
 
     return {
         'insurance_strike': int(insurance_strike),
@@ -191,9 +351,9 @@ def get_insurance_strike_options(
     max_profit: Decimal,
     quantity: int,
     spot_price: Decimal
-) -> list:
+) -> List[Dict]:
     """
-    Generate multiple insurance strike options for user selection
+    Generate multiple insurance strike options for user selection.
 
     Provides 3-4 options with different risk/reward profiles:
         - Conservative (1.5x risk): Closer insurance, lower max loss
@@ -209,7 +369,6 @@ def get_insurance_strike_options(
     Returns:
         list: List of insurance options with details
     """
-
     risk_options = [
         {'multiplier': Decimal('1.5'), 'label': 'Conservative'},
         {'multiplier': Decimal('2.0'), 'label': 'Moderate (Recommended)'},
@@ -248,85 +407,6 @@ def get_insurance_strike_options(
     return options
 
 
-def run_entry_filters() -> Tuple[bool, list, list]:
-    """
-    Execute ALL entry filters for broken iron condor strategy
-    (Same filters as strangle - conservative approach)
-
-    Filter Logic: ALL must pass
-    If ANY filter fails, skip the trade entirely
-
-    Returns:
-        tuple: (all_passed: bool, filters_passed: list, filters_failed: list)
-    """
-
-    logger.info("=" * 80)
-    logger.info("ENTRY FILTER EXECUTION")
-    logger.info("=" * 80)
-
-    filters_passed = []
-    filters_failed = []
-
-    # FILTER 1: Global Market Stability
-    try:
-        global_market_check = check_global_market_stability()
-        if global_market_check['passed']:
-            filters_passed.append(f"✅ Global markets stable: {global_market_check['message']}")
-        else:
-            filters_failed.append(f"❌ Global markets unstable: {global_market_check['message']}")
-    except Exception as e:
-        filters_failed.append(f"❌ Global market check failed: {str(e)}")
-        logger.error(f"Filter 1 error: {e}", exc_info=True)
-
-    # FILTER 2: Economic Event Calendar
-    try:
-        event_check = check_economic_events(days_ahead=5)
-        if event_check['passed']:
-            filters_passed.append(f"✅ No major events: {event_check['message']}")
-        else:
-            filters_failed.append(f"❌ Major event upcoming: {event_check['message']}")
-    except Exception as e:
-        filters_failed.append(f"❌ Event calendar check failed: {str(e)}")
-        logger.error(f"Filter 2 error: {e}", exc_info=True)
-
-    # FILTER 3: Market Regime Check (VIX, Bollinger Bands)
-    try:
-        regime_check = check_market_regime()
-        if regime_check['passed']:
-            filters_passed.append(f"✅ Market regime favorable: {regime_check['message']}")
-        else:
-            filters_failed.append(f"❌ Market regime unfavorable: {regime_check['message']}")
-    except Exception as e:
-        filters_failed.append(f"❌ Market regime check failed: {str(e)}")
-        logger.error(f"Filter 3 error: {e}", exc_info=True)
-
-    # Summary
-    all_passed = len(filters_failed) == 0
-
-    logger.info("")
-    logger.info("FILTER RESULTS:")
-    logger.info("-" * 80)
-
-    for passed_msg in filters_passed:
-        logger.info(passed_msg)
-
-    for failed_msg in filters_failed:
-        logger.warning(failed_msg)
-
-    logger.info("-" * 80)
-
-    if all_passed:
-        logger.info(f"✅ ALL FILTERS PASSED ({len(filters_passed)}/{len(filters_passed) + len(filters_failed)})")
-        logger.info("✅ Entry evaluation can proceed")
-    else:
-        logger.warning(f"❌ FILTERS FAILED ({len(filters_failed)}/{len(filters_passed) + len(filters_failed)})")
-        logger.warning("❌ Trade entry BLOCKED")
-
-    logger.info("=" * 80)
-
-    return all_passed, filters_passed, filters_failed
-
-
 def calculate_broken_iron_condor_scenarios(
     current_price: Decimal,
     call_strike: int,
@@ -339,12 +419,12 @@ def calculate_broken_iron_condor_scenarios(
     lot_size: int
 ) -> Dict:
     """
-    Calculate profit/loss scenarios for broken iron condor
+    Calculate profit/loss scenarios for broken iron condor.
 
     Broken Iron Condor P&L:
         - Max profit = Call Premium + Put Premium - Insurance Premium
         - Max loss on upside = Unlimited (but managed by SL)
-        - Max loss on downside = (Put Strike - Insurance Strike) × Quantity - Net Premium
+        - Max loss on downside = (Put Strike - Insurance Strike) * Quantity - Net Premium
 
     Args:
         current_price: Current spot price
@@ -360,7 +440,6 @@ def calculate_broken_iron_condor_scenarios(
     Returns:
         dict: Comprehensive P&L scenarios
     """
-
     net_premium = call_premium + put_premium - insurance_premium
     max_profit = net_premium * quantity
 
@@ -378,8 +457,8 @@ def calculate_broken_iron_condor_scenarios(
     scenarios.append({
         'move_pct': 0,
         'move_direction': 'NEUTRAL',
-        'target_price': current_price,
-        'profit_loss': max_profit,
+        'target_price': float(current_price),
+        'profit_loss': float(max_profit),
         'description': 'Current price (max profit zone)'
     })
 
@@ -448,471 +527,11 @@ def calculate_broken_iron_condor_scenarios(
     }
 
 
-def execute_kotak_broken_iron_condor_entry(
-    account: "BrokerAccount",
-    risk_multiplier: Decimal = DEFAULT_RISK_MULTIPLIER
-) -> Dict:
-    """
-    Complete entry workflow for Kotak Broken Iron Condor Strategy
-
-    Workflow:
-        1. Morning position check (ONE POSITION RULE)
-        2. Entry timing validation (9:00 AM - 11:30 AM)
-        3. Run entry filters (ALL must pass)
-        4. Expiry selection (1-day rule)
-        5. Calculate strikes (VIX-based delta adjustment)
-        6. Calculate insurance strike (based on risk_multiplier)
-        7. Validate premiums (min/max checks)
-        8. Calculate position size (50% margin rule)
-        9. Risk limit checks
-        10. Create trade suggestion (3 legs)
-
-    Args:
-        account: BrokerAccount instance (Kotak)
-        risk_multiplier: How many times max profit to risk (default 2.0)
-
-    Returns:
-        dict: {
-            'success': bool,
-            'message': str,
-            'suggestion': TradeSuggestion or None,
-            'insurance_options': list (if success, for UI selection),
-            'details': dict
-        }
-    """
-
-    logger.info("=" * 100)
-    logger.info("KOTAK BROKEN IRON CONDOR STRATEGY - ENTRY EVALUATION")
-    logger.info("=" * 100)
-    logger.info(f"Account: {account.broker} - {account.account_name}")
-    logger.info(f"Risk Multiplier: {risk_multiplier}x")
-    logger.info(f"Time: {timezone.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    logger.info("")
-
-    # STEP 1: Morning Check (ONE POSITION RULE)
-    logger.info("STEP 1: Morning Position Check (ONE POSITION RULE)")
-    logger.info("-" * 80)
-
-    morning_check_result = morning_check(account)
-
-    if not morning_check_result['allow_new_entry']:
-        logger.warning(f"❌ {morning_check_result['message']}")
-        logger.info("=" * 100)
-        return {
-            'success': False,
-            'message': morning_check_result['message'],
-            'suggestion': None,
-            'details': morning_check_result
-        }
-
-    logger.info(f"✅ {morning_check_result['message']}")
-    logger.info("")
-
-    # STEP 2: Entry Timing Validation
-    logger.info("STEP 2: Entry Timing Validation")
-    logger.info("-" * 80)
-
-    current_time = timezone.now().time()
-    entry_start = time(9, 0)   # 9:00 AM
-    entry_end = time(11, 30)   # 11:30 AM
-
-    if not (entry_start <= current_time <= entry_end):
-        msg = f"❌ Entry time window closed (allowed: 09:00-11:30, current: {current_time.strftime('%H:%M')})"
-        logger.warning(msg)
-        logger.info("=" * 100)
-        return {
-            'success': False,
-            'message': msg,
-            'suggestion': None,
-            'details': {'current_time': current_time.strftime('%H:%M')}
-        }
-
-    logger.info(f"✅ Entry timing valid (current: {current_time.strftime('%H:%M')})")
-    logger.info("")
-
-    # STEP 3: Run Entry Filters
-    logger.info("STEP 3: Entry Filters Execution")
-    logger.info("-" * 80)
-
-    all_passed, filters_passed, filters_failed = run_entry_filters()
-
-    if not all_passed:
-        msg = f"❌ Entry filters failed ({len(filters_failed)} filters blocked trade)"
-        logger.warning(msg)
-        logger.info("=" * 100)
-        return {
-            'success': False,
-            'message': msg,
-            'suggestion': None,
-            'details': {
-                'filters_passed': filters_passed,
-                'filters_failed': filters_failed
-            }
-        }
-
-    logger.info(f"✅ All entry filters passed ({len(filters_passed)} filters)")
-    logger.info("")
-
-    # STEP 4: Expiry Selection (1-day rule)
-    logger.info("STEP 4: Expiry Selection (1-day minimum rule)")
-    logger.info("-" * 80)
-
-    try:
-        selected_expiry, expiry_details = select_expiry_for_options(instrument='NIFTY', min_days=1)
-        days_to_expiry = (selected_expiry - date.today()).days
-
-        logger.info(f"✅ Selected Expiry: {selected_expiry} ({days_to_expiry} days)")
-        logger.info(f"   Details: {expiry_details}")
-        logger.info("")
-    except Exception as e:
-        msg = f"❌ Expiry selection failed: {str(e)}"
-        logger.error(msg, exc_info=True)
-        logger.info("=" * 100)
-        return {
-            'success': False,
-            'message': msg,
-            'suggestion': None,
-            'details': {'error': str(e)}
-        }
-
-    # STEP 5: Calculate Strikes
-    logger.info("STEP 5: Strike Selection (VIX-based delta adjustment)")
-    logger.info("-" * 80)
-
-    try:
-        # Get current Nifty spot price
-        spot_price = get_current_nifty_price()
-
-        # Get India VIX
-        vix = get_current_vix()
-
-        strikes = calculate_strikes(spot_price, days_to_expiry, vix)
-
-        logger.info(f"✅ Strikes calculated successfully")
-        logger.info("")
-    except Exception as e:
-        msg = f"❌ Strike calculation failed: {str(e)}"
-        logger.error(msg, exc_info=True)
-        logger.info("=" * 100)
-        return {
-            'success': False,
-            'message': msg,
-            'suggestion': None,
-            'details': {'error': str(e)}
-        }
-
-    # STEP 6: Position Sizing (50% margin rule)
-    logger.info("STEP 6: Position Sizing (50% margin usage rule)")
-    logger.info("-" * 80)
-
-    try:
-        usable_margin = calculate_usable_margin(account)
-        lot_size = 50  # Nifty lot size
-        margin_per_lot = Decimal('80000')  # Placeholder
-
-        max_lots = int(usable_margin / margin_per_lot)
-
-        if max_lots < 1:
-            msg = f"❌ Insufficient margin (usable: ₹{usable_margin:,.0f}, required: ₹{margin_per_lot:,.0f})"
-            logger.warning(msg)
-            logger.info("=" * 100)
-            return {
-                'success': False,
-                'message': msg,
-                'suggestion': None,
-                'details': {
-                    'usable_margin': usable_margin,
-                    'margin_required': margin_per_lot
-                }
-            }
-
-        lots = 1  # Conservative approach
-        quantity = lots * lot_size
-        margin_used = margin_per_lot * lots
-
-        logger.info(f"✅ Position sizing complete")
-        logger.info(f"   Lots: {lots}, Quantity: {quantity}")
-        logger.info("")
-    except Exception as e:
-        msg = f"❌ Position sizing failed: {str(e)}"
-        logger.error(msg, exc_info=True)
-        logger.info("=" * 100)
-        return {
-            'success': False,
-            'message': msg,
-            'suggestion': None,
-            'details': {'error': str(e)}
-        }
-
-    # STEP 7: Get Premiums and Calculate Insurance
-    logger.info("STEP 7: Premium Validation & Insurance Calculation")
-    logger.info("-" * 80)
-
-    try:
-        # Get option premiums
-        call_premium, put_premium = get_option_premiums(
-            strikes['call_strike'],
-            strikes['put_strike'],
-            selected_expiry
-        )
-
-        total_premium = call_premium + put_premium
-        max_profit_from_strangle = total_premium * quantity
-
-        logger.info(f"Call Premium ({strikes['call_strike']}CE): ₹{call_premium}")
-        logger.info(f"Put Premium ({strikes['put_strike']}PE): ₹{put_premium}")
-        logger.info(f"Total Premium (Strangle): ₹{total_premium}")
-        logger.info(f"Max Profit from Strangle: ₹{max_profit_from_strangle:,.2f}")
-
-        # Calculate insurance options
-        insurance_options = get_insurance_strike_options(
-            put_strike=strikes['put_strike'],
-            max_profit=max_profit_from_strangle,
-            quantity=quantity,
-            spot_price=spot_price
-        )
-
-        # Get insurance premiums for each option
-        for opt in insurance_options:
-            ins_premium = get_put_option_premium(opt['insurance_strike'], selected_expiry)
-            opt['insurance_premium'] = float(ins_premium)
-            opt['net_premium'] = float(total_premium - ins_premium)
-            opt['adjusted_max_profit'] = float((total_premium - ins_premium) * quantity)
-
-        logger.info("")
-        logger.info("Insurance Options Available:")
-        for opt in insurance_options:
-            logger.info(f"  {opt['label']}: Strike {opt['insurance_strike']}, "
-                       f"Premium ₹{opt['insurance_premium']:.2f}, "
-                       f"Max Loss ₹{opt['max_loss_on_put_side']:,.2f}")
-
-        logger.info("")
-
-    except Exception as e:
-        msg = f"❌ Premium/Insurance calculation failed: {str(e)}"
-        logger.error(msg, exc_info=True)
-        logger.info("=" * 100)
-        return {
-            'success': False,
-            'message': msg,
-            'suggestion': None,
-            'details': {'error': str(e)}
-        }
-
-    # STEP 8: Risk Limit Checks
-    logger.info("STEP 8: Risk Limit Validation")
-    logger.info("-" * 80)
-
-    try:
-        risk_check = check_risk_limits(account)
-
-        if risk_check['action_required'] != 'NONE':
-            msg = f"❌ Risk limits breached: {risk_check['message']}"
-            logger.warning(msg)
-            logger.info("=" * 100)
-            return {
-                'success': False,
-                'message': msg,
-                'suggestion': None,
-                'details': risk_check
-            }
-
-        logger.info(f"✅ All risk limits satisfied")
-        logger.info("")
-    except Exception as e:
-        msg = f"❌ Risk check failed: {str(e)}"
-        logger.error(msg, exc_info=True)
-        logger.info("=" * 100)
-        return {
-            'success': False,
-            'message': msg,
-            'suggestion': None,
-            'details': {'error': str(e)}
-        }
-
-    # STEP 9: Prepare trade suggestion with insurance options for UI
-    logger.info("STEP 9: Trade Suggestion Preparation")
-    logger.info("-" * 80)
-
-    # Use default (moderate) insurance option for initial suggestion
-    default_insurance = next(
-        (opt for opt in insurance_options if 'Recommended' in opt['label']),
-        insurance_options[1]  # Fallback to second option (moderate)
-    )
-
-    # Calculate risk scenarios with default insurance
-    risk_scenarios = calculate_broken_iron_condor_scenarios(
-        current_price=spot_price,
-        call_strike=strikes['call_strike'],
-        put_strike=strikes['put_strike'],
-        insurance_strike=default_insurance['insurance_strike'],
-        call_premium=call_premium,
-        put_premium=put_premium,
-        insurance_premium=Decimal(str(default_insurance['insurance_premium'])),
-        quantity=quantity,
-        lot_size=lot_size
-    )
-
-    # Support and Resistance
-    support_resistance = SupportResistanceCalculator.calculate_next_levels(
-        current_price=spot_price,
-        support_level=spot_price * Decimal('0.99'),
-        resistance_level=spot_price * Decimal('1.01')
-    )
-
-    # Prepare algorithm reasoning
-    algorithm_reasoning = {
-        'title': 'Kotak Broken Iron Condor Strategy',
-        'summary': 'Short Strangle with protective put (insurance) for defined downside risk',
-        'strategy_type': 'BROKEN_IRON_CONDOR',
-        'calculations': {
-            'spot_price': str(spot_price),
-            'vix': str(vix),
-            'days_to_expiry': days_to_expiry,
-            'strike_distance': str(strikes['strike_distance']),
-            'adjusted_delta': str(strikes['adjusted_delta']),
-            'adjustment_reason': strikes['adjustment_reason'],
-            'call_premium': str(call_premium),
-            'put_premium': str(put_premium),
-            'total_strangle_premium': str(total_premium),
-        },
-        'insurance': {
-            'selected_option': default_insurance['label'],
-            'insurance_strike': default_insurance['insurance_strike'],
-            'insurance_premium': default_insurance['insurance_premium'],
-            'risk_multiplier': default_insurance['risk_multiplier'],
-            'max_loss_on_put_side': default_insurance['max_loss_on_put_side'],
-            'available_options': insurance_options,
-        },
-        'filters': {
-            'filters_passed': filters_passed,
-            'filters_failed': filters_failed,
-            'entry_time_valid': True,
-            'position_count_check': morning_check_result['message'],
-        },
-        'position_sizing': {
-            'usable_margin': str(usable_margin),
-            'lot_size': lot_size,
-            'lots': lots,
-            'quantity': quantity,
-            'margin_per_lot': str(margin_per_lot),
-            'margin_used': str(margin_used),
-        },
-        'risk_scenarios': risk_scenarios,
-        'support_resistance': {
-            'support_level': str(support_resistance['support']),
-            'resistance_level': str(support_resistance['resistance']),
-        }
-    }
-
-    # Position details (3 legs)
-    position_details = {
-        'instrument': 'NIFTY',
-        'strategy': 'Broken Iron Condor',
-        'legs': [
-            {
-                'leg_number': 1,
-                'action': 'SELL',
-                'option_type': 'CE',
-                'strike': strikes['call_strike'],
-                'premium': str(call_premium),
-                'quantity': quantity,
-            },
-            {
-                'leg_number': 2,
-                'action': 'SELL',
-                'option_type': 'PE',
-                'strike': strikes['put_strike'],
-                'premium': str(put_premium),
-                'quantity': quantity,
-            },
-            {
-                'leg_number': 3,
-                'action': 'BUY',
-                'option_type': 'PE',
-                'strike': default_insurance['insurance_strike'],
-                'premium': str(default_insurance['insurance_premium']),
-                'quantity': quantity,
-                'purpose': 'Insurance'
-            }
-        ],
-        'call_strike': strikes['call_strike'],
-        'put_strike': strikes['put_strike'],
-        'insurance_strike': default_insurance['insurance_strike'],
-        'quantity': quantity,
-        'lot_size': lot_size,
-        'net_premium': str(default_insurance['net_premium']),
-        'adjusted_max_profit': str(default_insurance['adjusted_max_profit']),
-        'max_loss_on_put_side': str(default_insurance['max_loss_on_put_side']),
-        'margin_required': str(margin_used),
-        'expiry_date': str(selected_expiry),
-        # Configurable parameters for UI editing
-        'configurable': {
-            'risk_multiplier': {
-                'current': default_insurance['risk_multiplier'],
-                'options': [opt['risk_multiplier'] for opt in insurance_options],
-                'description': 'Risk multiplier for insurance calculation'
-            },
-            'insurance_strike': {
-                'current': default_insurance['insurance_strike'],
-                'options': [opt['insurance_strike'] for opt in insurance_options],
-                'description': 'Insurance put strike price'
-            }
-        }
-    }
-
-    try:
-        # Create trade suggestion
-        from apps.trading.models import TradeSuggestion
-        suggestion = TradeSuggestion.objects.create(
-            user=account.user,
-            strategy='kotak_broken_iron_condor',
-            suggestion_type='OPTIONS',
-            instrument='NIFTY',
-            direction='NEUTRAL',
-            algorithm_reasoning=algorithm_reasoning,
-            position_details=position_details
-        )
-
-        logger.info(f"✅ Trade suggestion created: {suggestion.id}")
-        logger.info(f"   Status: {suggestion.get_status_display()}")
-        logger.info(f"   Legs: 3 (Sell CE, Sell PE, Buy PE Insurance)")
-        logger.info(f"   Net Premium: ₹{default_insurance['net_premium'] * quantity:,.2f}")
-        logger.info(f"   Max Loss (Put Side): ₹{default_insurance['max_loss_on_put_side']:,.2f}")
-        logger.info("")
-        logger.info("=" * 100)
-
-        return {
-            'success': True,
-            'message': f'Trade suggestion #{suggestion.id} created - Review insurance options',
-            'suggestion': suggestion,
-            'insurance_options': insurance_options,
-            'details': {
-                'strikes': strikes,
-                'expiry': selected_expiry,
-                'default_insurance': default_insurance,
-                'quantity': quantity,
-                'suggestion_status': suggestion.get_status_display(),
-            }
-        }
-
-    except Exception as e:
-        msg = f"❌ Trade suggestion creation failed: {str(e)}"
-        logger.error(msg, exc_info=True)
-        logger.info("=" * 100)
-        return {
-            'success': False,
-            'message': msg,
-            'suggestion': None,
-            'details': {'error': str(e)}
-        }
-
-
 def update_insurance_selection(suggestion_id: int, risk_multiplier: float) -> Dict:
     """
-    Update the insurance strike based on user's risk multiplier selection from UI
+    Update the insurance strike based on user's risk multiplier selection from UI.
 
-    This is called when user adjusts the risk slider in the UI
+    This is called when user adjusts the risk slider in the UI.
 
     Args:
         suggestion_id: TradeSuggestion ID
@@ -960,17 +579,12 @@ def update_insurance_selection(suggestion_id: int, risk_multiplier: float) -> Di
         # Update position details
         position_details['insurance_strike'] = selected_option['insurance_strike']
         position_details['net_premium'] = str(selected_option['net_premium'])
-        position_details['adjusted_max_profit'] = str(selected_option['adjusted_max_profit'])
         position_details['max_loss_on_put_side'] = str(selected_option['max_loss_on_put_side'])
 
         # Update leg 3 (insurance)
         if len(position_details.get('legs', [])) >= 3:
             position_details['legs'][2]['strike'] = selected_option['insurance_strike']
             position_details['legs'][2]['premium'] = str(selected_option['insurance_premium'])
-
-        # Update configurable
-        position_details['configurable']['risk_multiplier']['current'] = selected_option['risk_multiplier']
-        position_details['configurable']['insurance_strike']['current'] = selected_option['insurance_strike']
 
         # Save updates
         suggestion.algorithm_reasoning = reasoning
@@ -1004,130 +618,108 @@ def update_insurance_selection(suggestion_id: int, risk_multiplier: float) -> Di
         }
 
 
-def get_current_nifty_price() -> Decimal:
+# ============================================================================
+# BACKWARD COMPATIBILITY FUNCTIONS
+# ============================================================================
+
+def execute_kotak_broken_iron_condor_entry(
+    account,
+    risk_multiplier: Decimal = DEFAULT_RISK_MULTIPLIER
+) -> Dict:
     """
-    Get current Nifty spot price
+    Complete entry workflow for Kotak Broken Iron Condor Strategy.
+
+    This is the backward-compatible wrapper function.
+
+    Args:
+        account: BrokerAccount instance (Kotak)
+        risk_multiplier: How many times max profit to risk (default 2.0)
 
     Returns:
-        Decimal: Current Nifty price
+        dict: {
+            'success': bool,
+            'message': str,
+            'suggestion': TradeSuggestion or None,
+            'insurance_options': list (if success, for UI selection),
+            'details': dict
+        }
     """
-    try:
-        from apps.brokers.models import HistoricalPrice
-        from datetime import datetime, timedelta
+    strategy = KotakBrokenIronCondorStrategy(account, risk_multiplier)
+    result = strategy.execute_entry()
 
-        latest_price = HistoricalPrice.objects.filter(
-            symbol='NIFTY 50',
-            timestamp__gte=datetime.now() - timedelta(days=1)
-        ).order_by('-timestamp').first()
+    # Add insurance options to the result for UI
+    output = result.to_dict()
 
-        if latest_price:
-            return Decimal(str(latest_price.close))
+    if result.success and result.suggestion:
+        # Generate insurance options for UI selection
+        position_details = result.suggestion.position_details
+        reasoning = result.suggestion.algorithm_reasoning
 
-        logger.warning("Using fallback Nifty price")
-        return Decimal('24000.00')
+        if 'insurance' in reasoning:
+            output['insurance_options'] = get_insurance_strike_options(
+                put_strike=position_details.get('put_strike', 0),
+                max_profit=Decimal(str(reasoning['calculations'].get('total_strangle_premium', '0'))) * 50,
+                quantity=50,
+                spot_price=Decimal(str(reasoning['calculations'].get('spot_price', '24000')))
+            )
 
-    except Exception as e:
-        logger.error(f"Error getting Nifty price: {e}")
-        return Decimal('24000.00')
+    return output
+
+
+def calculate_strikes(spot_price: Decimal, days_to_expiry: int, vix: Decimal) -> Dict:
+    """
+    Calculate OTM call and put strikes for short strangle (same as strangle).
+
+    DEPRECATED: Use apps.strategies.shared.strike_calculator.calculate_strangle_strikes instead.
+    """
+    return calculate_strangle_strikes(spot_price, days_to_expiry, vix)
+
+
+def run_entry_filters() -> Tuple[bool, list, list]:
+    """
+    Execute ALL entry filters for broken iron condor strategy.
+
+    DEPRECATED: Use apps.strategies.shared.entry_filters.run_filters instead.
+    """
+    from apps.strategies.shared.entry_filters import get_default_filters, run_filters
+
+    filters = get_default_filters()
+    all_passed, details = run_filters(filters, logger)
+
+    return all_passed, details.get('filters_passed', []), details.get('filters_failed', [])
+
+
+def get_current_nifty_price() -> Decimal:
+    """
+    Get current Nifty spot price.
+
+    DEPRECATED: Use apps.strategies.shared.market_data.get_nifty_price instead.
+    """
+    return get_nifty_price()
 
 
 def get_current_vix() -> Decimal:
     """
-    Get current India VIX value
+    Get current India VIX value.
 
-    Returns:
-        Decimal: Current VIX value
+    DEPRECATED: Use apps.strategies.shared.market_data.get_vix instead.
     """
-    try:
-        from apps.brokers.models import HistoricalPrice
-        from datetime import datetime, timedelta
-
-        latest_vix = HistoricalPrice.objects.filter(
-            symbol='INDIA VIX',
-            timestamp__gte=datetime.now() - timedelta(days=1)
-        ).order_by('-timestamp').first()
-
-        if latest_vix:
-            return Decimal(str(latest_vix.close))
-
-        logger.warning("Using fallback VIX value")
-        return Decimal('14.50')
-
-    except Exception as e:
-        logger.error(f"Error getting VIX: {e}")
-        return Decimal('14.50')
+    return get_vix()
 
 
-def get_option_premiums(call_strike: int, put_strike: int, expiry_date) -> Tuple[Decimal, Decimal]:
+def get_option_premiums_wrapper(call_strike: int, put_strike: int, expiry_date) -> Tuple[Decimal, Decimal]:
     """
-    Get option premiums for given strikes
+    Get option premiums for given strikes.
 
-    Args:
-        call_strike: Call option strike price
-        put_strike: Put option strike price
-        expiry_date: Expiry date
-
-    Returns:
-        Tuple[Decimal, Decimal]: (call_premium, put_premium)
+    DEPRECATED: Use apps.strategies.shared.market_data.get_option_premiums instead.
     """
-    try:
-        from apps.data.models import OptionChain
-
-        call_option = OptionChain.objects.filter(
-            underlying='NIFTY',
-            strike=call_strike,
-            option_type='CE',
-            expiry_date=expiry_date
-        ).order_by('-created_at').first()
-
-        put_option = OptionChain.objects.filter(
-            underlying='NIFTY',
-            strike=put_strike,
-            option_type='PE',
-            expiry_date=expiry_date
-        ).order_by('-created_at').first()
-
-        call_premium = call_option.ltp if call_option else Decimal('100.0')
-        put_premium = put_option.ltp if put_option else Decimal('100.0')
-
-        logger.info(f"Premiums: {call_strike}CE = ₹{call_premium}, {put_strike}PE = ₹{put_premium}")
-
-        return call_premium, put_premium
-
-    except Exception as e:
-        logger.error(f"Error getting option premiums: {e}")
-        return Decimal('100.0'), Decimal('100.0')
+    return get_option_premiums(call_strike, put_strike, expiry_date)
 
 
 def get_put_option_premium(strike: int, expiry_date) -> Decimal:
     """
-    Get put option premium for insurance strike
+    Get put option premium for insurance strike.
 
-    Args:
-        strike: Put option strike price
-        expiry_date: Expiry date
-
-    Returns:
-        Decimal: Put premium
+    DEPRECATED: Use apps.strategies.shared.market_data.get_put_premium instead.
     """
-    try:
-        from apps.data.models import OptionChain
-
-        put_option = OptionChain.objects.filter(
-            underlying='NIFTY',
-            strike=strike,
-            option_type='PE',
-            expiry_date=expiry_date
-        ).order_by('-created_at').first()
-
-        if put_option:
-            return Decimal(str(put_option.ltp))
-
-        # Estimate premium based on distance from ATM
-        # Further OTM puts are cheaper
-        logger.warning(f"Using estimated premium for {strike}PE")
-        return Decimal('50.0')
-
-    except Exception as e:
-        logger.error(f"Error getting put premium: {e}")
-        return Decimal('50.0')
+    return get_put_premium(strike, expiry_date)

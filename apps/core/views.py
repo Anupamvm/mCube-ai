@@ -63,6 +63,15 @@ def home_page(request):
     return render(request, 'core/home.html', context)
 
 
+@login_required
+def documentation_dashboard(request):
+    """
+    Documentation Dashboard - Comprehensive guide to the mCube Trading System.
+    Provides architecture overview, module documentation, and user guides.
+    """
+    return render(request, 'core/documentation.html')
+
+
 def error_400(request, exception):
     """Custom 400 bad request page - Always succeeds"""
     try:
@@ -2563,7 +2572,7 @@ def test_telegram():
                 'name': 'Send Simple Message',
                 'status': 'pass' if success else 'fail',
                 'message': response if success else f'Send failed: {response}',
-                'trigger_url': '/core/test/trigger-telegram-simple/',
+                'trigger_url': '/system/test/trigger-telegram-simple/',
                 'trigger_label': 'Send Again',
             })
         else:
@@ -2571,7 +2580,7 @@ def test_telegram():
                 'name': 'Send Simple Message',
                 'status': 'warning',
                 'message': 'Skipped - Telegram not configured',
-                'trigger_url': '/core/test/trigger-telegram-simple/',
+                'trigger_url': '/system/test/trigger-telegram-simple/',
                 'trigger_label': 'Test (Configure First)',
             })
     except Exception as e:
@@ -2594,7 +2603,7 @@ def test_telegram():
                 'name': 'Send Priority Message (CRITICAL)',
                 'status': 'pass' if success else 'fail',
                 'message': 'Critical alert sent' if success else f'Failed: {response}',
-                'trigger_url': '/core/test/trigger-telegram-critical/',
+                'trigger_url': '/system/test/trigger-telegram-critical/',
                 'trigger_label': 'Trigger',
             })
         else:
@@ -2602,7 +2611,7 @@ def test_telegram():
                 'name': 'Send Priority Message (CRITICAL)',
                 'status': 'warning',
                 'message': 'Skipped - Telegram not configured',
-                'trigger_url': '/core/test/trigger-telegram-critical/',
+                'trigger_url': '/system/test/trigger-telegram-critical/',
                 'trigger_label': 'Test (Configure First)',
             })
     except Exception as e:
@@ -2636,7 +2645,7 @@ def test_telegram():
                 'name': 'Position Alert - Stop-Loss Hit',
                 'status': 'pass' if success else 'fail',
                 'message': 'SL_HIT alert sent with full position details' if success else f'Failed: {response}',
-                'trigger_url': '/core/test/trigger-telegram-sl-alert/',
+                'trigger_url': '/system/test/trigger-telegram-sl-alert/',
                 'trigger_label': 'Send Alert',
             })
         else:
@@ -2644,7 +2653,7 @@ def test_telegram():
                 'name': 'Position Alert - Stop-Loss Hit',
                 'status': 'warning',
                 'message': 'Skipped - Telegram not configured',
-                'trigger_url': '/core/test/trigger-telegram-sl-alert/',
+                'trigger_url': '/system/test/trigger-telegram-sl-alert/',
                 'trigger_label': 'Test (Configure First)',
             })
     except Exception as e:
@@ -2678,7 +2687,7 @@ def test_telegram():
                 'name': 'Position Alert - Target Hit',
                 'status': 'pass' if success else 'fail',
                 'message': 'TARGET_HIT alert sent' if success else f'Failed: {response}',
-                'trigger_url': '/core/test/trigger-telegram-target-alert/',
+                'trigger_url': '/system/test/trigger-telegram-target-alert/',
                 'trigger_label': 'Send Alert',
             })
         else:
@@ -2686,7 +2695,7 @@ def test_telegram():
                 'name': 'Position Alert - Target Hit',
                 'status': 'warning',
                 'message': 'Skipped - Telegram not configured',
-                'trigger_url': '/core/test/trigger-telegram-target-alert/',
+                'trigger_url': '/system/test/trigger-telegram-target-alert/',
                 'trigger_label': 'Test (Configure First)',
             })
     except Exception as e:
@@ -2719,7 +2728,7 @@ def test_telegram():
                 'name': 'Risk Alert - Warning',
                 'status': 'pass' if success else 'fail',
                 'message': 'Risk warning sent' if success else f'Failed: {response}',
-                'trigger_url': '/core/test/trigger-telegram-risk-alert/',
+                'trigger_url': '/system/test/trigger-telegram-risk-alert/',
                 'trigger_label': 'Send Alert',
             })
         else:
@@ -2727,7 +2736,7 @@ def test_telegram():
                 'name': 'Risk Alert - Warning',
                 'status': 'warning',
                 'message': 'Skipped - Telegram not configured',
-                'trigger_url': '/core/test/trigger-telegram-risk-alert/',
+                'trigger_url': '/system/test/trigger-telegram-risk-alert/',
                 'trigger_label': 'Test (Configure First)',
             })
     except Exception as e:
@@ -2759,7 +2768,7 @@ def test_telegram():
                 'name': 'Risk Alert - Circuit Breaker (Emergency)',
                 'status': 'pass' if success else 'fail',
                 'message': 'Emergency alert sent (trading disabled)' if success else f'Failed: {response}',
-                'trigger_url': '/core/test/trigger-telegram-circuit-breaker/',
+                'trigger_url': '/system/test/trigger-telegram-circuit-breaker/',
                 'trigger_label': 'Send Alert',
             })
         else:
@@ -2767,7 +2776,7 @@ def test_telegram():
                 'name': 'Risk Alert - Circuit Breaker (Emergency)',
                 'status': 'warning',
                 'message': 'Skipped - Telegram not configured',
-                'trigger_url': '/core/test/trigger-telegram-circuit-breaker/',
+                'trigger_url': '/system/test/trigger-telegram-circuit-breaker/',
                 'trigger_label': 'Test (Configure First)',
             })
     except Exception as e:
@@ -2805,7 +2814,7 @@ def test_telegram():
                 'name': 'Daily Trading Summary',
                 'status': 'pass' if success else 'fail',
                 'message': 'Daily summary sent with complete statistics' if success else f'Failed: {response}',
-                'trigger_url': '/core/test/trigger-telegram-summary/',
+                'trigger_url': '/system/test/trigger-telegram-summary/',
                 'trigger_label': 'Send Summary',
             })
         else:
@@ -2813,7 +2822,7 @@ def test_telegram():
                 'name': 'Daily Trading Summary',
                 'status': 'warning',
                 'message': 'Skipped - Telegram not configured',
-                'trigger_url': '/core/test/trigger-telegram-summary/',
+                'trigger_url': '/system/test/trigger-telegram-summary/',
                 'trigger_label': 'Test (Configure First)',
             })
     except Exception as e:
@@ -3666,13 +3675,13 @@ def celery_task_control(request):
         static_schedule = {}
 
     # Initialize any missing tasks in the database (as disabled by default)
-    # and get all task states
+    # and get all task state objects with full details
     try:
         CeleryTaskState.initialize_static_tasks(static_schedule, force=False)
-        task_states = CeleryTaskState.get_all_states()
+        task_state_objects = {s.task_key: s for s in CeleryTaskState.objects.all()}
     except Exception as e:
         logger.warning(f"Could not initialize/get task states: {e}")
-        task_states = {}
+        task_state_objects = {}
 
     # Define task categories with display info
     TASK_CATEGORIES = {
@@ -3737,22 +3746,38 @@ def celery_task_control(request):
         if any(d in key.lower() for d in ['premarket', 'market_open', 'trade_start', 'trade_monitor', 'trade_stop', 'day_close', 'analyze_day']):
             continue
 
-        # Get enabled state (default to False/inactive if not in DB)
-        is_enabled = task_states.get(key, False)
+        # Get task state from database
+        task_state = task_state_objects.get(key)
         queue = config.get('options', {}).get('queue', 'default')
         category = categorize_task(key, queue)
 
-        # Get config fields for this task if available
-        config_info = TASK_CONFIG_FIELDS.get(key, {})
+        # Get default config for display info
+        default_config = TASK_DEFAULT_CONFIG.get(key, {})
+
+        # Build schedule display string
+        if task_state and task_state.use_custom_schedule:
+            schedule_type = task_state.schedule_type
+            if schedule_type == 'crontab':
+                schedule_str = f"{task_state.schedule_hour:02d}:{task_state.schedule_minute:02d}"
+            elif schedule_type == 'interval':
+                schedule_str = f"Every {task_state.interval_seconds}s"
+            elif schedule_type == 'recurring':
+                schedule_str = f"{task_state.recurring_start_hour:02d}:{task_state.recurring_start_minute:02d}-{task_state.recurring_end_hour:02d}:{task_state.recurring_end_minute:02d} (every {task_state.recurring_interval_minutes}m)"
+            else:
+                schedule_str = str(config.get('schedule', 'Unknown'))
+        else:
+            schedule_str = str(config.get('schedule', 'Unknown'))
 
         task_info = {
             'key': key,
             'task': config.get('task', 'Unknown'),
-            'schedule': str(config.get('schedule', 'Unknown')),
+            'schedule': schedule_str,
             'queue': queue,
-            'is_enabled': is_enabled,
-            'config_fields': config_info.get('fields', []),
-            'display_name': config_info.get('display_name', key),
+            'is_enabled': task_state.is_enabled if task_state else False,
+            'display_name': task_state.display_name if task_state and task_state.display_name else default_config.get('display_name', key.replace('-', ' ').title()),
+            'description': task_state.description if task_state and task_state.description else default_config.get('description', ''),
+            'use_custom_schedule': task_state.use_custom_schedule if task_state else False,
+            'schedule_type': task_state.schedule_type if task_state else default_config.get('schedule_type', 'crontab'),
         }
 
         categorized_tasks[category].append(task_info)
@@ -3920,12 +3945,10 @@ def reload_celery_schedule(request):
         return JsonResponse({'success': False, 'error': str(e)}, status=500)
 
 
-# Task configuration field mappings - uses fields from SystemSettings model
-# schedule_type: 'crontab' (fixed time) or 'interval' (recurring)
-# category_flag: The SystemSettings enable flag for this category
-# NOTE: Only includes fields that exist in SystemSettings model. Fields without model backing
-#       will use defaults and won't persist (shown for display purposes).
-TASK_CONFIG_FIELDS = {
+# Task configuration - default schedule info for tasks
+# All tasks now use CeleryTaskState for schedule storage
+# This dict provides display info and default values
+TASK_DEFAULT_CONFIG = {
     # =========================================================================
     # MARKET DATA TASKS
     # =========================================================================
@@ -3934,42 +3957,41 @@ TASK_CONFIG_FIELDS = {
         'description': 'Full morning data synchronization including market data, news, and indices',
         'schedule_type': 'crontab',
         'category': 'data',
-        'category_flag': 'enable_market_data_tasks',
-        'fields': []  # No configurable fields in SystemSettings
+        'default_hour': 7,
+        'default_minute': 0,
+        'default_days': [0, 1, 2, 3, 4],  # Weekdays
     },
     'update-pre-market-data': {
         'display_name': 'Pre-Market Data Update',
         'description': 'Fetches pre-market data before market opens',
         'schedule_type': 'crontab',
         'category': 'data',
-        'category_flag': 'enable_market_data_tasks',
-        'fields': [
-            {'name': 'premarket_update_hour', 'label': 'Hour', 'type': 'number', 'help': 'Hour to run (0-23)', 'min': 0, 'max': 23, 'default': 8},
-            {'name': 'premarket_update_minute', 'label': 'Minute', 'type': 'number', 'help': 'Minute (0-59)', 'min': 0, 'max': 59, 'default': 50},
-        ]
+        'default_hour': 8,
+        'default_minute': 50,
+        'default_days': [0, 1, 2, 3, 4],
     },
     'update-live-market-data': {
         'display_name': 'Live Market Data Update',
         'description': 'Updates live market data during trading hours',
-        'schedule_type': 'interval',
+        'schedule_type': 'recurring',
         'category': 'data',
-        'category_flag': 'enable_market_data_tasks',
-        'fields': [
-            {'name': 'live_data_interval_minutes', 'label': 'Interval', 'type': 'number', 'unit': 'minutes', 'help': 'Update every N minutes', 'min': 1, 'max': 60, 'default': 5},
-            {'name': 'live_data_start_hour', 'label': 'Start Hour', 'type': 'number', 'help': 'Start updating from this hour', 'min': 0, 'max': 23, 'default': 9},
-            {'name': 'live_data_end_hour', 'label': 'End Hour', 'type': 'number', 'help': 'Stop updating after this hour', 'min': 0, 'max': 23, 'default': 15},
-        ]
+        'default_hour': 9,
+        'default_minute': 15,
+        'default_recurring_start_hour': 9,
+        'default_recurring_start_minute': 15,
+        'default_recurring_end_hour': 15,
+        'default_recurring_end_minute': 30,
+        'default_recurring_interval_minutes': 5,
+        'default_days': [0, 1, 2, 3, 4],
     },
     'update-post-market-data': {
         'display_name': 'Post-Market Data Update',
         'description': 'Updates data after market close for end-of-day analysis',
         'schedule_type': 'crontab',
         'category': 'data',
-        'category_flag': 'enable_market_data_tasks',
-        'fields': [
-            {'name': 'postmarket_update_hour', 'label': 'Hour', 'type': 'number', 'help': 'Hour to run (0-23)', 'min': 0, 'max': 23, 'default': 15},
-            {'name': 'postmarket_update_minute', 'label': 'Minute', 'type': 'number', 'help': 'Minute (0-59)', 'min': 0, 'max': 59, 'default': 35},
-        ]
+        'default_hour': 15,
+        'default_minute': 35,
+        'default_days': [0, 1, 2, 3, 4],
     },
 
     # =========================================================================
@@ -3980,78 +4002,96 @@ TASK_CONFIG_FIELDS = {
         'description': 'Prepares system for trading day (loads strategies, checks accounts)',
         'schedule_type': 'crontab',
         'category': 'strategies',
-        'category_flag': 'enable_strategy_tasks',
-        'fields': []  # No configurable fields in SystemSettings - uses fixed schedule
+        'default_hour': 8,
+        'default_minute': 55,
+        'default_days': [0, 1, 2, 3, 4],
     },
     'start-trading-day': {
         'display_name': 'Start Trading Day',
         'description': 'Initiates trading at market open',
         'schedule_type': 'crontab',
         'category': 'strategies',
-        'category_flag': 'enable_strategy_tasks',
-        'fields': []  # No configurable fields - runs at market open
+        'default_hour': 9,
+        'default_minute': 15,
+        'default_days': [0, 1, 2, 3, 4],
     },
     'evaluate-options-strategy': {
         'display_name': 'Evaluate Options Strategy',
         'description': 'Analyzes market conditions and selects options strategies',
         'schedule_type': 'crontab',
         'category': 'strategies',
-        'category_flag': 'enable_strategy_tasks',
-        'fields': []  # No configurable fields
+        'default_hour': 9,
+        'default_minute': 30,
+        'default_days': [0, 1, 2, 3, 4],
     },
     'start-options-trade': {
         'display_name': 'Start Options Trade',
         'description': 'Executes options trades based on strategy evaluation',
         'schedule_type': 'crontab',
         'category': 'strategies',
-        'category_flag': 'enable_strategy_tasks',
-        'fields': []  # No configurable fields
+        'default_hour': 9,
+        'default_minute': 40,
+        'default_days': [0, 1, 2, 3, 4],
     },
     'batch-options-averaging': {
         'display_name': 'Options Averaging (Batch)',
         'description': 'Runs averaging logic for options positions at regular intervals',
         'schedule_type': 'recurring',
         'category': 'strategies',
-        'category_flag': 'enable_strategy_tasks',
-        'fields': []  # Complex recurring - not easily configurable
+        'default_hour': 9,
+        'default_minute': 40,
+        'default_recurring_start_hour': 9,
+        'default_recurring_start_minute': 40,
+        'default_recurring_end_hour': 10,
+        'default_recurring_end_minute': 15,
+        'default_recurring_interval_minutes': 5,
+        'default_days': [0, 1, 2, 3, 4],
     },
     'batch-options-averaging-10am': {
         'display_name': 'Options Averaging (10 AM)',
         'description': 'Continues options averaging after 10 AM',
         'schedule_type': 'recurring',
         'category': 'strategies',
-        'category_flag': 'enable_strategy_tasks',
-        'fields': []  # Complex recurring - not easily configurable
+        'default_hour': 10,
+        'default_minute': 0,
+        'default_recurring_start_hour': 10,
+        'default_recurring_start_minute': 0,
+        'default_recurring_end_hour': 10,
+        'default_recurring_end_minute': 15,
+        'default_recurring_interval_minutes': 5,
+        'default_days': [0, 1, 2, 3, 4],
     },
     'screen-futures-opportunities': {
         'display_name': 'Futures Screening',
         'description': 'Scans for futures trading opportunities',
-        'schedule_type': 'interval',
+        'schedule_type': 'crontab',
         'category': 'strategies',
-        'category_flag': 'enable_strategy_tasks',
-        'fields': [
-            {'name': 'futures_screening_interval_minutes', 'label': 'Interval', 'type': 'number', 'unit': 'minutes', 'help': 'Screen every N minutes', 'min': 5, 'max': 120, 'default': 30},
-            {'name': 'futures_screening_start_hour', 'label': 'Start Hour', 'type': 'number', 'help': 'Start from this hour', 'min': 0, 'max': 23, 'default': 9},
-            {'name': 'futures_screening_end_hour', 'label': 'End Hour', 'type': 'number', 'help': 'Stop after this hour', 'min': 0, 'max': 23, 'default': 14},
-        ]
+        'default_hour': 9,
+        'default_minute': 45,
+        'default_days': [0, 1, 2, 3, 4],
     },
     'check-futures-averaging': {
         'display_name': 'Futures Averaging Check',
         'description': 'Checks and executes averaging for futures positions',
-        'schedule_type': 'interval',
+        'schedule_type': 'recurring',
         'category': 'strategies',
-        'category_flag': 'enable_strategy_tasks',
-        'fields': [
-            {'name': 'futures_averaging_interval_minutes', 'label': 'Interval', 'type': 'number', 'unit': 'minutes', 'help': 'Check every N minutes', 'min': 1, 'max': 60, 'default': 10},
-        ]
+        'default_hour': 9,
+        'default_minute': 0,
+        'default_recurring_start_hour': 9,
+        'default_recurring_start_minute': 0,
+        'default_recurring_end_hour': 15,
+        'default_recurring_end_minute': 0,
+        'default_recurring_interval_minutes': 10,
+        'default_days': [0, 1, 2, 3, 4],
     },
     'close-trading-day': {
         'display_name': 'Close Trading Day',
         'description': 'Closes positions and finalizes trading day',
         'schedule_type': 'crontab',
         'category': 'strategies',
-        'category_flag': 'enable_strategy_tasks',
-        'fields': []  # Fixed schedule - closes before market close
+        'default_hour': 15,
+        'default_minute': 25,
+        'default_days': [0, 1, 2, 3, 4],
     },
 
     # =========================================================================
@@ -4062,30 +4102,24 @@ TASK_CONFIG_FIELDS = {
         'description': 'Real-time monitoring of all open positions',
         'schedule_type': 'interval',
         'category': 'monitoring',
-        'category_flag': 'enable_position_monitoring',
-        'fields': [
-            {'name': 'monitor_positions_interval_seconds', 'label': 'Interval', 'type': 'number', 'unit': 'seconds', 'help': 'Monitor every N seconds', 'min': 5, 'max': 300, 'default': 10},
-        ]
+        'default_interval_seconds': 10,
+        'default_days': [0, 1, 2, 3, 4],
     },
     'update-position-pnl': {
         'display_name': 'P&L Update',
         'description': 'Updates profit/loss for all positions',
         'schedule_type': 'interval',
         'category': 'monitoring',
-        'category_flag': 'enable_position_monitoring',
-        'fields': [
-            {'name': 'update_pnl_interval_seconds', 'label': 'Interval', 'type': 'number', 'unit': 'seconds', 'help': 'Update P&L every N seconds', 'min': 5, 'max': 300, 'default': 15},
-        ]
+        'default_interval_seconds': 15,
+        'default_days': [0, 1, 2, 3, 4],
     },
     'check-exit-conditions': {
         'display_name': 'Exit Conditions Check',
         'description': 'Checks stop-loss, target, and other exit conditions',
         'schedule_type': 'interval',
         'category': 'monitoring',
-        'category_flag': 'enable_position_monitoring',
-        'fields': [
-            {'name': 'check_exit_interval_seconds', 'label': 'Interval', 'type': 'number', 'unit': 'seconds', 'help': 'Check exits every N seconds', 'min': 10, 'max': 300, 'default': 30},
-        ]
+        'default_interval_seconds': 30,
+        'default_days': [0, 1, 2, 3, 4],
     },
 
     # =========================================================================
@@ -4096,20 +4130,16 @@ TASK_CONFIG_FIELDS = {
         'description': 'Monitors risk limits across all trading accounts',
         'schedule_type': 'interval',
         'category': 'risk',
-        'category_flag': 'enable_risk_monitoring',
-        'fields': [
-            {'name': 'risk_check_interval_seconds', 'label': 'Interval', 'type': 'number', 'unit': 'seconds', 'help': 'Check risk every N seconds', 'min': 30, 'max': 600, 'default': 60},
-        ]
+        'default_interval_seconds': 60,
+        'default_days': [0, 1, 2, 3, 4],
     },
     'monitor-circuit-breakers': {
         'display_name': 'Circuit Breaker Monitor',
         'description': 'Monitors market circuit breakers and trading halts',
         'schedule_type': 'interval',
         'category': 'risk',
-        'category_flag': 'enable_risk_monitoring',
-        'fields': [
-            {'name': 'circuit_breaker_interval_seconds', 'label': 'Interval', 'type': 'number', 'unit': 'seconds', 'help': 'Monitor every N seconds', 'min': 10, 'max': 300, 'default': 30},
-        ]
+        'default_interval_seconds': 30,
+        'default_days': [0, 1, 2, 3, 4],
     },
 
     # =========================================================================
@@ -4120,37 +4150,41 @@ TASK_CONFIG_FIELDS = {
         'description': 'Generates end-of-day profit/loss report',
         'schedule_type': 'crontab',
         'category': 'reports',
-        'category_flag': 'enable_reporting_tasks',
-        'fields': [
-            {'name': 'daily_pnl_report_hour', 'label': 'Hour', 'type': 'number', 'help': 'Hour to generate report (0-23)', 'min': 0, 'max': 23, 'default': 16},
-            {'name': 'daily_pnl_report_minute', 'label': 'Minute', 'type': 'number', 'help': 'Minute (0-59)', 'min': 0, 'max': 59, 'default': 0},
-        ]
+        'default_hour': 16,
+        'default_minute': 0,
+        'default_days': [0, 1, 2, 3, 4],
     },
     'sync-benchmark-data': {
         'display_name': 'Sync Benchmark Data',
         'description': 'Syncs benchmark indices for performance comparison',
         'schedule_type': 'crontab',
         'category': 'reports',
-        'category_flag': 'enable_reporting_tasks',
-        'fields': []  # No configurable fields in SystemSettings
+        'default_hour': 16,
+        'default_minute': 0,
+        'default_days': [0, 1, 2, 3, 4],
     },
     'daily-data-aggregation': {
         'display_name': 'Daily Data Aggregation',
         'description': 'Aggregates daily trading data for analytics',
         'schedule_type': 'crontab',
         'category': 'reports',
-        'category_flag': 'enable_reporting_tasks',
-        'fields': []  # No configurable fields in SystemSettings
+        'default_hour': 16,
+        'default_minute': 30,
+        'default_days': [0, 1, 2, 3, 4],
     },
     'update-equity-curves': {
         'display_name': 'Update Equity Curves',
         'description': 'Updates equity curves for portfolio tracking',
         'schedule_type': 'crontab',
         'category': 'reports',
-        'category_flag': 'enable_reporting_tasks',
-        'fields': []  # No configurable fields in SystemSettings
+        'default_hour': 17,
+        'default_minute': 0,
+        'default_days': [0, 1, 2, 3, 4],
     },
 }
+
+# For backwards compatibility
+TASK_CONFIG_FIELDS = TASK_DEFAULT_CONFIG
 
 
 @login_required
@@ -4162,74 +4196,102 @@ def get_task_config(request):
     Query params:
         task_key: The task key to get configuration for
 
-    Returns JSON with fields definition and current values from SystemSettings.
+    Returns JSON with schedule configuration from CeleryTaskState.
+    All tasks are now fully configurable with timing and repeatability options.
     """
-    from apps.core.models import SystemSettings
+    from apps.core.models import CeleryTaskState
 
     task_key = request.GET.get('task_key', '')
 
     if not task_key:
         return JsonResponse({'success': False, 'error': 'task_key required'}, status=400)
 
-    config_info = TASK_CONFIG_FIELDS.get(task_key)
+    # Get default config info
+    default_config = TASK_DEFAULT_CONFIG.get(task_key, {})
+    schedule_type = default_config.get('schedule_type', 'crontab')
 
-    if not config_info:
-        return JsonResponse({
-            'success': True,
-            'task_key': task_key,
-            'display_name': task_key,
-            'description': '',
-            'schedule_type': 'unknown',
-            'category': '',
-            'category_flag': '',
-            'fields': [],
-            'values': {},
-            'message': 'No configurable options for this task'
-        })
-
-    # Get current values from SystemSettings
+    # Try to get existing state from database
     try:
-        settings = SystemSettings.get_settings()
-        values = {}
-        for field in config_info['fields']:
-            field_name = field['name']
-            field_type = field.get('type', 'number')
+        task_state = CeleryTaskState.objects.get(task_key=task_key)
+        use_custom = task_state.use_custom_schedule
 
-            if hasattr(settings, field_name):
-                val = getattr(settings, field_name)
-                # Handle JSON fields (like days of week)
-                if field_type == 'days' and isinstance(val, str):
-                    import json
-                    try:
-                        val = json.loads(val)
-                    except:
-                        val = field.get('default', [0, 1, 2, 3, 4])
-                values[field_name] = val
-            else:
-                values[field_name] = field.get('default', 0 if field_type == 'number' else [])
+        # Get current values from task state
+        values = {
+            'schedule_type': task_state.schedule_type,
+            'schedule_hour': task_state.schedule_hour,
+            'schedule_minute': task_state.schedule_minute,
+            'interval_seconds': task_state.interval_seconds,
+            'recurring_start_hour': task_state.recurring_start_hour,
+            'recurring_start_minute': task_state.recurring_start_minute,
+            'recurring_end_hour': task_state.recurring_end_hour,
+            'recurring_end_minute': task_state.recurring_end_minute,
+            'recurring_interval_minutes': task_state.recurring_interval_minutes,
+            'days_of_week': task_state.days_of_week or default_config.get('default_days', [0, 1, 2, 3, 4]),
+            'use_custom_schedule': use_custom,
+        }
 
-        # Get category enable flag value
-        category_flag = config_info.get('category_flag', '')
-        if category_flag and hasattr(settings, category_flag):
-            values[category_flag] = getattr(settings, category_flag)
+        # If not using custom schedule, use defaults
+        if not use_custom:
+            values['schedule_hour'] = default_config.get('default_hour', 9)
+            values['schedule_minute'] = default_config.get('default_minute', 0)
+            values['interval_seconds'] = default_config.get('default_interval_seconds', 60)
+            values['recurring_start_hour'] = default_config.get('default_recurring_start_hour', 9)
+            values['recurring_start_minute'] = default_config.get('default_recurring_start_minute', 0)
+            values['recurring_end_hour'] = default_config.get('default_recurring_end_hour', 15)
+            values['recurring_end_minute'] = default_config.get('default_recurring_end_minute', 30)
+            values['recurring_interval_minutes'] = default_config.get('default_recurring_interval_minutes', 5)
 
-    except Exception as e:
-        logger.error(f"Error getting SystemSettings: {e}")
-        values = {}
-        for f in config_info['fields']:
-            default = f.get('default', 0 if f.get('type') == 'number' else [])
-            values[f['name']] = default
+    except CeleryTaskState.DoesNotExist:
+        # Task not in database yet, use defaults
+        use_custom = False
+        values = {
+            'schedule_type': schedule_type,
+            'schedule_hour': default_config.get('default_hour', 9),
+            'schedule_minute': default_config.get('default_minute', 0),
+            'interval_seconds': default_config.get('default_interval_seconds', 60),
+            'recurring_start_hour': default_config.get('default_recurring_start_hour', 9),
+            'recurring_start_minute': default_config.get('default_recurring_start_minute', 0),
+            'recurring_end_hour': default_config.get('default_recurring_end_hour', 15),
+            'recurring_end_minute': default_config.get('default_recurring_end_minute', 30),
+            'recurring_interval_minutes': default_config.get('default_recurring_interval_minutes', 5),
+            'days_of_week': default_config.get('default_days', [0, 1, 2, 3, 4]),
+            'use_custom_schedule': False,
+        }
+
+    # Build fields based on schedule type
+    fields = []
+
+    if schedule_type == 'crontab':
+        fields = [
+            {'name': 'schedule_hour', 'label': 'Hour', 'type': 'number', 'help': 'Hour to run (0-23, IST)', 'min': 0, 'max': 23},
+            {'name': 'schedule_minute', 'label': 'Minute', 'type': 'number', 'help': 'Minute to run (0-59)', 'min': 0, 'max': 59},
+            {'name': 'days_of_week', 'label': 'Days of Week', 'type': 'days', 'help': 'Select days to run'},
+        ]
+    elif schedule_type == 'interval':
+        fields = [
+            {'name': 'interval_seconds', 'label': 'Interval', 'type': 'number', 'unit': 'seconds', 'help': 'Run every N seconds', 'min': 1, 'max': 86400},
+            {'name': 'days_of_week', 'label': 'Days of Week', 'type': 'days', 'help': 'Select days to run'},
+        ]
+    elif schedule_type == 'recurring':
+        fields = [
+            {'name': 'recurring_start_hour', 'label': 'Start Hour', 'type': 'number', 'help': 'Window start hour (0-23)', 'min': 0, 'max': 23},
+            {'name': 'recurring_start_minute', 'label': 'Start Minute', 'type': 'number', 'help': 'Window start minute (0-59)', 'min': 0, 'max': 59},
+            {'name': 'recurring_end_hour', 'label': 'End Hour', 'type': 'number', 'help': 'Window end hour (0-23)', 'min': 0, 'max': 23},
+            {'name': 'recurring_end_minute', 'label': 'End Minute', 'type': 'number', 'help': 'Window end minute (0-59)', 'min': 0, 'max': 59},
+            {'name': 'recurring_interval_minutes', 'label': 'Interval', 'type': 'number', 'unit': 'minutes', 'help': 'Run every N minutes within window', 'min': 1, 'max': 60},
+            {'name': 'days_of_week', 'label': 'Days of Week', 'type': 'days', 'help': 'Select days to run'},
+        ]
 
     return JsonResponse({
         'success': True,
         'task_key': task_key,
-        'display_name': config_info.get('display_name', task_key),
-        'description': config_info.get('description', ''),
-        'schedule_type': config_info.get('schedule_type', 'crontab'),
-        'category': config_info.get('category', ''),
-        'category_flag': config_info.get('category_flag', ''),
-        'fields': config_info['fields'],
+        'display_name': default_config.get('display_name', task_key.replace('-', ' ').title()),
+        'description': default_config.get('description', ''),
+        'schedule_type': schedule_type,
+        'category': default_config.get('category', ''),
+        'fields': fields,
         'values': values,
+        'use_custom_schedule': use_custom,
     })
 
 
@@ -4238,111 +4300,111 @@ def get_task_config(request):
 @require_POST
 def save_task_config(request):
     """
-    Save configuration for a specific task and restart Celery Beat.
+    Save schedule configuration for a specific task and restart Celery Beat.
 
     POST params:
         task_key: The task key
-        <field_name>: Field values to update
+        schedule_hour, schedule_minute: For crontab tasks
+        interval_seconds: For interval tasks
+        recurring_*: For recurring window tasks
+        days_of_week[]: Days to run
 
-    Updates SystemSettings and restarts Celery Beat to apply changes.
+    Updates CeleryTaskState and restarts Celery Beat to apply changes.
     """
-    from apps.core.models import SystemSettings
+    from apps.core.models import CeleryTaskState
     from django.contrib import messages
+    from django.utils import timezone
 
     task_key = request.POST.get('task_key', '')
 
     if not task_key:
         return JsonResponse({'success': False, 'error': 'task_key required'}, status=400)
 
-    config_info = TASK_CONFIG_FIELDS.get(task_key)
-
-    if not config_info:
-        return JsonResponse({'success': False, 'error': 'Task has no configurable options'}, status=400)
+    default_config = TASK_DEFAULT_CONFIG.get(task_key, {})
+    schedule_type = default_config.get('schedule_type', 'crontab')
 
     try:
-        import json
-        settings = SystemSettings.get_settings()
+        # Get or create task state
+        task_state, created = CeleryTaskState.objects.get_or_create(
+            task_key=task_key,
+            defaults={
+                'display_name': default_config.get('display_name', task_key.replace('-', ' ').title()),
+                'description': default_config.get('description', ''),
+                'schedule_type': schedule_type,
+                'category': default_config.get('category', ''),
+            }
+        )
+
         updated_fields = []
 
-        for field in config_info['fields']:
-            field_name = field['name']
-            field_type = field.get('type', 'number')
+        # Handle days of week
+        days_key = 'days_of_week[]'
+        if days_key in request.POST or 'days_of_week' in request.POST:
+            days_list = request.POST.getlist(days_key) or request.POST.getlist('days_of_week')
+            try:
+                new_days = sorted(set(int(d) for d in days_list if d.isdigit()))
+                if task_state.days_of_week != new_days:
+                    task_state.days_of_week = new_days
+                    updated_fields.append('days_of_week')
+            except Exception as e:
+                logger.warning(f"Invalid days value: {e}")
 
-            if field_type == 'days':
-                # Handle days of week as a list from checkboxes
-                days_key = f"{field_name}[]"
-                if days_key in request.POST or field_name in request.POST:
-                    # Get list of selected days
-                    days_list = request.POST.getlist(days_key) or request.POST.getlist(field_name)
-                    try:
-                        new_value = [int(d) for d in days_list if d.isdigit()]
-                        new_value = sorted(set(new_value))  # Remove duplicates and sort
+        # Handle schedule fields based on type
+        int_fields = [
+            'schedule_hour', 'schedule_minute', 'interval_seconds',
+            'recurring_start_hour', 'recurring_start_minute',
+            'recurring_end_hour', 'recurring_end_minute', 'recurring_interval_minutes'
+        ]
 
-                        # Store as JSON string if the field expects it
-                        if hasattr(settings, field_name):
-                            old_value = getattr(settings, field_name)
-                            # Convert old value to list for comparison
-                            if isinstance(old_value, str):
-                                try:
-                                    old_value = json.loads(old_value)
-                                except:
-                                    old_value = []
+        field_limits = {
+            'schedule_hour': (0, 23),
+            'schedule_minute': (0, 59),
+            'interval_seconds': (1, 86400),
+            'recurring_start_hour': (0, 23),
+            'recurring_start_minute': (0, 59),
+            'recurring_end_hour': (0, 23),
+            'recurring_end_minute': (0, 59),
+            'recurring_interval_minutes': (1, 60),
+        }
 
-                            if old_value != new_value:
-                                # Store as JSON string
-                                setattr(settings, field_name, json.dumps(new_value))
-                                updated_fields.append(field_name)
-                                logger.info(f"Task config updated: {field_name} = {new_value} (was {old_value})")
-                    except Exception as e:
-                        logger.warning(f"Invalid days value for {field_name}: {e}")
-
-            elif field_name in request.POST:
+        for field_name in int_fields:
+            if field_name in request.POST:
                 try:
                     new_value = int(request.POST[field_name])
 
-                    # Validate min/max
-                    if 'min' in field and new_value < field['min']:
-                        new_value = field['min']
-                    if 'max' in field and new_value > field['max']:
-                        new_value = field['max']
+                    # Apply limits
+                    if field_name in field_limits:
+                        min_val, max_val = field_limits[field_name]
+                        new_value = max(min_val, min(max_val, new_value))
 
-                    if hasattr(settings, field_name):
-                        old_value = getattr(settings, field_name, None)
-                        if old_value != new_value:
-                            setattr(settings, field_name, new_value)
-                            updated_fields.append(field_name)
-                            logger.info(f"Task config updated: {field_name} = {new_value} (was {old_value})")
+                    old_value = getattr(task_state, field_name, None)
+                    if old_value != new_value:
+                        setattr(task_state, field_name, new_value)
+                        updated_fields.append(field_name)
+                        logger.info(f"Task {task_key}: {field_name} = {new_value} (was {old_value})")
                 except (ValueError, TypeError) as e:
                     logger.warning(f"Invalid value for {field_name}: {request.POST[field_name]}")
 
-        # Handle category enable flag
-        category_flag = config_info.get('category_flag', '')
-        if category_flag and category_flag in request.POST:
-            try:
-                new_value = request.POST[category_flag].lower() in ('true', '1', 'on', 'yes')
-                if hasattr(settings, category_flag):
-                    old_value = getattr(settings, category_flag, False)
-                    if old_value != new_value:
-                        setattr(settings, category_flag, new_value)
-                        updated_fields.append(category_flag)
-                        logger.info(f"Category flag updated: {category_flag} = {new_value}")
-            except Exception as e:
-                logger.warning(f"Invalid category flag value: {e}")
-
         if updated_fields:
-            settings.save()
-            logger.info(f"SystemSettings saved by {request.user.username} for task {task_key}: {updated_fields}")
+            task_state.use_custom_schedule = True
+            task_state.schedule_type = schedule_type
+            task_state.last_toggled_at = timezone.now()
+            task_state.last_toggled_by = request.user.username
+            task_state.save()
+
+            logger.info(f"Task config saved by {request.user.username} for {task_key}: {updated_fields}")
 
             # Restart Celery Beat to pick up the changes
             celery_result = ensure_celery_running()
 
-            messages.success(request, f"Configuration for '{config_info.get('display_name', task_key)}' saved and Celery restarted.")
+            display_name = default_config.get('display_name', task_key)
+            messages.success(request, f"Schedule for '{display_name}' saved. Celery Beat restarted.")
 
             return JsonResponse({
                 'success': True,
                 'task_key': task_key,
                 'updated_fields': updated_fields,
-                'message': 'Configuration saved and Celery restarted',
+                'message': 'Schedule saved and Celery restarted',
                 'celery': {
                     'success': celery_result.get('success', False),
                     'worker_status': celery_result.get('worker_status', 'unknown'),
@@ -5026,27 +5088,51 @@ def background_tasks_control(request):
     static_schedule = get_static_schedule()
 
     # Initialize any missing tasks in the database (as disabled by default)
-    # and get all task states
+    # and get all task states with full details
     try:
         CeleryTaskState.initialize_static_tasks(static_schedule, force=False)
-        task_states = CeleryTaskState.get_all_states()
+        # Get full task state objects, keyed by task_key
+        task_state_objects = {s.task_key: s for s in CeleryTaskState.objects.all()}
     except Exception as e:
         logger.warning(f"Could not initialize/get task states: {e}")
-        task_states = {}
+        task_state_objects = {}
 
     # Build static tasks list (excluding dynamic ones)
     celery_static_tasks = []
     for key, config in static_schedule.items():
         if any(d in key.lower() for d in ['premarket', 'market_open', 'trade_start', 'trade_monitor', 'trade_stop', 'day_close', 'analyze_day']):
             continue
-        # Default to False (inactive) if not in database
-        is_active = task_states.get(key, False)
+
+        # Get task state from database
+        task_state = task_state_objects.get(key)
+
+        # Get default config for display info
+        default_config = TASK_DEFAULT_CONFIG.get(key, {})
+
+        # Build schedule display string based on custom settings or defaults
+        if task_state and task_state.use_custom_schedule:
+            schedule_type = task_state.schedule_type
+            if schedule_type == 'crontab':
+                schedule_str = f"{task_state.schedule_hour:02d}:{task_state.schedule_minute:02d}"
+            elif schedule_type == 'interval':
+                schedule_str = f"Every {task_state.interval_seconds}s"
+            elif schedule_type == 'recurring':
+                schedule_str = f"{task_state.recurring_start_hour:02d}:{task_state.recurring_start_minute:02d}-{task_state.recurring_end_hour:02d}:{task_state.recurring_end_minute:02d} (every {task_state.recurring_interval_minutes}m)"
+            else:
+                schedule_str = str(config.get('schedule', 'Unknown'))
+        else:
+            schedule_str = str(config.get('schedule', 'Unknown'))
+
         celery_static_tasks.append({
             'key': key,
             'task': config.get('task', 'Unknown'),
-            'schedule': str(config.get('schedule', 'Unknown')),
+            'schedule': schedule_str,
             'queue': config.get('options', {}).get('queue', 'default'),
-            'is_active': is_active,
+            'is_active': task_state.is_enabled if task_state else False,
+            'display_name': task_state.display_name if task_state and task_state.display_name else default_config.get('display_name', key.replace('-', ' ').title()),
+            'description': task_state.description if task_state and task_state.description else default_config.get('description', ''),
+            'use_custom_schedule': task_state.use_custom_schedule if task_state else False,
+            'schedule_type': task_state.schedule_type if task_state else default_config.get('schedule_type', 'crontab'),
         })
 
     # Check Celery worker status

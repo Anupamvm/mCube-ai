@@ -351,6 +351,81 @@ const UIBuilders = (function() {
     }
 
     /**
+     * Show a loading overlay
+     * @param {Object} config - Overlay configuration
+     * @param {string} config.title - Title text
+     * @param {string} config.message - Message text
+     */
+    function showLoadingOverlay(config) {
+        // Remove existing overlay if any
+        hideLoadingOverlay();
+
+        const overlay = document.createElement('div');
+        overlay.id = 'loadingOverlay';
+        overlay.style.cssText = `
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.7);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 10001;
+        `;
+
+        overlay.innerHTML = `
+            <div style="
+                background: white;
+                padding: 30px 40px;
+                border-radius: 12px;
+                text-align: center;
+                max-width: 400px;
+                box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+            ">
+                <div style="
+                    width: 50px;
+                    height: 50px;
+                    border: 4px solid #e5e7eb;
+                    border-top-color: #2563eb;
+                    border-radius: 50%;
+                    animation: spin 1s linear infinite;
+                    margin: 0 auto 20px;
+                "></div>
+                <h3 style="margin: 0 0 10px; color: #1f2937; font-size: 1.25rem;">${config.title || 'Loading...'}</h3>
+                <p style="margin: 0; color: #6b7280; font-size: 0.9rem;">${config.message || 'Please wait...'}</p>
+            </div>
+        `;
+
+        // Add keyframes for spinner animation if not already present
+        if (!document.getElementById('loadingOverlayStyles')) {
+            const style = document.createElement('style');
+            style.id = 'loadingOverlayStyles';
+            style.textContent = `
+                @keyframes spin {
+                    to { transform: rotate(360deg); }
+                }
+            `;
+            document.head.appendChild(style);
+        }
+
+        document.body.appendChild(overlay);
+        document.body.style.overflow = 'hidden';
+    }
+
+    /**
+     * Hide the loading overlay
+     */
+    function hideLoadingOverlay() {
+        const overlay = document.getElementById('loadingOverlay');
+        if (overlay) {
+            overlay.remove();
+            document.body.style.overflow = '';
+        }
+    }
+
+    /**
      * Show a notification
      * @param {Object} config - Notification configuration
      * @param {string} config.type - Type: success, error, warning, info
@@ -432,7 +507,9 @@ const UIBuilders = (function() {
         showModal,
         closeModal,
         switchTab,
-        showNotification
+        showNotification,
+        showLoadingOverlay,
+        hideLoadingOverlay
     };
 })();
 

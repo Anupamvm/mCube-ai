@@ -181,20 +181,26 @@
                     {% endfor %}
                 </select>
             </div>
-            <div class="col-md-3">
-                <label class="form-label">Account</label>
-                <select name="account_id" class="form-select" onchange="this.form.submit()">
-                    <option value="">All Accounts</option>
-                    {% for account in accounts %}
-                    <option value="{{ account.id }}" {% if account.id == selected_account_id %}selected{% endif %}>
-                        {{ account.account_name }}
-                    </option>
-                    {% endfor %}
+            <div class="col-md-2">
+                <label class="form-label">Broker</label>
+                <select name="broker" class="form-select" onchange="this.form.submit()">
+                    <option value="">All Brokers</option>
+                    <option value="KOTAK" {% if selected_broker == 'KOTAK' %}selected{% endif %}>Kotak</option>
+                    <option value="ICICI" {% if selected_broker == 'ICICI' %}selected{% endif %}>ICICI</option>
                 </select>
             </div>
-            <div class="col-md-6 text-end">
+            <div class="col-md-2">
+                <label class="form-label">Segment</label>
+                <select name="segment" class="form-select" onchange="this.form.submit()">
+                    <option value="">All Segments</option>
+                    <option value="OPTIONS" {% if selected_segment == 'OPTIONS' %}selected{% endif %}>Options</option>
+                    <option value="FUTURES" {% if selected_segment == 'FUTURES' %}selected{% endif %}>Futures</option>
+                    <option value="EQUITY" {% if selected_segment == 'EQUITY' %}selected{% endif %}>Equity</option>
+                </select>
+            </div>
+            <div class="col-md-5 text-end">
                 <span class="text-muted">
-                    {{ report.fy_label }} | {{ report.total_trades }} trades (TakenTrade)
+                    {{ report.fy_label }} | {{ contract_pnl_count }} contracts from broker P&L data
                 </span>
             </div>
         </form>
@@ -501,10 +507,9 @@
                         <div id="broker-summary-content">
                             <p class="text-muted">Loading broker trade summary...</p>
                         </div>
-                        <div class="alert alert-warning mt-3 small mb-0">
-                            <strong>Note:</strong> This shows raw trade data synced from broker APIs.
-                            The P&L shown above is calculated from <strong>TakenTrade</strong> records (trades tracked through the suggestion system).
-                            <br>To match broker trades with your tracked trades, go to <a href="{% url 'trading:trade_history' %}">Trade History</a>.
+                        <div class="alert alert-info mt-3 small mb-0">
+                            <strong>Note:</strong> The performance metrics above are calculated from <strong>BrokerContractPnL</strong> data (imported from broker P&L statements/CSVs).
+                            <br>This shows your actual trading P&L from broker records, not just mCube-initiated trades.
                         </div>
                     </div>
                 </div>

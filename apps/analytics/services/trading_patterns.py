@@ -20,7 +20,7 @@ from collections import defaultdict
 
 from django.db import models
 from django.db.models import Sum, Count, Avg, Max, Min, F, Q, Case, When, Value
-from django.db.models.functions import ExtractWeekDay, ExtractHour, ExtractMonth, TruncMonth
+from django.db.models.functions import ExtractWeekDay, ExtractHour, ExtractMonth, TruncMonth, Coalesce
 from django.utils import timezone
 
 logger = logging.getLogger(__name__)
@@ -117,6 +117,10 @@ class TradingPatternsAnalyzer:
             Dict with total trades, win rate, profit factor, etc.
         """
         qs = self.get_base_queryset()
+
+        # Debug logging
+        total_count = qs.count()
+        logger.info(f"[Overview Stats] Queryset count: {total_count}, broker={self.broker}, fy={self.fy}, segment={self.segment}")
 
         stats = qs.aggregate(
             total_trades=Count('id'),
@@ -522,8 +526,10 @@ class TradingPatternsAnalyzer:
         qs = self.get_base_queryset()
 
         # Get monthly performance
-        monthly = qs.filter(expiry_date__isnull=False).annotate(
-            month=TruncMonth('expiry_date')
+        # Use Coalesce to fall back to created_at when expiry_date is NULL
+        # This ensures older FY data (which may lack expiry_date) is still included
+        monthly = qs.annotate(
+            month=TruncMonth(Coalesce('expiry_date', 'created_at'))
         ).values('month').annotate(
             pnl=Sum('net_pnl'),
             trades=Count('id'),
@@ -860,16 +866,58 @@ class TradingPatternsAnalyzer:
         Returns:
             Dict with all pattern data
         """
-        return {
-            'overview': self.get_overview_stats(),
-            'monthly': self.get_monthly_analysis(),
-            'symbols': self.get_symbol_performance(),
-            'segments': self.get_segment_analysis(),
-            'brokers': self.get_broker_comparison(),
-            'streaks': self.get_streak_analysis(),
-            'distribution': self.get_pnl_distribution(),
-            'consistency': self.get_consistency_metrics(),
-        }
+        result = {}
+
+        # Get each section with error handling
+        try:
+            result['overview'] = self.get_overview_stats()
+        except Exception as e:
+            logger.error(f"Error getting overview stats: {e}", exc_info=True)
+            result['overview'] = {}
+
+        try:
+            result['monthly'] = self.get_monthly_analysis()
+        except Exception as e:
+            logger.error(f"Error getting monthly analysis: {e}")
+            result['monthly'] = []
+
+        try:
+            result['symbols'] = self.get_symbol_performance()
+        except Exception as e:
+            logger.error(f"Error getting symbol performance: {e}")
+            result['symbols'] = {'best': [], 'worst': [], 'most_traded': []}
+
+        try:
+            result['segments'] = self.get_segment_analysis()
+        except Exception as e:
+            logger.error(f"Error getting segment analysis: {e}")
+            result['segments'] = []
+
+        try:
+            result['brokers'] = self.get_broker_comparison()
+        except Exception as e:
+            logger.error(f"Error getting broker comparison: {e}")
+            result['brokers'] = []
+
+        try:
+            result['streaks'] = self.get_streak_analysis()
+        except Exception as e:
+            logger.error(f"Error getting streak analysis: {e}")
+            result['streaks'] = {}
+
+        try:
+            result['distribution'] = self.get_pnl_distribution()
+        except Exception as e:
+            logger.error(f"Error getting pnl distribution: {e}")
+            result['distribution'] = {'buckets': [], 'stats': {}}
+
+        try:
+            result['consistency'] = self.get_consistency_metrics()
+        except Exception as e:
+            logger.error(f"Error getting consistency metrics: {e}")
+            result['consistency'] = {}
+
+        return result
 
 
 def get_trading_patterns(broker: str = None, fy: str = None) -> Dict[str, Any]:

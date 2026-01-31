@@ -2471,3 +2471,149 @@ def market_news_dashboard(request):
 
     # For regular page load, render the template (data will be loaded via AJAX)
     return render(request, 'trading/market_news_dashboard.html', context)
+
+
+@login_required
+def stream_market_news(request):
+    """
+    Stream market news analysis using Server-Sent Events (SSE).
+
+    Articles are analyzed in batches and sent to the client progressively,
+    allowing the UI to display results as they become available.
+
+    Returns:
+        StreamingHttpResponse with SSE events
+    """
+    from apps.data.services.gnews_client import get_gnews_client
+    from apps.llm.services.news_impact_analyzer import get_news_impact_analyzer
+    from apps.data.models import NewsArticle
+    from datetime import datetime
+    from django.utils import timezone as django_timezone
+
+    def generate_events():
+        try:
+            logger.info("[Market News Stream] Starting streaming news analysis")
+
+            # Send initial status
+            yield f"data: {json.dumps({'type': 'status', 'message': 'Fetching market news...'})}\n\n"
+
+            # Fetch market news from GNews API
+            gnews = get_gnews_client()
+            news_result = gnews.fetch_market_news(
+                max_results_per_keyword=8,
+                use_cache=True
+            )
+
+            if not news_result.get('success'):
+                yield f"data: {json.dumps({'type': 'error', 'error': news_result.get('error', 'Failed to fetch news')})}\n\n"
+                return
+
+            articles = news_result.get('articles', [])
+            keywords_used = news_result.get('keywords_used', [])
+            logger.info(f"[Market News Stream] Fetched {len(articles)} articles, starting analysis...")
+
+            yield f"data: {json.dumps({'type': 'status', 'message': f'Analyzing {len(articles)} articles...', 'total': len(articles)})}\n\n"
+
+            # Analyze articles with streaming
+            analyzer = get_news_impact_analyzer()
+            all_analyzed = []
+
+            for batch_result in analyzer.analyze_market_news_streaming(
+                articles=articles,
+                batch_size=5,
+                top_n=20
+            ):
+                if batch_result['type'] == 'batch':
+                    # Send batch of articles
+                    all_analyzed.extend(batch_result['articles'])
+                    yield f"data: {json.dumps(batch_result)}\n\n"
+
+                elif batch_result['type'] == 'complete':
+                    # Save articles to database
+                    saved_count = 0
+                    for article in batch_result['articles']:
+                        try:
+                            published_at = article.get('publishedAt')
+                            if published_at:
+                                published_dt = datetime.fromisoformat(published_at.replace('Z', '+00:00'))
+                            else:
+                                published_dt = django_timezone.now()
+
+                            existing = NewsArticle.objects.filter(url=article.get('url', '')).first()
+                            if existing:
+                                existing.sentiment_score = article.get('impact_score', 0)
+                                existing.sentiment_label = 'NEGATIVE' if article.get('impact_score', 0) < -0.3 else ('POSITIVE' if article.get('impact_score', 0) > 0.3 else 'NEUTRAL')
+                                existing.impact_reasoning = article.get('impact_reasoning', '')
+                                existing.market_direction = article.get('market_direction', 'NEUTRAL')
+                                existing.relevance_score = article.get('relevance', 0)
+                                existing.impact_category = article.get('impact_category', '')
+                                existing.impact_analysis = {
+                                    'impact_score': article.get('impact_score', 0),
+                                    'impact_label': article.get('impact_label', 'NEUTRAL'),
+                                    'impact_reasoning': article.get('impact_reasoning', ''),
+                                    'market_direction': article.get('market_direction', 'NEUTRAL'),
+                                    'relevance': article.get('relevance', 0),
+                                    'analyzed_at': django_timezone.now().isoformat()
+                                }
+                                existing.processed = True
+                                existing.processed_at = django_timezone.now()
+                                existing.save()
+                            else:
+                                NewsArticle.objects.create(
+                                    title=article.get('title', '')[:500],
+                                    source=article.get('source', {}).get('name', 'GNews')[:100],
+                                    author='',
+                                    published_at=published_dt,
+                                    url=article.get('url', ''),
+                                    image_url=article.get('image', ''),
+                                    summary=article.get('description', '')[:1000],
+                                    content=article.get('content', ''),
+                                    category='Market',
+                                    news_type='MARKET',
+                                    tags=[],
+                                    symbols_mentioned=[],
+                                    sectors_mentioned=[],
+                                    search_keywords=[article.get('search_keyword', '')] if article.get('search_keyword') else keywords_used[:3],
+                                    sentiment_score=article.get('impact_score', 0),
+                                    sentiment_label='NEGATIVE' if article.get('impact_score', 0) < -0.3 else ('POSITIVE' if article.get('impact_score', 0) > 0.3 else 'NEUTRAL'),
+                                    impact_reasoning=article.get('impact_reasoning', ''),
+                                    market_direction=article.get('market_direction', 'NEUTRAL'),
+                                    relevance_score=article.get('relevance', 0),
+                                    impact_category=article.get('impact_category', ''),
+                                    impact_analysis={
+                                        'impact_score': article.get('impact_score', 0),
+                                        'impact_label': article.get('impact_label', 'NEUTRAL'),
+                                        'impact_reasoning': article.get('impact_reasoning', ''),
+                                        'market_direction': article.get('market_direction', 'NEUTRAL'),
+                                        'relevance': article.get('relevance', 0),
+                                        'analyzed_at': django_timezone.now().isoformat()
+                                    },
+                                    processed=True,
+                                    processed_at=django_timezone.now()
+                                )
+                            saved_count += 1
+                        except Exception as save_error:
+                            logger.warning(f"[Market News Stream] Error saving article: {save_error}")
+                            continue
+
+                    logger.info(f"[Market News Stream] Saved/updated {saved_count} articles to database")
+
+                    # Fetch historical market news
+                    historical_market_news = get_historical_market_news(limit=5)
+
+                    # Send complete result
+                    yield f"data: {json.dumps({'type': 'complete', 'articles': batch_result['articles'], 'summary': batch_result['summary'], 'category_breakdown': batch_result['category_breakdown'], 'historical_news': historical_market_news})}\n\n"
+
+            logger.info("[Market News Stream] Stream complete")
+
+        except Exception as e:
+            logger.error(f"[Market News Stream] Error: {e}", exc_info=True)
+            yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
+
+    response = StreamingHttpResponse(
+        generate_events(),
+        content_type='text/event-stream'
+    )
+    response['Cache-Control'] = 'no-cache'
+    response['X-Accel-Buffering'] = 'no'
+    return response

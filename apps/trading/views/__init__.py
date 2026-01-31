@@ -44,6 +44,7 @@ from .verification_views import (
     stream_trendlyne_logs,
     fetch_trade_news,
     news_details_page,
+    stream_market_news,
 )
 
 from .execution_views import (

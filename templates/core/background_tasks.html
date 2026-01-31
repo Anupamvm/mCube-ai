@@ -417,11 +417,12 @@
         {% for task in celery_static_tasks %}
         <div class="task-item celery-task-item" id="static-task-{{ forloop.counter }}">
             <div class="task-content">
-                <div class="task-name">{{ task.key }}</div>
+                <div class="task-name">{{ task.display_name|default:task.key }}</div>
+                <div class="task-description" style="color: #718096; font-size: 12px; margin-bottom: 4px;">{{ task.description }}</div>
                 <div class="task-meta">
-                    <span>Task: {{ task.task }}</span>
                     <span>Schedule: {{ task.schedule }}</span>
                     <span>Queue: {{ task.queue }}</span>
+                    {% if task.use_custom_schedule %}<span style="color: #805ad5;">✓ Custom</span>{% endif %}
                 </div>
             </div>
             <div class="task-actions">
@@ -432,6 +433,7 @@
                 <span class="badge badge-warning status-badge">Inactive</span>
                 <button class="btn btn-sm btn-success" onclick="toggleStaticTask('{{ task.key }}', '{{ task.task }}', this, 'start')">Start</button>
                 {% endif %}
+                <button class="btn btn-sm btn-primary" onclick="showTaskConfig('{{ task.key }}', '{{ task.display_name|default:task.key }}')" title="Configure Schedule">Configure</button>
             </div>
         </div>
         {% empty %}
@@ -472,6 +474,140 @@
 
     <div class="timestamp">Last updated: {{ timestamp|date:"Y-m-d H:i:s" }}</div>
 </div>
+
+<!-- Task Configuration Modal -->
+<div id="configModal" class="modal-overlay" onclick="closeConfigModal(event)">
+    <div class="modal-content" onclick="event.stopPropagation()">
+        <div class="modal-header">
+            <h3 id="configModalTitle">Configure Task</h3>
+            <button class="modal-close" onclick="closeConfigModal()">&times;</button>
+        </div>
+        <div class="modal-body" id="configModalBody">
+            <div class="loading-state">Loading configuration...</div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secondary" onclick="closeConfigModal()">Cancel</button>
+            <button class="btn btn-success" id="saveConfigBtn" onclick="saveTaskConfig()">Save & Apply</button>
+        </div>
+    </div>
+</div>
+
+<style>
+    /* Modal Styles */
+    .modal-overlay {
+        display: none;
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0, 0, 0, 0.6);
+        z-index: 1000;
+        justify-content: center;
+        align-items: center;
+    }
+    .modal-overlay.active { display: flex; }
+    .modal-content {
+        background: white;
+        border-radius: 12px;
+        width: 90%;
+        max-width: 600px;
+        max-height: 85vh;
+        display: flex;
+        flex-direction: column;
+        box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+    }
+    .modal-header {
+        padding: 20px 24px;
+        border-bottom: 1px solid #e2e8f0;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+    .modal-header h3 { margin: 0; color: #2d3748; font-size: 18px; }
+    .modal-close {
+        background: none;
+        border: none;
+        font-size: 24px;
+        cursor: pointer;
+        color: #718096;
+        padding: 0;
+    }
+    .modal-close:hover { color: #2d3748; }
+    .modal-body { padding: 20px 24px; overflow-y: auto; flex: 1; }
+    .modal-footer {
+        padding: 16px 24px;
+        border-top: 1px solid #e2e8f0;
+        display: flex;
+        justify-content: flex-end;
+        gap: 12px;
+        background: #f7fafc;
+    }
+    .loading-state { text-align: center; padding: 40px; color: #718096; }
+    .config-info {
+        background: #ebf8ff;
+        border: 1px solid #bee3f8;
+        border-radius: 8px;
+        padding: 16px;
+        margin-bottom: 16px;
+    }
+    .config-section {
+        background: #f7fafc;
+        padding: 16px;
+        border-radius: 8px;
+        margin-bottom: 12px;
+    }
+    .config-section h4 {
+        margin: 0 0 12px 0;
+        font-size: 14px;
+        font-weight: 600;
+        color: #2d3748;
+    }
+    .config-row { display: flex; gap: 16px; }
+    .config-field { flex: 1; display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; }
+    .config-field label { font-weight: 600; color: #4a5568; font-size: 13px; }
+    .config-field input {
+        padding: 8px 12px;
+        border: 1px solid #cbd5e0;
+        border-radius: 6px;
+        font-size: 14px;
+    }
+    .config-field input:focus {
+        outline: none;
+        border-color: #667eea;
+        box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.15);
+    }
+    .field-help { font-size: 11px; color: #718096; }
+    .field-unit { font-size: 13px; color: #718096; }
+    .days-selector { display: flex; gap: 8px; flex-wrap: wrap; }
+    .day-checkbox {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 44px;
+        padding: 8px 10px;
+        border: 2px solid #e2e8f0;
+        border-radius: 8px;
+        cursor: pointer;
+        background: white;
+        transition: all 0.2s;
+    }
+    .day-checkbox input { display: none; }
+    .day-checkbox span { font-weight: 600; font-size: 12px; color: #4a5568; }
+    .day-checkbox:hover { border-color: #667eea; }
+    .day-checkbox.active { background: #667eea; border-color: #667eea; }
+    .day-checkbox.active span { color: white; }
+    .day-checkbox.weekend { border-color: #fbd38d; }
+    .day-checkbox.weekend.active { background: #ed8936; border-color: #ed8936; }
+    .config-warning {
+        background: #fffaf0;
+        border: 1px solid #fbd38d;
+        border-radius: 8px;
+        padding: 12px;
+        margin-top: 16px;
+    }
+    .config-warning p { margin: 0; font-size: 13px; color: #744210; }
+</style>
 {% endblock %}
 
 {% block extra_js %}
@@ -575,5 +711,252 @@
 
     // Auto-refresh every 2 minutes
     setTimeout(() => location.reload(), 120000);
+
+    // =========================================================================
+    // Task Configuration Modal Functions
+    // =========================================================================
+
+    let currentConfigTaskKey = '';
+
+    function showTaskConfig(taskKey, displayName) {
+        const modal = document.getElementById('configModal');
+        const title = document.getElementById('configModalTitle');
+        const body = document.getElementById('configModalBody');
+
+        currentConfigTaskKey = taskKey;
+        title.textContent = `Configure: ${displayName || taskKey}`;
+        body.innerHTML = '<div class="loading-state">Loading configuration...</div>';
+
+        modal.classList.add('active');
+        document.body.style.overflow = 'hidden';
+
+        fetch(`{% url "core:get_task_config" %}?task_key=${encodeURIComponent(taskKey)}`)
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    body.innerHTML = renderConfigForm(data);
+                } else {
+                    body.innerHTML = `<div class="loading-state" style="color: #e53e3e;">Error: ${data.error || 'Unknown error'}</div>`;
+                }
+            })
+            .catch(error => {
+                body.innerHTML = `<div class="loading-state" style="color: #e53e3e;">Error: ${error}</div>`;
+            });
+    }
+
+    function renderConfigForm(data) {
+        const { task_key, display_name, description, schedule_type, values, use_custom_schedule } = data;
+
+        const scheduleTypeLabel = {
+            'crontab': 'Fixed Time',
+            'interval': 'Interval',
+            'recurring': 'Recurring Window'
+        }[schedule_type] || schedule_type;
+
+        const scheduleTypeColor = {
+            'crontab': '#3182ce',
+            'interval': '#38a169',
+            'recurring': '#805ad5'
+        }[schedule_type] || '#718096';
+
+        const scheduleTypeIcon = { 'crontab': '🕐', 'interval': '🔄', 'recurring': '📅' }[schedule_type] || '⚙️';
+
+        let html = `
+            <div class="config-info">
+                <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px;">
+                    <strong style="font-size: 16px;">${display_name || task_key}</strong>
+                    <span style="background: ${scheduleTypeColor}; color: white; padding: 4px 10px; border-radius: 12px; font-size: 11px; font-weight: 600;">
+                        ${scheduleTypeIcon} ${scheduleTypeLabel}
+                    </span>
+                </div>
+                <p style="color: #4a5568; font-size: 13px; margin: 0;">${description || 'Configure schedule and timing for this task.'}</p>
+                ${use_custom_schedule ? '<p style="color: #805ad5; font-size: 12px; margin-top: 8px;"><strong>✓</strong> Using custom schedule</p>' : '<p style="color: #718096; font-size: 12px; margin-top: 8px;">Using default schedule (modify to customize)</p>'}
+            </div>
+            <form class="config-form" id="taskConfigForm">
+                <input type="hidden" name="task_key" value="${task_key}">
+        `;
+
+        if (schedule_type === 'crontab') {
+            html += `
+                <div class="config-section">
+                    <h4>🕐 Run Time (IST)</h4>
+                    <p style="font-size: 12px; color: #718096; margin-bottom: 12px;">Set the exact time when this task should run each day.</p>
+                    <div class="config-row">
+                        <div class="config-field">
+                            <label>Hour</label>
+                            <input type="number" name="schedule_hour" value="${values.schedule_hour || 9}" min="0" max="23" required>
+                            <span class="field-help">0-23 (24-hour format)</span>
+                        </div>
+                        <div class="config-field">
+                            <label>Minute</label>
+                            <input type="number" name="schedule_minute" value="${values.schedule_minute || 0}" min="0" max="59" required>
+                            <span class="field-help">0-59</span>
+                        </div>
+                    </div>
+                </div>
+            `;
+        } else if (schedule_type === 'interval') {
+            html += `
+                <div class="config-section">
+                    <h4>🔄 Repeat Interval</h4>
+                    <p style="font-size: 12px; color: #718096; margin-bottom: 12px;">Set how often this task should repeat.</p>
+                    <div class="config-field">
+                        <label>Interval</label>
+                        <div style="display: flex; align-items: center; gap: 8px;">
+                            <input type="number" name="interval_seconds" value="${values.interval_seconds || 60}" min="1" max="86400" required style="width: 120px;">
+                            <span class="field-unit">seconds</span>
+                        </div>
+                        <span class="field-help">Common: 10s=monitoring, 60s=checks, 300s=polling</span>
+                    </div>
+                </div>
+            `;
+        } else if (schedule_type === 'recurring') {
+            html += `
+                <div class="config-section">
+                    <h4>📅 Recurring Window</h4>
+                    <p style="font-size: 12px; color: #718096; margin-bottom: 12px;">Task runs repeatedly within a time window each day.</p>
+                    <div style="margin-bottom: 16px;">
+                        <label style="font-weight: 600; color: #2d3748; font-size: 13px; display: block; margin-bottom: 8px;">Start Time</label>
+                        <div class="config-row">
+                            <div class="config-field">
+                                <label>Hour</label>
+                                <input type="number" name="recurring_start_hour" value="${values.recurring_start_hour || 9}" min="0" max="23" required>
+                            </div>
+                            <div class="config-field">
+                                <label>Minute</label>
+                                <input type="number" name="recurring_start_minute" value="${values.recurring_start_minute || 0}" min="0" max="59" required>
+                            </div>
+                        </div>
+                    </div>
+                    <div style="margin-bottom: 16px;">
+                        <label style="font-weight: 600; color: #2d3748; font-size: 13px; display: block; margin-bottom: 8px;">End Time</label>
+                        <div class="config-row">
+                            <div class="config-field">
+                                <label>Hour</label>
+                                <input type="number" name="recurring_end_hour" value="${values.recurring_end_hour || 15}" min="0" max="23" required>
+                            </div>
+                            <div class="config-field">
+                                <label>Minute</label>
+                                <input type="number" name="recurring_end_minute" value="${values.recurring_end_minute || 30}" min="0" max="59" required>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="config-field">
+                        <label>Repeat Every</label>
+                        <div style="display: flex; align-items: center; gap: 8px;">
+                            <input type="number" name="recurring_interval_minutes" value="${values.recurring_interval_minutes || 5}" min="1" max="60" required style="width: 100px;">
+                            <span class="field-unit">minutes</span>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        // Days of week
+        const dayNames = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+        const selectedDays = values.days_of_week || [0, 1, 2, 3, 4];
+
+        html += `
+            <div class="config-section">
+                <h4>📆 Days of Week</h4>
+                <div class="days-selector">
+        `;
+
+        for (let i = 0; i < 7; i++) {
+            const isChecked = selectedDays.includes(i);
+            const isWeekend = i >= 5;
+            html += `
+                <label class="day-checkbox ${isWeekend ? 'weekend' : ''} ${isChecked ? 'active' : ''}">
+                    <input type="checkbox" name="days_of_week[]" value="${i}" ${isChecked ? 'checked' : ''} onchange="this.parentElement.classList.toggle('active', this.checked)">
+                    <span>${dayNames[i]}</span>
+                </label>
+            `;
+        }
+
+        html += `
+                </div>
+                <div style="margin-top: 8px;">
+                    <button type="button" class="btn btn-sm btn-secondary" onclick="selectAllDays()" style="font-size: 11px; padding: 4px 8px;">All</button>
+                    <button type="button" class="btn btn-sm btn-secondary" onclick="selectWeekdays()" style="font-size: 11px; padding: 4px 8px; margin-left: 4px;">Weekdays</button>
+                </div>
+            </div>
+            </form>
+            <div class="config-warning">
+                <p><strong>⚠️</strong> Saving changes will restart Celery Beat to apply the new schedule.</p>
+            </div>
+        `;
+
+        return html;
+    }
+
+    function selectAllDays() {
+        document.querySelectorAll('.days-selector input[type="checkbox"]').forEach(cb => {
+            cb.checked = true;
+            cb.parentElement.classList.add('active');
+        });
+    }
+
+    function selectWeekdays() {
+        document.querySelectorAll('.days-selector input[type="checkbox"]').forEach((cb, i) => {
+            const isWeekday = i < 5;
+            cb.checked = isWeekday;
+            cb.parentElement.classList.toggle('active', isWeekday);
+        });
+    }
+
+    function closeConfigModal(event) {
+        if (event && event.target !== event.currentTarget) return;
+        const modal = document.getElementById('configModal');
+        modal.classList.remove('active');
+        document.body.style.overflow = '';
+        currentConfigTaskKey = '';
+    }
+
+    function saveTaskConfig() {
+        const form = document.getElementById('taskConfigForm');
+        if (!form) {
+            alert('No configuration form found');
+            return;
+        }
+
+        const saveBtn = document.getElementById('saveConfigBtn');
+        saveBtn.disabled = true;
+        saveBtn.textContent = 'Saving...';
+
+        const formData = new FormData(form);
+
+        fetch('{% url "core:save_task_config" %}', {
+            method: 'POST',
+            headers: { 'X-CSRFToken': '{{ csrf_token }}' },
+            body: formData
+        })
+        .then(response => response.json())
+        .then(data => {
+            saveBtn.disabled = false;
+            saveBtn.textContent = 'Save & Apply';
+
+            if (data.success) {
+                closeConfigModal();
+                if (data.updated_fields && data.updated_fields.length > 0) {
+                    alert('Schedule saved! Celery Beat will restart to apply changes.');
+                    setTimeout(() => location.reload(), 1500);
+                } else {
+                    alert('No changes detected.');
+                }
+            } else {
+                alert('Error: ' + (data.error || 'Failed to save'));
+            }
+        })
+        .catch(error => {
+            saveBtn.disabled = false;
+            saveBtn.textContent = 'Save & Apply';
+            alert('Error: ' + error);
+        });
+    }
+
+    // Close on Escape key
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') closeConfigModal();
+    });
 </script>
 {% endblock %}
