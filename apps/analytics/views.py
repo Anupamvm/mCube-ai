@@ -175,16 +175,24 @@ def resume_learning(request, session_id):
 @login_required
 def view_patterns(request):
     """View comprehensive trading patterns analysis."""
-    from apps.analytics.services.trading_patterns import get_trading_patterns, TradingPatternsAnalyzer
+    from apps.analytics.services.trading_patterns import get_trading_patterns, TradingPatternsAnalyzer, get_available_fys
 
     # Get broker filter
     broker = request.GET.get('broker')
     if broker == 'ALL':
         broker = None
 
+    # Get FY filter
+    fy = request.GET.get('fy')
+    if fy == 'ALL':
+        fy = None
+
+    # Get available FYs for dropdown
+    available_fys = get_available_fys()
+
     # Get pattern analysis data
     try:
-        patterns_data = get_trading_patterns(broker=broker)
+        patterns_data = get_trading_patterns(broker=broker, fy=fy)
     except Exception as e:
         logger.error(f"Error loading patterns: {e}")
         patterns_data = {
@@ -202,7 +210,7 @@ def view_patterns(request):
     tax_data = {}
     try:
         for broker_code in ['KOTAK', 'ICICI']:
-            analyzer = TradingPatternsAnalyzer(broker=broker_code)
+            analyzer = TradingPatternsAnalyzer(broker=broker_code, fy=fy)
             segments = analyzer.get_segment_analysis()
             tax_data[broker_code] = {
                 'segments': segments,
@@ -219,7 +227,7 @@ def view_patterns(request):
     # Get timeline data with Nifty overlay
     timeline_data = {}
     try:
-        all_analyzer = TradingPatternsAnalyzer(broker=broker)
+        all_analyzer = TradingPatternsAnalyzer(broker=broker, fy=fy)
         timeline_data = all_analyzer.get_timeline_data()
     except Exception as e:
         logger.error(f"Error loading timeline data: {e}")
@@ -252,6 +260,8 @@ def view_patterns(request):
         'pattern_type': pattern_type,
         'actionable_only': actionable_only,
         'broker_filter': broker or 'ALL',
+        'fy_filter': fy or 'ALL',
+        'available_fys': available_fys,
     }
 
     return render(request, 'analytics/patterns_list.html', context)
@@ -276,19 +286,29 @@ def view_suggestions(request):
 
     Provides comprehensive trading analysis with actionable conclusions.
     """
-    from apps.analytics.services.trading_intelligence import get_trading_intelligence
+    from apps.analytics.services.trading_intelligence import get_trading_intelligence, get_available_fys
 
     # Get broker filter
     broker = request.GET.get('broker', 'ALL')
     if broker == 'ALL':
         broker = None
 
+    # Get FY filter
+    fy = request.GET.get('fy', 'ALL')
+    if fy == 'ALL':
+        fy = None
+
+    # Get available FYs for dropdown
+    available_fys = get_available_fys()
+
     # Get smart analysis
-    analysis = get_trading_intelligence(broker=broker)
+    analysis = get_trading_intelligence(broker=broker, fy=fy)
 
     context = {
         'analysis': analysis,
         'broker_filter': request.GET.get('broker', 'ALL'),
+        'fy_filter': request.GET.get('fy', 'ALL'),
+        'available_fys': available_fys,
     }
 
     return render(request, 'analytics/smart_suggestions.html', context)
@@ -563,6 +583,7 @@ def api_dashboard_summary(request):
     Query params:
     - account_id: Optional specific account ID
     - period: Time period (1D, 1W, 1M, 3M, 6M, 1Y, FY, YTD, ALL)
+    - fy: Optional specific financial year (e.g., '2024-25')
     """
     try:
         account = None
@@ -571,9 +592,10 @@ def api_dashboard_summary(request):
             account = get_object_or_404(BrokerAccount, id=account_id)
 
         period = request.GET.get('period', 'FY')
+        fy = request.GET.get('fy')
 
         service = get_dashboard_service()
-        summary = service.get_summary_metrics(request.user, account, period)
+        summary = service.get_summary_metrics(request.user, account, period, fy=fy)
 
         return JsonResponse({
             'success': True,
@@ -599,6 +621,7 @@ def api_pnl_chart_data(request):
     - account_id: Optional specific account ID
     - period: Time period (1D, 1W, 1M, 3M, 6M, 1Y, FY)
     - granularity: Data granularity (daily, weekly, monthly)
+    - fy: Optional specific financial year (e.g., '2024-25')
     """
     try:
         account = None
@@ -608,9 +631,10 @@ def api_pnl_chart_data(request):
 
         period = request.GET.get('period', '1M')
         granularity = request.GET.get('granularity', 'daily')
+        fy = request.GET.get('fy')
 
         service = get_dashboard_service()
-        chart_data = service.get_pnl_chart_data(request.user, account, period, granularity)
+        chart_data = service.get_pnl_chart_data(request.user, account, period, granularity, fy=fy)
 
         return JsonResponse({
             'success': True,
@@ -635,6 +659,7 @@ def api_cumulative_returns(request):
     Query params:
     - account_id: Optional specific account ID
     - period: Time period
+    - fy: Optional specific financial year (e.g., '2024-25')
     """
     try:
         account = None
@@ -643,9 +668,10 @@ def api_cumulative_returns(request):
             account = get_object_or_404(BrokerAccount, id=account_id)
 
         period = request.GET.get('period', 'FY')
+        fy = request.GET.get('fy')
 
         service = get_dashboard_service()
-        returns_data = service.get_cumulative_returns(request.user, account, period)
+        returns_data = service.get_cumulative_returns(request.user, account, period, fy=fy)
 
         return JsonResponse({
             'success': True,
@@ -670,6 +696,7 @@ def api_win_loss_distribution(request):
     Query params:
     - account_id: Optional specific account ID
     - period: Time period
+    - fy: Optional specific financial year (e.g., '2024-25')
     """
     try:
         account = None
@@ -678,9 +705,10 @@ def api_win_loss_distribution(request):
             account = get_object_or_404(BrokerAccount, id=account_id)
 
         period = request.GET.get('period', 'FY')
+        fy = request.GET.get('fy')
 
         service = get_dashboard_service()
-        distribution = service.get_win_loss_distribution(request.user, account, period)
+        distribution = service.get_win_loss_distribution(request.user, account, period, fy=fy)
 
         return JsonResponse({
             'success': True,
@@ -705,6 +733,7 @@ def api_strategy_performance(request):
     Query params:
     - account_id: Optional specific account ID
     - period: Time period
+    - fy: Optional specific financial year (e.g., '2024-25')
     """
     try:
         account = None
@@ -713,9 +742,10 @@ def api_strategy_performance(request):
             account = get_object_or_404(BrokerAccount, id=account_id)
 
         period = request.GET.get('period', 'FY')
+        fy = request.GET.get('fy')
 
         service = get_dashboard_service()
-        strategy_data = service.get_strategy_performance(request.user, account, period)
+        strategy_data = service.get_strategy_performance(request.user, account, period, fy=fy)
 
         return JsonResponse({
             'success': True,
@@ -740,6 +770,7 @@ def api_drawdown_chart(request):
     Query params:
     - account_id: Optional specific account ID
     - period: Time period
+    - fy: Optional specific financial year (e.g., '2024-25')
     """
     try:
         account = None
@@ -748,9 +779,10 @@ def api_drawdown_chart(request):
             account = get_object_or_404(BrokerAccount, id=account_id)
 
         period = request.GET.get('period', 'FY')
+        fy = request.GET.get('fy')
 
         service = get_dashboard_service()
-        returns_data = service.get_cumulative_returns(request.user, account, period)
+        returns_data = service.get_cumulative_returns(request.user, account, period, fy=fy)
 
         # Extract drawdown data
         drawdown_data = {
@@ -781,6 +813,7 @@ def api_performance_heatmap(request):
     Query params:
     - account_id: Optional specific account ID
     - period: Time period
+    - fy: Optional specific financial year (e.g., '2024-25')
     """
     try:
         account = None
@@ -789,9 +822,10 @@ def api_performance_heatmap(request):
             account = get_object_or_404(BrokerAccount, id=account_id)
 
         period = request.GET.get('period', 'FY')
+        fy = request.GET.get('fy')
 
         service = get_dashboard_service()
-        heatmap_data = service.get_performance_heatmap(request.user, account, period)
+        heatmap_data = service.get_performance_heatmap(request.user, account, period, fy=fy)
 
         return JsonResponse({
             'success': True,
@@ -852,6 +886,7 @@ def api_benchmark_comparison(request):
     - account_id: Optional specific account ID
     - benchmark: Benchmark to compare (NIFTY50, BANKNIFTY)
     - period: Time period
+    - fy: Optional specific financial year (e.g., '2024-25')
     """
     try:
         account = None
@@ -861,9 +896,10 @@ def api_benchmark_comparison(request):
 
         benchmark = request.GET.get('benchmark', 'NIFTY50')
         period = request.GET.get('period', 'FY')
+        fy = request.GET.get('fy')
 
         service = get_dashboard_service()
-        comparison_data = service.get_benchmark_comparison(request.user, account, benchmark, period)
+        comparison_data = service.get_benchmark_comparison(request.user, account, benchmark, period, fy=fy)
 
         return JsonResponse({
             'success': True,
@@ -1406,6 +1442,8 @@ def dashboard(request):
     """
     Main analytics dashboard view.
     """
+    from apps.analytics.services.trading_intelligence import get_available_fys
+
     # Get accounts for dropdown
     accounts = BrokerAccount.objects.filter(is_active=True)
 
@@ -1414,11 +1452,16 @@ def dashboard(request):
     trade_count = BrokerTradeHistory.objects.count()
     last_trade = BrokerTradeHistory.objects.order_by('-trade_date').first()
 
+    # Get available FYs for filter
+    available_fys = get_available_fys()
+
     context = {
         'accounts': accounts,
         'default_period': 'FY',
         'broker_trade_count': trade_count,
         'last_broker_trade_date': last_trade.trade_date if last_trade else None,
+        'available_fys': available_fys,
+        'fy_filter': request.GET.get('fy', 'ALL'),
     }
 
     return render(request, 'analytics/dashboard.html', context)
@@ -1432,7 +1475,9 @@ def dashboard(request):
 @require_http_methods(["GET"])
 def api_smart_suggestions(request):
     """
-    API endpoint to get smart trading suggestions and conclusions.
+    Smart Trading Intelligence endpoint.
+
+    Returns HTML page when accessed via browser, JSON when requested via API.
 
     This endpoint provides comprehensive trading analysis like a data scientist
     and trader would, including:
@@ -1445,24 +1490,642 @@ def api_smart_suggestions(request):
 
     Query params:
     - broker: Optional broker filter ('KOTAK', 'ICICI', or 'ALL')
+    - fy: Optional financial year filter ('2024-25', '2023-24', or 'ALL')
+    - format: 'json' to force JSON response
     """
     try:
-        from apps.analytics.services.trading_intelligence import get_trading_intelligence
+        from apps.analytics.services.trading_intelligence import get_trading_intelligence, get_available_fys
 
         broker = request.GET.get('broker', 'ALL')
         if broker == 'ALL':
             broker = None
 
-        analysis = get_trading_intelligence(broker=broker)
+        fy = request.GET.get('fy', 'ALL')
+        if fy == 'ALL':
+            fy = None
 
-        return JsonResponse({
-            'success': True,
-            'data': analysis,
-            'timestamp': timezone.now().isoformat()
-        })
+        # Get available FYs for dropdown
+        available_fys = get_available_fys()
+
+        analysis = get_trading_intelligence(broker=broker, fy=fy)
+
+        # Check if JSON format is explicitly requested
+        if request.GET.get('format') == 'json' or request.headers.get('Accept') == 'application/json':
+            return JsonResponse({
+                'success': True,
+                'data': analysis,
+                'available_fys': available_fys,
+                'timestamp': timezone.now().isoformat()
+            })
+
+        # Render HTML template for browser access
+        context = {
+            'analysis': analysis,
+            'broker_filter': request.GET.get('broker', 'ALL'),
+            'fy_filter': request.GET.get('fy', 'ALL'),
+            'available_fys': available_fys,
+        }
+        return render(request, 'analytics/smart_intelligence.html', context)
 
     except Exception as e:
         logger.error(f"Error in api_smart_suggestions: {e}", exc_info=True)
+        if request.GET.get('format') == 'json':
+            return JsonResponse({
+                'success': False,
+                'error': str(e)
+            }, status=500)
+        return render(request, 'analytics/smart_intelligence.html', {
+            'analysis': {'error': str(e)},
+            'broker_filter': 'ALL',
+            'fy_filter': 'ALL',
+            'available_fys': [],
+        })
+
+
+# =============================================================================
+# PATTERN SECTION API ENDPOINTS
+# Individual API endpoints for each pattern section to support per-section FY filtering
+# =============================================================================
+
+@login_required
+@require_http_methods(["GET"])
+def api_patterns_overview(request):
+    """API endpoint for overview stats section."""
+    from apps.analytics.services.trading_patterns import TradingPatternsAnalyzer
+
+    try:
+        broker = request.GET.get('broker')
+        if broker == 'ALL':
+            broker = None
+
+        fy = request.GET.get('fy')
+        if fy == 'ALL':
+            fy = None
+
+        segment = request.GET.get('segment')
+        if segment == 'ALL':
+            segment = None
+
+        analyzer = TradingPatternsAnalyzer(broker=broker, fy=fy, segment=segment)
+        data = analyzer.get_overview_stats()
+
+        return JsonResponse({'success': True, 'data': data})
+    except Exception as e:
+        logger.error(f"Error in api_patterns_overview: {e}")
+        return JsonResponse({'success': False, 'error': str(e)}, status=500)
+
+
+@login_required
+@require_http_methods(["GET"])
+def api_patterns_streaks(request):
+    """API endpoint for streak analysis section."""
+    from apps.analytics.services.trading_patterns import TradingPatternsAnalyzer
+
+    try:
+        broker = request.GET.get('broker')
+        if broker == 'ALL':
+            broker = None
+
+        fy = request.GET.get('fy')
+        if fy == 'ALL':
+            fy = None
+
+        analyzer = TradingPatternsAnalyzer(broker=broker, fy=fy)
+        data = analyzer.get_streak_analysis()
+
+        return JsonResponse({'success': True, 'data': data})
+    except Exception as e:
+        logger.error(f"Error in api_patterns_streaks: {e}")
+        return JsonResponse({'success': False, 'error': str(e)}, status=500)
+
+
+@login_required
+@require_http_methods(["GET"])
+def api_patterns_segments(request):
+    """API endpoint for segment analysis section."""
+    from apps.analytics.services.trading_patterns import TradingPatternsAnalyzer
+
+    try:
+        broker = request.GET.get('broker')
+        if broker == 'ALL':
+            broker = None
+
+        fy = request.GET.get('fy')
+        if fy == 'ALL':
+            fy = None
+
+        analyzer = TradingPatternsAnalyzer(broker=broker, fy=fy)
+        data = analyzer.get_segment_analysis()
+
+        return JsonResponse({'success': True, 'data': data})
+    except Exception as e:
+        logger.error(f"Error in api_patterns_segments: {e}")
+        return JsonResponse({'success': False, 'error': str(e)}, status=500)
+
+
+@login_required
+@require_http_methods(["GET"])
+def api_patterns_brokers(request):
+    """API endpoint for broker comparison section."""
+    from apps.analytics.services.trading_patterns import TradingPatternsAnalyzer
+
+    try:
+        broker = request.GET.get('broker')
+        if broker == 'ALL':
+            broker = None
+
+        fy = request.GET.get('fy')
+        if fy == 'ALL':
+            fy = None
+
+        analyzer = TradingPatternsAnalyzer(broker=broker, fy=fy)
+        data = analyzer.get_broker_comparison()
+
+        return JsonResponse({'success': True, 'data': data})
+    except Exception as e:
+        logger.error(f"Error in api_patterns_brokers: {e}")
+        return JsonResponse({'success': False, 'error': str(e)}, status=500)
+
+
+@login_required
+@require_http_methods(["GET"])
+def api_patterns_tax(request):
+    """API endpoint for tax calculator section."""
+    from apps.analytics.services.trading_patterns import TradingPatternsAnalyzer
+
+    try:
+        fy = request.GET.get('fy')
+        if fy == 'ALL':
+            fy = None
+
+        # Get broker-specific segment data for tax calculator
+        tax_data = {}
+        for broker_code in ['KOTAK', 'ICICI']:
+            analyzer = TradingPatternsAnalyzer(broker=broker_code, fy=fy)
+            segments = analyzer.get_segment_analysis()
+            tax_data[broker_code] = {
+                'segments': segments,
+                'entity': 'HUF' if broker_code == 'KOTAK' else 'Individual',
+                'name': 'Kotak Neo' if broker_code == 'KOTAK' else 'ICICI Breeze',
+            }
+
+        return JsonResponse({'success': True, 'data': tax_data})
+    except Exception as e:
+        logger.error(f"Error in api_patterns_tax: {e}")
+        return JsonResponse({'success': False, 'error': str(e)}, status=500)
+
+
+@login_required
+@require_http_methods(["GET"])
+def api_patterns_symbols(request):
+    """API endpoint for symbol performance section."""
+    from apps.analytics.services.trading_patterns import TradingPatternsAnalyzer
+
+    try:
+        broker = request.GET.get('broker')
+        if broker == 'ALL':
+            broker = None
+
+        fy = request.GET.get('fy')
+        if fy == 'ALL':
+            fy = None
+
+        analyzer = TradingPatternsAnalyzer(broker=broker, fy=fy)
+        data = analyzer.get_symbol_performance()
+
+        return JsonResponse({'success': True, 'data': data})
+    except Exception as e:
+        logger.error(f"Error in api_patterns_symbols: {e}")
+        return JsonResponse({'success': False, 'error': str(e)}, status=500)
+
+
+@login_required
+@require_http_methods(["GET"])
+def api_patterns_distribution(request):
+    """API endpoint for P&L distribution section."""
+    from apps.analytics.services.trading_patterns import TradingPatternsAnalyzer
+
+    try:
+        broker = request.GET.get('broker')
+        if broker == 'ALL':
+            broker = None
+
+        fy = request.GET.get('fy')
+        if fy == 'ALL':
+            fy = None
+
+        analyzer = TradingPatternsAnalyzer(broker=broker, fy=fy)
+        data = analyzer.get_pnl_distribution()
+
+        return JsonResponse({'success': True, 'data': data})
+    except Exception as e:
+        logger.error(f"Error in api_patterns_distribution: {e}")
+        return JsonResponse({'success': False, 'error': str(e)}, status=500)
+
+
+@login_required
+@require_http_methods(["GET"])
+def api_patterns_consistency(request):
+    """API endpoint for trading consistency section."""
+    from apps.analytics.services.trading_patterns import TradingPatternsAnalyzer
+
+    try:
+        broker = request.GET.get('broker')
+        if broker == 'ALL':
+            broker = None
+
+        fy = request.GET.get('fy')
+        if fy == 'ALL':
+            fy = None
+
+        analyzer = TradingPatternsAnalyzer(broker=broker, fy=fy)
+        data = analyzer.get_consistency_metrics()
+
+        return JsonResponse({'success': True, 'data': data})
+    except Exception as e:
+        logger.error(f"Error in api_patterns_consistency: {e}")
+        return JsonResponse({'success': False, 'error': str(e)}, status=500)
+
+
+@login_required
+@require_http_methods(["GET"])
+def api_patterns_timeline(request):
+    """API endpoint for timeline with Nifty section."""
+    from apps.analytics.services.trading_patterns import TradingPatternsAnalyzer
+
+    try:
+        broker = request.GET.get('broker')
+        if broker == 'ALL':
+            broker = None
+
+        fy = request.GET.get('fy')
+        if fy == 'ALL':
+            fy = None
+
+        analyzer = TradingPatternsAnalyzer(broker=broker, fy=fy)
+        data = analyzer.get_timeline_data()
+
+        return JsonResponse({'success': True, 'data': data})
+    except Exception as e:
+        logger.error(f"Error in api_patterns_timeline: {e}")
+        return JsonResponse({'success': False, 'error': str(e)}, status=500)
+
+
+@login_required
+@require_http_methods(["GET"])
+def api_debug_timeline_data(request):
+    """Debug endpoint to check timeline data for a given FY."""
+    from apps.brokers.models import BrokerContractPnL
+
+    try:
+        fy = request.GET.get('fy', '2023-24')
+
+        # Get sample trades
+        trades = BrokerContractPnL.objects.filter(fy=fy)[:20]
+
+        sample_data = []
+        for t in trades:
+            sample_data.append({
+                'id': t.id,
+                'symbol': t.symbol,
+                'trading_symbol': t.trading_symbol,
+                'expiry_date': t.expiry_date.isoformat() if t.expiry_date else None,
+                'created_at': t.created_at.isoformat() if t.created_at else None,
+                'net_pnl': float(t.net_pnl) if t.net_pnl else 0,
+                'segment': t.segment,
+            })
+
+        total_count = BrokerContractPnL.objects.filter(fy=fy).count()
+        with_expiry = BrokerContractPnL.objects.filter(fy=fy, expiry_date__isnull=False).count()
+
+        return JsonResponse({
+            'success': True,
+            'fy': fy,
+            'total_trades': total_count,
+            'trades_with_expiry_date': with_expiry,
+            'trades_without_expiry_date': total_count - with_expiry,
+            'sample_trades': sample_data,
+        })
+    except Exception as e:
+        logger.error(f"Error in api_debug_timeline_data: {e}")
+        return JsonResponse({'success': False, 'error': str(e)}, status=500)
+
+
+# =============================================================================
+# SUGGESTIONS SECTION API ENDPOINTS
+# Individual API endpoints for each suggestions section to support per-section FY filtering
+# =============================================================================
+
+@login_required
+@require_http_methods(["GET"])
+def api_suggestions_executive_summary(request):
+    """API endpoint for executive summary section."""
+    from apps.analytics.services.trading_intelligence import TradingIntelligenceService
+
+    try:
+        broker = request.GET.get('broker')
+        if broker == 'ALL':
+            broker = None
+
+        fy = request.GET.get('fy')
+        if fy == 'ALL':
+            fy = None
+
+        service = TradingIntelligenceService(broker=broker, fy=fy)
+        data = service.get_executive_summary()
+
+        return JsonResponse({'success': True, 'data': data})
+    except Exception as e:
+        logger.error(f"Error in api_suggestions_executive_summary: {e}")
+        return JsonResponse({'success': False, 'error': str(e)}, status=500)
+
+
+@login_required
+@require_http_methods(["GET"])
+def api_suggestions_conclusions(request):
+    """API endpoint for conclusions section."""
+    from apps.analytics.services.trading_intelligence import TradingIntelligenceService
+
+    try:
+        broker = request.GET.get('broker')
+        if broker == 'ALL':
+            broker = None
+
+        fy = request.GET.get('fy')
+        if fy == 'ALL':
+            fy = None
+
+        service = TradingIntelligenceService(broker=broker, fy=fy)
+        data = service.get_conclusions()
+
+        return JsonResponse({'success': True, 'data': data})
+    except Exception as e:
+        logger.error(f"Error in api_suggestions_conclusions: {e}")
+        return JsonResponse({'success': False, 'error': str(e)}, status=500)
+
+
+@login_required
+@require_http_methods(["GET"])
+def api_suggestions_performance(request):
+    """API endpoint for performance overview section."""
+    from apps.analytics.services.trading_intelligence import TradingIntelligenceService
+
+    try:
+        broker = request.GET.get('broker')
+        if broker == 'ALL':
+            broker = None
+
+        fy = request.GET.get('fy')
+        if fy == 'ALL':
+            fy = None
+
+        service = TradingIntelligenceService(broker=broker, fy=fy)
+        data = service.get_performance_overview()
+
+        return JsonResponse({'success': True, 'data': data})
+    except Exception as e:
+        logger.error(f"Error in api_suggestions_performance: {e}")
+        return JsonResponse({'success': False, 'error': str(e)}, status=500)
+
+
+@login_required
+@require_http_methods(["GET"])
+def api_suggestions_statistical_edge(request):
+    """API endpoint for statistical edge section."""
+    from apps.analytics.services.trading_intelligence import TradingIntelligenceService
+
+    try:
+        broker = request.GET.get('broker')
+        if broker == 'ALL':
+            broker = None
+
+        fy = request.GET.get('fy')
+        if fy == 'ALL':
+            fy = None
+
+        service = TradingIntelligenceService(broker=broker, fy=fy)
+        data = service.get_statistical_edge()
+
+        return JsonResponse({'success': True, 'data': data})
+    except Exception as e:
+        logger.error(f"Error in api_suggestions_statistical_edge: {e}")
+        return JsonResponse({'success': False, 'error': str(e)}, status=500)
+
+
+@login_required
+@require_http_methods(["GET"])
+def api_suggestions_risk(request):
+    """API endpoint for risk analysis section."""
+    from apps.analytics.services.trading_intelligence import TradingIntelligenceService
+
+    try:
+        broker = request.GET.get('broker')
+        if broker == 'ALL':
+            broker = None
+
+        fy = request.GET.get('fy')
+        if fy == 'ALL':
+            fy = None
+
+        service = TradingIntelligenceService(broker=broker, fy=fy)
+        data = service.get_risk_analysis()
+
+        return JsonResponse({'success': True, 'data': data})
+    except Exception as e:
+        logger.error(f"Error in api_suggestions_risk: {e}")
+        return JsonResponse({'success': False, 'error': str(e)}, status=500)
+
+
+@login_required
+@require_http_methods(["GET"])
+def api_suggestions_streaks(request):
+    """API endpoint for streaks and momentum section."""
+    from apps.analytics.services.trading_intelligence import TradingIntelligenceService
+
+    try:
+        broker = request.GET.get('broker')
+        if broker == 'ALL':
+            broker = None
+
+        fy = request.GET.get('fy')
+        if fy == 'ALL':
+            fy = None
+
+        service = TradingIntelligenceService(broker=broker, fy=fy)
+        data = service.get_streak_analysis()
+
+        return JsonResponse({'success': True, 'data': data})
+    except Exception as e:
+        logger.error(f"Error in api_suggestions_streaks: {e}")
+        return JsonResponse({'success': False, 'error': str(e)}, status=500)
+
+
+@login_required
+@require_http_methods(["GET"])
+def api_suggestions_symbols(request):
+    """API endpoint for symbol performance section."""
+    from apps.analytics.services.trading_intelligence import TradingIntelligenceService
+
+    try:
+        broker = request.GET.get('broker')
+        if broker == 'ALL':
+            broker = None
+
+        fy = request.GET.get('fy')
+        if fy == 'ALL':
+            fy = None
+
+        service = TradingIntelligenceService(broker=broker, fy=fy)
+        data = service.get_symbol_insights()
+
+        return JsonResponse({'success': True, 'data': data})
+    except Exception as e:
+        logger.error(f"Error in api_suggestions_symbols: {e}")
+        return JsonResponse({'success': False, 'error': str(e)}, status=500)
+
+
+@login_required
+@require_http_methods(["GET"])
+def api_suggestions_behavioral(request):
+    """API endpoint for behavioral patterns section."""
+    from apps.analytics.services.trading_intelligence import TradingIntelligenceService
+
+    try:
+        broker = request.GET.get('broker')
+        if broker == 'ALL':
+            broker = None
+
+        fy = request.GET.get('fy')
+        if fy == 'ALL':
+            fy = None
+
+        service = TradingIntelligenceService(broker=broker, fy=fy)
+        data = service.get_behavioral_patterns()
+
+        return JsonResponse({'success': True, 'data': data})
+    except Exception as e:
+        logger.error(f"Error in api_suggestions_behavioral: {e}")
+        return JsonResponse({'success': False, 'error': str(e)}, status=500)
+
+
+@login_required
+@require_http_methods(["GET"])
+def api_suggestions_time_patterns(request):
+    """API endpoint for time-based patterns section."""
+    from apps.analytics.services.trading_intelligence import TradingIntelligenceService
+
+    try:
+        broker = request.GET.get('broker')
+        if broker == 'ALL':
+            broker = None
+
+        fy = request.GET.get('fy')
+        if fy == 'ALL':
+            fy = None
+
+        service = TradingIntelligenceService(broker=broker, fy=fy)
+        data = service.get_time_patterns()
+
+        return JsonResponse({'success': True, 'data': data})
+    except Exception as e:
+        logger.error(f"Error in api_suggestions_time_patterns: {e}")
+        return JsonResponse({'success': False, 'error': str(e)}, status=500)
+
+
+@login_required
+@require_http_methods(["GET"])
+def api_patterns_yearly_comparison(request):
+    """API endpoint for yearly income comparison chart."""
+    from apps.analytics.services.trading_patterns import TradingPatternsAnalyzer, get_available_fys
+    from apps.brokers.models import BrokerContractPnL
+    from django.db.models import Sum, Count
+
+    try:
+        broker = request.GET.get('broker')
+        if broker == 'ALL':
+            broker = None
+
+        # Get all available FYs
+        available_fys = get_available_fys()
+
+        yearly_data = []
+        for fy_info in available_fys:
+            fy = fy_info['value']
+            analyzer = TradingPatternsAnalyzer(broker=broker, fy=fy)
+            overview = analyzer.get_overview_stats()
+
+            total_pnl = overview.get('total_pnl', 0)
+            total_trades = overview.get('total_trades', 0)
+
+            # Calculate months in this FY (for partial years)
+            # For simplicity, assume 12 months unless it's the current FY
+            months = 12
+
+            # Parse FY to check if it's current/partial
+            try:
+                parts = fy.split('-')
+                start_year = int(parts[0])
+                if start_year < 100:
+                    start_year += 2000
+
+                from datetime import date
+                today = date.today()
+                fy_start = date(start_year, 4, 1)
+                fy_end = date(start_year + 1, 3, 31)
+
+                if today < fy_end:
+                    # Current FY - calculate actual months elapsed
+                    if today >= fy_start:
+                        months_elapsed = (today.year - fy_start.year) * 12 + (today.month - fy_start.month) + 1
+                        months = min(months_elapsed, 12)
+            except:
+                pass
+
+            monthly_avg = total_pnl / months if months > 0 else 0
+
+            yearly_data.append({
+                'fy': fy,
+                'label': f"FY {fy}",
+                'total_pnl': total_pnl,
+                'total_trades': total_trades,
+                'months': months,
+                'monthly_avg': round(monthly_avg, 2),
+                'win_rate': overview.get('win_rate', 0),
+                'profit_factor': overview.get('profit_factor', 0),
+            })
+
+        # Sort by FY (oldest first for chart)
+        yearly_data.sort(key=lambda x: x['fy'])
+
+        return JsonResponse({'success': True, 'data': yearly_data})
+    except Exception as e:
+        logger.error(f"Error in api_patterns_yearly_comparison: {e}")
+        return JsonResponse({'success': False, 'error': str(e)}, status=500)
+
+
+@login_required
+@require_http_methods(["POST"])
+def api_sync_nifty_data(request):
+    """
+    API endpoint to sync Nifty historical data from Breeze.
+    Called via AJAX from the analytics page.
+    """
+    try:
+        from apps.brokers.integrations.breeze_module.historical import get_nifty50_historical_days
+
+        # Sync last 2000 days of Nifty data (covers ~5.5 years back to FY 2020-21)
+        days = 2000
+        interval = '1day'
+
+        saved_count = get_nifty50_historical_days(days=days, interval=interval)
+
+        return JsonResponse({
+            'success': True,
+            'message': f'Synced {saved_count} Nifty historical records',
+            'records_saved': saved_count
+        })
+    except Exception as e:
+        logger.error(f"Error syncing Nifty data: {e}", exc_info=True)
         return JsonResponse({
             'success': False,
             'error': str(e)

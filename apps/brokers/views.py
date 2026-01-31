@@ -1382,7 +1382,9 @@ def csv_upload_dashboard(request):
 @require_http_methods(["POST"])
 def api_upload_csv(request):
     """
-    API endpoint to upload and process a CSV file.
+    API endpoint to upload and process multiple CSV files.
+    Duplicate detection happens at the data level - same contracts are updated, not duplicated.
+    Users can freely re-upload any files.
     """
     import json
     from apps.brokers.forms import CSVUploadForm
@@ -1399,41 +1401,66 @@ def api_upload_csv(request):
             }, status=400)
 
         file_type = form.cleaned_data['file_type']
-        csv_file = form.cleaned_data['csv_file']
-
-        logger.info(f"Processing {file_type} CSV upload: {csv_file.name}")
+        csv_files = form.cleaned_data['csv_files']
 
         # Select importer based on file type
         if file_type == 'kotak_fno':
-            importer = KotakFNOImporter()
+            importer_class = KotakFNOImporter
         elif file_type == 'breeze_fno':
-            importer = BreezeFNOImporter()
+            importer_class = BreezeFNOImporter
         else:
             return JsonResponse({
                 'success': False,
                 'error': f'Unknown file type: {file_type}',
             }, status=400)
 
-        # Import the file
-        result = importer.import_file(csv_file, user=request.user)
+        # Process each file - no filename restrictions, duplicates handled at data level
+        results = []
+        total_created = 0
+        total_updated = 0
+        total_skipped = 0
+        all_errors = []
 
-        if result['success']:
-            return JsonResponse({
-                'success': True,
-                'message': f"Successfully imported {result['records_created']} records",
-                'batch_id': result['batch_id'],
-                'records_created': result['records_created'],
-                'records_updated': result['records_updated'],
-                'records_skipped': result['records_skipped'],
+        for csv_file in csv_files:
+            logger.info(f"Processing {file_type} CSV upload: {csv_file.name}")
+
+            # Create a new importer instance for each file
+            importer = importer_class()
+            result = importer.import_file(csv_file, user=request.user)
+
+            results.append({
+                'filename': csv_file.name,
+                'success': result['success'],
+                'batch_id': result.get('batch_id'),
+                'records_created': result.get('records_created', 0),
+                'records_updated': result.get('records_updated', 0),
+                'records_skipped': result.get('records_skipped', 0),
                 'errors': result.get('errors', []),
             })
-        else:
-            return JsonResponse({
-                'success': False,
-                'error': result.get('error', 'Import failed'),
-                'batch_id': result.get('batch_id'),
-                'errors': result.get('errors', []),
-            }, status=400)
+
+            if result['success']:
+                total_created += result.get('records_created', 0)
+                total_updated += result.get('records_updated', 0)
+                total_skipped += result.get('records_skipped', 0)
+
+            if result.get('errors'):
+                all_errors.extend([f"{csv_file.name}: {err}" for err in result['errors'][:5]])
+
+        # Build response message
+        files_processed = len(results)
+        files_successful = sum(1 for r in results if r['success'])
+
+        return JsonResponse({
+            'success': files_successful > 0,
+            'message': f"Processed {files_processed} file(s): {files_successful} successful, {files_processed - files_successful} failed",
+            'files_processed': files_processed,
+            'files_successful': files_successful,
+            'records_created': total_created,
+            'records_updated': total_updated,
+            'records_skipped': total_skipped,
+            'errors': all_errors,
+            'results': results,
+        })
 
     except Exception as e:
         logger.exception(f"Error processing CSV upload: {e}")

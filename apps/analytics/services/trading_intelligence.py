@@ -25,6 +25,110 @@ from django.utils import timezone
 logger = logging.getLogger(__name__)
 
 
+def get_fy_date_range(fy: str) -> Tuple[date, date]:
+    """
+    Get date range for Indian Financial Year.
+
+    FY format: '2024-25' means April 1, 2024 to March 31, 2025
+
+    Args:
+        fy: Financial year string like '2024-25'
+
+    Returns:
+        Tuple of (start_date, end_date)
+    """
+    try:
+        start_year = int(fy.split('-')[0])
+        end_year = start_year + 1
+        start_date = date(start_year, 4, 1)  # April 1
+        end_date = date(end_year, 3, 31)  # March 31
+        return start_date, end_date
+    except (ValueError, IndexError):
+        # Return a very wide range if parsing fails
+        return date(2020, 1, 1), date(2030, 12, 31)
+
+
+def get_available_fys() -> List[str]:
+    """
+    Get list of available Financial Years from the data.
+
+    Uses the fy field directly from BrokerContractPnL for accuracy,
+    with fallback to date-based calculation for records without fy field.
+
+    Returns:
+        List of FY strings like ['2024-25', '2023-24', '2022-23']
+    """
+    from apps.brokers.models import BrokerContractPnL, CSVImportLog
+
+    # First, get distinct FY values directly from the fy field (most accurate)
+    direct_fys = set(
+        BrokerContractPnL.objects.exclude(fy='').exclude(fy__isnull=True)
+        .values_list('fy', flat=True).distinct()
+    )
+
+    # Also calculate FYs from expiry dates for records without fy field
+    date_range = BrokerContractPnL.objects.filter(
+        Q(fy='') | Q(fy__isnull=True),
+        expiry_date__isnull=False
+    ).aggregate(
+        min_date=Min('expiry_date'),
+        max_date=Max('expiry_date')
+    )
+
+    min_date = date_range['min_date']
+    max_date = date_range['max_date']
+
+    # Also check created_at for records without expiry (equity, MF, ETF)
+    # Use CSVImportLog to get the date range of imports
+    import_date_range = CSVImportLog.objects.filter(
+        status__in=['SUCCESS', 'PARTIAL']
+    ).aggregate(
+        min_date=Min('created_at'),
+        max_date=Max('created_at')
+    )
+
+    # Combine both date ranges
+    if import_date_range['min_date']:
+        import_min = import_date_range['min_date'].date()
+        if not min_date or import_min < min_date:
+            min_date = import_min
+
+    if import_date_range['max_date']:
+        import_max = import_date_range['max_date'].date()
+        if not max_date or import_max > max_date:
+            max_date = import_max
+
+    # Calculate FY range from dates
+    def get_fy_for_date(d: date) -> str:
+        if d.month >= 4:  # April onwards
+            return f"{d.year}-{str(d.year + 1)[-2:]}"
+        else:  # Jan-Mar belongs to previous FY
+            return f"{d.year - 1}-{str(d.year)[-2:]}"
+
+    date_based_fys = set()
+    if min_date and max_date:
+        start_fy = get_fy_for_date(min_date)
+        end_fy = get_fy_for_date(max_date)
+
+        start_year = int(start_fy.split('-')[0])
+        end_year = int(end_fy.split('-')[0])
+
+        for year in range(start_year, end_year + 1):
+            date_based_fys.add(f"{year}-{str(year + 1)[-2:]}")
+
+    # Combine both sets and sort descending
+    all_fys = direct_fys | date_based_fys
+
+    # Sort by year descending
+    def fy_sort_key(fy: str) -> int:
+        try:
+            return -int(fy.split('-')[0])
+        except (ValueError, IndexError):
+            return 0
+
+    return sorted(all_fys, key=fy_sort_key)
+
+
 class TradingIntelligenceService:
     """
     Smart trading analysis engine that combines:
@@ -33,8 +137,9 @@ class TradingIntelligenceService:
     - Risk management (portfolio manager perspective)
     """
 
-    def __init__(self, broker: str = None):
+    def __init__(self, broker: str = None, fy: str = None):
         self.broker = broker
+        self.fy = fy
         self._cache = {}
 
     def get_smart_suggestions(self) -> Dict[str, Any]:
@@ -88,11 +193,22 @@ class TradingIntelligenceService:
             return {'error': str(e)}
 
     def _get_base_queryset(self):
-        """Get base queryset for contract P&L data."""
+        """Get base queryset for contract P&L data with broker and FY filters."""
         from apps.brokers.models import BrokerContractPnL
         qs = BrokerContractPnL.objects.all()
+
         if self.broker:
             qs = qs.filter(broker=self.broker)
+
+        if self.fy:
+            # Use the fy field directly if available, otherwise fall back to expiry_date
+            # The fy field works for all trade types including equity/MF/ETF
+            start_date, end_date = get_fy_date_range(self.fy)
+            qs = qs.filter(
+                Q(fy=self.fy) |  # Direct FY match (preferred)
+                Q(fy='', expiry_date__gte=start_date, expiry_date__lte=end_date)  # Fallback for records without fy field
+            )
+
         return qs
 
     def _get_performance_overview(self) -> Dict[str, Any]:
@@ -1010,16 +1126,84 @@ class TradingIntelligenceService:
         else:
             return 95.0
 
+    # =========================================================================
+    # PUBLIC SECTION ACCESSORS
+    # These methods expose individual sections for per-section FY filtering
+    # =========================================================================
 
-def get_trading_intelligence(broker: str = None) -> Dict[str, Any]:
+    def get_executive_summary(self) -> Dict[str, Any]:
+        """Get executive summary section data."""
+        overview = self._get_performance_overview()
+        conclusions = self._generate_conclusions(
+            overview,
+            self._analyze_statistical_edge(),
+            self._analyze_time_patterns(),
+            self._analyze_symbol_performance(),
+            self._analyze_risk_metrics(),
+            self._analyze_behavioral_patterns(),
+            self._analyze_market_conditions(),
+            self._analyze_streaks_and_momentum()
+        )
+        return self._create_executive_summary(overview, conclusions)
+
+    def get_conclusions(self) -> List[Dict]:
+        """Get conclusions section data."""
+        overview = self._get_performance_overview()
+        return self._generate_conclusions(
+            overview,
+            self._analyze_statistical_edge(),
+            self._analyze_time_patterns(),
+            self._analyze_symbol_performance(),
+            self._analyze_risk_metrics(),
+            self._analyze_behavioral_patterns(),
+            self._analyze_market_conditions(),
+            self._analyze_streaks_and_momentum()
+        )
+
+    def get_performance_overview(self) -> Dict[str, Any]:
+        """Get performance overview section data."""
+        return self._get_performance_overview()
+
+    def get_statistical_edge(self) -> Dict[str, Any]:
+        """Get statistical edge analysis section data."""
+        return self._analyze_statistical_edge()
+
+    def get_risk_analysis(self) -> Dict[str, Any]:
+        """Get risk analysis section data."""
+        return self._analyze_risk_metrics()
+
+    def get_streak_analysis(self) -> Dict[str, Any]:
+        """Get streak and momentum section data."""
+        return self._analyze_streaks_and_momentum()
+
+    def get_symbol_insights(self) -> Dict[str, Any]:
+        """Get symbol performance section data."""
+        return self._analyze_symbol_performance()
+
+    def get_behavioral_patterns(self) -> Dict[str, Any]:
+        """Get behavioral patterns section data."""
+        return self._analyze_behavioral_patterns()
+
+    def get_time_patterns(self) -> Dict[str, Any]:
+        """Get time-based patterns section data."""
+        return self._analyze_time_patterns()
+
+    def get_confidence_score(self) -> float:
+        """Get analysis confidence score."""
+        overview = self._get_performance_overview()
+        return self._calculate_confidence_score(overview)
+
+
+def get_trading_intelligence(broker: str = None, fy: str = None) -> Dict[str, Any]:
     """
     Convenience function to get smart trading suggestions.
 
     Args:
         broker: Optional broker filter ('KOTAK' or 'ICICI')
+        fy: Optional financial year filter ('2024-25', '2023-24', etc.)
 
     Returns:
         Dict with comprehensive trading analysis and recommendations
     """
-    service = TradingIntelligenceService(broker=broker)
+    service = TradingIntelligenceService(broker=broker, fy=fy)
     return service.get_smart_suggestions()

@@ -7,6 +7,7 @@
 const DashboardState = {
     account: null,
     period: 'FY',
+    fy: null,  // Financial year filter (e.g., '2024-25')
     benchmark: 'NIFTY50',
     granularity: 'daily',
     charts: {}
@@ -67,6 +68,7 @@ function hideLoading(containerId) {
 function getQueryParams() {
     const params = new URLSearchParams();
     if (DashboardState.account) params.append('account_id', DashboardState.account);
+    if (DashboardState.fy) params.append('fy', DashboardState.fy);
     params.append('period', DashboardState.period);
     return params.toString();
 }
@@ -126,6 +128,7 @@ async function loadPnLChart() {
 
     const params = new URLSearchParams();
     if (DashboardState.account) params.append('account_id', DashboardState.account);
+    if (DashboardState.fy) params.append('fy', DashboardState.fy);
     params.append('period', DashboardState.period);
     params.append('granularity', DashboardState.granularity);
 
@@ -291,6 +294,7 @@ async function loadBenchmarkComparison() {
 
     const params = new URLSearchParams();
     if (DashboardState.account) params.append('account_id', DashboardState.account);
+    if (DashboardState.fy) params.append('fy', DashboardState.fy);
     params.append('period', DashboardState.period);
     params.append('benchmark', DashboardState.benchmark);
 
@@ -373,6 +377,7 @@ async function loadBenchmarkComparison() {
 async function loadBestWorstTrades() {
     const params = new URLSearchParams();
     if (DashboardState.account) params.append('account_id', DashboardState.account);
+    if (DashboardState.fy) params.append('fy', DashboardState.fy);
     params.append('limit', '5');
 
     const data = await fetchJSON(`${API.bestWorstTrades}?${params.toString()}`);
@@ -401,8 +406,22 @@ async function loadBestWorstTrades() {
 
 // Event listeners
 document.addEventListener('DOMContentLoaded', () => {
+    // Initialize FY from URL or dropdown
+    const fyFilter = document.getElementById('fy-filter');
+    if (fyFilter) {
+        DashboardState.fy = fyFilter.value === 'ALL' ? null : fyFilter.value;
+    }
+
     // Initialize dashboard
     initDashboard();
+
+    // FY filter
+    if (fyFilter) {
+        fyFilter.addEventListener('change', (e) => {
+            DashboardState.fy = e.target.value === 'ALL' ? null : e.target.value;
+            initDashboard();
+        });
+    }
 
     // Account filter
     document.getElementById('account-filter').addEventListener('change', (e) => {

@@ -1611,6 +1611,14 @@ class BrokerContractPnL(TimeStampedModel):
         help_text="Contract expiry date"
     )
 
+    # Financial Year when P&L was realized (from CSV import filename)
+    fy = models.CharField(
+        max_length=10,
+        blank=True,
+        db_index=True,
+        help_text="Financial year of P&L realization (e.g., '2024-25')"
+    )
+
     strike_price = models.DecimalField(
         max_digits=12,
         decimal_places=2,
@@ -1727,11 +1735,16 @@ class BrokerContractPnL(TimeStampedModel):
             models.Index(fields=['broker', 'import_batch_id']),
             models.Index(fields=['symbol', 'expiry_date']),
             models.Index(fields=['segment']),
+            models.Index(fields=['broker', 'trading_symbol']),  # For fast lookups
+            models.Index(fields=['fy']),  # For FY filtering
+            models.Index(fields=['broker', 'fy']),  # For broker+FY filtering
         ]
         constraints = [
+            # Unique per broker + trading_symbol + fy - allows same contract in different FYs
+            # Same contract from same FY updates existing record
             models.UniqueConstraint(
-                fields=['broker', 'import_batch_id', 'trading_symbol'],
-                name='unique_contract_per_import'
+                fields=['broker', 'trading_symbol', 'fy'],
+                name='unique_contract_per_broker_fy'
             )
         ]
 

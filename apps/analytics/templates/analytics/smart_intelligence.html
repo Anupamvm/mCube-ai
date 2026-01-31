@@ -1,0 +1,1138 @@
+{% extends "analytics/base.html" %}
+
+{% block page_title %}Smart Intelligence{% endblock %}
+{% block page_description %}AI-Powered Analysis & Smart Trading Conclusions{% endblock %}
+
+{% block extra_css %}
+{{ block.super }}
+<style>
+    :root {
+        --gradient-primary: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        --gradient-success: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+        --gradient-danger: linear-gradient(135deg, #eb3349 0%, #f45c43 100%);
+        --gradient-warning: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+        --glass-bg: rgba(255, 255, 255, 0.95);
+        --glass-border: rgba(255, 255, 255, 0.18);
+    }
+
+    /* Hero Section */
+    .hero-card {
+        background: var(--gradient-primary);
+        border-radius: 24px;
+        padding: 2.5rem;
+        color: white;
+        margin-bottom: 2rem;
+        position: relative;
+        overflow: hidden;
+        box-shadow: 0 20px 60px rgba(102, 126, 234, 0.4);
+    }
+
+    .hero-card::before {
+        content: '';
+        position: absolute;
+        top: -50%;
+        right: -50%;
+        width: 100%;
+        height: 100%;
+        background: radial-gradient(circle, rgba(255,255,255,0.1) 0%, transparent 70%);
+        pointer-events: none;
+    }
+
+    .hero-content {
+        position: relative;
+        z-index: 1;
+    }
+
+    .hero-grid {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 2rem;
+        align-items: center;
+    }
+
+    .hero-title {
+        font-size: 1.75rem;
+        font-weight: 700;
+        margin-bottom: 0.5rem;
+    }
+
+    .hero-subtitle {
+        opacity: 0.9;
+        font-size: 1rem;
+        max-width: 500px;
+    }
+
+    .grade-circle {
+        width: 120px;
+        height: 120px;
+        border-radius: 50%;
+        background: rgba(255,255,255,0.2);
+        backdrop-filter: blur(10px);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        border: 3px solid rgba(255,255,255,0.3);
+    }
+
+    .grade-letter {
+        font-size: 3.5rem;
+        font-weight: 800;
+        line-height: 1;
+    }
+
+    .grade-label {
+        font-size: 0.75rem;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        opacity: 0.8;
+    }
+
+    .health-score-bar {
+        margin-top: 1.5rem;
+        background: rgba(255,255,255,0.2);
+        border-radius: 10px;
+        height: 12px;
+        overflow: hidden;
+    }
+
+    .health-score-fill {
+        height: 100%;
+        background: rgba(255,255,255,0.9);
+        border-radius: 10px;
+        transition: width 1s ease-out;
+    }
+
+    .hero-stats {
+        display: grid;
+        grid-template-columns: repeat(5, 1fr);
+        gap: 1rem;
+        margin-top: 2rem;
+    }
+
+    .hero-stat {
+        text-align: center;
+        padding: 1rem;
+        background: rgba(255,255,255,0.1);
+        border-radius: 12px;
+        backdrop-filter: blur(5px);
+    }
+
+    .hero-stat-value {
+        font-size: 1.75rem;
+        font-weight: 700;
+    }
+
+    .hero-stat-label {
+        font-size: 0.7rem;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        opacity: 0.8;
+        margin-top: 0.25rem;
+    }
+
+    /* Filter Bar */
+    .filter-bar {
+        display: flex;
+        gap: 1rem;
+        align-items: center;
+        margin-bottom: 1.5rem;
+        padding: 1rem 1.5rem;
+        background: var(--glass-bg);
+        border-radius: 16px;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+    }
+
+    .filter-bar select {
+        padding: 0.75rem 1.5rem;
+        border-radius: 10px;
+        border: 2px solid var(--light);
+        background: white;
+        font-weight: 500;
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+
+    .filter-bar select:hover {
+        border-color: var(--primary);
+    }
+
+    /* Section Card */
+    .intel-card {
+        background: var(--glass-bg);
+        border-radius: 20px;
+        padding: 1.75rem;
+        margin-bottom: 1.5rem;
+        box-shadow: 0 4px 30px rgba(0,0,0,0.08);
+        border: 1px solid var(--glass-border);
+    }
+
+    .intel-card-header {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        margin-bottom: 1.5rem;
+    }
+
+    .intel-card-icon {
+        width: 44px;
+        height: 44px;
+        border-radius: 12px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.25rem;
+    }
+
+    .intel-card-icon.purple { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; }
+    .intel-card-icon.green { background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%); color: white; }
+    .intel-card-icon.red { background: linear-gradient(135deg, #eb3349 0%, #f45c43 100%); color: white; }
+    .intel-card-icon.orange { background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); color: white; }
+    .intel-card-icon.blue { background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); color: white; }
+
+    .intel-card-title {
+        font-size: 1.25rem;
+        font-weight: 700;
+        color: var(--darker);
+    }
+
+    /* Conclusion Cards */
+    .conclusions-grid {
+        display: grid;
+        gap: 1rem;
+    }
+
+    .conclusion-item {
+        padding: 1.25rem;
+        border-radius: 16px;
+        display: flex;
+        gap: 1rem;
+        align-items: flex-start;
+        transition: transform 0.2s, box-shadow 0.2s;
+    }
+
+    .conclusion-item:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 8px 25px rgba(0,0,0,0.1);
+    }
+
+    .conclusion-item.alert {
+        background: linear-gradient(135deg, #fff5f5 0%, #fed7d7 100%);
+        border-left: 4px solid #e53e3e;
+    }
+
+    .conclusion-item.warning {
+        background: linear-gradient(135deg, #fffff0 0%, #fefcbf 100%);
+        border-left: 4px solid #d69e2e;
+    }
+
+    .conclusion-item.positive {
+        background: linear-gradient(135deg, #f0fff4 0%, #c6f6d5 100%);
+        border-left: 4px solid #38a169;
+    }
+
+    .conclusion-icon {
+        width: 40px;
+        height: 40px;
+        border-radius: 10px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.25rem;
+        flex-shrink: 0;
+    }
+
+    .conclusion-item.alert .conclusion-icon { background: #feb2b2; color: #c53030; }
+    .conclusion-item.warning .conclusion-icon { background: #faf089; color: #b7791f; }
+    .conclusion-item.positive .conclusion-icon { background: #9ae6b4; color: #276749; }
+
+    .conclusion-content {
+        flex: 1;
+    }
+
+    .conclusion-title {
+        font-weight: 600;
+        font-size: 1rem;
+        margin-bottom: 0.25rem;
+    }
+
+    .conclusion-item.alert .conclusion-title { color: #c53030; }
+    .conclusion-item.warning .conclusion-title { color: #b7791f; }
+    .conclusion-item.positive .conclusion-title { color: #276749; }
+
+    .conclusion-message {
+        color: var(--gray);
+        font-size: 0.9rem;
+        line-height: 1.5;
+    }
+
+    .conclusion-tag {
+        font-size: 0.65rem;
+        padding: 0.25rem 0.6rem;
+        border-radius: 20px;
+        text-transform: uppercase;
+        font-weight: 700;
+        letter-spacing: 0.5px;
+    }
+
+    .conclusion-item.alert .conclusion-tag { background: #fed7d7; color: #9b2c2c; }
+    .conclusion-item.warning .conclusion-tag { background: #fefcbf; color: #975a16; }
+    .conclusion-item.positive .conclusion-tag { background: #c6f6d5; color: #22543d; }
+
+    /* Stats Grid */
+    .stats-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+        gap: 1rem;
+    }
+
+    .stat-box {
+        background: linear-gradient(135deg, #f8f9ff 0%, #f0f4ff 100%);
+        padding: 1.25rem;
+        border-radius: 16px;
+        text-align: center;
+        border: 1px solid rgba(102, 126, 234, 0.1);
+    }
+
+    .stat-box-value {
+        font-size: 1.75rem;
+        font-weight: 800;
+        background: var(--gradient-primary);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+    }
+
+    .stat-box-value.positive {
+        background: var(--gradient-success);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+    }
+
+    .stat-box-value.negative {
+        background: var(--gradient-danger);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+    }
+
+    .stat-box-label {
+        font-size: 0.7rem;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        color: var(--gray);
+        margin-top: 0.25rem;
+        font-weight: 600;
+    }
+
+    /* Edge Badge */
+    .edge-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.6rem 1.25rem;
+        border-radius: 30px;
+        font-weight: 700;
+        font-size: 0.85rem;
+        letter-spacing: 0.5px;
+    }
+
+    .edge-badge.excellent { background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%); color: white; }
+    .edge-badge.good { background: linear-gradient(135deg, #56ab2f 0%, #a8e063 100%); color: white; }
+    .edge-badge.moderate { background: linear-gradient(135deg, #f2994a 0%, #f2c94c 100%); color: white; }
+    .edge-badge.marginal { background: linear-gradient(135deg, #eb5757 0%, #f2994a 100%); color: white; }
+    .edge-badge.weak { background: linear-gradient(135deg, #bdc3c7 0%, #95a5a6 100%); color: white; }
+    .edge-badge.none { background: #e2e8f0; color: #64748b; }
+
+    /* Risk Badge */
+    .risk-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.6rem 1.25rem;
+        border-radius: 30px;
+        font-weight: 700;
+        font-size: 0.85rem;
+    }
+
+    .risk-badge.low { background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%); color: white; }
+    .risk-badge.moderate { background: linear-gradient(135deg, #f2994a 0%, #f2c94c 100%); color: white; }
+    .risk-badge.high { background: linear-gradient(135deg, #eb5757 0%, #f2994a 100%); color: white; }
+    .risk-badge.critical { background: linear-gradient(135deg, #eb3349 0%, #f45c43 100%); color: white; animation: pulse 2s infinite; }
+
+    @keyframes pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.7; }
+    }
+
+    /* Momentum Badge */
+    .momentum-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.6rem 1.25rem;
+        border-radius: 30px;
+        font-weight: 700;
+        font-size: 0.85rem;
+    }
+
+    .momentum-badge.hot { background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%); color: white; }
+    .momentum-badge.neutral { background: #e2e8f0; color: #64748b; }
+    .momentum-badge.cold { background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); color: white; }
+
+    /* Data Table */
+    .data-table {
+        width: 100%;
+        border-collapse: separate;
+        border-spacing: 0;
+    }
+
+    .data-table th {
+        background: linear-gradient(135deg, #f8f9ff 0%, #eef2ff 100%);
+        padding: 1rem;
+        text-align: left;
+        font-size: 0.7rem;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        color: var(--gray);
+        font-weight: 700;
+        border-bottom: 2px solid var(--light);
+    }
+
+    .data-table th:first-child { border-radius: 12px 0 0 0; }
+    .data-table th:last-child { border-radius: 0 12px 0 0; }
+
+    .data-table td {
+        padding: 1rem;
+        border-bottom: 1px solid var(--light);
+        font-size: 0.9rem;
+    }
+
+    .data-table tbody tr:hover {
+        background: linear-gradient(135deg, #f8f9ff 0%, #fff 100%);
+    }
+
+    .data-table tbody tr:last-child td:first-child { border-radius: 0 0 0 12px; }
+    .data-table tbody tr:last-child td:last-child { border-radius: 0 0 12px 0; }
+
+    .pnl-positive { color: #16a34a; font-weight: 700; }
+    .pnl-negative { color: #dc2626; font-weight: 700; }
+
+    /* Two Column Layout */
+    .two-col {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 1.5rem;
+    }
+
+    /* Recommendation List */
+    .rec-list {
+        list-style: none;
+        padding: 0;
+        margin: 1rem 0 0 0;
+    }
+
+    .rec-list li {
+        display: flex;
+        align-items: flex-start;
+        gap: 0.75rem;
+        padding: 0.75rem 0;
+        border-bottom: 1px solid var(--light);
+    }
+
+    .rec-list li:last-child {
+        border-bottom: none;
+    }
+
+    .rec-bullet {
+        width: 28px;
+        height: 28px;
+        border-radius: 8px;
+        background: var(--gradient-primary);
+        color: white;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 0.75rem;
+        flex-shrink: 0;
+    }
+
+    /* Comparison Boxes */
+    .compare-box {
+        padding: 1.25rem;
+        border-radius: 16px;
+        text-align: center;
+    }
+
+    .compare-box.win {
+        background: linear-gradient(135deg, #f0fff4 0%, #c6f6d5 100%);
+        border: 2px solid #9ae6b4;
+    }
+
+    .compare-box.loss {
+        background: linear-gradient(135deg, #fff5f5 0%, #fed7d7 100%);
+        border: 2px solid #feb2b2;
+    }
+
+    .compare-box-label {
+        font-size: 0.7rem;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        font-weight: 700;
+    }
+
+    .compare-box.win .compare-box-label { color: #22543d; }
+    .compare-box.loss .compare-box-label { color: #9b2c2c; }
+
+    .compare-box-value {
+        font-size: 1.5rem;
+        font-weight: 800;
+        margin-top: 0.25rem;
+    }
+
+    .compare-box.win .compare-box-value { color: #22543d; }
+    .compare-box.loss .compare-box-value { color: #9b2c2c; }
+
+    /* Confidence Meter */
+    .confidence-section {
+        background: linear-gradient(135deg, #f8f9ff 0%, #eef2ff 100%);
+        padding: 1.25rem;
+        border-radius: 16px;
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+        margin-top: 1.5rem;
+    }
+
+    .confidence-icon {
+        width: 44px;
+        height: 44px;
+        border-radius: 12px;
+        background: var(--gradient-primary);
+        color: white;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.25rem;
+    }
+
+    .confidence-text {
+        flex: 1;
+    }
+
+    .confidence-value {
+        font-size: 1.25rem;
+        font-weight: 800;
+        background: var(--gradient-primary);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+    }
+
+    @media (max-width: 768px) {
+        .two-col {
+            grid-template-columns: 1fr;
+        }
+        .hero-grid {
+            grid-template-columns: 1fr;
+            text-align: center;
+        }
+        .grade-circle {
+            margin: 0 auto;
+        }
+        .hero-stats {
+            grid-template-columns: repeat(2, 1fr);
+        }
+    }
+</style>
+{% endblock %}
+
+{% block page_content %}
+
+<!-- Filter Bar -->
+<div class="filter-bar">
+    <span style="font-weight: 600;">Financial Year:</span>
+    <select onchange="updateFilters();" id="fy-filter">
+        <option value="ALL" {% if fy_filter == 'ALL' %}selected{% endif %}>All Data</option>
+        {% for fy in available_fys %}
+        <option value="{{ fy }}" {% if fy_filter == fy %}selected{% endif %}>FY {{ fy }}</option>
+        {% endfor %}
+    </select>
+
+    <span style="font-weight: 600; margin-left: 1rem;">Broker:</span>
+    <select onchange="updateFilters();" id="broker-filter">
+        <option value="ALL" {% if broker_filter == 'ALL' %}selected{% endif %}>All Brokers</option>
+        <option value="KOTAK" {% if broker_filter == 'KOTAK' %}selected{% endif %}>Kotak Neo</option>
+        <option value="ICICI" {% if broker_filter == 'ICICI' %}selected{% endif %}>ICICI Breeze</option>
+    </select>
+</div>
+
+<script>
+function updateFilters() {
+    var fy = document.getElementById('fy-filter').value;
+    var broker = document.getElementById('broker-filter').value;
+    var params = [];
+    if (fy !== 'ALL') params.push('fy=' + fy);
+    if (broker !== 'ALL') params.push('broker=' + broker);
+    window.location.href = '?' + params.join('&');
+}
+</script>
+
+{% if analysis.error %}
+<div class="intel-card">
+    <p style="color: var(--danger);">Error loading analysis: {{ analysis.error }}</p>
+</div>
+{% else %}
+
+<!-- Hero Section -->
+{% with summary=analysis.executive_summary %}
+<div class="hero-card">
+    <div class="hero-content">
+        <div class="hero-grid">
+            <div>
+                <h2 class="hero-title">Trading Performance Score</h2>
+                <p class="hero-subtitle">{{ summary.summary }}</p>
+
+                <div class="health-score-bar">
+                    <div class="health-score-fill" style="width: {{ summary.health_score }}%;"></div>
+                </div>
+                <div style="display: flex; justify-content: space-between; margin-top: 0.5rem; font-size: 0.8rem; opacity: 0.8;">
+                    <span>0</span>
+                    <span>Score: {{ summary.health_score }}/100</span>
+                    <span>100</span>
+                </div>
+            </div>
+            <div class="grade-circle">
+                <span class="grade-letter">{{ summary.grade }}</span>
+                <span class="grade-label">Grade</span>
+            </div>
+        </div>
+
+        <div class="hero-stats">
+            <div class="hero-stat">
+                <div class="hero-stat-value">{{ summary.total_trades }}</div>
+                <div class="hero-stat-label">Total Trades</div>
+            </div>
+            <div class="hero-stat">
+                <div class="hero-stat-value">{{ summary.win_rate|floatformat:1 }}%</div>
+                <div class="hero-stat-label">Win Rate</div>
+            </div>
+            <div class="hero-stat">
+                <div class="hero-stat-value">{% if summary.profit_factor %}{{ summary.profit_factor|floatformat:2 }}{% else %}--{% endif %}</div>
+                <div class="hero-stat-label">Profit Factor</div>
+            </div>
+            <div class="hero-stat">
+                <div class="hero-stat-value" style="{% if summary.total_pnl >= 0 %}color: #9ae6b4;{% else %}color: #feb2b2;{% endif %}">
+                    {% if summary.total_pnl >= 0 %}+{% endif %}{{ summary.total_pnl|floatformat:0 }}
+                </div>
+                <div class="hero-stat-label">Net P&L</div>
+            </div>
+            <div class="hero-stat">
+                <div class="hero-stat-value">{{ summary.alerts_count }}/{{ summary.warnings_count }}</div>
+                <div class="hero-stat-label">Alerts/Warnings</div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endwith %}
+
+<!-- Key Findings -->
+{% if analysis.conclusions %}
+<div class="intel-card">
+    <div class="intel-card-header">
+        <div class="intel-card-icon purple">&#128161;</div>
+        <h3 class="intel-card-title">Key Findings & Action Items</h3>
+    </div>
+
+    <div class="conclusions-grid">
+        {% for c in analysis.conclusions %}
+        <div class="conclusion-item {% if c.type == 'ALERT' %}alert{% elif c.type == 'WARNING' %}warning{% else %}positive{% endif %}">
+            <div class="conclusion-icon">
+                {% if c.type == 'ALERT' %}&#9888;{% elif c.type == 'WARNING' %}&#9888;{% else %}&#10004;{% endif %}
+            </div>
+            <div class="conclusion-content">
+                <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.25rem;">
+                    <span class="conclusion-title">{{ c.title }}</span>
+                    <span class="conclusion-tag">{{ c.category }}</span>
+                </div>
+                <p class="conclusion-message">{{ c.message }}</p>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+
+<div class="two-col">
+    <!-- Performance Metrics -->
+    {% with overview=analysis.performance_overview %}
+    <div class="intel-card">
+        <div class="intel-card-header">
+            <div class="intel-card-icon green">&#128200;</div>
+            <h3 class="intel-card-title">Performance Metrics</h3>
+        </div>
+
+        <div class="stats-grid">
+            <div class="stat-box">
+                <div class="stat-box-value">{{ overview.win_rate|floatformat:1 }}%</div>
+                <div class="stat-box-label">Win Rate</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-box-value {% if overview.expectancy >= 0 %}positive{% else %}negative{% endif %}">{{ overview.expectancy|floatformat:0 }}</div>
+                <div class="stat-box-label">Expectancy</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-box-value">{% if overview.profit_factor %}{{ overview.profit_factor|floatformat:2 }}{% else %}--{% endif %}</div>
+                <div class="stat-box-label">Profit Factor</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-box-value">{% if overview.risk_reward %}{{ overview.risk_reward|floatformat:2 }}{% else %}--{% endif %}</div>
+                <div class="stat-box-label">Risk : Reward</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-box-value">{{ overview.kelly_criterion_pct|floatformat:1 }}%</div>
+                <div class="stat-box-label">Kelly %</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-box-value">{{ overview.total_trades }}</div>
+                <div class="stat-box-label">Trades</div>
+            </div>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-top: 1.25rem;">
+            <div class="compare-box win">
+                <div class="compare-box-label">Avg Win</div>
+                <div class="compare-box-value">+{{ overview.avg_profit|floatformat:0 }}</div>
+            </div>
+            <div class="compare-box loss">
+                <div class="compare-box-label">Avg Loss</div>
+                <div class="compare-box-value">-{{ overview.avg_loss|floatformat:0 }}</div>
+            </div>
+        </div>
+    </div>
+    {% endwith %}
+
+    <!-- Statistical Edge -->
+    {% with edge=analysis.statistical_edge %}
+    <div class="intel-card">
+        <div class="intel-card-header">
+            <div class="intel-card-icon blue">&#128202;</div>
+            <h3 class="intel-card-title">Statistical Edge</h3>
+        </div>
+
+        {% if edge.insufficient_data %}
+        <p style="color: var(--gray);">Need {{ edge.min_required }} trades minimum. Currently: {{ edge.current }}</p>
+        {% else %}
+
+        <div style="margin-bottom: 1.25rem;">
+            <span class="edge-badge {% if edge.edge_quality == 'EXCELLENT_EDGE' %}excellent{% elif edge.edge_quality == 'GOOD_EDGE' %}good{% elif edge.edge_quality == 'MODERATE_EDGE' %}moderate{% elif edge.edge_quality == 'MARGINAL_EDGE' %}marginal{% elif edge.edge_quality == 'WEAK_EDGE' %}weak{% else %}none{% endif %}">
+                {% if edge.edge_quality == 'EXCELLENT_EDGE' %}&#9733; Excellent Edge
+                {% elif edge.edge_quality == 'GOOD_EDGE' %}&#9733; Good Edge
+                {% elif edge.edge_quality == 'MODERATE_EDGE' %}&#9733; Moderate Edge
+                {% elif edge.edge_quality == 'MARGINAL_EDGE' %}Marginal Edge
+                {% elif edge.edge_quality == 'WEAK_EDGE' %}Weak Edge
+                {% else %}No Edge Detected{% endif %}
+            </span>
+            {% if edge.is_statistically_significant %}
+            <span style="margin-left: 0.5rem; color: #16a34a; font-weight: 600;">&#10004; Statistically Significant</span>
+            {% endif %}
+        </div>
+
+        <p style="color: var(--gray); font-size: 0.9rem; margin-bottom: 1.25rem;">{{ edge.interpretation }}</p>
+
+        <div class="stats-grid">
+            <div class="stat-box">
+                <div class="stat-box-value">{{ edge.sharpe_ratio_annualized|floatformat:2 }}</div>
+                <div class="stat-box-label">Sharpe (Ann)</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-box-value">{{ edge.sortino_ratio|floatformat:2 }}</div>
+                <div class="stat-box-label">Sortino</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-box-value">{{ edge.confidence_level|floatformat:0 }}%</div>
+                <div class="stat-box-label">Confidence</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-box-value">{{ edge.p_value|floatformat:3 }}</div>
+                <div class="stat-box-label">P-Value</div>
+            </div>
+        </div>
+
+        <div style="margin-top: 1rem; padding: 0.75rem; background: var(--lighter); border-radius: 10px; font-size: 0.85rem;">
+            <strong>Win Rate 95% CI:</strong> {{ edge.win_rate_95_ci.0 }}% - {{ edge.win_rate_95_ci.1 }}%
+        </div>
+        {% endif %}
+    </div>
+    {% endwith %}
+</div>
+
+<div class="two-col">
+    <!-- Risk Analysis -->
+    {% with risk=analysis.risk_analysis %}
+    <div class="intel-card">
+        <div class="intel-card-header">
+            <div class="intel-card-icon red">&#128737;</div>
+            <h3 class="intel-card-title">Risk Analysis</h3>
+        </div>
+
+        {% if risk.insufficient_data %}
+        <p style="color: var(--gray);">Insufficient data for risk analysis.</p>
+        {% else %}
+
+        <div style="margin-bottom: 1.25rem;">
+            <span class="risk-badge {{ risk.risk_level|lower }}">
+                {% if risk.risk_level == 'LOW' %}&#10004; Low Risk
+                {% elif risk.risk_level == 'MODERATE' %}&#9888; Moderate Risk
+                {% elif risk.risk_level == 'HIGH' %}&#9888; High Risk
+                {% else %}&#9888; Critical Risk{% endif %}
+            </span>
+            {% if risk.in_drawdown %}
+            <span style="margin-left: 0.5rem; padding: 0.4rem 0.8rem; background: #fed7d7; color: #9b2c2c; border-radius: 20px; font-size: 0.8rem; font-weight: 600;">In Drawdown</span>
+            {% endif %}
+        </div>
+
+        <div class="stats-grid">
+            <div class="stat-box">
+                <div class="stat-box-value negative">{{ risk.max_drawdown|floatformat:0 }}</div>
+                <div class="stat-box-label">Max Drawdown</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-box-value {% if risk.current_drawdown > 0 %}negative{% endif %}">{{ risk.current_drawdown|floatformat:0 }}</div>
+                <div class="stat-box-label">Current DD</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-box-value">{{ risk.var_95|floatformat:0 }}</div>
+                <div class="stat-box-label">VaR 95%</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-box-value negative">{{ risk.max_consecutive_losses }}</div>
+                <div class="stat-box-label">Max Consec Loss</div>
+            </div>
+        </div>
+
+        {% if risk.recommendations %}
+        <ul class="rec-list">
+            {% for rec in risk.recommendations %}
+            <li>
+                <span class="rec-bullet">!</span>
+                <span style="font-size: 0.9rem;">{{ rec }}</span>
+            </li>
+            {% endfor %}
+        </ul>
+        {% endif %}
+        {% endif %}
+    </div>
+    {% endwith %}
+
+    <!-- Momentum -->
+    {% with streaks=analysis.streak_analysis %}
+    <div class="intel-card">
+        <div class="intel-card-header">
+            <div class="intel-card-icon orange">&#128293;</div>
+            <h3 class="intel-card-title">Momentum & Streaks</h3>
+        </div>
+
+        {% if streaks.insufficient_data %}
+        <p style="color: var(--gray);">Insufficient data.</p>
+        {% else %}
+
+        {% with m=streaks.recent_momentum %}
+        <div style="margin-bottom: 1.25rem;">
+            <span class="momentum-badge {{ m.trend|lower }}">
+                {% if m.trend == 'HOT' %}&#128293; Running Hot
+                {% elif m.trend == 'COLD' %}&#10052; Cold Streak
+                {% else %}&#8212; Neutral{% endif %}
+            </span>
+            <span style="margin-left: 0.75rem; color: var(--gray); font-size: 0.9rem;">
+                {{ m.wins }}/{{ m.trades }} recent wins
+            </span>
+        </div>
+        {% endwith %}
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1rem;">
+            <div style="padding: 1rem; background: var(--lighter); border-radius: 12px;">
+                <div style="font-size: 0.7rem; color: var(--gray); text-transform: uppercase; font-weight: 600;">Current Streak</div>
+                <div style="font-size: 1.5rem; font-weight: 800; {% if streaks.current_streak.type == 'win' %}color: #16a34a;{% else %}color: #dc2626;{% endif %}">
+                    {{ streaks.current_streak.length }} {{ streaks.current_streak.type|title }}{% if streaks.current_streak.length != 1 %}s{% endif %}
+                </div>
+            </div>
+            <div style="padding: 1rem; background: var(--lighter); border-radius: 12px;">
+                <div style="font-size: 0.7rem; color: var(--gray); text-transform: uppercase; font-weight: 600;">Recent P&L</div>
+                <div style="font-size: 1.5rem; font-weight: 800; {% if streaks.recent_momentum.pnl >= 0 %}color: #16a34a;{% else %}color: #dc2626;{% endif %}">
+                    {% if streaks.recent_momentum.pnl >= 0 %}+{% endif %}{{ streaks.recent_momentum.pnl|floatformat:0 }}
+                </div>
+            </div>
+        </div>
+
+        <div class="stats-grid">
+            <div class="stat-box">
+                <div class="stat-box-value positive">{{ streaks.max_win_streak }}</div>
+                <div class="stat-box-label">Max Win Streak</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-box-value negative">{{ streaks.max_loss_streak }}</div>
+                <div class="stat-box-label">Max Loss Streak</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-box-value">{{ streaks.avg_win_streak|floatformat:1 }}</div>
+                <div class="stat-box-label">Avg Win Streak</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-box-value">{{ streaks.avg_loss_streak|floatformat:1 }}</div>
+                <div class="stat-box-label">Avg Loss Streak</div>
+            </div>
+        </div>
+
+        {% if streaks.recommendations %}
+        <ul class="rec-list">
+            {% for rec in streaks.recommendations %}
+            <li>
+                <span class="rec-bullet">&#10148;</span>
+                <span style="font-size: 0.9rem;">{{ rec }}</span>
+            </li>
+            {% endfor %}
+        </ul>
+        {% endif %}
+        {% endif %}
+    </div>
+    {% endwith %}
+</div>
+
+<!-- Symbol Performance -->
+{% with symbols=analysis.symbol_insights %}
+<div class="intel-card">
+    <div class="intel-card-header">
+        <div class="intel-card-icon purple">&#128176;</div>
+        <h3 class="intel-card-title">Symbol Performance</h3>
+    </div>
+
+    {% if symbols.concentration_risk.is_concentrated %}
+    <div style="margin-bottom: 1.25rem; padding: 1rem; background: linear-gradient(135deg, #fffff0 0%, #fefcbf 100%); border-radius: 12px; border-left: 4px solid #d69e2e;">
+        <strong style="color: #975a16;">&#9888; Concentration Warning:</strong>
+        <span style="color: #744210;">{{ symbols.concentration_risk.top_symbol }} accounts for {{ symbols.concentration_risk.top_contribution_pct }}% of P&L</span>
+    </div>
+    {% endif %}
+
+    <div class="two-col">
+        <div>
+            <h4 style="color: #16a34a; margin-bottom: 1rem; font-size: 0.9rem;">&#128200; Best Performers</h4>
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>Symbol</th>
+                        <th>Trades</th>
+                        <th>Win %</th>
+                        <th>P&L</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for s in symbols.best_performers %}
+                    <tr>
+                        <td><strong>{{ s.symbol }}</strong></td>
+                        <td>{{ s.trades }}</td>
+                        <td>{{ s.win_rate }}%</td>
+                        <td class="pnl-positive">+{{ s.total_pnl|floatformat:0 }}</td>
+                    </tr>
+                    {% empty %}
+                    <tr><td colspan="4" style="color: var(--gray); text-align: center;">No data</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        <div>
+            <h4 style="color: #dc2626; margin-bottom: 1rem; font-size: 0.9rem;">&#128201; Worst Performers</h4>
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>Symbol</th>
+                        <th>Trades</th>
+                        <th>Win %</th>
+                        <th>P&L</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for s in symbols.worst_performers %}
+                    <tr>
+                        <td><strong>{{ s.symbol }}</strong></td>
+                        <td>{{ s.trades }}</td>
+                        <td>{{ s.win_rate }}%</td>
+                        <td class="pnl-negative">{{ s.total_pnl|floatformat:0 }}</td>
+                    </tr>
+                    {% empty %}
+                    <tr><td colspan="4" style="color: var(--gray); text-align: center;">No data</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    {% if symbols.recommendations %}
+    <ul class="rec-list">
+        {% for rec in symbols.recommendations %}
+        <li>
+            <span class="rec-bullet">&#10148;</span>
+            <span style="font-size: 0.9rem;">{{ rec }}</span>
+        </li>
+        {% endfor %}
+    </ul>
+    {% endif %}
+</div>
+{% endwith %}
+
+<!-- Behavioral & Time Patterns -->
+<div class="two-col">
+    {% with behavior=analysis.behavioral_patterns %}
+    <div class="intel-card">
+        <div class="intel-card-header">
+            <div class="intel-card-icon green">&#129504;</div>
+            <h3 class="intel-card-title">Behavioral Patterns</h3>
+        </div>
+
+        <h4 style="font-size: 0.85rem; color: var(--gray); margin-bottom: 0.75rem; text-transform: uppercase;">Segment Performance</h4>
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>Segment</th>
+                    <th>Trades</th>
+                    <th>Win %</th>
+                    <th>P&L</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for seg_name, seg in behavior.segment_performance.items %}
+                <tr>
+                    <td><strong>{{ seg_name }}</strong></td>
+                    <td>{{ seg.trades }}</td>
+                    <td>{{ seg.win_rate }}%</td>
+                    <td class="{% if seg.total_pnl >= 0 %}pnl-positive{% else %}pnl-negative{% endif %}">
+                        {% if seg.total_pnl >= 0 %}+{% endif %}{{ seg.total_pnl|floatformat:0 }}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+
+        {% if behavior.option_type_performance %}
+        <h4 style="font-size: 0.85rem; color: var(--gray); margin: 1.25rem 0 0.75rem; text-transform: uppercase;">Option Types</h4>
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>Type</th>
+                    <th>Trades</th>
+                    <th>Win %</th>
+                    <th>P&L</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for opt_name, opt in behavior.option_type_performance.items %}
+                <tr>
+                    <td><strong>{{ opt_name }}</strong></td>
+                    <td>{{ opt.trades }}</td>
+                    <td>{{ opt.win_rate }}%</td>
+                    <td class="{% if opt.total_pnl >= 0 %}pnl-positive{% else %}pnl-negative{% endif %}">
+                        {% if opt.total_pnl >= 0 %}+{% endif %}{{ opt.total_pnl|floatformat:0 }}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% endif %}
+
+        {% if behavior.recommendations %}
+        <ul class="rec-list">
+            {% for rec in behavior.recommendations %}
+            <li>
+                <span class="rec-bullet">&#10148;</span>
+                <span style="font-size: 0.9rem;">{{ rec }}</span>
+            </li>
+            {% endfor %}
+        </ul>
+        {% endif %}
+    </div>
+    {% endwith %}
+
+    {% with time=analysis.time_patterns %}
+    <div class="intel-card">
+        <div class="intel-card-header">
+            <div class="intel-card-icon blue">&#128197;</div>
+            <h3 class="intel-card-title">Time Patterns</h3>
+        </div>
+
+        {% if time.best_month or time.worst_month %}
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1.25rem;">
+            {% if time.best_month %}
+            <div class="compare-box win">
+                <div class="compare-box-label">Best Month</div>
+                <div class="compare-box-value">{{ time.best_month.month }}</div>
+                <div style="font-size: 0.85rem; color: #22543d;">+{{ time.best_month.pnl|floatformat:0 }}</div>
+            </div>
+            {% endif %}
+            {% if time.worst_month %}
+            <div class="compare-box loss">
+                <div class="compare-box-label">Worst Month</div>
+                <div class="compare-box-value">{{ time.worst_month.month }}</div>
+                <div style="font-size: 0.85rem; color: #9b2c2c;">{{ time.worst_month.pnl|floatformat:0 }}</div>
+            </div>
+            {% endif %}
+        </div>
+        {% endif %}
+
+        {% if time.monthly_performance %}
+        <h4 style="font-size: 0.85rem; color: var(--gray); margin-bottom: 0.75rem; text-transform: uppercase;">Monthly Breakdown</h4>
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>Month</th>
+                    <th>Trades</th>
+                    <th>Win %</th>
+                    <th>P&L</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for m in time.monthly_performance %}
+                <tr>
+                    <td><strong>{{ m.month }}</strong></td>
+                    <td>{{ m.trades }}</td>
+                    <td>{{ m.win_rate }}%</td>
+                    <td class="{% if m.total_pnl >= 0 %}pnl-positive{% else %}pnl-negative{% endif %}">
+                        {% if m.total_pnl >= 0 %}+{% endif %}{{ m.total_pnl|floatformat:0 }}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% endif %}
+
+        {% if time.recommendations %}
+        <ul class="rec-list">
+            {% for rec in time.recommendations %}
+            <li>
+                <span class="rec-bullet">&#10148;</span>
+                <span style="font-size: 0.9rem;">{{ rec }}</span>
+            </li>
+            {% endfor %}
+        </ul>
+        {% endif %}
+    </div>
+    {% endwith %}
+</div>
+
+<!-- Confidence Section -->
+<div class="confidence-section">
+    <div class="confidence-icon">&#128202;</div>
+    <div class="confidence-text">
+        <div style="font-size: 0.85rem; color: var(--gray);">Analysis Confidence</div>
+        <div>
+            <span class="confidence-value">{{ analysis.confidence_score|floatformat:0 }}%</span>
+            <span style="color: var(--gray); font-size: 0.85rem; margin-left: 0.5rem;">
+                Based on {{ analysis.performance_overview.total_trades }} trades
+            </span>
+        </div>
+    </div>
+</div>
+
+{% endif %}
+
+{% endblock %}

@@ -140,6 +140,41 @@ class KotakFNOImporter:
         self.records_updated = 0
         self.records_skipped = 0
         self.section_counts = {}  # Track records per section
+        self.fy = None  # Financial year extracted from filename
+
+    def _parse_fy_from_filename(self, filename: str) -> str:
+        """
+        Extract Financial Year from Kotak filename.
+
+        Filename format: Gain_Loss_A0YPQ_20240401_20250331.csv
+        The dates represent the FY period (YYYYMMDD_YYYYMMDD).
+
+        Returns:
+            FY string like '2024-25' or empty string if cannot parse
+        """
+        try:
+            # Extract date portion using regex
+            match = re.search(r'_(\d{8})_(\d{8})\.', filename)
+            if match:
+                start_date_str = match.group(1)
+                # Parse start date (YYYYMMDD format)
+                start_year = int(start_date_str[:4])
+                start_month = int(start_date_str[4:6])
+
+                # FY starts in April
+                if start_month >= 4:
+                    # Start date is in April or later, this is the FY start year
+                    fy = f"{start_year}-{str(start_year + 1)[-2:]}"
+                else:
+                    # Start date is Jan-Mar, this is the FY end year
+                    fy = f"{start_year - 1}-{str(start_year)[-2:]}"
+
+                logger.info(f"Extracted FY from filename {filename}: {fy}")
+                return fy
+        except Exception as e:
+            logger.warning(f"Could not extract FY from filename {filename}: {e}")
+
+        return ''
 
     def parse_contract(self, script_name: str, security_type: str) -> Dict:
         """
@@ -263,11 +298,14 @@ class KotakFNOImporter:
             'derivatives': 0,
         }
 
-        # Get filename
+        # Get filename and extract FY
         if hasattr(file_obj, 'name'):
             filename = file_obj.name
         else:
             filename = 'kotak_gainloss.csv'
+
+        # Extract FY from filename
+        self.fy = self._parse_fy_from_filename(filename)
 
         # Create import log
         import_log = CSVImportLog.objects.create(
@@ -445,12 +483,15 @@ class KotakFNOImporter:
             'long_term_pnl': str(long_term_pnl),
         }
 
-        # Create or update record
+        # Create or update record - use broker + trading_symbol + fy as unique key
+        # This allows the same contract to have different P&L entries for each FY
         obj, created = BrokerContractPnL.objects.update_or_create(
             broker='KOTAK',
-            import_batch_id=self.batch_id,
             trading_symbol=script_name,
+            fy=self.fy,  # Include FY in unique key
             defaults={
+                'import_batch_id': self.batch_id,  # Track latest import batch
+                'fy': self.fy,  # Financial year from filename
                 'symbol': contract['symbol'],
                 'segment': contract['segment'],
                 'security_type': contract['security_type'],
@@ -498,6 +539,35 @@ class BreezeFNOImporter:
         self.records_created = 0
         self.records_updated = 0
         self.records_skipped = 0
+        self.fy = None  # Financial year
+
+    def _determine_fy_from_current_date(self) -> str:
+        """
+        Determine Financial Year based on current date.
+
+        Breeze FNO Portfolio CSV shows current portfolio status,
+        so the realized P&L is for the current FY.
+
+        Indian FY runs April 1 to March 31.
+        - If current month >= April (4), FY is current_year-next_year
+        - If current month < April, FY is previous_year-current_year
+
+        Returns:
+            FY string like '2024-25'
+        """
+        today = datetime.now()
+        year = today.year
+        month = today.month
+
+        if month >= 4:
+            # April or later - we're in FY starting this year
+            fy = f"{year}-{str(year + 1)[-2:]}"
+        else:
+            # Jan-Mar - we're in FY that started last year
+            fy = f"{year - 1}-{str(year)[-2:]}"
+
+        logger.info(f"Determined FY from current date: {fy}")
+        return fy
 
     def parse_contract(self, contract_str: str) -> Dict:
         """
@@ -588,6 +658,9 @@ class BreezeFNOImporter:
             filename = file_obj.name
         else:
             filename = 'breeze_fno.csv'
+
+        # Determine FY from current date (Breeze portfolio shows current FY data)
+        self.fy = self._determine_fy_from_current_date()
 
         # Create import log
         import_log = CSVImportLog.objects.create(
@@ -711,12 +784,15 @@ class BreezeFNOImporter:
         gross_pnl = realized_pnl + unrealized_pnl
         net_pnl = gross_pnl  # Breeze doesn't show charges in this CSV
 
-        # Create or update record
+        # Create or update record - use broker + trading_symbol + fy as unique key
+        # This allows the same contract to have different P&L entries for each FY
         obj, created = BrokerContractPnL.objects.update_or_create(
             broker='ICICI',
-            import_batch_id=self.batch_id,
             trading_symbol=contract_str,
+            fy=self.fy,  # Include FY in unique key
             defaults={
+                'import_batch_id': self.batch_id,  # Track latest import batch
+                'fy': self.fy,  # Financial year
                 'symbol': contract['symbol'],
                 'segment': contract['segment'],
                 'security_type': contract['security_type'],

@@ -1,9 +1,9 @@
 {% extends 'analytics/base.html' %}
 
-{% block title %}Trading Patterns Analysis - mCube Analytics{% endblock %}
+{% block title %}Historical Analysis - mCube Analytics{% endblock %}
 
-{% block page_title %}Trading Patterns Analysis{% endblock %}
-{% block page_description %}Discover actionable insights from your trading data{% endblock %}
+{% block page_title %}Historical Analysis{% endblock %}
+{% block page_description %}Comprehensive analysis of your trading performance across all time periods{% endblock %}
 
 {% block extra_css %}
 {{ block.super }}
@@ -89,6 +89,50 @@
 
     .section-body {
         padding: 1.5rem;
+    }
+
+    /* Section FY Filter */
+    .section-fy-filter {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+    }
+
+    .section-fy-filter label {
+        font-size: 0.75rem;
+        color: var(--gray);
+        font-weight: 500;
+    }
+
+    .section-fy-filter select {
+        padding: 0.375rem 0.75rem;
+        border: 1px solid var(--light);
+        border-radius: var(--radius-md);
+        font-size: 0.813rem;
+        background: white;
+        cursor: pointer;
+    }
+
+    .section-fy-filter select:focus {
+        outline: none;
+        border-color: var(--primary);
+    }
+
+    .section-loading {
+        display: none;
+        align-items: center;
+        justify-content: center;
+        padding: 2rem;
+        color: var(--gray);
+    }
+
+    .section-loading.active {
+        display: flex;
+    }
+
+    .section-content.loading {
+        opacity: 0.5;
+        pointer-events: none;
     }
 
     /* Performance Table */
@@ -356,7 +400,7 @@
     }
 
     .insights-list li::before {
-        content: "→";
+        content: ">";
         margin-right: 0.5rem;
         color: #3b82f6;
     }
@@ -435,581 +479,759 @@
 {% block page_content %}
 {% with overview=patterns_data.overview streaks=patterns_data.streaks consistency=patterns_data.consistency %}
 
-<!-- Broker Filter -->
+<!-- Global Filter Bar (affects initial load) -->
 <div class="pattern-filter-bar">
-    <span class="filter-label">Broker:</span>
-    <select id="brokerFilter" onchange="updateBrokerFilter(this.value)" style="padding: 0.5rem 1rem; border-radius: var(--radius-md); border: 1px solid var(--light);">
+    <span class="filter-label">Global Filter:</span>
+    <select id="globalBrokerFilter" onchange="updateGlobalFilters()" style="padding: 0.5rem 1rem; border-radius: var(--radius-md); border: 1px solid var(--light);">
         <option value="ALL" {% if broker_filter == 'ALL' %}selected{% endif %}>All Brokers</option>
         <option value="KOTAK" {% if broker_filter == 'KOTAK' %}selected{% endif %}>Kotak Neo</option>
         <option value="ICICI" {% if broker_filter == 'ICICI' %}selected{% endif %}>ICICI Breeze</option>
     </select>
+
+    <span style="font-size: 0.75rem; color: var(--gray); margin-left: auto;">
+        Each section below has its own Year filter
+    </span>
 </div>
 
-<!-- Overview Stats -->
-<div class="stats-grid">
-    <div class="stat-card neutral">
-        <div class="stat-value">{{ overview.total_trades|default:0 }}</div>
-        <div class="stat-label">Total Trades</div>
-        <div class="stat-subtitle">{{ overview.winners|default:0 }}W / {{ overview.losers|default:0 }}L</div>
+<!-- Overview Stats Section -->
+<div class="section-card" id="overviewSection">
+    <div class="section-header">
+        <h3 class="section-title">Overview Statistics</h3>
+        <div class="section-fy-filter">
+            <label>Asset:</label>
+            <select id="overviewAssetFilter" onchange="loadSectionData('overview')">
+                <option value="ALL">All Assets</option>
+                <option value="FNO">F&O Only</option>
+                <option value="FUTURES">Futures Only</option>
+                <option value="OPTIONS">Options Only</option>
+                <option value="EQUITY">Equity Only</option>
+                <option value="MUTUAL_FUND">Mutual Funds</option>
+                <option value="ETF">ETF Only</option>
+            </select>
+            <label style="margin-left: 1rem;">Year:</label>
+            <select id="overviewFyFilter" onchange="loadSectionData('overview')">
+                <option value="ALL">All Years</option>
+                {% for fy in available_fys %}
+                <option value="{{ fy.value }}" {% if fy_filter == fy.value %}selected{% endif %}>{{ fy.label }}</option>
+                {% endfor %}
+            </select>
+        </div>
     </div>
+    <div class="section-body">
+        <div class="section-loading"><span>Loading...</span></div>
+        <div class="section-content" id="overviewContent">
+            <div class="stats-grid">
+                <div class="stat-card neutral">
+                    <div class="stat-value" id="ov-total-trades">{{ overview.total_trades|default:0 }}</div>
+                    <div class="stat-label">Total Trades</div>
+                    <div class="stat-subtitle"><span id="ov-winners">{{ overview.winners|default:0 }}</span>W / <span id="ov-losers">{{ overview.losers|default:0 }}</span>L</div>
+                </div>
 
-    <div class="stat-card {% if overview.win_rate >= 50 %}positive{% else %}negative{% endif %}">
-        <div class="stat-value">{{ overview.win_rate|default:0 }}%</div>
-        <div class="stat-label">Win Rate</div>
-        <div class="stat-subtitle">Target: 50%+</div>
-    </div>
+                <div class="stat-card {% if overview.win_rate >= 50 %}positive{% else %}negative{% endif %}" id="ov-winrate-card">
+                    <div class="stat-value" id="ov-win-rate">{{ overview.win_rate|default:0 }}%</div>
+                    <div class="stat-label">Win Rate</div>
+                    <div class="stat-subtitle">Target: 50%+</div>
+                </div>
 
-    <div class="stat-card {% if overview.profit_factor >= 1 %}positive{% else %}negative{% endif %}">
-        <div class="stat-value">{{ overview.profit_factor|default:0 }}</div>
-        <div class="stat-label">Profit Factor</div>
-        <div class="stat-subtitle">Target: 1.5+</div>
-    </div>
+                <div class="stat-card {% if overview.profit_factor >= 1 %}positive{% else %}negative{% endif %}" id="ov-pf-card">
+                    <div class="stat-value" id="ov-profit-factor">{{ overview.profit_factor|default:0 }}</div>
+                    <div class="stat-label">Profit Factor</div>
+                    <div class="stat-subtitle">Target: 1.5+</div>
+                </div>
 
-    <div class="stat-card {% if overview.total_pnl >= 0 %}positive{% else %}negative{% endif %}">
-        <div class="stat-value">₹{{ overview.total_pnl|floatformat:0|default:0 }}</div>
-        <div class="stat-label">Total P&L</div>
-    </div>
+                <div class="stat-card {% if overview.total_pnl >= 0 %}positive{% else %}negative{% endif %}" id="ov-pnl-card">
+                    <div class="stat-value" id="ov-total-pnl">₹{{ overview.total_pnl|floatformat:0|default:0 }}</div>
+                    <div class="stat-label">Total P&L</div>
+                </div>
 
-    <div class="stat-card {% if overview.expectancy >= 0 %}positive{% else %}negative{% endif %}">
-        <div class="stat-value">₹{{ overview.expectancy|floatformat:0|default:0 }}</div>
-        <div class="stat-label">Expectancy</div>
-        <div class="stat-subtitle">Per Trade</div>
-    </div>
+                <div class="stat-card {% if overview.expectancy >= 0 %}positive{% else %}negative{% endif %}" id="ov-exp-card">
+                    <div class="stat-value" id="ov-expectancy">₹{{ overview.expectancy|floatformat:0|default:0 }}</div>
+                    <div class="stat-label">Expectancy</div>
+                    <div class="stat-subtitle">Per Trade</div>
+                </div>
 
-    <div class="stat-card {% if overview.risk_reward >= 1 %}positive{% else %}warning{% endif %}">
-        <div class="stat-value">{{ overview.risk_reward|default:0 }}</div>
-        <div class="stat-label">Risk/Reward</div>
-        <div class="stat-subtitle">Target: 1.5+</div>
-    </div>
+                <div class="stat-card {% if overview.risk_reward >= 1 %}positive{% else %}warning{% endif %}" id="ov-rr-card">
+                    <div class="stat-value" id="ov-risk-reward">{{ overview.risk_reward|default:0 }}</div>
+                    <div class="stat-label">Risk/Reward</div>
+                    <div class="stat-subtitle">Target: 1.5+</div>
+                </div>
 
-    <div class="stat-card positive">
-        <div class="stat-value">₹{{ overview.avg_profit|floatformat:0|default:0 }}</div>
-        <div class="stat-label">Avg Win</div>
-        <div class="stat-subtitle">Max: ₹{{ overview.max_profit|floatformat:0|default:0 }}</div>
-    </div>
+                <div class="stat-card positive">
+                    <div class="stat-value" id="ov-avg-profit">₹{{ overview.avg_profit|floatformat:0|default:0 }}</div>
+                    <div class="stat-label">Avg Win</div>
+                    <div class="stat-subtitle">Max: ₹<span id="ov-max-profit">{{ overview.max_profit|floatformat:0|default:0 }}</span></div>
+                </div>
 
-    <div class="stat-card negative">
-        <div class="stat-value">₹{{ overview.avg_loss|floatformat:0|default:0 }}</div>
-        <div class="stat-label">Avg Loss</div>
-        <div class="stat-subtitle">Max: ₹{{ overview.max_loss|floatformat:0|default:0 }}</div>
+                <div class="stat-card negative">
+                    <div class="stat-value" id="ov-avg-loss">₹{{ overview.avg_loss|floatformat:0|default:0 }}</div>
+                    <div class="stat-label">Avg Loss</div>
+                    <div class="stat-subtitle">Max: ₹<span id="ov-max-loss">{{ overview.max_loss|floatformat:0|default:0 }}</span></div>
+                </div>
+            </div>
+
+            <!-- Key Insights -->
+            <div class="insights-box" id="ov-insights" {% if not overview or not overview.total_trades or overview.total_trades == 0 %}style="display:none;"{% endif %}>
+                <div class="insights-title">Key Trading Insights</div>
+                <ul class="insights-list" id="ov-insights-list">
+                    {% if overview.win_rate >= 60 %}
+                    <li>Strong win rate of {{ overview.win_rate }}% - You're selecting good entry points</li>
+                    {% elif overview.win_rate >= 50 %}
+                    <li>Win rate of {{ overview.win_rate }}% is above breakeven - Focus on improving risk/reward</li>
+                    {% else %}
+                    <li>Win rate of {{ overview.win_rate }}% needs improvement - Review your entry criteria</li>
+                    {% endif %}
+
+                    {% if overview.profit_factor >= 2 %}
+                    <li>Excellent profit factor of {{ overview.profit_factor }} - Your winners outpace losers significantly</li>
+                    {% elif overview.profit_factor >= 1.5 %}
+                    <li>Good profit factor of {{ overview.profit_factor }} - Maintain this edge</li>
+                    {% elif overview.profit_factor >= 1 %}
+                    <li>Profit factor of {{ overview.profit_factor }} is profitable but thin - Consider tighter stop losses</li>
+                    {% else %}
+                    <li>Profit factor below 1 - Losses exceed profits, review position sizing</li>
+                    {% endif %}
+
+                    {% if overview.risk_reward >= 2 %}
+                    <li>Risk/Reward of {{ overview.risk_reward }} is excellent - You're letting winners run</li>
+                    {% elif overview.risk_reward < 1 %}
+                    <li>Risk/Reward below 1 - Consider holding winners longer or cutting losses sooner</li>
+                    {% endif %}
+                </ul>
+            </div>
+        </div>
     </div>
 </div>
-
-<!-- Key Insights -->
-{% if overview and overview.total_trades and overview.total_trades > 0 %}
-<div class="insights-box">
-    <div class="insights-title">Key Trading Insights</div>
-    <ul class="insights-list">
-        {% if overview.win_rate >= 60 %}
-        <li>Strong win rate of {{ overview.win_rate }}% - You're selecting good entry points</li>
-        {% elif overview.win_rate >= 50 %}
-        <li>Win rate of {{ overview.win_rate }}% is above breakeven - Focus on improving risk/reward</li>
-        {% else %}
-        <li>Win rate of {{ overview.win_rate }}% needs improvement - Review your entry criteria</li>
-        {% endif %}
-
-        {% if overview.profit_factor >= 2 %}
-        <li>Excellent profit factor of {{ overview.profit_factor }} - Your winners outpace losers significantly</li>
-        {% elif overview.profit_factor >= 1.5 %}
-        <li>Good profit factor of {{ overview.profit_factor }} - Maintain this edge</li>
-        {% elif overview.profit_factor >= 1 %}
-        <li>Profit factor of {{ overview.profit_factor }} is profitable but thin - Consider tighter stop losses</li>
-        {% else %}
-        <li>Profit factor below 1 - Losses exceed profits, review position sizing</li>
-        {% endif %}
-
-        {% if overview.risk_reward >= 2 %}
-        <li>Risk/Reward of {{ overview.risk_reward }} is excellent - You're letting winners run</li>
-        {% elif overview.risk_reward < 1 %}
-        <li>Risk/Reward below 1 - Consider holding winners longer or cutting losses sooner</li>
-        {% endif %}
-    </ul>
-</div>
-{% endif %}
 
 <!-- Streak Analysis -->
-<div class="section-card" style="margin-top: 1.5rem;">
-        <div class="section-header">
-            <h3 class="section-title">Streak Analysis</h3>
+<div class="section-card" id="streaksSection">
+    <div class="section-header">
+        <h3 class="section-title">Streak Analysis</h3>
+        <div class="section-fy-filter">
+            <label>Year:</label>
+            <select id="streaksFyFilter" onchange="loadSectionData('streaks')">
+                <option value="ALL">All Years</option>
+                {% for fy in available_fys %}
+                <option value="{{ fy.value }}" {% if fy_filter == fy.value %}selected{% endif %}>{{ fy.label }}</option>
+                {% endfor %}
+            </select>
         </div>
-        <div class="section-body">
+    </div>
+    <div class="section-body">
+        <div class="section-loading"><span>Loading...</span></div>
+        <div class="section-content" id="streaksContent">
             <div class="streak-display">
-                <div class="streak-item" style="{% if streaks.current_streak_type == 'win' %}background: #d1fae5;{% else %}background: #fee2e2;{% endif %}">
-                    <div class="streak-value" style="{% if streaks.current_streak_type == 'win' %}color: #065f46;{% else %}color: #991b1b;{% endif %}">
+                <div class="streak-item" id="streak-current-item" style="{% if streaks.current_streak_type == 'win' %}background: #d1fae5;{% else %}background: #fee2e2;{% endif %}">
+                    <div class="streak-value" id="streak-current" style="{% if streaks.current_streak_type == 'win' %}color: #065f46;{% else %}color: #991b1b;{% endif %}">
                         {{ streaks.current_streak|default:0 }}
                     </div>
-                    <div class="streak-label">Current {{ streaks.current_streak_type|default:'—'|title }} Streak</div>
+                    <div class="streak-label">Current <span id="streak-type">{{ streaks.current_streak_type|default:'—'|title }}</span> Streak</div>
                 </div>
 
                 <div class="streak-item" style="background: #d1fae5;">
-                    <div class="streak-value" style="color: #065f46;">{{ streaks.max_win_streak|default:0 }}</div>
+                    <div class="streak-value" id="streak-max-win" style="color: #065f46;">{{ streaks.max_win_streak|default:0 }}</div>
                     <div class="streak-label">Best Win Streak</div>
                 </div>
 
                 <div class="streak-item" style="background: #fee2e2;">
-                    <div class="streak-value" style="color: #991b1b;">{{ streaks.max_loss_streak|default:0 }}</div>
+                    <div class="streak-value" id="streak-max-loss" style="color: #991b1b;">{{ streaks.max_loss_streak|default:0 }}</div>
                     <div class="streak-label">Worst Loss Streak</div>
                 </div>
             </div>
 
             <div style="margin-top: 1.5rem; display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
                 <div style="text-align: center; padding: 1rem; background: var(--lighter); border-radius: var(--radius-md);">
-                    <div style="font-size: 1.25rem; font-weight: 600; color: #065f46;">{{ streaks.avg_win_streak|default:0 }}</div>
+                    <div id="streak-avg-win" style="font-size: 1.25rem; font-weight: 600; color: #065f46;">{{ streaks.avg_win_streak|default:0 }}</div>
                     <div style="font-size: 0.75rem; color: var(--gray);">Avg Win Streak</div>
                 </div>
                 <div style="text-align: center; padding: 1rem; background: var(--lighter); border-radius: var(--radius-md);">
-                    <div style="font-size: 1.25rem; font-weight: 600; color: #991b1b;">{{ streaks.avg_loss_streak|default:0 }}</div>
+                    <div id="streak-avg-loss" style="font-size: 1.25rem; font-weight: 600; color: #991b1b;">{{ streaks.avg_loss_streak|default:0 }}</div>
                     <div style="font-size: 0.75rem; color: var(--gray);">Avg Loss Streak</div>
                 </div>
             </div>
 
-            {% if streaks.max_loss_streak >= 5 %}
-            <div class="insights-box" style="margin-top: 1rem;">
+            <div class="insights-box" id="streak-insight" style="margin-top: 1rem; {% if streaks.max_loss_streak < 5 %}display: none;{% endif %}">
                 <div class="insights-title">Streak Insight</div>
                 <ul class="insights-list">
-                    <li>Max loss streak of {{ streaks.max_loss_streak }} trades - Consider taking a break after 3 consecutive losses</li>
+                    <li id="streak-insight-text">Max loss streak of {{ streaks.max_loss_streak }} trades - Consider taking a break after 3 consecutive losses</li>
                 </ul>
             </div>
-            {% endif %}
         </div>
     </div>
+</div>
 
 <div class="two-col-grid">
     <!-- Segment Analysis (Futures vs Options) -->
-    <div class="section-card">
+    <div class="section-card" id="segmentsSection">
         <div class="section-header">
             <h3 class="section-title">Segment Analysis</h3>
+            <div class="section-fy-filter">
+                <label>Year:</label>
+                <select id="segmentsFyFilter" onchange="loadSectionData('segments')">
+                    <option value="ALL">All Years</option>
+                    {% for fy in available_fys %}
+                    <option value="{{ fy.value }}" {% if fy_filter == fy.value %}selected{% endif %}>{{ fy.label }}</option>
+                    {% endfor %}
+                </select>
+            </div>
         </div>
         <div class="section-body">
-            {% if patterns_data.segments %}
-            {% for seg in patterns_data.segments %}
-            <div class="comparison-card">
-                <div class="comparison-header">
-                    <span class="comparison-name">{{ seg.segment|default:'Unknown' }}</span>
-                    <span class="comparison-pnl {% if seg.total_pnl >= 0 %}pnl-positive{% else %}pnl-negative{% endif %}">
-                        ₹{{ seg.total_pnl|floatformat:0 }}
-                    </span>
+            <div class="section-loading"><span>Loading...</span></div>
+            <div class="section-content" id="segmentsContent">
+                {% if patterns_data.segments %}
+                {% for seg in patterns_data.segments %}
+                <div class="comparison-card">
+                    <div class="comparison-header">
+                        <span class="comparison-name">{{ seg.segment|default:'Unknown' }}</span>
+                        <span class="comparison-pnl {% if seg.total_pnl >= 0 %}pnl-positive{% else %}pnl-negative{% endif %}">
+                            ₹{{ seg.total_pnl|floatformat:0 }}
+                        </span>
+                    </div>
+                    <div class="comparison-stats">
+                        <span>{{ seg.trades }} trades</span>
+                        <span>{{ seg.win_rate }}% win rate</span>
+                        <span>PF: {{ seg.profit_factor }}</span>
+                    </div>
+                    <div class="progress-bar" style="margin-top: 0.75rem;">
+                        <div class="progress-fill {% if seg.total_pnl >= 0 %}green{% else %}red{% endif %}" style="width: {{ seg.win_rate }}%;"></div>
+                    </div>
                 </div>
-                <div class="comparison-stats">
-                    <span>{{ seg.trades }} trades</span>
-                    <span>{{ seg.win_rate }}% win rate</span>
-                    <span>PF: {{ seg.profit_factor }}</span>
-                </div>
-                <div class="progress-bar" style="margin-top: 0.75rem;">
-                    <div class="progress-fill {% if seg.total_pnl >= 0 %}green{% else %}red{% endif %}" style="width: {{ seg.win_rate }}%;"></div>
-                </div>
+                {% endfor %}
+                {% else %}
+                <p style="text-align: center; color: var(--gray); padding: 2rem;">No segment data available</p>
+                {% endif %}
             </div>
-            {% endfor %}
-            {% else %}
-            <p style="text-align: center; color: var(--gray); padding: 2rem;">No segment data available</p>
-            {% endif %}
         </div>
     </div>
 
     <!-- Broker Comparison -->
-    <div class="section-card">
+    <div class="section-card" id="brokersSection">
         <div class="section-header">
             <h3 class="section-title">Broker Comparison</h3>
+            <div class="section-fy-filter">
+                <label>Year:</label>
+                <select id="brokersFyFilter" onchange="loadSectionData('brokers')">
+                    <option value="ALL">All Years</option>
+                    {% for fy in available_fys %}
+                    <option value="{{ fy.value }}" {% if fy_filter == fy.value %}selected{% endif %}>{{ fy.label }}</option>
+                    {% endfor %}
+                </select>
+            </div>
         </div>
         <div class="section-body">
-            {% if patterns_data.brokers %}
-            {% for broker in patterns_data.brokers %}
-            <div class="comparison-card">
-                <div class="comparison-header">
-                    <span class="comparison-name">{{ broker.broker_name }}</span>
-                    <span class="comparison-pnl {% if broker.total_pnl >= 0 %}pnl-positive{% else %}pnl-negative{% endif %}">
-                        ₹{{ broker.total_pnl|floatformat:0 }}
-                    </span>
+            <div class="section-loading"><span>Loading...</span></div>
+            <div class="section-content" id="brokersContent">
+                {% if patterns_data.brokers %}
+                {% for broker in patterns_data.brokers %}
+                <div class="comparison-card">
+                    <div class="comparison-header">
+                        <span class="comparison-name">{{ broker.broker_name }}</span>
+                        <span class="comparison-pnl {% if broker.total_pnl >= 0 %}pnl-positive{% else %}pnl-negative{% endif %}">
+                            ₹{{ broker.total_pnl|floatformat:0 }}
+                        </span>
+                    </div>
+                    <div class="comparison-stats">
+                        <span>{{ broker.trades }} trades</span>
+                        <span>{{ broker.win_rate }}% win rate</span>
+                        <span>Charges: ₹{{ broker.total_charges|floatformat:0 }}</span>
+                    </div>
+                    <div class="progress-bar" style="margin-top: 0.75rem;">
+                        <div class="progress-fill {% if broker.total_pnl >= 0 %}green{% else %}red{% endif %}" style="width: {{ broker.win_rate }}%;"></div>
+                    </div>
                 </div>
-                <div class="comparison-stats">
-                    <span>{{ broker.trades }} trades</span>
-                    <span>{{ broker.win_rate }}% win rate</span>
-                    <span>Charges: ₹{{ broker.total_charges|floatformat:0 }}</span>
-                </div>
-                <div class="progress-bar" style="margin-top: 0.75rem;">
-                    <div class="progress-fill {% if broker.total_pnl >= 0 %}green{% else %}red{% endif %}" style="width: {{ broker.win_rate }}%;"></div>
-                </div>
+                {% endfor %}
+                {% else %}
+                <p style="text-align: center; color: var(--gray); padding: 2rem;">No broker data available</p>
+                {% endif %}
             </div>
-            {% endfor %}
-            {% else %}
-            <p style="text-align: center; color: var(--gray); padding: 2rem;">No broker data available</p>
-            {% endif %}
         </div>
     </div>
 </div>
 
 <!-- Tax Calculation Section -->
-<div class="section-card" style="margin-top: 1.5rem;">
+<div class="section-card" id="taxSection" style="margin-top: 1.5rem;">
     <div class="section-header">
         <h3 class="section-title">Capital Gains Tax Calculator</h3>
+        <div class="section-fy-filter">
+            <label>Year:</label>
+            <select id="taxFyFilter" onchange="loadSectionData('tax')">
+                <option value="ALL">All Years</option>
+                {% for fy in available_fys %}
+                <option value="{{ fy.value }}" {% if fy_filter == fy.value %}selected{% endif %}>{{ fy.label }}</option>
+                {% endfor %}
+            </select>
+        </div>
     </div>
     <div class="section-body">
-        <!-- Account Selector -->
-        <div style="display: flex; gap: 1rem; align-items: center; margin-bottom: 1.5rem; flex-wrap: wrap;">
-            <div style="display: flex; align-items: center; gap: 0.5rem;">
-                <label style="font-weight: 600; color: var(--darker);">Account:</label>
-                <select id="taxAccountSelect" onchange="switchTaxAccount(this.value)" style="padding: 0.5rem 1rem; border: 1px solid var(--light); border-radius: var(--radius-md); font-size: 1rem;">
-                    <option value="KOTAK">Kotak Neo (HUF)</option>
-                    <option value="ICICI">ICICI Breeze (Individual)</option>
-                </select>
+        <div class="section-loading"><span>Loading...</span></div>
+        <div class="section-content" id="taxContent">
+            <!-- Account Selector -->
+            <div style="display: flex; gap: 1rem; align-items: center; margin-bottom: 1.5rem; flex-wrap: wrap;">
+                <div style="display: flex; align-items: center; gap: 0.5rem;">
+                    <label style="font-weight: 600; color: var(--darker);">Account:</label>
+                    <select id="taxAccountSelect" onchange="switchTaxAccount(this.value)" style="padding: 0.5rem 1rem; border: 1px solid var(--light); border-radius: var(--radius-md); font-size: 1rem;">
+                        <option value="KOTAK">Kotak Neo (HUF)</option>
+                        <option value="ICICI">ICICI Breeze (Individual)</option>
+                    </select>
+                </div>
+                <div style="display: flex; align-items: center; gap: 0.5rem;">
+                    <label style="font-weight: 600; color: var(--darker);">Expenses:</label>
+                    <span style="font-size: 1rem;">₹</span>
+                    <input type="number" id="taxExpenses" value="0" min="0" step="1000"
+                           style="padding: 0.5rem; border: 1px solid var(--light); border-radius: var(--radius-md); width: 120px; font-size: 1rem;"
+                           onchange="recalculateTaxes()" oninput="recalculateTaxes()">
+                </div>
+                <div id="accountEntityBadge" style="padding: 0.375rem 0.75rem; border-radius: var(--radius-full); font-size: 0.813rem; font-weight: 600; background: #fef3c7; color: #92400e;">
+                    HUF Account
+                </div>
             </div>
-            <div style="display: flex; align-items: center; gap: 0.5rem;">
-                <label style="font-weight: 600; color: var(--darker);">Expenses:</label>
-                <span style="font-size: 1rem;">₹</span>
-                <input type="number" id="taxExpenses" value="0" min="0" step="1000"
-                       style="padding: 0.5rem; border: 1px solid var(--light); border-radius: var(--radius-md); width: 120px; font-size: 1rem;"
-                       onchange="recalculateTaxes()" oninput="recalculateTaxes()">
-            </div>
-            <div id="accountEntityBadge" style="padding: 0.375rem 0.75rem; border-radius: var(--radius-full); font-size: 0.813rem; font-weight: 600; background: #fef3c7; color: #92400e;">
-                HUF Account
-            </div>
-        </div>
 
-        <!-- Segment-wise Tax Table -->
-        <div style="overflow-x: auto;">
-            <table class="performance-table" id="taxTable">
-                <thead>
-                    <tr>
-                        <th>Segment</th>
-                        <th>Trades</th>
-                        <th>Win Rate</th>
-                        <th>Gross P&L</th>
-                        <th>Tax Type</th>
-                        <th>Tax Rate</th>
-                        <th>Taxable Amount</th>
-                        <th>Tax Liability</th>
-                    </tr>
-                </thead>
-                <tbody id="taxTableBody">
-                    <!-- Populated by JavaScript -->
-                </tbody>
-                <tfoot style="background: var(--lighter); font-weight: 600;">
-                    <tr>
-                        <td colspan="3">TOTAL</td>
-                        <td id="totalGrossPnl">₹0</td>
-                        <td colspan="2"></td>
-                        <td id="totalTaxableAmount">₹0</td>
-                        <td id="totalTaxLiability">₹0</td>
-                    </tr>
-                </tfoot>
-            </table>
-        </div>
+            <!-- Segment-wise Tax Table -->
+            <div style="overflow-x: auto;">
+                <table class="performance-table" id="taxTable">
+                    <thead>
+                        <tr>
+                            <th>Segment</th>
+                            <th>Trades</th>
+                            <th>Win Rate</th>
+                            <th>Gross P&L</th>
+                            <th>Tax Type</th>
+                            <th>Tax Rate</th>
+                            <th>Taxable Amount</th>
+                            <th>Tax Liability</th>
+                        </tr>
+                    </thead>
+                    <tbody id="taxTableBody">
+                        <!-- Populated by JavaScript -->
+                    </tbody>
+                    <tfoot style="background: var(--lighter); font-weight: 600;">
+                        <tr>
+                            <td colspan="3">TOTAL</td>
+                            <td id="totalGrossPnl">₹0</td>
+                            <td colspan="2"></td>
+                            <td id="totalTaxableAmount">₹0</td>
+                            <td id="totalTaxLiability">₹0</td>
+                        </tr>
+                    </tfoot>
+                </table>
+            </div>
 
-        <!-- Summary Cards -->
-        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1rem; margin-top: 1.5rem;">
-            <div style="background: var(--lighter); padding: 1rem; border-radius: var(--radius-md); text-align: center;">
-                <div id="summaryGrossPnl" style="font-size: 1.25rem; font-weight: 700; color: var(--darker);">₹0</div>
-                <div style="font-size: 0.75rem; color: var(--gray); text-transform: uppercase;">Gross P&L</div>
+            <!-- Summary Cards -->
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1rem; margin-top: 1.5rem;">
+                <div style="background: var(--lighter); padding: 1rem; border-radius: var(--radius-md); text-align: center;">
+                    <div id="summaryGrossPnl" style="font-size: 1.25rem; font-weight: 700; color: var(--darker);">₹0</div>
+                    <div style="font-size: 0.75rem; color: var(--gray); text-transform: uppercase;">Gross P&L</div>
+                </div>
+                <div style="background: var(--lighter); padding: 1rem; border-radius: var(--radius-md); text-align: center;">
+                    <div id="summaryExpenses" style="font-size: 1.25rem; font-weight: 700; color: var(--gray);">₹0</div>
+                    <div style="font-size: 0.75rem; color: var(--gray); text-transform: uppercase;">Expenses</div>
+                </div>
+                <div style="background: var(--lighter); padding: 1rem; border-radius: var(--radius-md); text-align: center;">
+                    <div id="summaryTaxable" style="font-size: 1.25rem; font-weight: 700; color: var(--darker);">₹0</div>
+                    <div style="font-size: 0.75rem; color: var(--gray); text-transform: uppercase;">Taxable</div>
+                </div>
+                <div style="background: #fee2e2; padding: 1rem; border-radius: var(--radius-md); text-align: center;">
+                    <div id="summaryTax" style="font-size: 1.25rem; font-weight: 700; color: #991b1b;">₹0</div>
+                    <div style="font-size: 0.75rem; color: #991b1b; text-transform: uppercase;">Tax Payable</div>
+                </div>
+                <div style="background: #d1fae5; padding: 1rem; border-radius: var(--radius-md); text-align: center;">
+                    <div id="summaryNet" style="font-size: 1.25rem; font-weight: 700; color: #065f46;">₹0</div>
+                    <div style="font-size: 0.75rem; color: #065f46; text-transform: uppercase;">Net After Tax</div>
+                </div>
             </div>
-            <div style="background: var(--lighter); padding: 1rem; border-radius: var(--radius-md); text-align: center;">
-                <div id="summaryExpenses" style="font-size: 1.25rem; font-weight: 700; color: var(--gray);">₹0</div>
-                <div style="font-size: 0.75rem; color: var(--gray); text-transform: uppercase;">Expenses</div>
-            </div>
-            <div style="background: var(--lighter); padding: 1rem; border-radius: var(--radius-md); text-align: center;">
-                <div id="summaryTaxable" style="font-size: 1.25rem; font-weight: 700; color: var(--darker);">₹0</div>
-                <div style="font-size: 0.75rem; color: var(--gray); text-transform: uppercase;">Taxable</div>
-            </div>
-            <div style="background: #fee2e2; padding: 1rem; border-radius: var(--radius-md); text-align: center;">
-                <div id="summaryTax" style="font-size: 1.25rem; font-weight: 700; color: #991b1b;">₹0</div>
-                <div style="font-size: 0.75rem; color: #991b1b; text-transform: uppercase;">Tax Payable</div>
-            </div>
-            <div style="background: #d1fae5; padding: 1rem; border-radius: var(--radius-md); text-align: center;">
-                <div id="summaryNet" style="font-size: 1.25rem; font-weight: 700; color: #065f46;">₹0</div>
-                <div style="font-size: 0.75rem; color: #065f46; text-transform: uppercase;">Net After Tax</div>
-            </div>
-        </div>
 
-        <div style="margin-top: 1.5rem; padding: 1rem; background: #eff6ff; border-radius: var(--radius-md); border-left: 4px solid #3b82f6;">
-            <div style="font-weight: 600; color: #1e40af; margin-bottom: 0.5rem;">Tax Rules Applied:</div>
-            <ul style="margin: 0; padding-left: 1.25rem; font-size: 0.875rem; color: #1e3a8a;">
-                <li><strong>F&O (Futures/Options):</strong> Business Income - 30% slab rate (HUF/Individual), 25% (Company)</li>
-                <li><strong>Equity/ETF/MF:</strong> STCG - 15% flat rate for all</li>
-                <li><strong>Expenses:</strong> Deducted proportionally from F&O income only (business expense)</li>
-                <li><strong>Losses:</strong> Can be carried forward for 8 years</li>
-            </ul>
+            <div style="margin-top: 1.5rem; padding: 1rem; background: #eff6ff; border-radius: var(--radius-md); border-left: 4px solid #3b82f6;">
+                <div style="font-weight: 600; color: #1e40af; margin-bottom: 0.5rem;">Tax Rules Applied:</div>
+                <ul style="margin: 0; padding-left: 1.25rem; font-size: 0.875rem; color: #1e3a8a;">
+                    <li><strong>F&O (Futures/Options):</strong> Business Income - 30% slab rate (HUF/Individual), 25% (Company)</li>
+                    <li><strong>Equity/ETF/MF:</strong> STCG - 15% flat rate for all</li>
+                    <li><strong>Expenses:</strong> Deducted proportionally from F&O income only (business expense)</li>
+                    <li><strong>Losses:</strong> Can be carried forward for 8 years</li>
+                </ul>
+            </div>
         </div>
     </div>
 </div>
 
 <!-- Symbol Performance -->
-<div class="section-card">
+<div class="section-card" id="symbolsSection">
     <div class="section-header">
         <h3 class="section-title">Symbol Performance</h3>
+        <div class="section-fy-filter">
+            <label>Year:</label>
+            <select id="symbolsFyFilter" onchange="loadSectionData('symbols')">
+                <option value="ALL">All Years</option>
+                {% for fy in available_fys %}
+                <option value="{{ fy.value }}" {% if fy_filter == fy.value %}selected{% endif %}>{{ fy.label }}</option>
+                {% endfor %}
+            </select>
+        </div>
     </div>
     <div class="section-body">
-        <div class="symbol-tabs">
-            <button class="symbol-tab active" onclick="showSymbolTab('best')">Top Performers</button>
-            <button class="symbol-tab" onclick="showSymbolTab('worst')">Needs Improvement</button>
-            <button class="symbol-tab" onclick="showSymbolTab('most')">Most Traded</button>
-        </div>
+        <div class="section-loading"><span>Loading...</span></div>
+        <div class="section-content" id="symbolsContent">
+            <div class="symbol-tabs">
+                <button class="symbol-tab active" onclick="showSymbolTab('best')">Top Performers</button>
+                <button class="symbol-tab" onclick="showSymbolTab('worst')">Needs Improvement</button>
+                <button class="symbol-tab" onclick="showSymbolTab('most')">Most Traded</button>
+            </div>
 
-        {% with symbols=patterns_data.symbols %}
-        <!-- Best Performers -->
-        <div id="best-content" class="symbol-content active">
-            {% if symbols.best %}
-            <table class="performance-table">
-                <thead>
-                    <tr>
-                        <th>Symbol</th>
-                        <th>Trades</th>
-                        <th>Win Rate</th>
-                        <th>Avg P&L</th>
-                        <th>Total P&L</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for s in symbols.best %}
-                    <tr>
-                        <td><strong>{{ s.symbol }}</strong></td>
-                        <td>{{ s.trades }}</td>
-                        <td>{{ s.win_rate }}%</td>
-                        <td class="{% if s.avg_pnl >= 0 %}pnl-positive{% else %}pnl-negative{% endif %}">₹{{ s.avg_pnl|floatformat:0 }}</td>
-                        <td class="{% if s.total_pnl >= 0 %}pnl-positive{% else %}pnl-negative{% endif %}">₹{{ s.total_pnl|floatformat:0 }}</td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-            {% else %}
-            <p style="text-align: center; color: var(--gray); padding: 2rem;">No data available</p>
-            {% endif %}
-        </div>
+            {% with symbols=patterns_data.symbols %}
+            <!-- Best Performers -->
+            <div id="best-content" class="symbol-content active">
+                {% if symbols.best %}
+                <table class="performance-table">
+                    <thead>
+                        <tr>
+                            <th>Symbol</th>
+                            <th>Trades</th>
+                            <th>Win Rate</th>
+                            <th>Avg P&L</th>
+                            <th>Total P&L</th>
+                        </tr>
+                    </thead>
+                    <tbody id="symbols-best-tbody">
+                        {% for s in symbols.best %}
+                        <tr>
+                            <td><strong>{{ s.symbol }}</strong></td>
+                            <td>{{ s.trades }}</td>
+                            <td>{{ s.win_rate }}%</td>
+                            <td class="{% if s.avg_pnl >= 0 %}pnl-positive{% else %}pnl-negative{% endif %}">₹{{ s.avg_pnl|floatformat:0 }}</td>
+                            <td class="{% if s.total_pnl >= 0 %}pnl-positive{% else %}pnl-negative{% endif %}">₹{{ s.total_pnl|floatformat:0 }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+                {% else %}
+                <p style="text-align: center; color: var(--gray); padding: 2rem;">No data available</p>
+                {% endif %}
+            </div>
 
-        <!-- Worst Performers -->
-        <div id="worst-content" class="symbol-content">
-            {% if symbols.worst %}
-            <table class="performance-table">
-                <thead>
-                    <tr>
-                        <th>Symbol</th>
-                        <th>Trades</th>
-                        <th>Win Rate</th>
-                        <th>Avg P&L</th>
-                        <th>Total P&L</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for s in symbols.worst %}
-                    <tr>
-                        <td><strong>{{ s.symbol }}</strong></td>
-                        <td>{{ s.trades }}</td>
-                        <td>{{ s.win_rate }}%</td>
-                        <td class="{% if s.avg_pnl >= 0 %}pnl-positive{% else %}pnl-negative{% endif %}">₹{{ s.avg_pnl|floatformat:0 }}</td>
-                        <td class="{% if s.total_pnl >= 0 %}pnl-positive{% else %}pnl-negative{% endif %}">₹{{ s.total_pnl|floatformat:0 }}</td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-            {% else %}
-            <p style="text-align: center; color: var(--gray); padding: 2rem;">No data available</p>
-            {% endif %}
-        </div>
+            <!-- Worst Performers -->
+            <div id="worst-content" class="symbol-content">
+                {% if symbols.worst %}
+                <table class="performance-table">
+                    <thead>
+                        <tr>
+                            <th>Symbol</th>
+                            <th>Trades</th>
+                            <th>Win Rate</th>
+                            <th>Avg P&L</th>
+                            <th>Total P&L</th>
+                        </tr>
+                    </thead>
+                    <tbody id="symbols-worst-tbody">
+                        {% for s in symbols.worst %}
+                        <tr>
+                            <td><strong>{{ s.symbol }}</strong></td>
+                            <td>{{ s.trades }}</td>
+                            <td>{{ s.win_rate }}%</td>
+                            <td class="{% if s.avg_pnl >= 0 %}pnl-positive{% else %}pnl-negative{% endif %}">₹{{ s.avg_pnl|floatformat:0 }}</td>
+                            <td class="{% if s.total_pnl >= 0 %}pnl-positive{% else %}pnl-negative{% endif %}">₹{{ s.total_pnl|floatformat:0 }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+                {% else %}
+                <p style="text-align: center; color: var(--gray); padding: 2rem;">No data available</p>
+                {% endif %}
+            </div>
 
-        <!-- Most Traded -->
-        <div id="most-content" class="symbol-content">
-            {% if symbols.most_traded %}
-            <table class="performance-table">
-                <thead>
-                    <tr>
-                        <th>Symbol</th>
-                        <th>Trades</th>
-                        <th>Win Rate</th>
-                        <th>Avg P&L</th>
-                        <th>Total P&L</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for s in symbols.most_traded %}
-                    <tr>
-                        <td><strong>{{ s.symbol }}</strong></td>
-                        <td>{{ s.trades }}</td>
-                        <td>{{ s.win_rate }}%</td>
-                        <td class="{% if s.avg_pnl >= 0 %}pnl-positive{% else %}pnl-negative{% endif %}">₹{{ s.avg_pnl|floatformat:0 }}</td>
-                        <td class="{% if s.total_pnl >= 0 %}pnl-positive{% else %}pnl-negative{% endif %}">₹{{ s.total_pnl|floatformat:0 }}</td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-            {% else %}
-            <p style="text-align: center; color: var(--gray); padding: 2rem;">No data available</p>
-            {% endif %}
+            <!-- Most Traded -->
+            <div id="most-content" class="symbol-content">
+                {% if symbols.most_traded %}
+                <table class="performance-table">
+                    <thead>
+                        <tr>
+                            <th>Symbol</th>
+                            <th>Trades</th>
+                            <th>Win Rate</th>
+                            <th>Avg P&L</th>
+                            <th>Total P&L</th>
+                        </tr>
+                    </thead>
+                    <tbody id="symbols-most-tbody">
+                        {% for s in symbols.most_traded %}
+                        <tr>
+                            <td><strong>{{ s.symbol }}</strong></td>
+                            <td>{{ s.trades }}</td>
+                            <td>{{ s.win_rate }}%</td>
+                            <td class="{% if s.avg_pnl >= 0 %}pnl-positive{% else %}pnl-negative{% endif %}">₹{{ s.avg_pnl|floatformat:0 }}</td>
+                            <td class="{% if s.total_pnl >= 0 %}pnl-positive{% else %}pnl-negative{% endif %}">₹{{ s.total_pnl|floatformat:0 }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+                {% else %}
+                <p style="text-align: center; color: var(--gray); padding: 2rem;">No data available</p>
+                {% endif %}
+            </div>
+            {% endwith %}
         </div>
-        {% endwith %}
     </div>
 </div>
 
 <div class="two-col-grid">
     <!-- P&L Distribution -->
-    <div class="section-card">
+    <div class="section-card" id="distributionSection">
         <div class="section-header">
             <h3 class="section-title">P&L Distribution</h3>
+            <div class="section-fy-filter">
+                <label>Year:</label>
+                <select id="distributionFyFilter" onchange="loadSectionData('distribution')">
+                    <option value="ALL">All Years</option>
+                    {% for fy in available_fys %}
+                    <option value="{{ fy.value }}" {% if fy_filter == fy.value %}selected{% endif %}>{{ fy.label }}</option>
+                    {% endfor %}
+                </select>
+            </div>
         </div>
         <div class="section-body">
-            <div style="height: 220px;">
-                <canvas id="distributionChart"></canvas>
+            <div class="section-loading"><span>Loading...</span></div>
+            <div class="section-content" id="distributionContent">
+                <div style="height: 220px;">
+                    <canvas id="distributionChart"></canvas>
+                </div>
+                {% with dist=patterns_data.distribution.stats %}
+                {% if dist %}
+                <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; margin-top: 1rem;" id="dist-stats">
+                    <div class="stat-tooltip" style="text-align: center; cursor: help;">
+                        <div style="font-size: 1rem; font-weight: 600;" id="dist-p25">₹{{ dist.p25|floatformat:0|default:0 }}</div>
+                        <div style="font-size: 0.7rem; color: var(--gray);">25th Percentile</div>
+                        <div class="tooltip-content">
+                            <strong>25th Percentile</strong><br>
+                            25% of your trades made less than this amount.<br><br>
+                            This is your "bad trade" threshold - 1 in 4 trades falls below this value.
+                        </div>
+                    </div>
+                    <div class="stat-tooltip" style="text-align: center; cursor: help;">
+                        <div style="font-size: 1rem; font-weight: 600;" id="dist-median">₹{{ dist.median|floatformat:0|default:0 }}</div>
+                        <div style="font-size: 0.7rem; color: var(--gray);">Median</div>
+                        <div class="tooltip-content">
+                            <strong>Median (50th Percentile)</strong><br>
+                            The middle value - half your trades made more, half made less.<br><br>
+                            More reliable than average as it's not skewed by outliers. This is your "typical" trade result.
+                        </div>
+                    </div>
+                    <div class="stat-tooltip" style="text-align: center; cursor: help;">
+                        <div style="font-size: 1rem; font-weight: 600;" id="dist-p75">₹{{ dist.p75|floatformat:0|default:0 }}</div>
+                        <div style="font-size: 0.7rem; color: var(--gray);">75th Percentile</div>
+                        <div class="tooltip-content">
+                            <strong>75th Percentile</strong><br>
+                            75% of trades made less than this amount.<br><br>
+                            Your top 25% of trades exceed this value - these are your "big winners".
+                        </div>
+                    </div>
+                    <div class="stat-tooltip" style="text-align: center; cursor: help;">
+                        <div style="font-size: 1rem; font-weight: 600;" id="dist-stddev">₹{{ dist.std_dev|floatformat:0|default:0 }}</div>
+                        <div style="font-size: 0.7rem; color: var(--gray);">Std Deviation</div>
+                        <div class="tooltip-content">
+                            <strong>Standard Deviation</strong><br>
+                            Measures how much your P&L varies from trade to trade.<br><br>
+                            A HIGH value means inconsistent results - some big wins, some big losses. Consider tighter position sizing to reduce variance.
+                        </div>
+                    </div>
+                </div>
+                {% endif %}
+                {% endwith %}
             </div>
-            {% with dist=patterns_data.distribution.stats %}
-            {% if dist %}
-            <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; margin-top: 1rem;">
-                <div class="stat-tooltip" style="text-align: center; cursor: help;">
-                    <div style="font-size: 1rem; font-weight: 600;">₹{{ dist.p25|floatformat:0|default:0 }}</div>
-                    <div style="font-size: 0.7rem; color: var(--gray);">25th Percentile</div>
-                    <div class="tooltip-content">
-                        <strong>25th Percentile</strong><br>
-                        25% of your trades made less than this amount.<br><br>
-                        This is your "bad trade" threshold - 1 in 4 trades falls below this value.
-                    </div>
-                </div>
-                <div class="stat-tooltip" style="text-align: center; cursor: help;">
-                    <div style="font-size: 1rem; font-weight: 600;">₹{{ dist.median|floatformat:0|default:0 }}</div>
-                    <div style="font-size: 0.7rem; color: var(--gray);">Median</div>
-                    <div class="tooltip-content">
-                        <strong>Median (50th Percentile)</strong><br>
-                        The middle value - half your trades made more, half made less.<br><br>
-                        More reliable than average as it's not skewed by outliers. This is your "typical" trade result.
-                    </div>
-                </div>
-                <div class="stat-tooltip" style="text-align: center; cursor: help;">
-                    <div style="font-size: 1rem; font-weight: 600;">₹{{ dist.p75|floatformat:0|default:0 }}</div>
-                    <div style="font-size: 0.7rem; color: var(--gray);">75th Percentile</div>
-                    <div class="tooltip-content">
-                        <strong>75th Percentile</strong><br>
-                        75% of trades made less than this amount.<br><br>
-                        Your top 25% of trades exceed this value - these are your "big winners".
-                    </div>
-                </div>
-                <div class="stat-tooltip" style="text-align: center; cursor: help;">
-                    <div style="font-size: 1rem; font-weight: 600;">₹{{ dist.std_dev|floatformat:0|default:0 }}</div>
-                    <div style="font-size: 0.7rem; color: var(--gray);">Std Deviation</div>
-                    <div class="tooltip-content">
-                        <strong>Standard Deviation</strong><br>
-                        Measures how much your P&L varies from trade to trade.<br><br>
-                        A HIGH value means inconsistent results - some big wins, some big losses. Consider tighter position sizing to reduce variance.
-                    </div>
-                </div>
-            </div>
-            {% endif %}
-            {% endwith %}
         </div>
     </div>
 
     <!-- Consistency Score -->
-    <div class="section-card">
+    <div class="section-card" id="consistencySection">
         <div class="section-header">
             <h3 class="section-title">Trading Consistency</h3>
+            <div class="section-fy-filter">
+                <label>Year:</label>
+                <select id="consistencyFyFilter" onchange="loadSectionData('consistency')">
+                    <option value="ALL">All Years</option>
+                    {% for fy in available_fys %}
+                    <option value="{{ fy.value }}" {% if fy_filter == fy.value %}selected{% endif %}>{{ fy.label }}</option>
+                    {% endfor %}
+                </select>
+            </div>
         </div>
         <div class="section-body">
-            <div class="consistency-gauge">
-                <div class="gauge-circle" style="--percentage: {{ consistency.consistency_score|default:0 }}%;">
-                    <div class="gauge-inner">{{ consistency.consistency_score|default:0 }}%</div>
+            <div class="section-loading"><span>Loading...</span></div>
+            <div class="section-content" id="consistencyContent">
+                <div class="consistency-gauge">
+                    <div class="gauge-circle" id="consistency-gauge" style="--percentage: {{ consistency.consistency_score|default:0 }}%;">
+                        <div class="gauge-inner" id="consistency-score">{{ consistency.consistency_score|default:0 }}%</div>
+                    </div>
+                    <div style="font-weight: 600; color: var(--darker); margin-bottom: 0.5rem;">Consistency Score</div>
+                    <div style="font-size: 0.875rem; color: var(--gray);">
+                        <span id="consistency-profitable">{{ consistency.profitable_months|default:0 }}</span> profitable out of <span id="consistency-total">{{ consistency.total_months|default:0 }}</span> months
+                    </div>
                 </div>
-                <div style="font-weight: 600; color: var(--darker); margin-bottom: 0.5rem;">Consistency Score</div>
-                <div style="font-size: 0.875rem; color: var(--gray);">
-                    {{ consistency.profitable_months|default:0 }} profitable out of {{ consistency.total_months|default:0 }} months
+
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-top: 1rem;">
+                    <div style="text-align: center; padding: 1rem; background: var(--lighter); border-radius: var(--radius-md);">
+                        <div id="consistency-avg-monthly" style="font-size: 1.25rem; font-weight: 600;">₹{{ consistency.avg_monthly_pnl|floatformat:0|default:0 }}</div>
+                        <div style="font-size: 0.75rem; color: var(--gray);">Avg Monthly P&L</div>
+                    </div>
+                    <div style="text-align: center; padding: 1rem; background: var(--lighter); border-radius: var(--radius-md);">
+                        <div id="consistency-volatility" style="font-size: 1.25rem; font-weight: 600;">₹{{ consistency.monthly_volatility|floatformat:0|default:0 }}</div>
+                        <div style="font-size: 0.75rem; color: var(--gray);">Monthly Volatility</div>
+                    </div>
+                </div>
+
+                <div class="insights-box" id="consistency-insight" style="margin-top: 1rem; {% if consistency.consistency_score >= 50 %}display: none;{% endif %}">
+                    <div class="insights-title">Consistency Insight</div>
+                    <ul class="insights-list">
+                        <li>Consistency below 50% - Focus on developing a systematic approach</li>
+                        <li>Consider keeping a trading journal to identify patterns in losing months</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Trading Timeline with Nifty Overlay -->
+<div class="section-card" id="timelineSection" style="margin-top: 1.5rem;">
+    <div class="section-header">
+        <h3 class="section-title">Trading Timeline vs Nifty</h3>
+        <div class="section-fy-filter">
+            <label>Year:</label>
+            <select id="timelineFyFilter" onchange="loadSectionData('timeline')">
+                <option value="ALL">All Years</option>
+                {% for fy in available_fys %}
+                <option value="{{ fy.value }}" {% if fy_filter == fy.value %}selected{% endif %}>{{ fy.label }}</option>
+                {% endfor %}
+            </select>
+            <button type="button" onclick="syncNiftyData()" id="syncNiftyBtnSmall" style="font-size: 0.75rem; color: var(--primary); text-decoration: none; margin-left: 1rem; background: none; border: none; cursor: pointer; padding: 0;" title="Sync Nifty Data">
+                Sync
+            </button>
+        </div>
+    </div>
+    <div class="section-body">
+        <div class="section-loading"><span>Loading...</span></div>
+        <div class="section-content" id="timelineContent">
+            {% if timeline_data.has_nifty_data or timeline_data.critical_trades %}
+            <!-- Filter Controls -->
+            <div style="display: flex; flex-wrap: wrap; gap: 1rem; align-items: center; margin-bottom: 1rem; padding: 0.75rem 1rem; background: var(--lighter); border-radius: var(--radius-md);">
+                <div style="display: flex; align-items: center; gap: 0.5rem;">
+                    <label style="font-size: 0.813rem; font-weight: 600; color: var(--darker);">Broker:</label>
+                    <select id="timelineBrokerFilter" onchange="updateTimelineFilters()" style="padding: 0.375rem 0.75rem; border: 1px solid var(--light); border-radius: var(--radius-md); font-size: 0.875rem;">
+                        <option value="ALL">All Brokers</option>
+                        <option value="KOTAK">Kotak Neo</option>
+                        <option value="ICICI">ICICI Breeze</option>
+                    </select>
+                </div>
+                <div style="display: flex; align-items: center; gap: 0.5rem;">
+                    <label style="font-size: 0.813rem; font-weight: 600; color: var(--darker);">Segment:</label>
+                    <select id="timelineSegmentFilter" onchange="updateTimelineFilters()" style="padding: 0.375rem 0.75rem; border: 1px solid var(--light); border-radius: var(--radius-md); font-size: 0.875rem;">
+                        <option value="ALL">All Segments</option>
+                        <option value="FUT">Futures Only</option>
+                        <option value="OPT">Options Only</option>
+                    </select>
+                </div>
+                <div style="flex: 1;"></div>
+                <!-- Legend -->
+                <div style="display: flex; flex-wrap: wrap; gap: 0.75rem; font-size: 0.75rem;">
+                    <div style="display: flex; align-items: center; gap: 0.25rem;">
+                        <span style="width: 10px; height: 10px; border-radius: 50%; background: #6366f1;"></span>
+                        <span>Nifty</span>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 0.25rem;">
+                        <span style="width: 10px; height: 10px; border-radius: 50%; background: #10b981;"></span>
+                        <span>Win</span>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 0.25rem;">
+                        <span style="width: 10px; height: 10px; border-radius: 50%; background: #ef4444;"></span>
+                        <span>Loss</span>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 0.25rem;">
+                        <span style="width: 10px; height: 10px; border-radius: 50%; background: #f97316;"></span>
+                        <span>Streak</span>
+                    </div>
                 </div>
             </div>
 
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-top: 1rem;">
-                <div style="text-align: center; padding: 1rem; background: var(--lighter); border-radius: var(--radius-md);">
-                    <div style="font-size: 1.25rem; font-weight: 600;">₹{{ consistency.avg_monthly_pnl|floatformat:0|default:0 }}</div>
-                    <div style="font-size: 0.75rem; color: var(--gray);">Avg Monthly P&L</div>
+            <!-- Chart Container -->
+            <div style="height: 350px; position: relative;">
+                <canvas id="timelineChart"></canvas>
+            </div>
+
+            <!-- Critical Events List -->
+            <div style="margin-top: 1.5rem;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+                    <div style="font-weight: 600; color: var(--darker);">Key Events <span id="eventsCount">({{ timeline_data.critical_trades|length }})</span></div>
                 </div>
-                <div style="text-align: center; padding: 1rem; background: var(--lighter); border-radius: var(--radius-md);">
-                    <div style="font-size: 1.25rem; font-weight: 600;">₹{{ consistency.monthly_volatility|floatformat:0|default:0 }}</div>
-                    <div style="font-size: 0.75rem; color: var(--gray);">Monthly Volatility</div>
+                <div id="eventsContainer" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 0.75rem; max-height: 300px; overflow-y: auto;">
+                    <!-- Events populated by JavaScript -->
                 </div>
             </div>
 
-            {% if consistency.consistency_score < 50 %}
-            <div class="insights-box" style="margin-top: 1rem;">
-                <div class="insights-title">Consistency Insight</div>
-                <ul class="insights-list">
-                    <li>Consistency below 50% - Focus on developing a systematic approach</li>
-                    <li>Consider keeping a trading journal to identify patterns in losing months</li>
-                </ul>
+            {% else %}
+            <div style="text-align: center; padding: 3rem; color: var(--gray);" id="noNiftyDataMessage">
+                <div style="font-size: 3rem; margin-bottom: 1rem;">Chart</div>
+                <p>No Nifty Data for This Period</p>
+                <p style="font-size: 0.875rem; margin-bottom: 1rem;">Historical Nifty prices need to be synced from broker.</p>
+                <button type="button" onclick="syncNiftyData()" id="syncNiftyBtn" class="btn btn-primary" style="display: inline-flex; align-items: center; gap: 0.5rem; padding: 0.75rem 1.5rem; background: var(--primary); color: white; border-radius: var(--radius-md); border: none; cursor: pointer; font-weight: 600;">
+                    Sync Nifty Data
+                </button>
             </div>
             {% endif %}
         </div>
     </div>
 </div>
 
-<!-- Trading Timeline with Nifty Overlay -->
-<div class="section-card" style="margin-top: 1.5rem;">
+<!-- Yearly Income Comparison -->
+<div class="section-card" id="yearlyComparisonSection" style="margin-top: 1.5rem;">
     <div class="section-header">
-        <h3 class="section-title">Trading Timeline vs Nifty</h3>
-        <div style="display: flex; align-items: center; gap: 1rem;">
-            <span style="font-size: 0.813rem; color: var(--gray);">FY {{ timeline_data.fy_start|slice:":4" }}-{{ timeline_data.fy_end|slice:"2:4" }}</span>
-            <a href="{% url 'brokers:historical' %}" style="font-size: 0.75rem; color: var(--primary); text-decoration: none;" title="Sync Nifty Data">
-                ↻ Sync
-            </a>
+        <h3 class="section-title">Year-wise Monthly Income Comparison</h3>
+        <div style="font-size: 0.75rem; color: var(--gray);">
+            Total P&L / Months = Average Monthly Income
         </div>
     </div>
     <div class="section-body">
-        {% if timeline_data.has_nifty_data or timeline_data.critical_trades %}
-        <!-- Filter Controls -->
-        <div style="display: flex; flex-wrap: wrap; gap: 1rem; align-items: center; margin-bottom: 1rem; padding: 0.75rem 1rem; background: var(--lighter); border-radius: var(--radius-md);">
-            <div style="display: flex; align-items: center; gap: 0.5rem;">
-                <label style="font-size: 0.813rem; font-weight: 600; color: var(--darker);">Broker:</label>
-                <select id="timelineBrokerFilter" onchange="updateTimelineFilters()" style="padding: 0.375rem 0.75rem; border: 1px solid var(--light); border-radius: var(--radius-md); font-size: 0.875rem;">
-                    <option value="ALL">All Brokers</option>
-                    <option value="KOTAK">Kotak Neo</option>
-                    <option value="ICICI">ICICI Breeze</option>
-                </select>
+        <div class="section-loading" id="yearlyComparisonLoading"><span>Loading...</span></div>
+        <div class="section-content" id="yearlyComparisonContent">
+            <!-- Chart Container -->
+            <div style="height: 350px; position: relative;">
+                <canvas id="yearlyComparisonChart"></canvas>
             </div>
-            <div style="display: flex; align-items: center; gap: 0.5rem;">
-                <label style="font-size: 0.813rem; font-weight: 600; color: var(--darker);">Segment:</label>
-                <select id="timelineSegmentFilter" onchange="updateTimelineFilters()" style="padding: 0.375rem 0.75rem; border: 1px solid var(--light); border-radius: var(--radius-md); font-size: 0.875rem;">
-                    <option value="ALL">All Segments</option>
-                    <option value="FUT">Futures Only</option>
-                    <option value="OPT">Options Only</option>
-                </select>
-            </div>
-            <div style="flex: 1;"></div>
-            <!-- Legend -->
-            <div style="display: flex; flex-wrap: wrap; gap: 0.75rem; font-size: 0.75rem;">
-                <div style="display: flex; align-items: center; gap: 0.25rem;">
-                    <span style="width: 10px; height: 10px; border-radius: 50%; background: #6366f1;"></span>
-                    <span>Nifty</span>
-                </div>
-                <div style="display: flex; align-items: center; gap: 0.25rem;">
-                    <span style="width: 10px; height: 10px; border-radius: 50%; background: #10b981;"></span>
-                    <span>Win</span>
-                </div>
-                <div style="display: flex; align-items: center; gap: 0.25rem;">
-                    <span style="width: 10px; height: 10px; border-radius: 50%; background: #ef4444;"></span>
-                    <span>Loss</span>
-                </div>
-                <div style="display: flex; align-items: center; gap: 0.25rem;">
-                    <span style="width: 10px; height: 10px; border-radius: 50%; background: #f97316;"></span>
-                    <span>Streak</span>
-                </div>
-            </div>
-        </div>
 
-        <!-- Chart Container -->
-        <div style="height: 350px; position: relative;">
-            <canvas id="timelineChart"></canvas>
-        </div>
-
-        <!-- Critical Events List -->
-        <div style="margin-top: 1.5rem;">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
-                <div style="font-weight: 600; color: var(--darker);">Key Events <span id="eventsCount">({{ timeline_data.critical_trades|length }})</span></div>
+            <!-- Summary Table -->
+            <div style="margin-top: 1.5rem; overflow-x: auto;">
+                <table class="performance-table" id="yearlyComparisonTable">
+                    <thead>
+                        <tr>
+                            <th>Financial Year</th>
+                            <th>Total P&L</th>
+                            <th>Months</th>
+                            <th>Monthly Avg</th>
+                            <th>Trades</th>
+                            <th>Win Rate</th>
+                            <th>Profit Factor</th>
+                        </tr>
+                    </thead>
+                    <tbody id="yearlyComparisonTbody">
+                        <!-- Populated by JavaScript -->
+                    </tbody>
+                    <tfoot style="background: var(--lighter); font-weight: 600;">
+                        <tr>
+                            <td>TOTAL / AVERAGE</td>
+                            <td id="yearly-total-pnl">-</td>
+                            <td id="yearly-total-months">-</td>
+                            <td id="yearly-avg-monthly">-</td>
+                            <td id="yearly-total-trades">-</td>
+                            <td id="yearly-avg-winrate">-</td>
+                            <td id="yearly-avg-pf">-</td>
+                        </tr>
+                    </tfoot>
+                </table>
             </div>
-            <div id="eventsContainer" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 0.75rem; max-height: 300px; overflow-y: auto;">
-                <!-- Events populated by JavaScript -->
+
+            <!-- Insights -->
+            <div class="insights-box" id="yearly-insights" style="margin-top: 1rem;">
+                <div class="insights-title">Income Analysis</div>
+                <ul class="insights-list" id="yearly-insights-list">
+                    <!-- Populated by JavaScript -->
+                </ul>
             </div>
         </div>
-
-        {% else %}
-        <div style="text-align: center; padding: 3rem; color: var(--gray);">
-            <div style="font-size: 3rem; margin-bottom: 1rem;">📊</div>
-            <p>No timeline data available yet.</p>
-            <p style="font-size: 0.875rem; margin-bottom: 1rem;">Nifty historical data needs to be synced from Breeze.</p>
-            <a href="{% url 'brokers:historical' %}" class="btn btn-primary" style="display: inline-flex; align-items: center; gap: 0.5rem; padding: 0.75rem 1.5rem; background: var(--primary); color: white; border-radius: var(--radius-md); text-decoration: none; font-weight: 600;">
-                Sync Nifty Data
-            </a>
-        </div>
-        {% endif %}
     </div>
 </div>
 
@@ -1025,19 +1247,408 @@
 {% endwith %}
 {{ tax_data|json_script:"tax-data" }}
 {{ timeline_data|json_script:"timeline-data" }}
+{{ available_fys|json_script:"available-fys" }}
 <script>
-// Initialize data from Django context
-try {
-    const distDataEl = document.getElementById('distribution-data');
-    const distributionData = distDataEl ? JSON.parse(distDataEl.textContent) : [];
+// API endpoints for each section
+const API_ENDPOINTS = {
+    overview: '/analytics/api/patterns/overview/',
+    streaks: '/analytics/api/patterns/streaks/',
+    segments: '/analytics/api/patterns/segments/',
+    brokers: '/analytics/api/patterns/brokers/',
+    tax: '/analytics/api/patterns/tax/',
+    symbols: '/analytics/api/patterns/symbols/',
+    distribution: '/analytics/api/patterns/distribution/',
+    consistency: '/analytics/api/patterns/consistency/',
+    timeline: '/analytics/api/patterns/timeline/'
+};
 
-    // P&L Distribution Chart
-    const distCtx = document.getElementById('distributionChart');
-    if (distCtx && distributionData.length > 0) {
-        // Filter out buckets with 0 count for cleaner visualization
-        const filteredData = distributionData.filter(d => d.count > 0);
+// Current FY values for each section
+const sectionFYs = {
+    overview: '{{ fy_filter|default:"ALL" }}',
+    streaks: '{{ fy_filter|default:"ALL" }}',
+    segments: '{{ fy_filter|default:"ALL" }}',
+    brokers: '{{ fy_filter|default:"ALL" }}',
+    tax: '{{ fy_filter|default:"ALL" }}',
+    symbols: '{{ fy_filter|default:"ALL" }}',
+    distribution: '{{ fy_filter|default:"ALL" }}',
+    consistency: '{{ fy_filter|default:"ALL" }}',
+    timeline: '{{ fy_filter|default:"ALL" }}'
+};
 
-        new Chart(distCtx, {
+// Get current broker filter
+function getCurrentBroker() {
+    return document.getElementById('globalBrokerFilter')?.value || 'ALL';
+}
+
+// Update global filters (reload page)
+function updateGlobalFilters() {
+    const url = new URL(window.location.href);
+    const broker = document.getElementById('globalBrokerFilter').value;
+    url.searchParams.set('broker', broker);
+    window.location.href = url.toString();
+}
+
+// Format currency
+function formatCurrency(amount) {
+    const absAmount = Math.abs(amount);
+    if (absAmount >= 10000000) {
+        return '₹' + (amount / 10000000).toFixed(2) + ' Cr';
+    } else if (absAmount >= 100000) {
+        return '₹' + (amount / 100000).toFixed(2) + ' L';
+    } else {
+        return '₹' + Math.round(amount).toLocaleString('en-IN');
+    }
+}
+
+// Sync Nifty historical data from broker
+async function syncNiftyData() {
+    const syncBtn = document.getElementById('syncNiftyBtn');
+    const syncBtnSmall = document.getElementById('syncNiftyBtnSmall');
+    const originalText = syncBtn ? syncBtn.textContent : 'Sync Nifty Data';
+    const originalSmallText = syncBtnSmall ? syncBtnSmall.textContent : 'Sync';
+
+    // Show loading state
+    if (syncBtn) {
+        syncBtn.textContent = 'Syncing...';
+        syncBtn.disabled = true;
+        syncBtn.style.opacity = '0.7';
+    }
+    if (syncBtnSmall) {
+        syncBtnSmall.textContent = 'Syncing...';
+        syncBtnSmall.disabled = true;
+        syncBtnSmall.style.opacity = '0.7';
+    }
+
+    try {
+        const response = await fetch('/analytics/api/sync-nifty-data/', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]')?.value || '{{ csrf_token }}'
+            }
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+            // Show success message
+            if (syncBtn) {
+                syncBtn.textContent = `Synced ${result.records_saved} records! Reloading...`;
+                syncBtn.style.background = '#10b981';
+            }
+            if (syncBtnSmall) {
+                syncBtnSmall.textContent = 'Done!';
+                syncBtnSmall.style.color = '#10b981';
+            }
+
+            // Reload the page after a brief delay to show fresh data
+            setTimeout(() => {
+                window.location.reload();
+            }, 1500);
+        } else {
+            throw new Error(result.error || 'Failed to sync Nifty data');
+        }
+    } catch (error) {
+        console.error('Error syncing Nifty data:', error);
+        // Show error state
+        if (syncBtn) {
+            syncBtn.textContent = 'Sync Failed - Retry';
+            syncBtn.disabled = false;
+            syncBtn.style.opacity = '1';
+            syncBtn.style.background = '#ef4444';
+        }
+        if (syncBtnSmall) {
+            syncBtnSmall.textContent = 'Failed';
+            syncBtnSmall.disabled = false;
+            syncBtnSmall.style.opacity = '1';
+            syncBtnSmall.style.color = '#ef4444';
+        }
+
+        // Reset after delay
+        setTimeout(() => {
+            if (syncBtn) {
+                syncBtn.textContent = originalText;
+                syncBtn.style.background = 'var(--primary)';
+            }
+            if (syncBtnSmall) {
+                syncBtnSmall.textContent = originalSmallText;
+                syncBtnSmall.style.color = 'var(--primary)';
+            }
+        }, 3000);
+    }
+}
+
+// Generic function to load section data via AJAX
+async function loadSectionData(section) {
+    const fySelect = document.getElementById(`${section}FyFilter`);
+    const fy = fySelect ? fySelect.value : 'ALL';
+    sectionFYs[section] = fy;
+
+    // Get asset filter if available
+    const assetSelect = document.getElementById(`${section}AssetFilter`);
+    const asset = assetSelect ? assetSelect.value : 'ALL';
+
+    const broker = getCurrentBroker();
+    const sectionEl = document.getElementById(`${section}Section`);
+    const loadingEl = sectionEl.querySelector('.section-loading');
+    const contentEl = sectionEl.querySelector('.section-content');
+
+    // Show loading
+    if (loadingEl) loadingEl.classList.add('active');
+    if (contentEl) contentEl.classList.add('loading');
+
+    try {
+        const url = `${API_ENDPOINTS[section]}?fy=${fy}&broker=${broker}&segment=${asset}`;
+        const response = await fetch(url);
+        const result = await response.json();
+
+        if (result.success) {
+            updateSectionUI(section, result.data);
+        } else {
+            console.error(`Error loading ${section}:`, result.error);
+        }
+    } catch (error) {
+        console.error(`Error loading ${section}:`, error);
+    } finally {
+        // Hide loading
+        if (loadingEl) loadingEl.classList.remove('active');
+        if (contentEl) contentEl.classList.remove('loading');
+    }
+}
+
+// Update section UI based on new data
+function updateSectionUI(section, data) {
+    switch (section) {
+        case 'overview':
+            updateOverviewUI(data);
+            break;
+        case 'streaks':
+            updateStreaksUI(data);
+            break;
+        case 'segments':
+            updateSegmentsUI(data);
+            break;
+        case 'brokers':
+            updateBrokersUI(data);
+            break;
+        case 'tax':
+            TAX_DATA = data;
+            switchTaxAccount(currentBroker);
+            break;
+        case 'symbols':
+            updateSymbolsUI(data);
+            break;
+        case 'distribution':
+            updateDistributionUI(data);
+            break;
+        case 'consistency':
+            updateConsistencyUI(data);
+            break;
+        case 'timeline':
+            allTimelineData = data;
+            rebuildTimelineContent();
+            break;
+    }
+}
+
+// Update Overview UI
+function updateOverviewUI(data) {
+    document.getElementById('ov-total-trades').textContent = data.total_trades || 0;
+    document.getElementById('ov-winners').textContent = data.winners || 0;
+    document.getElementById('ov-losers').textContent = data.losers || 0;
+    document.getElementById('ov-win-rate').textContent = (data.win_rate || 0) + '%';
+    document.getElementById('ov-profit-factor').textContent = data.profit_factor || 0;
+    document.getElementById('ov-total-pnl').textContent = formatCurrency(data.total_pnl || 0);
+    document.getElementById('ov-expectancy').textContent = formatCurrency(data.expectancy || 0);
+    document.getElementById('ov-risk-reward').textContent = data.risk_reward || 0;
+    document.getElementById('ov-avg-profit').textContent = formatCurrency(data.avg_profit || 0);
+    document.getElementById('ov-max-profit').textContent = Math.round(data.max_profit || 0).toLocaleString('en-IN');
+    document.getElementById('ov-avg-loss').textContent = formatCurrency(data.avg_loss || 0);
+    document.getElementById('ov-max-loss').textContent = Math.round(Math.abs(data.max_loss || 0)).toLocaleString('en-IN');
+
+    // Update card colors
+    const winRateCard = document.getElementById('ov-winrate-card');
+    winRateCard.className = 'stat-card ' + (data.win_rate >= 50 ? 'positive' : 'negative');
+
+    const pfCard = document.getElementById('ov-pf-card');
+    pfCard.className = 'stat-card ' + (data.profit_factor >= 1 ? 'positive' : 'negative');
+
+    const pnlCard = document.getElementById('ov-pnl-card');
+    pnlCard.className = 'stat-card ' + (data.total_pnl >= 0 ? 'positive' : 'negative');
+
+    const expCard = document.getElementById('ov-exp-card');
+    expCard.className = 'stat-card ' + (data.expectancy >= 0 ? 'positive' : 'negative');
+
+    const rrCard = document.getElementById('ov-rr-card');
+    rrCard.className = 'stat-card ' + (data.risk_reward >= 1 ? 'positive' : 'warning');
+
+    // Update insights
+    const insightsBox = document.getElementById('ov-insights');
+    const insightsList = document.getElementById('ov-insights-list');
+    if (data.total_trades > 0) {
+        insightsBox.style.display = 'block';
+        let insights = [];
+        if (data.win_rate >= 60) {
+            insights.push(`Strong win rate of ${data.win_rate}% - You're selecting good entry points`);
+        } else if (data.win_rate >= 50) {
+            insights.push(`Win rate of ${data.win_rate}% is above breakeven - Focus on improving risk/reward`);
+        } else {
+            insights.push(`Win rate of ${data.win_rate}% needs improvement - Review your entry criteria`);
+        }
+
+        if (data.profit_factor >= 2) {
+            insights.push(`Excellent profit factor of ${data.profit_factor} - Your winners outpace losers significantly`);
+        } else if (data.profit_factor >= 1.5) {
+            insights.push(`Good profit factor of ${data.profit_factor} - Maintain this edge`);
+        } else if (data.profit_factor >= 1) {
+            insights.push(`Profit factor of ${data.profit_factor} is profitable but thin - Consider tighter stop losses`);
+        } else {
+            insights.push(`Profit factor below 1 - Losses exceed profits, review position sizing`);
+        }
+
+        if (data.risk_reward >= 2) {
+            insights.push(`Risk/Reward of ${data.risk_reward} is excellent - You're letting winners run`);
+        } else if (data.risk_reward < 1) {
+            insights.push(`Risk/Reward below 1 - Consider holding winners longer or cutting losses sooner`);
+        }
+
+        insightsList.innerHTML = insights.map(i => `<li>${i}</li>`).join('');
+    } else {
+        insightsBox.style.display = 'none';
+    }
+}
+
+// Update Streaks UI
+function updateStreaksUI(data) {
+    const currentItem = document.getElementById('streak-current-item');
+    const isWin = data.current_streak_type === 'win';
+    currentItem.style.background = isWin ? '#d1fae5' : '#fee2e2';
+
+    const currentVal = document.getElementById('streak-current');
+    currentVal.textContent = data.current_streak || 0;
+    currentVal.style.color = isWin ? '#065f46' : '#991b1b';
+
+    document.getElementById('streak-type').textContent = (data.current_streak_type || '-').charAt(0).toUpperCase() + (data.current_streak_type || '-').slice(1);
+    document.getElementById('streak-max-win').textContent = data.max_win_streak || 0;
+    document.getElementById('streak-max-loss').textContent = data.max_loss_streak || 0;
+    document.getElementById('streak-avg-win').textContent = data.avg_win_streak || 0;
+    document.getElementById('streak-avg-loss').textContent = data.avg_loss_streak || 0;
+
+    const insightBox = document.getElementById('streak-insight');
+    if (data.max_loss_streak >= 5) {
+        insightBox.style.display = 'block';
+        document.getElementById('streak-insight-text').textContent =
+            `Max loss streak of ${data.max_loss_streak} trades - Consider taking a break after 3 consecutive losses`;
+    } else {
+        insightBox.style.display = 'none';
+    }
+}
+
+// Update Segments UI
+function updateSegmentsUI(data) {
+    const container = document.getElementById('segmentsContent');
+    if (!data || data.length === 0) {
+        container.innerHTML = '<p style="text-align: center; color: var(--gray); padding: 2rem;">No segment data available</p>';
+        return;
+    }
+
+    container.innerHTML = data.map(seg => `
+        <div class="comparison-card">
+            <div class="comparison-header">
+                <span class="comparison-name">${seg.segment || 'Unknown'}</span>
+                <span class="comparison-pnl ${seg.total_pnl >= 0 ? 'pnl-positive' : 'pnl-negative'}">
+                    ${formatCurrency(seg.total_pnl)}
+                </span>
+            </div>
+            <div class="comparison-stats">
+                <span>${seg.trades} trades</span>
+                <span>${seg.win_rate}% win rate</span>
+                <span>PF: ${seg.profit_factor}</span>
+            </div>
+            <div class="progress-bar" style="margin-top: 0.75rem;">
+                <div class="progress-fill ${seg.total_pnl >= 0 ? 'green' : 'red'}" style="width: ${seg.win_rate}%;"></div>
+            </div>
+        </div>
+    `).join('');
+}
+
+// Update Brokers UI
+function updateBrokersUI(data) {
+    const container = document.getElementById('brokersContent');
+    if (!data || data.length === 0) {
+        container.innerHTML = '<p style="text-align: center; color: var(--gray); padding: 2rem;">No broker data available</p>';
+        return;
+    }
+
+    container.innerHTML = data.map(broker => `
+        <div class="comparison-card">
+            <div class="comparison-header">
+                <span class="comparison-name">${broker.broker_name}</span>
+                <span class="comparison-pnl ${broker.total_pnl >= 0 ? 'pnl-positive' : 'pnl-negative'}">
+                    ${formatCurrency(broker.total_pnl)}
+                </span>
+            </div>
+            <div class="comparison-stats">
+                <span>${broker.trades} trades</span>
+                <span>${broker.win_rate}% win rate</span>
+                <span>Charges: ${formatCurrency(broker.total_charges)}</span>
+            </div>
+            <div class="progress-bar" style="margin-top: 0.75rem;">
+                <div class="progress-fill ${broker.total_pnl >= 0 ? 'green' : 'red'}" style="width: ${broker.win_rate}%;"></div>
+            </div>
+        </div>
+    `).join('');
+}
+
+// Update Symbols UI
+function updateSymbolsUI(data) {
+    const renderTable = (items, tbodyId) => {
+        const tbody = document.getElementById(tbodyId);
+        if (!tbody) return;
+
+        if (!items || items.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; color: var(--gray); padding: 2rem;">No data available</td></tr>';
+            return;
+        }
+
+        tbody.innerHTML = items.map(s => `
+            <tr>
+                <td><strong>${s.symbol}</strong></td>
+                <td>${s.trades}</td>
+                <td>${s.win_rate}%</td>
+                <td class="${s.avg_pnl >= 0 ? 'pnl-positive' : 'pnl-negative'}">${formatCurrency(s.avg_pnl)}</td>
+                <td class="${s.total_pnl >= 0 ? 'pnl-positive' : 'pnl-negative'}">${formatCurrency(s.total_pnl)}</td>
+            </tr>
+        `).join('');
+    };
+
+    renderTable(data.best, 'symbols-best-tbody');
+    renderTable(data.worst, 'symbols-worst-tbody');
+    renderTable(data.most_traded, 'symbols-most-tbody');
+}
+
+// Update Distribution UI
+let distributionChart = null;
+
+function updateDistributionUI(data) {
+    // Update stats
+    if (data.stats) {
+        document.getElementById('dist-p25').textContent = formatCurrency(data.stats.p25 || 0);
+        document.getElementById('dist-median').textContent = formatCurrency(data.stats.median || 0);
+        document.getElementById('dist-p75').textContent = formatCurrency(data.stats.p75 || 0);
+        document.getElementById('dist-stddev').textContent = formatCurrency(data.stats.std_dev || 0);
+    }
+
+    // Rebuild chart
+    const ctx = document.getElementById('distributionChart');
+    if (ctx && data.buckets && data.buckets.length > 0) {
+        if (distributionChart) {
+            distributionChart.destroy();
+        }
+
+        const filteredData = data.buckets.filter(d => d.count > 0);
+
+        distributionChart = new Chart(ctx, {
             type: 'bar',
             data: {
                 labels: filteredData.map(d => d.label),
@@ -1074,8 +1685,21 @@ try {
             }
         });
     }
-} catch (e) {
-    console.error('Error rendering distribution chart:', e);
+}
+
+// Update Consistency UI
+function updateConsistencyUI(data) {
+    const gauge = document.getElementById('consistency-gauge');
+    gauge.style.setProperty('--percentage', (data.consistency_score || 0) + '%');
+
+    document.getElementById('consistency-score').textContent = (data.consistency_score || 0) + '%';
+    document.getElementById('consistency-profitable').textContent = data.profitable_months || 0;
+    document.getElementById('consistency-total').textContent = data.total_months || 0;
+    document.getElementById('consistency-avg-monthly').textContent = formatCurrency(data.avg_monthly_pnl || 0);
+    document.getElementById('consistency-volatility').textContent = formatCurrency(data.monthly_volatility || 0);
+
+    const insightBox = document.getElementById('consistency-insight');
+    insightBox.style.display = data.consistency_score < 50 ? 'block' : 'none';
 }
 
 // Symbol Tabs
@@ -1089,16 +1713,9 @@ function showSymbolTab(tab) {
     document.getElementById(tab + '-content').classList.add('active');
 }
 
-// Broker Filter
-function updateBrokerFilter(broker) {
-    const url = new URL(window.location.href);
-    url.searchParams.set('broker', broker);
-    window.location.href = url.toString();
-}
-
 // Tax Calculation Functions
 const taxDataEl = document.getElementById('tax-data');
-const TAX_DATA = taxDataEl ? JSON.parse(taxDataEl.textContent) : {
+let TAX_DATA = taxDataEl ? JSON.parse(taxDataEl.textContent) : {
     'KOTAK': { name: 'Kotak Neo', entity: 'HUF', segments: [] },
     'ICICI': { name: 'ICICI Breeze', entity: 'Individual', segments: [] }
 };
@@ -1109,17 +1726,6 @@ const STCG_RATE = 0.15;  // 15% for equity STCG
 const BUSINESS_RATE = 0.30;  // 30% for F&O business income
 
 let currentBroker = 'KOTAK';
-
-function formatCurrency(amount) {
-    const absAmount = Math.abs(amount);
-    if (absAmount >= 10000000) {
-        return '₹' + (amount / 10000000).toFixed(2) + ' Cr';
-    } else if (absAmount >= 100000) {
-        return '₹' + (amount / 100000).toFixed(2) + ' L';
-    } else {
-        return '₹' + Math.round(amount).toLocaleString('en-IN');
-    }
-}
 
 function isFOSegment(segment) {
     if (!segment) return false;
@@ -1133,7 +1739,7 @@ function switchTaxAccount(broker) {
 
     // Update entity badge
     const badge = document.getElementById('accountEntityBadge');
-    if (badge) {
+    if (badge && data) {
         if (data.entity === 'HUF') {
             badge.style.background = '#fef3c7';
             badge.style.color = '#92400e';
@@ -1146,13 +1752,16 @@ function switchTaxAccount(broker) {
     }
 
     // Reset expenses when switching
-    document.getElementById('taxExpenses').value = 0;
+    const expInput = document.getElementById('taxExpenses');
+    if (expInput) expInput.value = 0;
 
     recalculateTaxes();
 }
 
 function recalculateTaxes() {
     const data = TAX_DATA[currentBroker];
+    if (!data) return;
+
     const segments = data.segments || [];
     const expenses = parseFloat(document.getElementById('taxExpenses')?.value) || 0;
 
@@ -1301,6 +1910,107 @@ function getFilteredTrades() {
 
 function updateTimelineFilters() {
     renderTimelineChart();
+    renderEventsGrid();
+}
+
+// Rebuild timeline content after AJAX load
+function rebuildTimelineContent() {
+    const timelineContent = document.getElementById('timelineContent');
+    if (!timelineContent) return;
+
+    const niftyData = allTimelineData?.nifty_data || [];
+    const criticalTrades = allTimelineData?.critical_trades || [];
+    const hasNiftyData = niftyData.length > 0;
+    const hasTrades = criticalTrades.length > 0;
+
+    if (!hasNiftyData && !hasTrades) {
+        // No data at all - show empty state
+        timelineContent.innerHTML = `
+            <div style="text-align: center; padding: 3rem; color: var(--gray);" id="noNiftyDataMessage">
+                <div style="font-size: 3rem; margin-bottom: 1rem;">Chart</div>
+                <p>No Nifty Data for This Period</p>
+                <p style="font-size: 0.875rem; margin-bottom: 1rem;">Historical Nifty prices need to be synced from broker.</p>
+                <button type="button" onclick="syncNiftyData()" id="syncNiftyBtn" class="btn btn-primary" style="display: inline-flex; align-items: center; gap: 0.5rem; padding: 0.75rem 1.5rem; background: var(--primary); color: white; border-radius: var(--radius-md); border: none; cursor: pointer; font-weight: 600;">
+                    Sync Nifty Data
+                </button>
+            </div>
+        `;
+        return;
+    }
+
+    // Build the full content structure
+    let html = `
+        <!-- Filter Controls -->
+        <div style="display: flex; flex-wrap: wrap; gap: 1rem; align-items: center; margin-bottom: 1rem; padding: 0.75rem 1rem; background: var(--lighter); border-radius: var(--radius-md);">
+            <div style="display: flex; align-items: center; gap: 0.5rem;">
+                <label style="font-size: 0.813rem; font-weight: 600; color: var(--darker);">Broker:</label>
+                <select id="timelineBrokerFilter" onchange="updateTimelineFilters()" style="padding: 0.375rem 0.75rem; border: 1px solid var(--light); border-radius: var(--radius-md); font-size: 0.875rem;">
+                    <option value="ALL">All Brokers</option>
+                    <option value="KOTAK">Kotak Neo</option>
+                    <option value="ICICI">ICICI Breeze</option>
+                </select>
+            </div>
+            <div style="display: flex; align-items: center; gap: 0.5rem;">
+                <label style="font-size: 0.813rem; font-weight: 600; color: var(--darker);">Segment:</label>
+                <select id="timelineSegmentFilter" onchange="updateTimelineFilters()" style="padding: 0.375rem 0.75rem; border: 1px solid var(--light); border-radius: var(--radius-md); font-size: 0.875rem;">
+                    <option value="ALL">All Segments</option>
+                    <option value="FUT">Futures Only</option>
+                    <option value="OPT">Options Only</option>
+                </select>
+            </div>
+            <div style="flex: 1;"></div>
+            <!-- Legend -->
+            <div style="display: flex; flex-wrap: wrap; gap: 0.75rem; font-size: 0.75rem;">
+                <div style="display: flex; align-items: center; gap: 0.25rem;">
+                    <span style="width: 10px; height: 10px; border-radius: 50%; background: #6366f1;"></span>
+                    <span>Nifty</span>
+                </div>
+                <div style="display: flex; align-items: center; gap: 0.25rem;">
+                    <span style="width: 10px; height: 10px; border-radius: 50%; background: #10b981;"></span>
+                    <span>Win</span>
+                </div>
+                <div style="display: flex; align-items: center; gap: 0.25rem;">
+                    <span style="width: 10px; height: 10px; border-radius: 50%; background: #ef4444;"></span>
+                    <span>Loss</span>
+                </div>
+                <div style="display: flex; align-items: center; gap: 0.25rem;">
+                    <span style="width: 10px; height: 10px; border-radius: 50%; background: #f97316;"></span>
+                    <span>Streak</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Chart Container -->
+        <div id="timelineChartContainer" style="height: 350px; position: relative;">
+            ${hasNiftyData ? '<canvas id="timelineChart"></canvas>' : `
+                <div style="text-align: center; padding: 2rem; color: var(--gray); height: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center; background: var(--lighter); border-radius: var(--radius-md);">
+                    <div style="font-size: 2.5rem; margin-bottom: 0.75rem;">Chart</div>
+                    <p style="font-weight: 600; margin-bottom: 0.5rem;">No Nifty Data for This Period</p>
+                    <p style="font-size: 0.813rem; margin-bottom: 1rem;">Historical Nifty prices need to be synced from broker.</p>
+                    <button type="button" onclick="syncNiftyData()" id="syncNiftyBtn" style="display: inline-flex; align-items: center; gap: 0.5rem; padding: 0.5rem 1rem; background: var(--primary); color: white; border-radius: var(--radius-md); border: none; cursor: pointer; font-weight: 500; font-size: 0.875rem;">
+                        Sync Nifty Data
+                    </button>
+                </div>
+            `}
+        </div>
+
+        <!-- Critical Events List -->
+        <div style="margin-top: 1.5rem;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+                <div style="font-weight: 600; color: var(--darker);">Key Events <span id="eventsCount">(${criticalTrades.length})</span></div>
+            </div>
+            <div id="eventsContainer" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 0.75rem; max-height: 300px; overflow-y: auto;">
+                <!-- Events populated by JavaScript -->
+            </div>
+        </div>
+    `;
+
+    timelineContent.innerHTML = html;
+
+    // Now render the chart and events
+    if (hasNiftyData) {
+        renderTimelineChart();
+    }
     renderEventsGrid();
 }
 
@@ -1502,10 +2212,298 @@ function renderEventsGrid() {
     `}).join('');
 }
 
+// Initialize distribution chart on page load
+function initDistributionChart() {
+    try {
+        const distDataEl = document.getElementById('distribution-data');
+        const distributionData = distDataEl ? JSON.parse(distDataEl.textContent) : [];
+
+        // P&L Distribution Chart
+        const distCtx = document.getElementById('distributionChart');
+        if (distCtx && distributionData.length > 0) {
+            // Filter out buckets with 0 count for cleaner visualization
+            const filteredData = distributionData.filter(d => d.count > 0);
+
+            distributionChart = new Chart(distCtx, {
+                type: 'bar',
+                data: {
+                    labels: filteredData.map(d => d.label),
+                    datasets: [{
+                        label: 'Trades',
+                        data: filteredData.map(d => d.count),
+                        backgroundColor: filteredData.map(d =>
+                            d.start < 0 ? 'rgba(239, 68, 68, 0.8)' : 'rgba(16, 185, 129, 0.8)'
+                        ),
+                        borderRadius: 4,
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false }
+                    },
+                    scales: {
+                        x: {
+                            ticks: {
+                                maxRotation: 45,
+                                minRotation: 45,
+                                font: { size: 9 }
+                            }
+                        },
+                        y: {
+                            beginAtZero: true,
+                            ticks: {
+                                stepSize: 10
+                            }
+                        }
+                    }
+                }
+            });
+        }
+    } catch (e) {
+        console.error('Error rendering distribution chart:', e);
+    }
+}
+
+// Yearly Comparison Chart
+let yearlyComparisonChart = null;
+
+async function loadYearlyComparison() {
+    const loadingEl = document.getElementById('yearlyComparisonLoading');
+    const contentEl = document.getElementById('yearlyComparisonContent');
+
+    if (loadingEl) loadingEl.classList.add('active');
+    if (contentEl) contentEl.classList.add('loading');
+
+    try {
+        const broker = getCurrentBroker();
+        const response = await fetch(`/analytics/api/patterns/yearly-comparison/?broker=${broker}`);
+        const result = await response.json();
+
+        if (result.success) {
+            renderYearlyComparisonChart(result.data);
+            renderYearlyComparisonTable(result.data);
+            renderYearlyInsights(result.data);
+        } else {
+            console.error('Error loading yearly comparison:', result.error);
+        }
+    } catch (error) {
+        console.error('Error loading yearly comparison:', error);
+    } finally {
+        if (loadingEl) loadingEl.classList.remove('active');
+        if (contentEl) contentEl.classList.remove('loading');
+    }
+}
+
+function renderYearlyComparisonChart(data) {
+    const ctx = document.getElementById('yearlyComparisonChart');
+    if (!ctx || !data || data.length === 0) return;
+
+    if (yearlyComparisonChart) {
+        yearlyComparisonChart.destroy();
+    }
+
+    const labels = data.map(d => d.label);
+    const totalPnlData = data.map(d => d.total_pnl / 100000); // Convert to Lakhs
+    const monthlyAvgData = data.map(d => d.monthly_avg / 100000); // Convert to Lakhs
+
+    // Generate colors based on positive/negative
+    const pnlColors = data.map(d => d.total_pnl >= 0 ? 'rgba(16, 185, 129, 0.8)' : 'rgba(239, 68, 68, 0.8)');
+    const avgColors = data.map(d => d.monthly_avg >= 0 ? 'rgba(99, 102, 241, 0.8)' : 'rgba(251, 146, 60, 0.8)');
+
+    yearlyComparisonChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: labels,
+            datasets: [
+                {
+                    label: 'Total P&L (L)',
+                    data: totalPnlData,
+                    backgroundColor: pnlColors,
+                    borderRadius: 4,
+                    order: 2,
+                },
+                {
+                    label: 'Monthly Avg (L)',
+                    data: monthlyAvgData,
+                    type: 'line',
+                    borderColor: '#6366f1',
+                    backgroundColor: 'rgba(99, 102, 241, 0.2)',
+                    borderWidth: 3,
+                    pointRadius: 6,
+                    pointBackgroundColor: '#6366f1',
+                    tension: 0.3,
+                    fill: false,
+                    order: 1,
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: {
+                mode: 'index',
+                intersect: false,
+            },
+            plugins: {
+                legend: {
+                    display: true,
+                    position: 'top',
+                },
+                tooltip: {
+                    callbacks: {
+                        label: function(context) {
+                            const value = context.parsed.y;
+                            const label = context.dataset.label;
+                            return `${label}: ₹${value.toFixed(2)} L`;
+                        }
+                    }
+                }
+            },
+            scales: {
+                x: {
+                    grid: {
+                        display: false,
+                    }
+                },
+                y: {
+                    title: {
+                        display: true,
+                        text: 'Amount (Lakhs)',
+                        font: { size: 11 },
+                    },
+                    ticks: {
+                        callback: function(value) {
+                            return '₹' + value.toFixed(1) + 'L';
+                        }
+                    },
+                    grid: {
+                        color: 'rgba(0,0,0,0.05)',
+                    }
+                }
+            }
+        }
+    });
+}
+
+function renderYearlyComparisonTable(data) {
+    const tbody = document.getElementById('yearlyComparisonTbody');
+    if (!tbody) return;
+
+    if (!data || data.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="7" style="text-align: center; color: var(--gray); padding: 2rem;">No yearly data available</td></tr>';
+        return;
+    }
+
+    let totalPnl = 0;
+    let totalTrades = 0;
+    let totalMonths = 0;
+    let winRateSum = 0;
+    let pfSum = 0;
+
+    tbody.innerHTML = data.map(d => {
+        totalPnl += d.total_pnl;
+        totalTrades += d.total_trades;
+        totalMonths += d.months;
+        winRateSum += d.win_rate;
+        pfSum += d.profit_factor;
+
+        const pnlClass = d.total_pnl >= 0 ? 'pnl-positive' : 'pnl-negative';
+        const avgClass = d.monthly_avg >= 0 ? 'pnl-positive' : 'pnl-negative';
+
+        return `
+            <tr>
+                <td><strong>${d.label}</strong></td>
+                <td class="${pnlClass}">${formatCurrency(d.total_pnl)}</td>
+                <td>${d.months}</td>
+                <td class="${avgClass}">${formatCurrency(d.monthly_avg)}</td>
+                <td>${d.total_trades}</td>
+                <td>${d.win_rate}%</td>
+                <td>${d.profit_factor}</td>
+            </tr>
+        `;
+    }).join('');
+
+    // Update footer
+    const avgMonthly = totalMonths > 0 ? totalPnl / totalMonths : 0;
+    const avgWinRate = data.length > 0 ? winRateSum / data.length : 0;
+    const avgPf = data.length > 0 ? pfSum / data.length : 0;
+
+    document.getElementById('yearly-total-pnl').innerHTML = `<span class="${totalPnl >= 0 ? 'pnl-positive' : 'pnl-negative'}">${formatCurrency(totalPnl)}</span>`;
+    document.getElementById('yearly-total-months').textContent = totalMonths;
+    document.getElementById('yearly-avg-monthly').innerHTML = `<span class="${avgMonthly >= 0 ? 'pnl-positive' : 'pnl-negative'}">${formatCurrency(avgMonthly)}</span>`;
+    document.getElementById('yearly-total-trades').textContent = totalTrades;
+    document.getElementById('yearly-avg-winrate').textContent = avgWinRate.toFixed(1) + '%';
+    document.getElementById('yearly-avg-pf').textContent = avgPf.toFixed(2);
+}
+
+function renderYearlyInsights(data) {
+    const insightsList = document.getElementById('yearly-insights-list');
+    if (!insightsList || !data || data.length === 0) return;
+
+    let insights = [];
+
+    // Calculate totals
+    let totalPnl = 0;
+    let totalMonths = 0;
+    data.forEach(d => {
+        totalPnl += d.total_pnl;
+        totalMonths += d.months;
+    });
+
+    const overallMonthlyAvg = totalMonths > 0 ? totalPnl / totalMonths : 0;
+
+    // Find best and worst years
+    const sortedByPnl = [...data].sort((a, b) => b.total_pnl - a.total_pnl);
+    const bestYear = sortedByPnl[0];
+    const worstYear = sortedByPnl[sortedByPnl.length - 1];
+
+    // Find best monthly average
+    const sortedByMonthlyAvg = [...data].sort((a, b) => b.monthly_avg - a.monthly_avg);
+    const bestMonthlyYear = sortedByMonthlyAvg[0];
+
+    insights.push(`Overall monthly average income: <strong>${formatCurrency(overallMonthlyAvg)}</strong> across ${totalMonths} months`);
+
+    if (bestYear && bestYear.total_pnl > 0) {
+        insights.push(`Best year: <strong>${bestYear.label}</strong> with ${formatCurrency(bestYear.total_pnl)} total P&L (${formatCurrency(bestYear.monthly_avg)}/month)`);
+    }
+
+    if (worstYear && worstYear.total_pnl < bestYear.total_pnl) {
+        if (worstYear.total_pnl < 0) {
+            insights.push(`Worst year: <strong>${worstYear.label}</strong> with ${formatCurrency(worstYear.total_pnl)} loss`);
+        } else {
+            insights.push(`Lowest profitable year: <strong>${worstYear.label}</strong> with ${formatCurrency(worstYear.total_pnl)}`);
+        }
+    }
+
+    // Growth trend
+    if (data.length >= 2) {
+        const firstYear = data[0];
+        const lastYear = data[data.length - 1];
+        if (lastYear.total_pnl > firstYear.total_pnl) {
+            const growth = ((lastYear.total_pnl - firstYear.total_pnl) / Math.abs(firstYear.total_pnl) * 100).toFixed(0);
+            if (firstYear.total_pnl > 0) {
+                insights.push(`P&L grew by <strong>${growth}%</strong> from ${firstYear.label} to ${lastYear.label}`);
+            }
+        }
+    }
+
+    // Annualized projection
+    if (data.length > 0) {
+        const annualProjection = overallMonthlyAvg * 12;
+        insights.push(`Annualized projection (based on historical average): <strong>${formatCurrency(annualProjection)}</strong> per year`);
+    }
+
+    insightsList.innerHTML = insights.map(i => `<li>${i}</li>`).join('');
+}
+
 // Initialize on page load
 document.addEventListener('DOMContentLoaded', function() {
+    initDistributionChart();
     switchTaxAccount('KOTAK');
     initTimelineChart();
+    loadYearlyComparison();
 });
 </script>
 {% endblock %}

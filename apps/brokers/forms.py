@@ -5,6 +5,27 @@ Forms for brokers app
 from django import forms
 
 
+class MultipleFileInput(forms.ClearableFileInput):
+    """Custom widget for multiple file uploads."""
+    allow_multiple_selected = True
+
+
+class MultipleFileField(forms.FileField):
+    """Custom field for multiple file uploads."""
+
+    def __init__(self, *args, **kwargs):
+        kwargs.setdefault('widget', MultipleFileInput())
+        super().__init__(*args, **kwargs)
+
+    def clean(self, data, initial=None):
+        single_file_clean = super().clean
+        if isinstance(data, (list, tuple)):
+            result = [single_file_clean(d, initial) for d in data]
+        else:
+            result = [single_file_clean(data, initial)]
+        return result
+
+
 class CSVUploadForm(forms.Form):
     """Form for uploading CSV trade history files."""
 
@@ -22,25 +43,34 @@ class CSVUploadForm(forms.Form):
         help_text='Select the type of CSV file you are uploading'
     )
 
-    csv_file = forms.FileField(
-        widget=forms.FileInput(attrs={
+    csv_files = MultipleFileField(
+        widget=MultipleFileInput(attrs={
             'class': 'form-control',
             'accept': '.csv',
             'id': 'csv-file-input',
+            'multiple': True,
         }),
-        help_text='Upload a CSV file from your broker'
+        help_text='Upload one or more CSV files from your broker'
     )
 
-    def clean_csv_file(self):
-        """Validate the uploaded CSV file."""
-        file = self.cleaned_data.get('csv_file')
-        if file:
-            # Check file extension
-            if not file.name.lower().endswith('.csv'):
-                raise forms.ValidationError('Only CSV files are allowed.')
+    def clean_csv_files(self):
+        """Validate the uploaded CSV files."""
+        files = self.cleaned_data.get('csv_files', [])
+        validated_files = []
 
-            # Check file size (max 10MB)
-            if file.size > 10 * 1024 * 1024:
-                raise forms.ValidationError('File size must be less than 10MB.')
+        for file in files:
+            if file:
+                # Check file extension
+                if not file.name.lower().endswith('.csv'):
+                    raise forms.ValidationError(f'Only CSV files are allowed. "{file.name}" is not a CSV file.')
 
-        return file
+                # Check file size (max 10MB)
+                if file.size > 10 * 1024 * 1024:
+                    raise forms.ValidationError(f'File "{file.name}" exceeds 10MB limit.')
+
+                validated_files.append(file)
+
+        if not validated_files:
+            raise forms.ValidationError('Please select at least one CSV file.')
+
+        return validated_files

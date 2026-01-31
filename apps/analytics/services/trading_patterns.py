@@ -31,31 +31,82 @@ class TradingPatternsAnalyzer:
     Analyzes trading patterns from BrokerContractPnL and BrokerTradeHistory data.
     """
 
-    def __init__(self, broker: str = None):
+    def __init__(self, broker: str = None, fy: str = None, segment: str = None):
         """
-        Initialize analyzer with optional broker filter.
+        Initialize analyzer with optional broker, FY, and segment filters.
 
         Args:
             broker: Optional broker filter ('KOTAK' or 'ICICI')
+            fy: Optional financial year filter (e.g., '2024-25' for FY 2024-25)
+                If None or 'ALL', includes all data
+            segment: Optional segment/asset filter ('FUTURES', 'OPTIONS', 'EQUITY', 'FNO', etc.)
+                If None or 'ALL', includes all data
         """
         self.broker = broker
+        self.fy = fy
+        self.segment = segment
+        self._fy_start = None
+        self._fy_end = None
+
+        # Parse FY into date range
+        if fy and fy != 'ALL':
+            self._parse_fy(fy)
+
+    def _parse_fy(self, fy: str):
+        """
+        Parse financial year string into start and end dates.
+        FY format: '2024-25' means April 1, 2024 to March 31, 2025
+        """
+        try:
+            parts = fy.split('-')
+            if len(parts) == 2:
+                start_year = int(parts[0])
+                # Handle both '24-25' and '2024-25' formats
+                if start_year < 100:
+                    start_year += 2000
+                self._fy_start = date(start_year, 4, 1)
+                self._fy_end = date(start_year + 1, 3, 31)
+        except (ValueError, IndexError):
+            logger.warning(f"Invalid FY format: {fy}")
+            self._fy_start = None
+            self._fy_end = None
 
     def get_base_queryset(self):
-        """Get base queryset with optional broker filter."""
+        """Get base queryset with optional broker, FY, and segment filters."""
         from apps.brokers.models import BrokerContractPnL
 
         qs = BrokerContractPnL.objects.all()
         if self.broker:
             qs = qs.filter(broker=self.broker)
+        # Filter by FY: match either the 'fy' field OR expiry_date within FY range
+        if self.fy and self.fy != 'ALL':
+            if self._fy_start and self._fy_end:
+                # Match trades where fy field matches OR expiry_date falls within FY range
+                qs = qs.filter(
+                    Q(fy=self.fy) |
+                    Q(expiry_date__gte=self._fy_start, expiry_date__lte=self._fy_end)
+                )
+            else:
+                # Fallback to just fy field if date range not parsed
+                qs = qs.filter(fy=self.fy)
+        # Filter by segment/asset type
+        if self.segment and self.segment != 'ALL':
+            if self.segment == 'FNO':
+                # F&O includes both Futures and Options
+                qs = qs.filter(segment__in=['FUTURES', 'OPTIONS'])
+            else:
+                qs = qs.filter(segment=self.segment)
         return qs
 
     def get_trade_history_queryset(self):
-        """Get trade history queryset with optional broker filter."""
+        """Get trade history queryset with optional broker and FY filters."""
         from apps.brokers.models import BrokerTradeHistory
 
         qs = BrokerTradeHistory.objects.all()
         if self.broker:
             qs = qs.filter(broker=self.broker)
+        if self._fy_start and self._fy_end:
+            qs = qs.filter(trade_date__gte=self._fy_start, trade_date__lte=self._fy_end)
         return qs
 
     def get_overview_stats(self) -> Dict[str, Any]:
@@ -282,7 +333,13 @@ class TradingPatternsAnalyzer:
         """
         from apps.brokers.models import BrokerContractPnL
 
-        broker_stats = BrokerContractPnL.objects.values('broker').annotate(
+        # Start with base queryset but without broker filter for comparison
+        qs = BrokerContractPnL.objects.all()
+        # Use the 'fy' field for filtering
+        if self.fy and self.fy != 'ALL':
+            qs = qs.filter(fy=self.fy)
+
+        broker_stats = qs.values('broker').annotate(
             trades=Count('id'),
             total_pnl=Sum('net_pnl'),
             winners=Count('id', filter=Q(net_pnl__gt=0)),
@@ -515,14 +572,76 @@ class TradingPatternsAnalyzer:
         Returns:
             List of critical trade events with date, type, and details
         """
-        qs = self.get_base_queryset().order_by('expiry_date', 'id')
-        trades = list(qs.values('id', 'net_pnl', 'symbol', 'segment', 'expiry_date', 'broker'))
+        qs = self.get_base_queryset().order_by('expiry_date', 'created_at', 'id')
+        trades = list(qs.values('id', 'net_pnl', 'symbol', 'segment', 'expiry_date', 'broker', 'created_at', 'trading_symbol'))
 
         if not trades:
             return []
 
         critical_trades = []
         seen_ids = set()
+
+        # Helper to parse expiry date from trading_symbol
+        def parse_expiry_from_symbol(trading_symbol):
+            """
+            Try to parse expiry date from trading symbol.
+            Formats:
+            - Kotak new: "NIFTY 31AUG2023 PE 19200" (DDMMMYYYY - 4-digit year)
+            - Kotak old: "NIFTY 02DEC25 CE 26850" (DDMMMYY - 2-digit year)
+            - Breeze: "NIFTY FUT 02 NOV 2025" or "NIFTY OPT 02 NOV 2025 CE 26850"
+            """
+            if not trading_symbol:
+                return None
+
+            parts = trading_symbol.strip().split()
+            if len(parts) < 2:
+                return None
+
+            try:
+                # Try Kotak format with 4-digit year: DDMMMYYYY (e.g., 31AUG2023)
+                if len(parts) >= 2:
+                    expiry_str = parts[1].upper()
+                    if len(expiry_str) == 9 and expiry_str[:2].isdigit():
+                        return datetime.strptime(expiry_str, '%d%b%Y').date()
+            except ValueError:
+                pass
+
+            try:
+                # Try Kotak format with 2-digit year: DDMMMYY (e.g., 02DEC25)
+                if len(parts) >= 2:
+                    expiry_str = parts[1].upper()
+                    if len(expiry_str) == 7 and expiry_str[:2].isdigit():
+                        return datetime.strptime(expiry_str, '%d%b%y').date()
+            except ValueError:
+                pass
+
+            try:
+                # Try Breeze format: parts[2]=day, parts[3]=month, parts[4]=year
+                if len(parts) >= 5 and parts[1].upper() in ['FUT', 'OPT']:
+                    expiry_str = f"{parts[2]}-{parts[3]}-{parts[4]}"
+                    return datetime.strptime(expiry_str, '%d-%b-%Y').date()
+            except (ValueError, IndexError):
+                pass
+
+            return None
+
+        # Helper to get trade date (expiry_date, parse from symbol, or fallback to created_at)
+        def get_trade_date(trade):
+            if trade['expiry_date']:
+                return trade['expiry_date']
+
+            # Try to parse from trading_symbol
+            parsed_date = parse_expiry_from_symbol(trade.get('trading_symbol'))
+            if parsed_date:
+                return parsed_date
+
+            # Last resort: use created_at
+            if trade['created_at']:
+                created = trade['created_at']
+                if hasattr(created, 'date'):
+                    return created.date()
+                return created
+            return None
 
         # Calculate P&L thresholds for top trades
         pnl_values = sorted([float(t['net_pnl'] or 0) for t in trades])
@@ -537,7 +656,7 @@ class TradingPatternsAnalyzer:
         # 1. Find big wins and losses
         for trade in trades:
             pnl = float(trade['net_pnl'] or 0)
-            trade_date = trade['expiry_date']
+            trade_date = get_trade_date(trade)
 
             if trade_date and trade['id'] not in seen_ids:
                 if pnl >= win_threshold and pnl > 0:
@@ -577,7 +696,7 @@ class TradingPatternsAnalyzer:
         for i, trade in enumerate(trades):
             pnl = float(trade['net_pnl'] or 0)
             is_win = pnl > 0
-            trade_date = trade['expiry_date']
+            trade_date = get_trade_date(trade)
 
             if current_type is None:
                 current_type = 'win' if is_win else 'loss'
@@ -588,7 +707,7 @@ class TradingPatternsAnalyzer:
             else:
                 # Streak ended - mark if significant (>= 3)
                 if current_streak >= 3 and streak_start_trade:
-                    start_date = streak_start_trade['expiry_date']
+                    start_date = get_trade_date(streak_start_trade)
                     if start_date and streak_start_trade['id'] not in seen_ids:
                         critical_trades.append({
                             'id': streak_start_trade['id'],
@@ -614,7 +733,7 @@ class TradingPatternsAnalyzer:
         monthly_trades = defaultdict(list)
 
         for trade in trades:
-            trade_date = trade['expiry_date']
+            trade_date = get_trade_date(trade)
             if trade_date:
                 month_key = trade_date.strftime('%Y-%m') if hasattr(trade_date, 'strftime') else str(trade_date)[:7]
                 monthly_trades[month_key].append(trade)
@@ -626,7 +745,7 @@ class TradingPatternsAnalyzer:
                 # Monthly worst
                 worst = sorted_trades[0]
                 if worst['id'] not in seen_ids and float(worst['net_pnl'] or 0) < 0:
-                    worst_date = worst['expiry_date']
+                    worst_date = get_trade_date(worst)
                     critical_trades.append({
                         'id': worst['id'],
                         'date': worst_date.isoformat() if hasattr(worst_date, 'isoformat') else str(worst_date),
@@ -645,7 +764,7 @@ class TradingPatternsAnalyzer:
                 # Monthly best
                 best = sorted_trades[-1]
                 if best['id'] not in seen_ids and float(best['net_pnl'] or 0) > 0:
-                    best_date = best['expiry_date']
+                    best_date = get_trade_date(best)
                     critical_trades.append({
                         'id': best['id'],
                         'date': best_date.isoformat() if hasattr(best_date, 'isoformat') else str(best_date),
@@ -673,24 +792,38 @@ class TradingPatternsAnalyzer:
         Returns:
             Dict with critical trades, nifty data, and date range
         """
-        from apps.brokers.models import HistoricalPrice
+        from apps.brokers.models import HistoricalPrice, BrokerContractPnL
 
-        # Get current financial year dates
         today = date.today()
-        if today.month >= 4:
-            fy_start = date(today.year, 4, 1)
-            fy_end = date(today.year + 1, 3, 31)
-        else:
-            fy_start = date(today.year - 1, 4, 1)
-            fy_end = date(today.year, 3, 31)
 
-        # Get critical trades
+        # Use FY filter if set, otherwise determine date range from data
+        if self.fy and self.fy != 'ALL':
+            # Specific FY selected - use its date range
+            fy_start = self._fy_start
+            fy_end = self._fy_end
+        else:
+            # ALL selected - get date range from all data
+            qs = self.get_base_queryset().filter(expiry_date__isnull=False)
+            date_range = qs.aggregate(
+                min_date=Min('expiry_date'),
+                max_date=Max('expiry_date')
+            )
+            if date_range['min_date'] and date_range['max_date']:
+                fy_start = date_range['min_date']
+                fy_end = min(date_range['max_date'], today)
+            else:
+                # Fallback to current FY
+                if today.month >= 4:
+                    fy_start = date(today.year, 4, 1)
+                    fy_end = date(today.year + 1, 3, 31)
+                else:
+                    fy_start = date(today.year - 1, 4, 1)
+                    fy_end = date(today.year, 3, 31)
+
+        # Get critical trades (already filtered by FY in get_base_queryset)
         critical_trades = self.get_critical_trades()
 
-        # Filter to current FY
-        fy_trades = [t for t in critical_trades if fy_start.isoformat() <= t['date'] <= fy_end.isoformat()]
-
-        # Get Nifty daily data for FY
+        # Get Nifty daily data for the date range
         nifty_data = list(HistoricalPrice.objects.filter(
             stock_code='NIFTY',
             exchange_code='NSE',
@@ -713,7 +846,7 @@ class TradingPatternsAnalyzer:
                 seen_dates.add(date_str)
 
         return {
-            'critical_trades': fy_trades,
+            'critical_trades': critical_trades,
             'nifty_data': nifty_timeline,
             'fy_start': fy_start.isoformat(),
             'fy_end': fy_end.isoformat(),
@@ -739,15 +872,46 @@ class TradingPatternsAnalyzer:
         }
 
 
-def get_trading_patterns(broker: str = None) -> Dict[str, Any]:
+def get_trading_patterns(broker: str = None, fy: str = None) -> Dict[str, Any]:
     """
     Convenience function to get all trading patterns.
 
     Args:
         broker: Optional broker filter
+        fy: Optional financial year filter (e.g., '2024-25')
 
     Returns:
         Dict with all pattern analysis data
     """
-    analyzer = TradingPatternsAnalyzer(broker=broker)
+    analyzer = TradingPatternsAnalyzer(broker=broker, fy=fy)
     return analyzer.get_all_patterns()
+
+
+def get_available_fys() -> List[Dict[str, str]]:
+    """
+    Get list of available financial years from the data.
+
+    Returns:
+        List of dicts with 'value' (e.g., '2024-25') and 'label' (e.g., 'FY 2024-25')
+    """
+    from apps.brokers.models import BrokerContractPnL
+
+    # Get distinct FY values from the 'fy' field (populated during CSV import)
+    fy_values = BrokerContractPnL.objects.exclude(
+        fy=''
+    ).values('fy').distinct().values_list('fy', flat=True)
+
+    fys = []
+    seen = set()
+    for fy_value in fy_values:
+        if fy_value and fy_value not in seen:
+            seen.add(fy_value)
+            fys.append({
+                'value': fy_value,
+                'label': f"FY {fy_value}",
+            })
+
+    # Sort by FY value (newest first)
+    fys.sort(key=lambda x: x['value'], reverse=True)
+
+    return fys

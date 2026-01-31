@@ -124,41 +124,85 @@
         display: none;
     }
 
-    .file-preview {
+    .files-preview {
         display: none;
         margin-top: 1rem;
-        padding: 1rem;
+        flex-direction: column;
+        gap: 0.5rem;
+    }
+
+    .files-preview.show {
+        display: flex;
+    }
+
+    .file-preview-item {
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+        padding: 0.75rem 1rem;
         background: #f0fdf4;
         border: 1px solid #bbf7d0;
         border-radius: var(--radius-md);
     }
 
-    .file-preview.show {
-        display: flex;
-        align-items: center;
-        gap: 1rem;
+    .file-preview-item.duplicate {
+        background: #fef3c7;
+        border-color: #fcd34d;
     }
 
-    .file-preview .file-info {
+    .file-preview-item .file-info {
         flex: 1;
     }
 
-    .file-preview .file-name {
+    .file-preview-item .file-name {
         font-weight: 600;
         color: var(--darker);
+        font-size: 0.875rem;
     }
 
-    .file-preview .file-size {
+    .file-preview-item .file-size {
         font-size: 0.75rem;
         color: var(--gray);
     }
 
-    .file-preview .remove-file {
+    .file-preview-item .duplicate-badge {
+        font-size: 0.75rem;
+        color: #92400e;
+        background: #fef3c7;
+        padding: 0.125rem 0.5rem;
+        border-radius: 9999px;
+    }
+
+    .file-preview-item .remove-file {
         background: none;
         border: none;
         color: var(--danger);
         cursor: pointer;
-        padding: 0.5rem;
+        padding: 0.25rem;
+    }
+
+    .files-summary {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 0.75rem 1rem;
+        background: var(--lighter);
+        border-radius: var(--radius-md);
+        margin-top: 0.5rem;
+    }
+
+    .files-summary .summary-text {
+        font-size: 0.875rem;
+        color: var(--gray);
+    }
+
+    .files-summary .clear-all {
+        background: none;
+        border: none;
+        color: var(--danger);
+        cursor: pointer;
+        font-size: 0.875rem;
+        text-decoration: underline;
     }
 
     .upload-actions {
@@ -557,24 +601,17 @@
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
                 </svg>
-                <h3>Drop CSV file here</h3>
-                <p>or click to browse</p>
-                <input type="file" id="csv-file-input" name="csv_file" accept=".csv" required>
+                <h3>Drop CSV files here</h3>
+                <p>or click to browse (multiple files supported)</p>
+                <input type="file" id="csv-file-input" name="csv_files" accept=".csv" multiple required>
             </div>
 
-            <div class="file-preview" id="file-preview">
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" width="24" height="24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                </svg>
-                <div class="file-info">
-                    <div class="file-name" id="file-name"></div>
-                    <div class="file-size" id="file-size"></div>
+            <div class="files-preview" id="files-preview">
+                <div id="files-list"></div>
+                <div class="files-summary" id="files-summary">
+                    <span class="summary-text" id="summary-text">0 files selected</span>
+                    <button type="button" class="clear-all" id="clear-all">Clear all</button>
                 </div>
-                <button type="button" class="remove-file" id="remove-file">
-                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" width="20" height="20">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-                    </svg>
-                </button>
             </div>
 
             <div class="upload-actions">
@@ -669,12 +706,15 @@
 const csrfToken = '{{ csrf_token }}';
 const dropZone = document.getElementById('drop-zone');
 const fileInput = document.getElementById('csv-file-input');
-const filePreview = document.getElementById('file-preview');
-const fileName = document.getElementById('file-name');
-const fileSize = document.getElementById('file-size');
-const removeFileBtn = document.getElementById('remove-file');
+const filesPreview = document.getElementById('files-preview');
+const filesList = document.getElementById('files-list');
+const summaryText = document.getElementById('summary-text');
+const clearAllBtn = document.getElementById('clear-all');
 const uploadBtn = document.getElementById('upload-btn');
 const uploadForm = document.getElementById('upload-form');
+
+// Track selected files (since FileList is immutable)
+let selectedFiles = [];
 
 // Drag and drop handlers
 dropZone.addEventListener('click', () => fileInput.click());
@@ -692,26 +732,78 @@ dropZone.addEventListener('drop', (e) => {
     e.preventDefault();
     dropZone.classList.remove('dragover');
 
-    const files = e.dataTransfer.files;
-    if (files.length > 0 && files[0].name.toLowerCase().endsWith('.csv')) {
-        fileInput.files = files;
-        showFilePreview(files[0]);
+    const files = Array.from(e.dataTransfer.files).filter(f => f.name.toLowerCase().endsWith('.csv'));
+    if (files.length > 0) {
+        addFiles(files);
     } else {
-        alert('Please upload a CSV file');
+        alert('Please upload CSV files only');
     }
 });
 
 fileInput.addEventListener('change', () => {
     if (fileInput.files.length > 0) {
-        showFilePreview(fileInput.files[0]);
+        addFiles(Array.from(fileInput.files));
     }
 });
 
-function showFilePreview(file) {
-    fileName.textContent = file.name;
-    fileSize.textContent = formatFileSize(file.size);
-    filePreview.classList.add('show');
+function addFiles(newFiles) {
+    // Add new files, avoiding duplicates by name
+    const existingNames = new Set(selectedFiles.map(f => f.name));
+    for (const file of newFiles) {
+        if (!existingNames.has(file.name)) {
+            selectedFiles.push(file);
+            existingNames.add(file.name);
+        }
+    }
+    updateFilesPreview();
+}
+
+function removeFile(index) {
+    selectedFiles.splice(index, 1);
+    updateFilesPreview();
+}
+
+function updateFilesPreview() {
+    if (selectedFiles.length === 0) {
+        filesPreview.classList.remove('show');
+        uploadBtn.disabled = true;
+        fileInput.value = '';
+        return;
+    }
+
+    filesPreview.classList.add('show');
     uploadBtn.disabled = false;
+
+    // Build file list HTML
+    filesList.innerHTML = selectedFiles.map((file, index) => `
+        <div class="file-preview-item" data-index="${index}">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" width="20" height="20">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+            </svg>
+            <div class="file-info">
+                <div class="file-name">${file.name}</div>
+                <div class="file-size">${formatFileSize(file.size)}</div>
+            </div>
+            <button type="button" class="remove-file" onclick="removeFile(${index})">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" width="18" height="18">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+            </button>
+        </div>
+    `).join('');
+
+    // Update summary
+    const totalSize = selectedFiles.reduce((sum, f) => sum + f.size, 0);
+    summaryText.textContent = `${selectedFiles.length} file${selectedFiles.length > 1 ? 's' : ''} selected (${formatFileSize(totalSize)})`;
+
+    // Update the actual file input with a DataTransfer object
+    updateFileInput();
+}
+
+function updateFileInput() {
+    const dt = new DataTransfer();
+    selectedFiles.forEach(file => dt.items.add(file));
+    fileInput.files = dt.files;
 }
 
 function formatFileSize(bytes) {
@@ -720,15 +812,19 @@ function formatFileSize(bytes) {
     return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
 }
 
-removeFileBtn.addEventListener('click', () => {
-    fileInput.value = '';
-    filePreview.classList.remove('show');
-    uploadBtn.disabled = true;
+clearAllBtn.addEventListener('click', () => {
+    selectedFiles = [];
+    updateFilesPreview();
 });
 
 // Upload form handler
 uploadForm.addEventListener('submit', async (e) => {
     e.preventDefault();
+
+    if (selectedFiles.length === 0) {
+        alert('Please select at least one CSV file');
+        return;
+    }
 
     uploadBtn.classList.add('loading');
     uploadBtn.disabled = true;
@@ -749,10 +845,10 @@ uploadForm.addEventListener('submit', async (e) => {
 
         if (data.success) {
             // Clear form
-            fileInput.value = '';
-            filePreview.classList.remove('show');
+            selectedFiles = [];
+            updateFilesPreview();
 
-            // Reload page to show new import
+            // Reload page to show new imports
             setTimeout(() => location.reload(), 2000);
         }
 
@@ -760,7 +856,7 @@ uploadForm.addEventListener('submit', async (e) => {
         showResult({ message: 'Error: ' + error.message, errors: [error.message] }, false);
     } finally {
         uploadBtn.classList.remove('loading');
-        uploadBtn.disabled = false;
+        uploadBtn.disabled = selectedFiles.length === 0;
     }
 });
 
@@ -770,15 +866,35 @@ function showResult(data, isSuccess) {
     panel.classList.remove('success', 'error');
     panel.classList.add(isSuccess ? 'success' : 'error');
 
-    document.getElementById('result-title').textContent = isSuccess ? 'Import Successful' : 'Import Failed';
+    const filesProcessed = data.files_processed || 0;
+    const filesSuccessful = data.files_successful || 0;
+    const duplicatesSkipped = data.duplicates_skipped || [];
+
+    let title = isSuccess ? 'Import Successful' : 'Import Failed';
+    if (filesProcessed > 1) {
+        title = `${filesSuccessful}/${filesProcessed} Files Imported`;
+    }
+    document.getElementById('result-title').textContent = title;
+
     document.getElementById('result-created').textContent = data.records_created || 0;
     document.getElementById('result-updated').textContent = data.records_updated || 0;
     document.getElementById('result-skipped').textContent = data.records_skipped || 0;
 
     let details = data.message || '';
-    if (data.batch_id) {
-        details += `\nBatch ID: ${data.batch_id}`;
+
+    // Show per-file results if multiple files
+    if (data.results && data.results.length > 0) {
+        details += '\n\nPer-file results:';
+        data.results.forEach(r => {
+            const status = r.success ? 'OK' : 'FAILED';
+            details += `\n  ${r.filename}: ${status} (${r.records_created} created)`;
+        });
     }
+
+    if (duplicatesSkipped.length > 0) {
+        details += `\n\nDuplicates skipped: ${duplicatesSkipped.join(', ')}`;
+    }
+
     if (data.errors && data.errors.length > 0) {
         details += '\n\nErrors:\n' + data.errors.slice(0, 10).join('\n');
         if (data.errors.length > 10) {

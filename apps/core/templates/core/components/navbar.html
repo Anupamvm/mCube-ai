@@ -56,13 +56,29 @@
                             </ul>
                         </li>
 
-                        <!-- Analytics Dropdown -->
+                        <!-- Historical Analysis Dropdown -->
                         <li class="dropdown">
-                            <a href="#" class="dropdown-toggle">Analytics ▾</a>
+                            <a href="#" class="dropdown-toggle">Historical Analysis ▾</a>
                             <ul class="dropdown-menu">
-                                <li><a href="/analytics/learning/">📊 Learning Dashboard</a></li>
-                                <li><a href="/analytics/patterns/">📈 Performance Patterns</a></li>
-                                <li><a href="/analytics/suggestions/">🔍 Trade Analysis</a></li>
+                                <li><a href="/analytics/historical-analysis/">📊 Performance Overview</a></li>
+                                <li><a href="/analytics/historical-analysis/#segmentsSection">📈 Segment Analysis</a></li>
+                                <li><a href="/analytics/historical-analysis/#symbolsSection">🎯 Symbol Performance</a></li>
+                                <li><a href="/analytics/historical-analysis/#taxSection">💰 Tax Calculator</a></li>
+                                <li><a href="/analytics/historical-analysis/#timelineSection">📅 Timeline vs Nifty</a></li>
+                                <li><a href="/analytics/historical-analysis/#yearlyComparisonSection">📆 Yearly Comparison</a></li>
+                                <li class="dropdown-divider"></li>
+                                <li><a href="{% url 'brokers:csv_upload_dashboard' %}">📤 Upload Trade Data</a></li>
+                            </ul>
+                        </li>
+
+                        <!-- Trading Insights Dropdown -->
+                        <li class="dropdown">
+                            <a href="#" class="dropdown-toggle">Trading Insights ▾</a>
+                            <ul class="dropdown-menu">
+                                <li><a href="/analytics/insights/">🧠 Smart Intelligence</a></li>
+                                <li><a href="/analytics/insights/suggestions/">💡 Parameter Suggestions</a></li>
+                                <li class="dropdown-divider"></li>
+                                <li><a href="/analytics/learning/">⚙️ Learning Engine</a></li>
                             </ul>
                         </li>
 

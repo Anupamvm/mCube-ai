@@ -183,6 +183,14 @@
 <!-- Filters -->
 <div class="dashboard-filters">
     <label>
+        <select id="fy-filter">
+            <option value="ALL" {% if fy_filter == 'ALL' %}selected{% endif %}>All FYs</option>
+            {% for fy in available_fys %}
+            <option value="{{ fy }}" {% if fy_filter == fy %}selected{% endif %}>FY {{ fy }}</option>
+            {% endfor %}
+        </select>
+    </label>
+    <label>
         <select id="account-filter">
             <option value="">All Accounts</option>
             {% for account in accounts %}

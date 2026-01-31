@@ -44,6 +44,7 @@ class DashboardService:
         user: User,
         account: Optional[BrokerAccount] = None,
         period: str = 'FY',
+        fy: str = None,
     ) -> Dict[str, Any]:
         """
         Get summary metrics for dashboard header.
@@ -52,13 +53,14 @@ class DashboardService:
             user: The user
             account: Optional specific account (None for all accounts)
             period: Period for metrics (1D, 1W, 1M, 3M, 6M, 1Y, FY, YTD, ALL)
+            fy: Optional specific financial year (e.g., '2024-25')
 
         Returns:
             Dict with summary metrics
         """
         try:
             # Determine date range
-            start_date, end_date = self._get_period_dates(period)
+            start_date, end_date = self._get_period_dates(period, fy)
 
             # Build trade query
             trades_query = TakenTrade.objects.filter(
@@ -185,6 +187,7 @@ class DashboardService:
         account: Optional[BrokerAccount] = None,
         period: str = '1M',
         granularity: str = 'daily',
+        fy: str = None,
     ) -> Dict[str, Any]:
         """
         Get P&L chart data for visualization.
@@ -194,12 +197,13 @@ class DashboardService:
             account: Optional specific account
             period: Time period
             granularity: 'daily', 'weekly', or 'monthly'
+            fy: Optional specific financial year (e.g., '2024-25')
 
         Returns:
             Dict with chart data
         """
         try:
-            start_date, end_date = self._get_period_dates(period)
+            start_date, end_date = self._get_period_dates(period, fy)
 
             if granularity == 'daily':
                 return self._get_daily_pnl_data(user, account, start_date, end_date)
@@ -347,6 +351,7 @@ class DashboardService:
         user: User,
         account: Optional[BrokerAccount] = None,
         period: str = 'FY',
+        fy: str = None,
     ) -> Dict[str, Any]:
         """
         Get cumulative returns data for equity curve chart.
@@ -355,12 +360,13 @@ class DashboardService:
             user: The user
             account: Optional specific account
             period: Time period
+            fy: Optional specific financial year (e.g., '2024-25')
 
         Returns:
             Dict with equity curve data
         """
         try:
-            start_date, end_date = self._get_period_dates(period)
+            start_date, end_date = self._get_period_dates(period, fy)
 
             query = DailyEquityCurve.objects.filter(
                 date__gte=start_date,
@@ -394,6 +400,7 @@ class DashboardService:
         user: User,
         account: Optional[BrokerAccount] = None,
         period: str = 'FY',
+        fy: str = None,
     ) -> Dict[str, Any]:
         """
         Get win/loss distribution data for histogram.
@@ -402,12 +409,13 @@ class DashboardService:
             user: The user
             account: Optional specific account
             period: Time period
+            fy: Optional specific financial year (e.g., '2024-25')
 
         Returns:
             Dict with distribution data
         """
         try:
-            start_date, end_date = self._get_period_dates(period)
+            start_date, end_date = self._get_period_dates(period, fy)
 
             query = TakenTrade.objects.filter(
                 user=user,
@@ -476,6 +484,7 @@ class DashboardService:
         user: User,
         account: Optional[BrokerAccount] = None,
         period: str = 'FY',
+        fy: str = None,
     ) -> Dict[str, Any]:
         """
         Get performance breakdown by strategy.
@@ -484,12 +493,13 @@ class DashboardService:
             user: The user
             account: Optional specific account
             period: Time period
+            fy: Optional specific financial year (e.g., '2024-25')
 
         Returns:
             Dict with strategy performance data
         """
         try:
-            start_date, end_date = self._get_period_dates(period)
+            start_date, end_date = self._get_period_dates(period, fy)
 
             query = TakenTrade.objects.filter(
                 user=user,
@@ -540,6 +550,7 @@ class DashboardService:
         user: User,
         account: Optional[BrokerAccount] = None,
         period: str = 'FY',
+        fy: str = None,
     ) -> Dict[str, Any]:
         """
         Get performance heatmap data by day/hour.
@@ -548,12 +559,13 @@ class DashboardService:
             user: The user
             account: Optional specific account
             period: Time period
+            fy: Optional specific financial year (e.g., '2024-25')
 
         Returns:
             Dict with heatmap data
         """
         try:
-            start_date, end_date = self._get_period_dates(period)
+            start_date, end_date = self._get_period_dates(period, fy)
             from django.db.models.functions import ExtractHour, ExtractWeekDay
 
             query = TakenTrade.objects.filter(
@@ -657,6 +669,7 @@ class DashboardService:
         account: Optional[BrokerAccount] = None,
         benchmark: str = 'NIFTY50',
         period: str = 'FY',
+        fy: str = None,
     ) -> Dict[str, Any]:
         """
         Get performance comparison vs benchmark.
@@ -666,6 +679,7 @@ class DashboardService:
             account: Optional specific account
             benchmark: Benchmark to compare against
             period: Time period
+            fy: Optional specific financial year (e.g., '2024-25')
 
         Returns:
             Dict with comparison data
@@ -709,6 +723,7 @@ class DashboardService:
         self,
         user: User,
         period: str = 'FY',
+        fy: str = None,
     ) -> Dict[str, Any]:
         """
         Get ML insights on decision patterns.
@@ -716,12 +731,13 @@ class DashboardService:
         Args:
             user: The user
             period: Time period
+            fy: Optional specific financial year (e.g., '2024-25')
 
         Returns:
             Dict with decision pattern analysis
         """
         try:
-            start_date, end_date = self._get_period_dates(period)
+            start_date, end_date = self._get_period_dates(period, fy)
 
             logs = UserDecisionLog.objects.filter(
                 user=user,
@@ -770,6 +786,7 @@ class DashboardService:
         self,
         user: User,
         period: str = 'FY',
+        fy: str = None,
     ) -> Dict[str, Any]:
         """
         Get accuracy analysis of algorithm recommendations.
@@ -777,12 +794,13 @@ class DashboardService:
         Args:
             user: The user
             period: Time period
+            fy: Optional specific financial year (e.g., '2024-25')
 
         Returns:
             Dict with recommendation accuracy data
         """
         try:
-            start_date, end_date = self._get_period_dates(period)
+            start_date, end_date = self._get_period_dates(period, fy)
 
             # Get suggestions with outcomes
             suggestions = TradeSuggestion.objects.filter(
@@ -848,9 +866,32 @@ class DashboardService:
         successful = queryset.filter(status='SUCCESSFUL').count()
         return round((successful / total) * 100, 1)
 
-    def _get_period_dates(self, period: str) -> tuple:
-        """Get start and end dates for a period."""
+    def _get_period_dates(self, period: str, fy: str = None) -> tuple:
+        """
+        Get start and end dates for a period.
+
+        Args:
+            period: Period string (1D, 1W, 1M, 3M, 6M, 1Y, FY, YTD, ALL)
+            fy: Optional specific financial year like '2024-25'
+
+        Returns:
+            Tuple of (start_date, end_date)
+        """
         today = date.today()
+
+        # If specific FY is provided, use that
+        if fy:
+            try:
+                start_year = int(fy.split('-')[0])
+                end_year = start_year + 1
+                start_date = date(start_year, 4, 1)  # April 1
+                end_date = date(end_year, 3, 31)  # March 31
+                # If FY is current or future, cap at today
+                if end_date > today:
+                    end_date = today
+                return start_date, end_date
+            except (ValueError, IndexError):
+                pass  # Fall through to regular period handling
 
         if period == '1D':
             return today, today

@@ -1,0 +1,1421 @@
+{% extends "analytics/base.html" %}
+
+{% block page_title %}Trading Insights{% endblock %}
+{% block page_description %}Data-driven analysis and actionable trading conclusions{% endblock %}
+
+{% block extra_css %}
+{{ block.super }}
+<style>
+    /* Executive Summary Card */
+    .executive-summary {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 2rem;
+        border-radius: var(--radius-lg);
+        margin-bottom: 2rem;
+        box-shadow: var(--shadow-xl);
+    }
+
+    .summary-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+        gap: 1.5rem;
+        margin-top: 1.5rem;
+    }
+
+    .summary-item {
+        text-align: center;
+    }
+
+    .summary-value {
+        font-size: 2.5rem;
+        font-weight: 700;
+    }
+
+    .summary-label {
+        font-size: 0.875rem;
+        opacity: 0.9;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+
+    .grade-badge {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 80px;
+        height: 80px;
+        border-radius: 50%;
+        background: rgba(255,255,255,0.2);
+        font-size: 3rem;
+        font-weight: 700;
+    }
+
+    .health-bar {
+        height: 10px;
+        background: rgba(255,255,255,0.3);
+        border-radius: 5px;
+        overflow: hidden;
+        margin-top: 1rem;
+    }
+
+    .health-fill {
+        height: 100%;
+        background: white;
+        border-radius: 5px;
+        transition: width 0.5s ease;
+    }
+
+    /* Conclusion Cards */
+    .conclusion-card {
+        padding: 1.25rem;
+        border-radius: var(--radius-lg);
+        margin-bottom: 1rem;
+        border-left: 4px solid;
+    }
+
+    .conclusion-card.alert {
+        background: #fef2f2;
+        border-color: #ef4444;
+    }
+
+    .conclusion-card.warning {
+        background: #fffbeb;
+        border-color: #f59e0b;
+    }
+
+    .conclusion-card.positive {
+        background: #f0fdf4;
+        border-color: #22c55e;
+    }
+
+    .conclusion-title {
+        font-weight: 600;
+        font-size: 1rem;
+        margin-bottom: 0.5rem;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+    }
+
+    .conclusion-card.alert .conclusion-title { color: #dc2626; }
+    .conclusion-card.warning .conclusion-title { color: #d97706; }
+    .conclusion-card.positive .conclusion-title { color: #16a34a; }
+
+    .conclusion-message {
+        color: var(--gray);
+        font-size: 0.9rem;
+        line-height: 1.5;
+    }
+
+    .conclusion-badge {
+        font-size: 0.7rem;
+        padding: 0.25rem 0.5rem;
+        border-radius: var(--radius-full);
+        text-transform: uppercase;
+        font-weight: 600;
+    }
+
+    .conclusion-card.alert .conclusion-badge { background: #fee2e2; color: #991b1b; }
+    .conclusion-card.warning .conclusion-badge { background: #fef3c7; color: #92400e; }
+    .conclusion-card.positive .conclusion-badge { background: #dcfce7; color: #166534; }
+
+    /* Stats Grid */
+    .stats-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 1rem;
+        margin-bottom: 1.5rem;
+    }
+
+    .stat-card {
+        background: white;
+        padding: 1.25rem;
+        border-radius: var(--radius-lg);
+        box-shadow: var(--shadow-sm);
+        text-align: center;
+    }
+
+    .stat-value {
+        font-size: 1.75rem;
+        font-weight: 700;
+        color: var(--primary);
+    }
+
+    .stat-value.positive { color: #16a34a; }
+    .stat-value.negative { color: #dc2626; }
+
+    .stat-label {
+        font-size: 0.75rem;
+        color: var(--gray);
+        text-transform: uppercase;
+        margin-top: 0.25rem;
+    }
+
+    /* Section Cards */
+    .section-card {
+        background: white;
+        border-radius: var(--radius-lg);
+        padding: 1.5rem;
+        margin-bottom: 1.5rem;
+        box-shadow: var(--shadow-md);
+    }
+
+    .section-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 1rem;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+    }
+
+    .section-title {
+        font-size: 1.25rem;
+        font-weight: 600;
+        color: var(--darker);
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        margin: 0;
+    }
+
+    .section-filter {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+    }
+
+    .section-filter label {
+        font-size: 0.75rem;
+        color: var(--gray);
+        text-transform: uppercase;
+    }
+
+    .section-filter select {
+        padding: 0.35rem 0.75rem;
+        border-radius: var(--radius-md);
+        border: 1px solid var(--light);
+        background: white;
+        font-size: 0.85rem;
+        min-width: 120px;
+    }
+
+    /* Edge Quality Badge */
+    .edge-badge {
+        display: inline-block;
+        padding: 0.5rem 1rem;
+        border-radius: var(--radius-full);
+        font-weight: 600;
+        font-size: 0.875rem;
+    }
+
+    .edge-badge.excellent { background: #dcfce7; color: #166534; }
+    .edge-badge.good { background: #d1fae5; color: #065f46; }
+    .edge-badge.moderate { background: #fef3c7; color: #92400e; }
+    .edge-badge.marginal { background: #fed7aa; color: #9a3412; }
+    .edge-badge.weak { background: #fee2e2; color: #991b1b; }
+    .edge-badge.none { background: #f3f4f6; color: #6b7280; }
+
+    /* Risk Level Badge */
+    .risk-badge {
+        display: inline-block;
+        padding: 0.5rem 1rem;
+        border-radius: var(--radius-full);
+        font-weight: 600;
+        font-size: 0.875rem;
+    }
+
+    .risk-badge.low { background: #dcfce7; color: #166534; }
+    .risk-badge.moderate { background: #fef3c7; color: #92400e; }
+    .risk-badge.high { background: #fee2e2; color: #991b1b; }
+    .risk-badge.critical { background: #dc2626; color: white; }
+
+    /* Momentum Badge */
+    .momentum-badge {
+        display: inline-block;
+        padding: 0.5rem 1rem;
+        border-radius: var(--radius-full);
+        font-weight: 600;
+    }
+
+    .momentum-badge.hot { background: #dcfce7; color: #166534; }
+    .momentum-badge.neutral { background: #f3f4f6; color: #6b7280; }
+    .momentum-badge.cold { background: #fee2e2; color: #991b1b; }
+
+    /* Symbol Table */
+    .symbol-table {
+        width: 100%;
+        font-size: 0.9rem;
+    }
+
+    .symbol-table th {
+        text-align: left;
+        padding: 0.75rem;
+        background: var(--lighter);
+        font-weight: 600;
+        color: var(--gray);
+        font-size: 0.75rem;
+        text-transform: uppercase;
+    }
+
+    .symbol-table td {
+        padding: 0.75rem;
+        border-bottom: 1px solid var(--light);
+    }
+
+    /* Recommendations List */
+    .recommendations-list {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+    }
+
+    .recommendations-list li {
+        padding: 0.75rem 0;
+        border-bottom: 1px solid var(--light);
+        display: flex;
+        align-items: flex-start;
+        gap: 0.75rem;
+    }
+
+    .recommendations-list li:last-child {
+        border-bottom: none;
+    }
+
+    .rec-icon {
+        flex-shrink: 0;
+        width: 24px;
+        height: 24px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 50%;
+        background: var(--primary);
+        color: white;
+        font-size: 0.75rem;
+    }
+
+    /* Filter Bar */
+    .filter-bar-inline {
+        display: flex;
+        gap: 1rem;
+        align-items: center;
+        margin-bottom: 1.5rem;
+    }
+
+    .filter-bar-inline select {
+        padding: 0.5rem 1rem;
+        border-radius: var(--radius-md);
+        border: 1px solid var(--light);
+        background: white;
+    }
+
+    /* Confidence Score */
+    .confidence-meter {
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+        padding: 1rem;
+        background: var(--lighter);
+        border-radius: var(--radius-md);
+        margin-top: 1rem;
+    }
+
+    .confidence-meter-label {
+        font-size: 0.875rem;
+        color: var(--gray);
+    }
+
+    .confidence-meter-value {
+        font-weight: 700;
+        color: var(--primary);
+    }
+
+    /* Two Column Layout */
+    .two-col-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+        gap: 1.5rem;
+    }
+
+    /* Loading State */
+    .section-loading {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 2rem;
+        color: var(--gray);
+    }
+
+    .section-loading::after {
+        content: '';
+        width: 20px;
+        height: 20px;
+        border: 2px solid var(--light);
+        border-top-color: var(--primary);
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+        margin-left: 0.5rem;
+    }
+
+    @keyframes spin {
+        to { transform: rotate(360deg); }
+    }
+
+    .section-error {
+        color: var(--danger);
+        padding: 1rem;
+        background: #fef2f2;
+        border-radius: var(--radius-md);
+    }
+
+    @media (max-width: 768px) {
+        .two-col-grid {
+            grid-template-columns: 1fr;
+        }
+        .summary-grid {
+            grid-template-columns: repeat(2, 1fr);
+        }
+        .section-header {
+            flex-direction: column;
+            align-items: flex-start;
+        }
+    }
+</style>
+{% endblock %}
+
+{% block page_content %}
+
+<!-- Global Broker Filter -->
+<div class="filter-bar-inline">
+    <label>Broker:</label>
+    <select onchange="updateGlobalBroker(this.value);" id="global-broker-filter">
+        <option value="ALL" {% if broker_filter == 'ALL' %}selected{% endif %}>All Brokers</option>
+        <option value="KOTAK" {% if broker_filter == 'KOTAK' %}selected{% endif %}>Kotak Neo</option>
+        <option value="ICICI" {% if broker_filter == 'ICICI' %}selected{% endif %}>ICICI Breeze</option>
+    </select>
+    <span style="color: var(--gray); font-size: 0.85rem; margin-left: 1rem;">
+        Each section below has its own FY filter
+    </span>
+</div>
+
+<!-- Executive Summary Section -->
+<div id="section-executive-summary">
+    <div class="executive-summary">
+        <div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 1rem;">
+            <div style="flex: 1;">
+                <div style="display: flex; align-items: center; gap: 1rem; margin-bottom: 0.5rem;">
+                    <h2 style="margin: 0; font-size: 1.5rem;">Trading Health Score</h2>
+                    <select id="fy-executive-summary" onchange="loadSection('executive-summary')" style="padding: 0.35rem 0.75rem; border-radius: var(--radius-md); border: 1px solid rgba(255,255,255,0.3); background: rgba(255,255,255,0.2); color: white; font-size: 0.85rem;">
+                        <option value="ALL">All Years</option>
+                        {% for fy in available_fys %}
+                        <option value="{{ fy }}">FY {{ fy }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <p id="summary-text" style="margin: 0.5rem 0 0 0; opacity: 0.9;">{{ analysis.executive_summary.summary }}</p>
+            </div>
+            <div class="grade-badge" id="summary-grade">{{ analysis.executive_summary.grade }}</div>
+        </div>
+
+        <div class="health-bar">
+            <div class="health-fill" id="health-fill" style="width: {{ analysis.executive_summary.health_score }}%;"></div>
+        </div>
+
+        <div class="summary-grid" id="summary-grid">
+            <div class="summary-item">
+                <div class="summary-value" id="summary-health-score">{{ analysis.executive_summary.health_score }}</div>
+                <div class="summary-label">Health Score</div>
+            </div>
+            <div class="summary-item">
+                <div class="summary-value" id="summary-total-trades">{{ analysis.executive_summary.total_trades }}</div>
+                <div class="summary-label">Total Trades</div>
+            </div>
+            <div class="summary-item">
+                <div class="summary-value" id="summary-win-rate">{{ analysis.executive_summary.win_rate|floatformat:1 }}%</div>
+                <div class="summary-label">Win Rate</div>
+            </div>
+            <div class="summary-item">
+                <div class="summary-value" id="summary-profit-factor">{% if analysis.executive_summary.profit_factor %}{{ analysis.executive_summary.profit_factor|floatformat:2 }}{% else %}N/A{% endif %}</div>
+                <div class="summary-label">Profit Factor</div>
+            </div>
+            <div class="summary-item">
+                <div class="summary-value" id="summary-total-pnl" style="{% if analysis.executive_summary.total_pnl >= 0 %}color: #86efac;{% else %}color: #fca5a5;{% endif %}">
+                    {% if analysis.executive_summary.total_pnl >= 0 %}+{% endif %}{{ analysis.executive_summary.total_pnl|floatformat:0 }}
+                </div>
+                <div class="summary-label">Net P&L</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Conclusions Section -->
+<div class="section-card" id="section-conclusions">
+    <div class="section-header">
+        <h3 class="section-title">Key Findings & Conclusions</h3>
+        <div class="section-filter">
+            <label>FY:</label>
+            <select id="fy-conclusions" onchange="loadSection('conclusions')">
+                <option value="ALL">All Years</option>
+                {% for fy in available_fys %}
+                <option value="{{ fy }}">FY {{ fy }}</option>
+                {% endfor %}
+            </select>
+        </div>
+    </div>
+    <div id="conclusions-content">
+        {% for conclusion in analysis.conclusions %}
+        <div class="conclusion-card {% if conclusion.type == 'ALERT' %}alert{% elif conclusion.type == 'WARNING' %}warning{% else %}positive{% endif %}">
+            <div class="conclusion-title">
+                {% if conclusion.type == 'ALERT' %}
+                <span>&#9888;</span>
+                {% elif conclusion.type == 'WARNING' %}
+                <span>&#9888;</span>
+                {% else %}
+                <span>&#10004;</span>
+                {% endif %}
+                {{ conclusion.title }}
+                <span class="conclusion-badge">{{ conclusion.category }}</span>
+            </div>
+            <div class="conclusion-message">{{ conclusion.message }}</div>
+        </div>
+        {% empty %}
+        <p style="color: var(--gray);">No conclusions available.</p>
+        {% endfor %}
+    </div>
+</div>
+
+<div class="two-col-grid">
+    <!-- Performance Overview Section -->
+    <div class="section-card" id="section-performance">
+        <div class="section-header">
+            <h3 class="section-title">Performance Metrics</h3>
+            <div class="section-filter">
+                <label>FY:</label>
+                <select id="fy-performance" onchange="loadSection('performance')">
+                    <option value="ALL">All Years</option>
+                    {% for fy in available_fys %}
+                    <option value="{{ fy }}">FY {{ fy }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+        </div>
+        <div id="performance-content">
+            {% with overview=analysis.performance_overview %}
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-value">{{ overview.total_trades }}</div>
+                    <div class="stat-label">Total Trades</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">{{ overview.win_rate|floatformat:1 }}%</div>
+                    <div class="stat-label">Win Rate</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value {% if overview.expectancy >= 0 %}positive{% else %}negative{% endif %}">
+                        {{ overview.expectancy|floatformat:0 }}
+                    </div>
+                    <div class="stat-label">Expectancy/Trade</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">{% if overview.profit_factor %}{{ overview.profit_factor|floatformat:2 }}{% else %}N/A{% endif %}</div>
+                    <div class="stat-label">Profit Factor</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">{% if overview.risk_reward %}{{ overview.risk_reward|floatformat:2 }}{% else %}N/A{% endif %}</div>
+                    <div class="stat-label">Risk:Reward</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">{{ overview.kelly_criterion_pct|floatformat:1 }}%</div>
+                    <div class="stat-label">Kelly %</div>
+                </div>
+            </div>
+
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-top: 1rem;">
+                <div style="padding: 1rem; background: #f0fdf4; border-radius: var(--radius-md);">
+                    <div style="font-size: 0.75rem; color: #166534; text-transform: uppercase;">Avg Win</div>
+                    <div style="font-size: 1.25rem; font-weight: 700; color: #16a34a;">+{{ overview.avg_profit|floatformat:0 }}</div>
+                </div>
+                <div style="padding: 1rem; background: #fef2f2; border-radius: var(--radius-md);">
+                    <div style="font-size: 0.75rem; color: #991b1b; text-transform: uppercase;">Avg Loss</div>
+                    <div style="font-size: 1.25rem; font-weight: 700; color: #dc2626;">-{{ overview.avg_loss|floatformat:0 }}</div>
+                </div>
+            </div>
+
+            {% if overview.charges_impact_pct > 5 %}
+            <div style="margin-top: 1rem; padding: 0.75rem; background: #fef3c7; border-radius: var(--radius-md);">
+                <strong>Charges Impact:</strong> {{ overview.charges_impact_pct|floatformat:1 }}% of gross profits
+            </div>
+            {% endif %}
+            {% endwith %}
+        </div>
+    </div>
+
+    <!-- Statistical Edge Section -->
+    <div class="section-card" id="section-statistical-edge">
+        <div class="section-header">
+            <h3 class="section-title">Statistical Edge Analysis</h3>
+            <div class="section-filter">
+                <label>FY:</label>
+                <select id="fy-statistical-edge" onchange="loadSection('statistical-edge')">
+                    <option value="ALL">All Years</option>
+                    {% for fy in available_fys %}
+                    <option value="{{ fy }}">FY {{ fy }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+        </div>
+        <div id="statistical-edge-content">
+            {% with edge=analysis.statistical_edge %}
+            {% if edge.insufficient_data %}
+            <p style="color: var(--gray);">Need at least {{ edge.min_required }} trades for statistical analysis. Currently have {{ edge.current }}.</p>
+            {% else %}
+
+            <div style="margin-bottom: 1rem;">
+                <span class="edge-badge {% if edge.edge_quality == 'EXCELLENT_EDGE' %}excellent{% elif edge.edge_quality == 'GOOD_EDGE' %}good{% elif edge.edge_quality == 'MODERATE_EDGE' %}moderate{% elif edge.edge_quality == 'MARGINAL_EDGE' %}marginal{% elif edge.edge_quality == 'WEAK_EDGE' %}weak{% else %}none{% endif %}">
+                    {{ edge.edge_quality|title }}
+                </span>
+                {% if edge.is_statistically_significant %}
+                <span style="margin-left: 0.5rem; color: #16a34a; font-weight: 600;">&#10004; Statistically Significant</span>
+                {% endif %}
+            </div>
+
+            <p style="color: var(--gray); margin-bottom: 1rem;">{{ edge.interpretation }}</p>
+
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-value">{{ edge.sharpe_ratio_annualized|floatformat:2 }}</div>
+                    <div class="stat-label">Sharpe (Ann.)</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">{{ edge.sortino_ratio|floatformat:2 }}</div>
+                    <div class="stat-label">Sortino</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">{{ edge.confidence_level|floatformat:1 }}%</div>
+                    <div class="stat-label">Confidence</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">{{ edge.p_value|floatformat:3 }}</div>
+                    <div class="stat-label">P-Value</div>
+                </div>
+            </div>
+
+            <div style="margin-top: 1rem; font-size: 0.875rem; color: var(--gray);">
+                <strong>Win Rate 95% CI:</strong> {{ edge.win_rate_95_ci.0 }}% - {{ edge.win_rate_95_ci.1 }}%
+            </div>
+            {% endif %}
+            {% endwith %}
+        </div>
+    </div>
+</div>
+
+<div class="two-col-grid">
+    <!-- Risk Analysis Section -->
+    <div class="section-card" id="section-risk">
+        <div class="section-header">
+            <h3 class="section-title">Risk Analysis</h3>
+            <div class="section-filter">
+                <label>FY:</label>
+                <select id="fy-risk" onchange="loadSection('risk')">
+                    <option value="ALL">All Years</option>
+                    {% for fy in available_fys %}
+                    <option value="{{ fy }}">FY {{ fy }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+        </div>
+        <div id="risk-content">
+            {% with risk=analysis.risk_analysis %}
+            {% if risk.insufficient_data %}
+            <p style="color: var(--gray);">Insufficient data for risk analysis.</p>
+            {% else %}
+
+            <div style="margin-bottom: 1rem;">
+                <span class="risk-badge {{ risk.risk_level|lower }}">{{ risk.risk_level }} RISK</span>
+                {% if risk.in_drawdown %}
+                <span style="margin-left: 0.5rem; color: #dc2626; font-weight: 600;">Currently in Drawdown</span>
+                {% endif %}
+            </div>
+
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-value negative">{{ risk.max_drawdown|floatformat:0 }}</div>
+                    <div class="stat-label">Max Drawdown</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value {% if risk.current_drawdown > 0 %}negative{% endif %}">{{ risk.current_drawdown|floatformat:0 }}</div>
+                    <div class="stat-label">Current DD</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">{{ risk.var_95|floatformat:0 }}</div>
+                    <div class="stat-label">VaR (95%)</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">{{ risk.max_consecutive_losses }}</div>
+                    <div class="stat-label">Max Consec. Losses</div>
+                </div>
+            </div>
+
+            {% if risk.recommendations %}
+            <div style="margin-top: 1rem;">
+                <strong style="font-size: 0.875rem;">Risk Recommendations:</strong>
+                <ul class="recommendations-list" style="margin-top: 0.5rem;">
+                    {% for rec in risk.recommendations %}
+                    <li>
+                        <span class="rec-icon">!</span>
+                        <span>{{ rec }}</span>
+                    </li>
+                    {% endfor %}
+                </ul>
+            </div>
+            {% endif %}
+            {% endif %}
+            {% endwith %}
+        </div>
+    </div>
+
+    <!-- Streak & Momentum Section -->
+    <div class="section-card" id="section-streaks">
+        <div class="section-header">
+            <h3 class="section-title">Momentum & Streaks</h3>
+            <div class="section-filter">
+                <label>FY:</label>
+                <select id="fy-streaks" onchange="loadSection('streaks')">
+                    <option value="ALL">All Years</option>
+                    {% for fy in available_fys %}
+                    <option value="{{ fy }}">FY {{ fy }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+        </div>
+        <div id="streaks-content">
+            {% with streaks=analysis.streak_analysis %}
+            {% if streaks.insufficient_data %}
+            <p style="color: var(--gray);">Insufficient data for streak analysis.</p>
+            {% else %}
+
+            {% with momentum=streaks.recent_momentum %}
+            <div style="margin-bottom: 1rem;">
+                <span class="momentum-badge {{ momentum.trend|lower }}">
+                    {% if momentum.trend == 'HOT' %}Running Hot{% elif momentum.trend == 'COLD' %}Cold Streak{% else %}Neutral{% endif %}
+                </span>
+                <span style="margin-left: 0.5rem; color: var(--gray);">
+                    {{ momentum.wins }}/{{ momentum.trades }} recent wins
+                </span>
+            </div>
+            {% endwith %}
+
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+                <div style="padding: 1rem; background: var(--lighter); border-radius: var(--radius-md);">
+                    <div style="font-size: 0.75rem; color: var(--gray); text-transform: uppercase;">Current Streak</div>
+                    <div style="font-size: 1.5rem; font-weight: 700; {% if streaks.current_streak.type == 'win' %}color: #16a34a;{% else %}color: #dc2626;{% endif %}">
+                        {{ streaks.current_streak.length }} {{ streaks.current_streak.type|title }}s
+                    </div>
+                </div>
+                <div style="padding: 1rem; background: var(--lighter); border-radius: var(--radius-md);">
+                    <div style="font-size: 0.75rem; color: var(--gray); text-transform: uppercase;">Recent P&L</div>
+                    <div style="font-size: 1.5rem; font-weight: 700; {% if streaks.recent_momentum.pnl >= 0 %}color: #16a34a;{% else %}color: #dc2626;{% endif %}">
+                        {% if streaks.recent_momentum.pnl >= 0 %}+{% endif %}{{ streaks.recent_momentum.pnl|floatformat:0 }}
+                    </div>
+                </div>
+            </div>
+
+            <div class="stats-grid" style="margin-top: 1rem;">
+                <div class="stat-card">
+                    <div class="stat-value positive">{{ streaks.max_win_streak }}</div>
+                    <div class="stat-label">Max Win Streak</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value negative">{{ streaks.max_loss_streak }}</div>
+                    <div class="stat-label">Max Loss Streak</div>
+                </div>
+            </div>
+
+            {% if streaks.recommendations %}
+            <ul class="recommendations-list" style="margin-top: 1rem;">
+                {% for rec in streaks.recommendations %}
+                <li>
+                    <span class="rec-icon">&#10148;</span>
+                    <span>{{ rec }}</span>
+                </li>
+                {% endfor %}
+            </ul>
+            {% endif %}
+            {% endif %}
+            {% endwith %}
+        </div>
+    </div>
+</div>
+
+<!-- Symbol Performance Section -->
+<div class="section-card" id="section-symbols">
+    <div class="section-header">
+        <h3 class="section-title">Symbol Performance</h3>
+        <div class="section-filter">
+            <label>FY:</label>
+            <select id="fy-symbols" onchange="loadSection('symbols')">
+                <option value="ALL">All Years</option>
+                {% for fy in available_fys %}
+                <option value="{{ fy }}">FY {{ fy }}</option>
+                {% endfor %}
+            </select>
+        </div>
+    </div>
+    <div id="symbols-content">
+        {% with symbols=analysis.symbol_insights %}
+        {% if symbols.concentration_risk.is_concentrated %}
+        <div style="margin-bottom: 1rem; padding: 0.75rem; background: #fef3c7; border-radius: var(--radius-md);">
+            <strong>Concentration Warning:</strong> {{ symbols.concentration_risk.top_symbol }} accounts for {{ symbols.concentration_risk.top_contribution_pct }}% of your P&L
+        </div>
+        {% endif %}
+
+        <div class="two-col-grid">
+            <!-- Best Performers -->
+            <div>
+                <h4 style="color: #16a34a; margin-bottom: 0.75rem;">Best Performers</h4>
+                <table class="symbol-table">
+                    <thead>
+                        <tr>
+                            <th>Symbol</th>
+                            <th>Trades</th>
+                            <th>Win Rate</th>
+                            <th>P&L</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for sym in symbols.best_performers %}
+                        <tr>
+                            <td><strong>{{ sym.symbol }}</strong></td>
+                            <td>{{ sym.trades }}</td>
+                            <td>{{ sym.win_rate }}%</td>
+                            <td style="color: #16a34a; font-weight: 600;">+{{ sym.total_pnl|floatformat:0 }}</td>
+                        </tr>
+                        {% empty %}
+                        <tr><td colspan="4" style="color: var(--gray);">No profitable symbols yet</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Worst Performers -->
+            <div>
+                <h4 style="color: #dc2626; margin-bottom: 0.75rem;">Worst Performers</h4>
+                <table class="symbol-table">
+                    <thead>
+                        <tr>
+                            <th>Symbol</th>
+                            <th>Trades</th>
+                            <th>Win Rate</th>
+                            <th>P&L</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for sym in symbols.worst_performers %}
+                        <tr>
+                            <td><strong>{{ sym.symbol }}</strong></td>
+                            <td>{{ sym.trades }}</td>
+                            <td>{{ sym.win_rate }}%</td>
+                            <td style="color: #dc2626; font-weight: 600;">{{ sym.total_pnl|floatformat:0 }}</td>
+                        </tr>
+                        {% empty %}
+                        <tr><td colspan="4" style="color: var(--gray);">No losing symbols</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        {% if symbols.recommendations %}
+        <ul class="recommendations-list" style="margin-top: 1.5rem;">
+            {% for rec in symbols.recommendations %}
+            <li>
+                <span class="rec-icon">&#10148;</span>
+                <span>{{ rec }}</span>
+            </li>
+            {% endfor %}
+        </ul>
+        {% endif %}
+        {% endwith %}
+    </div>
+</div>
+
+<!-- Behavioral Patterns Section -->
+<div class="section-card" id="section-behavioral">
+    <div class="section-header">
+        <h3 class="section-title">Behavioral Patterns</h3>
+        <div class="section-filter">
+            <label>FY:</label>
+            <select id="fy-behavioral" onchange="loadSection('behavioral')">
+                <option value="ALL">All Years</option>
+                {% for fy in available_fys %}
+                <option value="{{ fy }}">FY {{ fy }}</option>
+                {% endfor %}
+            </select>
+        </div>
+    </div>
+    <div id="behavioral-content">
+        {% with behavior=analysis.behavioral_patterns %}
+        <div class="two-col-grid">
+            <!-- Segment Performance -->
+            <div>
+                <h4 style="margin-bottom: 0.75rem;">Segment Performance</h4>
+                <table class="symbol-table">
+                    <thead>
+                        <tr>
+                            <th>Segment</th>
+                            <th>Trades</th>
+                            <th>Win Rate</th>
+                            <th>P&L</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for seg_name, seg in behavior.segment_performance.items %}
+                        <tr>
+                            <td><strong>{{ seg_name }}</strong></td>
+                            <td>{{ seg.trades }}</td>
+                            <td>{{ seg.win_rate }}%</td>
+                            <td style="{% if seg.total_pnl >= 0 %}color: #16a34a;{% else %}color: #dc2626;{% endif %} font-weight: 600;">
+                                {% if seg.total_pnl >= 0 %}+{% endif %}{{ seg.total_pnl|floatformat:0 }}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Option Type Performance -->
+            <div>
+                <h4 style="margin-bottom: 0.75rem;">Option Type Performance</h4>
+                <table class="symbol-table">
+                    <thead>
+                        <tr>
+                            <th>Type</th>
+                            <th>Trades</th>
+                            <th>Win Rate</th>
+                            <th>P&L</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for opt_name, opt in behavior.option_type_performance.items %}
+                        <tr>
+                            <td><strong>{{ opt_name }}</strong></td>
+                            <td>{{ opt.trades }}</td>
+                            <td>{{ opt.win_rate }}%</td>
+                            <td style="{% if opt.total_pnl >= 0 %}color: #16a34a;{% else %}color: #dc2626;{% endif %} font-weight: 600;">
+                                {% if opt.total_pnl >= 0 %}+{% endif %}{{ opt.total_pnl|floatformat:0 }}
+                            </td>
+                        </tr>
+                        {% empty %}
+                        <tr><td colspan="4" style="color: var(--gray);">No options data</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        {% if behavior.recommendations %}
+        <ul class="recommendations-list" style="margin-top: 1.5rem;">
+            {% for rec in behavior.recommendations %}
+            <li>
+                <span class="rec-icon">&#10148;</span>
+                <span>{{ rec }}</span>
+            </li>
+            {% endfor %}
+        </ul>
+        {% endif %}
+        {% endwith %}
+    </div>
+</div>
+
+<!-- Time Patterns Section -->
+<div class="section-card" id="section-time-patterns">
+    <div class="section-header">
+        <h3 class="section-title">Time-Based Patterns</h3>
+        <div class="section-filter">
+            <label>FY:</label>
+            <select id="fy-time-patterns" onchange="loadSection('time-patterns')">
+                <option value="ALL">All Years</option>
+                {% for fy in available_fys %}
+                <option value="{{ fy }}">FY {{ fy }}</option>
+                {% endfor %}
+            </select>
+        </div>
+    </div>
+    <div id="time-patterns-content">
+        {% with time=analysis.time_patterns %}
+        {% if time.best_month or time.worst_month %}
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1.5rem;">
+            {% if time.best_month %}
+            <div style="padding: 1rem; background: #f0fdf4; border-radius: var(--radius-md); border-left: 4px solid #16a34a;">
+                <div style="font-size: 0.75rem; color: #166534; text-transform: uppercase;">Best Month</div>
+                <div style="font-size: 1.25rem; font-weight: 700; color: #16a34a;">{{ time.best_month.month }}</div>
+                <div style="color: #166534;">+{{ time.best_month.pnl|floatformat:0 }}</div>
+            </div>
+            {% endif %}
+            {% if time.worst_month %}
+            <div style="padding: 1rem; background: #fef2f2; border-radius: var(--radius-md); border-left: 4px solid #dc2626;">
+                <div style="font-size: 0.75rem; color: #991b1b; text-transform: uppercase;">Worst Month</div>
+                <div style="font-size: 1.25rem; font-weight: 700; color: #dc2626;">{{ time.worst_month.month }}</div>
+                <div style="color: #991b1b;">{{ time.worst_month.pnl|floatformat:0 }}</div>
+            </div>
+            {% endif %}
+        </div>
+        {% endif %}
+
+        {% if time.monthly_performance %}
+        <h4 style="margin-bottom: 0.75rem;">Monthly Breakdown</h4>
+        <table class="symbol-table">
+            <thead>
+                <tr>
+                    <th>Month</th>
+                    <th>Trades</th>
+                    <th>Win Rate</th>
+                    <th>P&L</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for month in time.monthly_performance %}
+                <tr>
+                    <td><strong>{{ month.month }}</strong></td>
+                    <td>{{ month.trades }}</td>
+                    <td>{{ month.win_rate }}%</td>
+                    <td style="{% if month.total_pnl >= 0 %}color: #16a34a;{% else %}color: #dc2626;{% endif %} font-weight: 600;">
+                        {% if month.total_pnl >= 0 %}+{% endif %}{{ month.total_pnl|floatformat:0 }}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% endif %}
+
+        {% if time.recommendations %}
+        <ul class="recommendations-list" style="margin-top: 1.5rem;">
+            {% for rec in time.recommendations %}
+            <li>
+                <span class="rec-icon">&#10148;</span>
+                <span>{{ rec }}</span>
+            </li>
+            {% endfor %}
+        </ul>
+        {% endif %}
+        {% endwith %}
+    </div>
+</div>
+
+<script>
+// Global broker filter
+var globalBroker = '{{ broker_filter }}';
+
+function updateGlobalBroker(broker) {
+    globalBroker = broker;
+    // Reload all sections with new broker
+    loadSection('executive-summary');
+    loadSection('conclusions');
+    loadSection('performance');
+    loadSection('statistical-edge');
+    loadSection('risk');
+    loadSection('streaks');
+    loadSection('symbols');
+    loadSection('behavioral');
+    loadSection('time-patterns');
+}
+
+// Section API endpoints
+var sectionEndpoints = {
+    'executive-summary': '/analytics/api/suggestions/executive-summary/',
+    'conclusions': '/analytics/api/suggestions/conclusions/',
+    'performance': '/analytics/api/suggestions/performance/',
+    'statistical-edge': '/analytics/api/suggestions/statistical-edge/',
+    'risk': '/analytics/api/suggestions/risk/',
+    'streaks': '/analytics/api/suggestions/streaks/',
+    'symbols': '/analytics/api/suggestions/symbols/',
+    'behavioral': '/analytics/api/suggestions/behavioral/',
+    'time-patterns': '/analytics/api/suggestions/time-patterns/'
+};
+
+function loadSection(section) {
+    var fySelect = document.getElementById('fy-' + section);
+    var fy = fySelect ? fySelect.value : 'ALL';
+    var contentId = section + '-content';
+    var contentEl = document.getElementById(contentId);
+
+    // For executive summary, handle differently
+    if (section === 'executive-summary') {
+        loadExecutiveSummary(fy);
+        return;
+    }
+
+    if (!contentEl) return;
+
+    // Show loading state
+    contentEl.innerHTML = '<div class="section-loading">Loading...</div>';
+
+    var url = sectionEndpoints[section] + '?fy=' + fy + '&broker=' + globalBroker;
+
+    fetch(url)
+        .then(function(response) { return response.json(); })
+        .then(function(result) {
+            if (result.success) {
+                renderSection(section, result.data, contentEl);
+            } else {
+                contentEl.innerHTML = '<div class="section-error">Error: ' + result.error + '</div>';
+            }
+        })
+        .catch(function(error) {
+            contentEl.innerHTML = '<div class="section-error">Failed to load: ' + error + '</div>';
+        });
+}
+
+function loadExecutiveSummary(fy) {
+    var url = sectionEndpoints['executive-summary'] + '?fy=' + fy + '&broker=' + globalBroker;
+
+    fetch(url)
+        .then(function(response) { return response.json(); })
+        .then(function(result) {
+            if (result.success) {
+                var data = result.data;
+                document.getElementById('summary-text').textContent = data.summary || '';
+                document.getElementById('summary-grade').textContent = data.grade || '';
+                document.getElementById('health-fill').style.width = (data.health_score || 0) + '%';
+                document.getElementById('summary-health-score').textContent = data.health_score || 0;
+                document.getElementById('summary-total-trades').textContent = data.total_trades || 0;
+                document.getElementById('summary-win-rate').textContent = (data.win_rate || 0).toFixed(1) + '%';
+                document.getElementById('summary-profit-factor').textContent = data.profit_factor ? data.profit_factor.toFixed(2) : 'N/A';
+
+                var pnlEl = document.getElementById('summary-total-pnl');
+                var pnl = data.total_pnl || 0;
+                pnlEl.textContent = (pnl >= 0 ? '+' : '') + Math.round(pnl);
+                pnlEl.style.color = pnl >= 0 ? '#86efac' : '#fca5a5';
+            }
+        })
+        .catch(function(error) {
+            console.error('Failed to load executive summary:', error);
+        });
+}
+
+function renderSection(section, data, contentEl) {
+    var html = '';
+
+    switch(section) {
+        case 'conclusions':
+            html = renderConclusions(data);
+            break;
+        case 'performance':
+            html = renderPerformance(data);
+            break;
+        case 'statistical-edge':
+            html = renderStatisticalEdge(data);
+            break;
+        case 'risk':
+            html = renderRisk(data);
+            break;
+        case 'streaks':
+            html = renderStreaks(data);
+            break;
+        case 'symbols':
+            html = renderSymbols(data);
+            break;
+        case 'behavioral':
+            html = renderBehavioral(data);
+            break;
+        case 'time-patterns':
+            html = renderTimePatterns(data);
+            break;
+        default:
+            html = '<p>Unknown section</p>';
+    }
+
+    contentEl.innerHTML = html;
+}
+
+function renderConclusions(data) {
+    if (!data || data.length === 0) {
+        return '<p style="color: var(--gray);">No conclusions available.</p>';
+    }
+
+    var html = '';
+    data.forEach(function(c) {
+        var typeClass = c.type === 'ALERT' ? 'alert' : (c.type === 'WARNING' ? 'warning' : 'positive');
+        var icon = c.type === 'POSITIVE' ? '&#10004;' : '&#9888;';
+        html += '<div class="conclusion-card ' + typeClass + '">' +
+            '<div class="conclusion-title">' +
+            '<span>' + icon + '</span>' +
+            c.title +
+            '<span class="conclusion-badge">' + c.category + '</span>' +
+            '</div>' +
+            '<div class="conclusion-message">' + c.message + '</div>' +
+            '</div>';
+    });
+    return html;
+}
+
+function renderPerformance(data) {
+    var pf = data.profit_factor ? data.profit_factor.toFixed(2) : 'N/A';
+    var rr = data.risk_reward ? data.risk_reward.toFixed(2) : 'N/A';
+    var expectClass = data.expectancy >= 0 ? 'positive' : 'negative';
+
+    var html = '<div class="stats-grid">' +
+        '<div class="stat-card"><div class="stat-value">' + data.total_trades + '</div><div class="stat-label">Total Trades</div></div>' +
+        '<div class="stat-card"><div class="stat-value">' + data.win_rate.toFixed(1) + '%</div><div class="stat-label">Win Rate</div></div>' +
+        '<div class="stat-card"><div class="stat-value ' + expectClass + '">' + Math.round(data.expectancy) + '</div><div class="stat-label">Expectancy/Trade</div></div>' +
+        '<div class="stat-card"><div class="stat-value">' + pf + '</div><div class="stat-label">Profit Factor</div></div>' +
+        '<div class="stat-card"><div class="stat-value">' + rr + '</div><div class="stat-label">Risk:Reward</div></div>' +
+        '<div class="stat-card"><div class="stat-value">' + data.kelly_criterion_pct.toFixed(1) + '%</div><div class="stat-label">Kelly %</div></div>' +
+        '</div>' +
+        '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-top: 1rem;">' +
+        '<div style="padding: 1rem; background: #f0fdf4; border-radius: var(--radius-md);">' +
+        '<div style="font-size: 0.75rem; color: #166534; text-transform: uppercase;">Avg Win</div>' +
+        '<div style="font-size: 1.25rem; font-weight: 700; color: #16a34a;">+' + Math.round(data.avg_profit) + '</div></div>' +
+        '<div style="padding: 1rem; background: #fef2f2; border-radius: var(--radius-md);">' +
+        '<div style="font-size: 0.75rem; color: #991b1b; text-transform: uppercase;">Avg Loss</div>' +
+        '<div style="font-size: 1.25rem; font-weight: 700; color: #dc2626;">-' + Math.round(data.avg_loss) + '</div></div></div>';
+
+    if (data.charges_impact_pct > 5) {
+        html += '<div style="margin-top: 1rem; padding: 0.75rem; background: #fef3c7; border-radius: var(--radius-md);">' +
+            '<strong>Charges Impact:</strong> ' + data.charges_impact_pct.toFixed(1) + '% of gross profits</div>';
+    }
+
+    return html;
+}
+
+function renderStatisticalEdge(data) {
+    if (data.insufficient_data) {
+        return '<p style="color: var(--gray);">Need at least ' + data.min_required + ' trades for statistical analysis. Currently have ' + data.current + '.</p>';
+    }
+
+    var edgeClass = data.edge_quality.toLowerCase().replace('_edge', '').replace('_', '-');
+    if (edgeClass === 'no') edgeClass = 'none';
+
+    var html = '<div style="margin-bottom: 1rem;">' +
+        '<span class="edge-badge ' + edgeClass + '">' + data.edge_quality.replace(/_/g, ' ') + '</span>';
+
+    if (data.is_statistically_significant) {
+        html += '<span style="margin-left: 0.5rem; color: #16a34a; font-weight: 600;">&#10004; Statistically Significant</span>';
+    }
+    html += '</div>';
+
+    html += '<p style="color: var(--gray); margin-bottom: 1rem;">' + data.interpretation + '</p>';
+
+    html += '<div class="stats-grid">' +
+        '<div class="stat-card"><div class="stat-value">' + data.sharpe_ratio_annualized.toFixed(2) + '</div><div class="stat-label">Sharpe (Ann.)</div></div>' +
+        '<div class="stat-card"><div class="stat-value">' + data.sortino_ratio.toFixed(2) + '</div><div class="stat-label">Sortino</div></div>' +
+        '<div class="stat-card"><div class="stat-value">' + data.confidence_level.toFixed(1) + '%</div><div class="stat-label">Confidence</div></div>' +
+        '<div class="stat-card"><div class="stat-value">' + data.p_value.toFixed(3) + '</div><div class="stat-label">P-Value</div></div>' +
+        '</div>';
+
+    html += '<div style="margin-top: 1rem; font-size: 0.875rem; color: var(--gray);">' +
+        '<strong>Win Rate 95% CI:</strong> ' + data.win_rate_95_ci[0] + '% - ' + data.win_rate_95_ci[1] + '%</div>';
+
+    return html;
+}
+
+function renderRisk(data) {
+    if (data.insufficient_data) {
+        return '<p style="color: var(--gray);">Insufficient data for risk analysis.</p>';
+    }
+
+    var html = '<div style="margin-bottom: 1rem;">' +
+        '<span class="risk-badge ' + data.risk_level.toLowerCase() + '">' + data.risk_level + ' RISK</span>';
+
+    if (data.in_drawdown) {
+        html += '<span style="margin-left: 0.5rem; color: #dc2626; font-weight: 600;">Currently in Drawdown</span>';
+    }
+    html += '</div>';
+
+    var ddClass = data.current_drawdown > 0 ? 'negative' : '';
+
+    html += '<div class="stats-grid">' +
+        '<div class="stat-card"><div class="stat-value negative">' + Math.round(data.max_drawdown) + '</div><div class="stat-label">Max Drawdown</div></div>' +
+        '<div class="stat-card"><div class="stat-value ' + ddClass + '">' + Math.round(data.current_drawdown) + '</div><div class="stat-label">Current DD</div></div>' +
+        '<div class="stat-card"><div class="stat-value">' + Math.round(data.var_95) + '</div><div class="stat-label">VaR (95%)</div></div>' +
+        '<div class="stat-card"><div class="stat-value">' + data.max_consecutive_losses + '</div><div class="stat-label">Max Consec. Losses</div></div>' +
+        '</div>';
+
+    if (data.recommendations && data.recommendations.length > 0) {
+        html += '<div style="margin-top: 1rem;"><strong style="font-size: 0.875rem;">Risk Recommendations:</strong>' +
+            '<ul class="recommendations-list" style="margin-top: 0.5rem;">';
+        data.recommendations.forEach(function(rec) {
+            html += '<li><span class="rec-icon">!</span><span>' + rec + '</span></li>';
+        });
+        html += '</ul></div>';
+    }
+
+    return html;
+}
+
+function renderStreaks(data) {
+    if (data.insufficient_data) {
+        return '<p style="color: var(--gray);">Insufficient data for streak analysis.</p>';
+    }
+
+    var momentum = data.recent_momentum;
+    var trendLabel = momentum.trend === 'HOT' ? 'Running Hot' : (momentum.trend === 'COLD' ? 'Cold Streak' : 'Neutral');
+
+    var html = '<div style="margin-bottom: 1rem;">' +
+        '<span class="momentum-badge ' + momentum.trend.toLowerCase() + '">' + trendLabel + '</span>' +
+        '<span style="margin-left: 0.5rem; color: var(--gray);">' + momentum.wins + '/' + momentum.trades + ' recent wins</span></div>';
+
+    var streakColor = data.current_streak.type === 'win' ? '#16a34a' : '#dc2626';
+    var pnlColor = momentum.pnl >= 0 ? '#16a34a' : '#dc2626';
+    var pnlSign = momentum.pnl >= 0 ? '+' : '';
+
+    html += '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">' +
+        '<div style="padding: 1rem; background: var(--lighter); border-radius: var(--radius-md);">' +
+        '<div style="font-size: 0.75rem; color: var(--gray); text-transform: uppercase;">Current Streak</div>' +
+        '<div style="font-size: 1.5rem; font-weight: 700; color: ' + streakColor + ';">' + data.current_streak.length + ' ' + data.current_streak.type + 's</div></div>' +
+        '<div style="padding: 1rem; background: var(--lighter); border-radius: var(--radius-md);">' +
+        '<div style="font-size: 0.75rem; color: var(--gray); text-transform: uppercase;">Recent P&L</div>' +
+        '<div style="font-size: 1.5rem; font-weight: 700; color: ' + pnlColor + ';">' + pnlSign + Math.round(momentum.pnl) + '</div></div></div>';
+
+    html += '<div class="stats-grid" style="margin-top: 1rem;">' +
+        '<div class="stat-card"><div class="stat-value positive">' + data.max_win_streak + '</div><div class="stat-label">Max Win Streak</div></div>' +
+        '<div class="stat-card"><div class="stat-value negative">' + data.max_loss_streak + '</div><div class="stat-label">Max Loss Streak</div></div></div>';
+
+    if (data.recommendations && data.recommendations.length > 0) {
+        html += '<ul class="recommendations-list" style="margin-top: 1rem;">';
+        data.recommendations.forEach(function(rec) {
+            html += '<li><span class="rec-icon">&#10148;</span><span>' + rec + '</span></li>';
+        });
+        html += '</ul>';
+    }
+
+    return html;
+}
+
+function renderSymbols(data) {
+    var html = '';
+
+    if (data.concentration_risk && data.concentration_risk.is_concentrated) {
+        html += '<div style="margin-bottom: 1rem; padding: 0.75rem; background: #fef3c7; border-radius: var(--radius-md);">' +
+            '<strong>Concentration Warning:</strong> ' + data.concentration_risk.top_symbol + ' accounts for ' +
+            data.concentration_risk.top_contribution_pct + '% of your P&L</div>';
+    }
+
+    html += '<div class="two-col-grid"><div><h4 style="color: #16a34a; margin-bottom: 0.75rem;">Best Performers</h4>' +
+        '<table class="symbol-table"><thead><tr><th>Symbol</th><th>Trades</th><th>Win Rate</th><th>P&L</th></tr></thead><tbody>';
+
+    if (data.best_performers && data.best_performers.length > 0) {
+        data.best_performers.forEach(function(sym) {
+            html += '<tr><td><strong>' + sym.symbol + '</strong></td><td>' + sym.trades + '</td><td>' + sym.win_rate + '%</td>' +
+                '<td style="color: #16a34a; font-weight: 600;">+' + Math.round(sym.total_pnl) + '</td></tr>';
+        });
+    } else {
+        html += '<tr><td colspan="4" style="color: var(--gray);">No profitable symbols yet</td></tr>';
+    }
+
+    html += '</tbody></table></div><div><h4 style="color: #dc2626; margin-bottom: 0.75rem;">Worst Performers</h4>' +
+        '<table class="symbol-table"><thead><tr><th>Symbol</th><th>Trades</th><th>Win Rate</th><th>P&L</th></tr></thead><tbody>';
+
+    if (data.worst_performers && data.worst_performers.length > 0) {
+        data.worst_performers.forEach(function(sym) {
+            html += '<tr><td><strong>' + sym.symbol + '</strong></td><td>' + sym.trades + '</td><td>' + sym.win_rate + '%</td>' +
+                '<td style="color: #dc2626; font-weight: 600;">' + Math.round(sym.total_pnl) + '</td></tr>';
+        });
+    } else {
+        html += '<tr><td colspan="4" style="color: var(--gray);">No losing symbols</td></tr>';
+    }
+
+    html += '</tbody></table></div></div>';
+
+    if (data.recommendations && data.recommendations.length > 0) {
+        html += '<ul class="recommendations-list" style="margin-top: 1.5rem;">';
+        data.recommendations.forEach(function(rec) {
+            html += '<li><span class="rec-icon">&#10148;</span><span>' + rec + '</span></li>';
+        });
+        html += '</ul>';
+    }
+
+    return html;
+}
+
+function renderBehavioral(data) {
+    var html = '<div class="two-col-grid"><div><h4 style="margin-bottom: 0.75rem;">Segment Performance</h4>' +
+        '<table class="symbol-table"><thead><tr><th>Segment</th><th>Trades</th><th>Win Rate</th><th>P&L</th></tr></thead><tbody>';
+
+    if (data.segment_performance) {
+        Object.keys(data.segment_performance).forEach(function(segName) {
+            var seg = data.segment_performance[segName];
+            var pnlColor = seg.total_pnl >= 0 ? '#16a34a' : '#dc2626';
+            var pnlSign = seg.total_pnl >= 0 ? '+' : '';
+            html += '<tr><td><strong>' + segName + '</strong></td><td>' + seg.trades + '</td><td>' + seg.win_rate + '%</td>' +
+                '<td style="color: ' + pnlColor + '; font-weight: 600;">' + pnlSign + Math.round(seg.total_pnl) + '</td></tr>';
+        });
+    }
+
+    html += '</tbody></table></div><div><h4 style="margin-bottom: 0.75rem;">Option Type Performance</h4>' +
+        '<table class="symbol-table"><thead><tr><th>Type</th><th>Trades</th><th>Win Rate</th><th>P&L</th></tr></thead><tbody>';
+
+    if (data.option_type_performance && Object.keys(data.option_type_performance).length > 0) {
+        Object.keys(data.option_type_performance).forEach(function(optName) {
+            var opt = data.option_type_performance[optName];
+            var pnlColor = opt.total_pnl >= 0 ? '#16a34a' : '#dc2626';
+            var pnlSign = opt.total_pnl >= 0 ? '+' : '';
+            html += '<tr><td><strong>' + optName + '</strong></td><td>' + opt.trades + '</td><td>' + opt.win_rate + '%</td>' +
+                '<td style="color: ' + pnlColor + '; font-weight: 600;">' + pnlSign + Math.round(opt.total_pnl) + '</td></tr>';
+        });
+    } else {
+        html += '<tr><td colspan="4" style="color: var(--gray);">No options data</td></tr>';
+    }
+
+    html += '</tbody></table></div></div>';
+
+    if (data.recommendations && data.recommendations.length > 0) {
+        html += '<ul class="recommendations-list" style="margin-top: 1.5rem;">';
+        data.recommendations.forEach(function(rec) {
+            html += '<li><span class="rec-icon">&#10148;</span><span>' + rec + '</span></li>';
+        });
+        html += '</ul>';
+    }
+
+    return html;
+}
+
+function renderTimePatterns(data) {
+    var html = '';
+
+    if (data.best_month || data.worst_month) {
+        html += '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1.5rem;">';
+        if (data.best_month) {
+            html += '<div style="padding: 1rem; background: #f0fdf4; border-radius: var(--radius-md); border-left: 4px solid #16a34a;">' +
+                '<div style="font-size: 0.75rem; color: #166534; text-transform: uppercase;">Best Month</div>' +
+                '<div style="font-size: 1.25rem; font-weight: 700; color: #16a34a;">' + data.best_month.month + '</div>' +
+                '<div style="color: #166534;">+' + Math.round(data.best_month.pnl) + '</div></div>';
+        }
+        if (data.worst_month) {
+            html += '<div style="padding: 1rem; background: #fef2f2; border-radius: var(--radius-md); border-left: 4px solid #dc2626;">' +
+                '<div style="font-size: 0.75rem; color: #991b1b; text-transform: uppercase;">Worst Month</div>' +
+                '<div style="font-size: 1.25rem; font-weight: 700; color: #dc2626;">' + data.worst_month.month + '</div>' +
+                '<div style="color: #991b1b;">' + Math.round(data.worst_month.pnl) + '</div></div>';
+        }
+        html += '</div>';
+    }
+
+    if (data.monthly_performance && data.monthly_performance.length > 0) {
+        html += '<h4 style="margin-bottom: 0.75rem;">Monthly Breakdown</h4>' +
+            '<table class="symbol-table"><thead><tr><th>Month</th><th>Trades</th><th>Win Rate</th><th>P&L</th></tr></thead><tbody>';
+
+        data.monthly_performance.forEach(function(month) {
+            var pnlColor = month.total_pnl >= 0 ? '#16a34a' : '#dc2626';
+            var pnlSign = month.total_pnl >= 0 ? '+' : '';
+            html += '<tr><td><strong>' + month.month + '</strong></td><td>' + month.trades + '</td><td>' + month.win_rate + '%</td>' +
+                '<td style="color: ' + pnlColor + '; font-weight: 600;">' + pnlSign + Math.round(month.total_pnl) + '</td></tr>';
+        });
+
+        html += '</tbody></table>';
+    }
+
+    if (data.recommendations && data.recommendations.length > 0) {
+        html += '<ul class="recommendations-list" style="margin-top: 1.5rem;">';
+        data.recommendations.forEach(function(rec) {
+            html += '<li><span class="rec-icon">&#10148;</span><span>' + rec + '</span></li>';
+        });
+        html += '</ul>';
+    }
+
+    return html;
+}
+</script>
+
+{% endblock %}
