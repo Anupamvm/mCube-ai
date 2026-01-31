@@ -65,17 +65,17 @@
 </div>
 
 <div class="card">
-    <h2>Nifty Option Chain - All Expiries</h2>
+    <h2>Nifty Option Chain - All Expiries <span class="info-tooltip" data-bs-toggle="tooltip" title="Live option chain data showing calls and puts at various strike prices. Use this to analyze option premiums, open interest, and market sentiment.">?</span></h2>
 
     <form method="post" id="fetchOptionChainForm">
         {% csrf_token %}
-        <button type="submit" class="btn btn-success" id="fetchButton">Fetch Nifty Option Chain</button>
+        <button type="submit" class="btn btn-success" id="fetchButton" data-bs-toggle="tooltip" title="Fetches live option chain data from the broker API. This may take 30-60 seconds.">Fetch Nifty Option Chain</button>
     </form>
 
     {% if total_records %}
     <p style="margin-top: 10px;">
-        <strong>Total Records:</strong> {{ total_records }}<br>
-        <strong>Spot Price:</strong> {% if spot_price %}₹{{ spot_price|floatformat:2 }}{% else %}N/A{% endif %}
+        <span data-bs-toggle="tooltip" title="Total number of option contracts (strike-expiry combinations) in the current data."><strong>Total Records:</strong> {{ total_records }} <span class="info-tooltip">?</span></span><br>
+        <span data-bs-toggle="tooltip" title="Current underlying index price. Options are priced relative to this. ATM strike is closest to this value."><strong>Spot Price:</strong> {% if spot_price %}₹{{ spot_price|floatformat:2 }}{% else %}N/A{% endif %} <span class="info-tooltip">?</span></span>
     </p>
     {% endif %}
 </div>
@@ -89,6 +89,14 @@
         var button = document.getElementById('fetchButton');
         button.disabled = true;
         button.textContent = 'Fetching...';
+    });
+
+    // Initialize Bootstrap tooltips
+    document.addEventListener('DOMContentLoaded', function() {
+        var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+        tooltipTriggerList.map(function(el) {
+            return new bootstrap.Tooltip(el, { html: true, placement: 'top', trigger: 'hover' });
+        });
     });
 </script>
 
@@ -117,25 +125,25 @@
         <table>
             <thead>
                 <tr>
-                    <th colspan="5" style="text-align: center; background-color: #e8f5e9;">CALLS</th>
+                    <th colspan="5" style="text-align: center; background-color: #e8f5e9;" data-bs-toggle="tooltip" title="Call options - give the holder the right to BUY the underlying at the strike price. Bullish bets.">CALLS <span class="info-tooltip">?</span></th>
                     <th style="text-align: center; background-color: #fff3e0;">STRIKE</th>
-                    <th colspan="5" style="text-align: center; background-color: #ffebee;">PUTS</th>
+                    <th colspan="5" style="text-align: center; background-color: #ffebee;" data-bs-toggle="tooltip" title="Put options - give the holder the right to SELL the underlying at the strike price. Bearish bets.">PUTS <span class="info-tooltip">?</span></th>
                 </tr>
                 <tr>
                     <!-- Call columns -->
-                    <th>OI</th>
-                    <th>Volume</th>
-                    <th>LTP</th>
-                    <th>Bid</th>
-                    <th>Ask</th>
+                    <th data-bs-toggle="tooltip" title="Open Interest: Total outstanding contracts at this strike. High OI indicates active interest and support/resistance levels.">OI</th>
+                    <th data-bs-toggle="tooltip" title="Trading Volume: Number of contracts traded today. High volume shows active trading interest.">Volume</th>
+                    <th data-bs-toggle="tooltip" title="Last Traded Price: Most recent trade price for this option contract.">LTP</th>
+                    <th data-bs-toggle="tooltip" title="Bid Price: Highest price a buyer is willing to pay. You can sell at this price immediately.">Bid</th>
+                    <th data-bs-toggle="tooltip" title="Ask Price: Lowest price a seller is willing to accept. You can buy at this price immediately.">Ask</th>
                     <!-- Strike -->
-                    <th>Price</th>
+                    <th data-bs-toggle="tooltip" title="Strike Price: The price at which the option can be exercised. Options near spot price (ATM) have highest time value.">Price</th>
                     <!-- Put columns -->
-                    <th>Ask</th>
-                    <th>Bid</th>
-                    <th>LTP</th>
-                    <th>Volume</th>
-                    <th>OI</th>
+                    <th data-bs-toggle="tooltip" title="Ask Price: Lowest price a seller is willing to accept for this put option.">Ask</th>
+                    <th data-bs-toggle="tooltip" title="Bid Price: Highest price a buyer is willing to pay for this put option.">Bid</th>
+                    <th data-bs-toggle="tooltip" title="Last Traded Price: Most recent trade price for this put option contract.">LTP</th>
+                    <th data-bs-toggle="tooltip" title="Trading Volume: Number of put contracts traded today at this strike.">Volume</th>
+                    <th data-bs-toggle="tooltip" title="Open Interest: Total outstanding put contracts at this strike.">OI</th>
                 </tr>
             </thead>
             <tbody>

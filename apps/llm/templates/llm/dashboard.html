@@ -17,9 +17,9 @@
 
     <!-- LLM Status Section -->
     <div class="status-card">
-        <h2>LLM Status</h2>
+        <h2>LLM Status <span class="info-tooltip" data-bs-toggle="tooltip" title="Current status of the Large Language Model (AI) used for document analysis, sentiment detection, and intelligent insights.">?</span></h2>
         <div class="status-grid">
-            <div class="status-item">
+            <div class="status-item" data-bs-toggle="tooltip" title="Connection status to the AI model. Connected = ready for queries. Disconnected = check API keys and network.">
                 <span class="status-label">Status:</span>
                 <span class="status-value {% if llm_enabled %}text-success{% else %}text-error{% endif %}">
                     {% if llm_enabled %}
@@ -29,7 +29,7 @@
                     {% endif %}
                 </span>
             </div>
-            <div class="status-item">
+            <div class="status-item" data-bs-toggle="tooltip" title="The AI model being used for analysis. More advanced models provide better insights but may be slower.">
                 <span class="status-label">Model:</span>
                 <span class="status-value">{{ llm_model }}</span>
             </div>
@@ -38,31 +38,31 @@
 
     <!-- Document Stats Section -->
     <div class="stats-section">
-        <h2>Document Statistics</h2>
+        <h2>Document Statistics <span class="info-tooltip" data-bs-toggle="tooltip" title="Overview of all documents processed by the AI system. These documents feed the knowledge base used for intelligent trading insights.">?</span></h2>
         <div class="stats-grid">
-            <div class="stat-card">
+            <div class="stat-card" data-bs-toggle="tooltip" title="Market news articles processed and analyzed for sentiment. News can impact stock prices and provide trading signals.">
                 <div class="stat-icon">📰</div>
                 <div class="stat-content">
                     <h3>{{ news_count }}</h3>
-                    <p>News Articles</p>
+                    <p>News Articles <span class="info-tooltip">?</span></p>
                     <a href="{% url 'llm:news_list' %}" class="stat-link">View All →</a>
                 </div>
             </div>
 
-            <div class="stat-card">
+            <div class="stat-card" data-bs-toggle="tooltip" title="Investor call transcripts (earnings calls, AGMs) analyzed for management tone, guidance, and key insights about company performance.">
                 <div class="stat-icon">📞</div>
                 <div class="stat-content">
                     <h3>{{ calls_count }}</h3>
-                    <p>Investor Calls</p>
+                    <p>Investor Calls <span class="info-tooltip">?</span></p>
                     <a href="{% url 'llm:investor_calls_list' %}" class="stat-link">View All →</a>
                 </div>
             </div>
 
-            <div class="stat-card">
+            <div class="stat-card" data-bs-toggle="tooltip" title="Processed text chunks stored in the knowledge base. These enable semantic search and AI-powered Q&A across all your documents.">
                 <div class="stat-icon">📚</div>
                 <div class="stat-content">
                     <h3>{{ kb_count }}</h3>
-                    <p>Knowledge Chunks</p>
+                    <p>Knowledge Chunks <span class="info-tooltip">?</span></p>
                     <a href="{% url 'llm:knowledge_search' %}" class="stat-link">Search →</a>
                 </div>
             </div>
@@ -73,25 +73,25 @@
     <div class="actions-section">
         <h2>Quick Actions</h2>
         <div class="actions-grid">
-            <a href="{% url 'llm:chat' %}" class="action-card">
+            <a href="{% url 'llm:chat' %}" class="action-card" data-bs-toggle="tooltip" title="Interactive chat with AI. Ask questions like 'What's the sentiment on NIFTY today?' or 'Summarize recent HDFC news.'">
                 <div class="action-icon">💬</div>
                 <h3>Chat with AI</h3>
                 <p>Ask questions about market trends and documents</p>
             </a>
 
-            <a href="{% url 'llm:news_list' %}" class="action-card">
+            <a href="{% url 'llm:news_list' %}" class="action-card" data-bs-toggle="tooltip" title="Browse processed news articles with AI-generated sentiment analysis and key takeaways.">
                 <div class="action-icon">📊</div>
                 <h3>Analyze News</h3>
                 <p>View and analyze latest news articles</p>
             </a>
 
-            <a href="{% url 'llm:investor_calls_list' %}" class="action-card">
+            <a href="{% url 'llm:investor_calls_list' %}" class="action-card" data-bs-toggle="tooltip" title="Read earnings call transcripts with AI summaries of management tone, guidance, and key business updates.">
                 <div class="action-icon">📈</div>
                 <h3>Review Calls</h3>
                 <p>Read investor call transcripts and insights</p>
             </a>
 
-            <a href="{% url 'llm:knowledge_search' %}" class="action-card">
+            <a href="{% url 'llm:knowledge_search' %}" class="action-card" data-bs-toggle="tooltip" title="Semantic search across all processed documents. Find relevant information using natural language queries.">
                 <div class="action-icon">🔍</div>
                 <h3>Search Knowledge</h3>
                 <p>Search through processed documents</p>
@@ -390,5 +390,32 @@
     border: 1px solid #fecaca;
     color: #991b1b;
 }
+
+/* Tooltip Styles */
+.info-tooltip {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: rgba(59, 130, 246, 0.15);
+    color: #3b82f6;
+    font-size: 10px;
+    font-weight: 700;
+    cursor: help;
+    margin-left: 6px;
+    vertical-align: middle;
+}
+.info-tooltip:hover { background: rgba(59, 130, 246, 0.3); }
 </style>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+    tooltipTriggerList.map(function(el) {
+        return new bootstrap.Tooltip(el, { html: true, placement: 'top', trigger: 'hover' });
+    });
+});
+</script>
 {% endblock %}

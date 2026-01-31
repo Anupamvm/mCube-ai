@@ -8,10 +8,9 @@ from . import views
 app_name = 'core'
 
 urlpatterns = [
-    # Settings
-    path('broker-settings/', views.broker_settings, name='broker_settings'),
-    path('task-settings/', views.system_settings, name='task_settings'),
-    path('settings/', views.system_settings, name='system_settings'),  # Keep for backward compatibility
+    # System Configuration (comprehensive settings page)
+    path('configuration/', views.broker_settings, name='system_configuration'),
+    path('broker-settings/', views.broker_settings, name='broker_settings'),  # Backward compatibility
 
     # Dashboard API
     path('api/dashboard/refresh/<str:stat_type>/', views.refresh_dashboard_stat, name='refresh_dashboard_stat'),
@@ -49,6 +48,8 @@ urlpatterns = [
     path('celery/task-logs/', views.get_task_logs, name='get_task_logs'),
     path('celery/all-logs/', views.get_all_celery_logs, name='get_all_celery_logs'),
     path('celery/reload/', views.reload_celery_schedule, name='reload_celery_schedule'),
+    path('celery/config/', views.get_task_config, name='get_task_config'),
+    path('celery/config/save/', views.save_task_config, name='save_task_config'),
 
     # Django Background Tasks Control
     path('bg-tasks/toggle/<int:task_id>/', views.toggle_bg_task, name='toggle_bg_task'),

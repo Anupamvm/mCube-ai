@@ -743,6 +743,202 @@
         font-weight: 700;
         color: #38a169;
     }
+
+    /* Configuration Modal Styles */
+    .config-form {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+    }
+
+    .config-field {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+    }
+
+    .config-field label {
+        font-weight: 600;
+        color: #2d3748;
+        font-size: 14px;
+    }
+
+    .config-field .field-help {
+        font-size: 12px;
+        color: #718096;
+        margin-top: 2px;
+    }
+
+    .config-field input,
+    .config-field select {
+        padding: 10px 12px;
+        border: 1px solid #cbd5e0;
+        border-radius: 6px;
+        font-size: 14px;
+        transition: border-color 0.2s, box-shadow 0.2s;
+    }
+
+    .config-field input:focus,
+    .config-field select:focus {
+        outline: none;
+        border-color: #667eea;
+        box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.15);
+    }
+
+    .config-field input[type="number"] {
+        width: 120px;
+    }
+
+    .config-row {
+        display: flex;
+        gap: 16px;
+        align-items: flex-start;
+    }
+
+    .config-row .config-field {
+        flex: 1;
+    }
+
+    .config-section {
+        background: #f7fafc;
+        padding: 16px;
+        border-radius: 8px;
+        margin-bottom: 8px;
+    }
+
+    .config-section h4 {
+        margin: 0 0 12px 0;
+        font-size: 15px;
+        color: #4a5568;
+        border-bottom: 1px solid #e2e8f0;
+        padding-bottom: 8px;
+    }
+
+    .config-info {
+        background: #ebf8ff;
+        border: 1px solid #bee3f8;
+        border-radius: 8px;
+        padding: 12px;
+        margin-bottom: 16px;
+    }
+
+    .config-info p {
+        margin: 0;
+        font-size: 13px;
+        color: #2c5282;
+    }
+
+    .config-warning {
+        background: #fffaf0;
+        border: 1px solid #fbd38d;
+        border-radius: 8px;
+        padding: 12px;
+        margin-top: 16px;
+    }
+
+    .config-warning p {
+        margin: 0;
+        font-size: 13px;
+        color: #744210;
+    }
+
+    .modal-footer {
+        background: #f7fafc;
+    }
+
+    #saveConfigBtn.loading {
+        opacity: 0.7;
+        pointer-events: none;
+    }
+
+    /* Days of Week Selector */
+    .days-selector {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+    }
+
+    .day-checkbox {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 52px;
+        padding: 10px 12px;
+        border: 2px solid #e2e8f0;
+        border-radius: 8px;
+        cursor: pointer;
+        transition: all 0.2s ease;
+        background: white;
+    }
+
+    .day-checkbox input {
+        display: none;
+    }
+
+    .day-checkbox span {
+        font-weight: 600;
+        font-size: 13px;
+        color: #4a5568;
+    }
+
+    .day-checkbox:hover {
+        border-color: #667eea;
+        background: #f7fafc;
+    }
+
+    .day-checkbox.active {
+        background: #667eea;
+        border-color: #667eea;
+    }
+
+    .day-checkbox.active span {
+        color: white;
+    }
+
+    .day-checkbox.weekend {
+        border-color: #fbd38d;
+    }
+
+    .day-checkbox.weekend.active {
+        background: #ed8936;
+        border-color: #ed8936;
+    }
+
+    .field-unit {
+        font-size: 13px;
+        color: #718096;
+        font-weight: 500;
+        white-space: nowrap;
+    }
+
+    .config-info {
+        background: #ebf8ff;
+        border: 1px solid #bee3f8;
+        border-radius: 8px;
+        padding: 16px;
+        margin-bottom: 16px;
+    }
+
+    .config-section h4 {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin: 0 0 12px 0;
+        font-size: 14px;
+        font-weight: 600;
+        color: #2d3748;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+
+    .config-section h4::before {
+        content: '';
+        display: inline-block;
+        width: 4px;
+        height: 16px;
+        background: #667eea;
+        border-radius: 2px;
+    }
 </style>
 {% endblock %}
 
@@ -934,6 +1130,9 @@
                 <button class="btn btn-sm btn-secondary" onclick="showTaskLogs('{{ task.key }}', '{{ task.task }}')" title="View Logs">
                     Logs
                 </button>
+                <button class="btn btn-sm btn-primary" onclick="showTaskConfig('{{ task.key }}', '{{ task.display_name|default:task.key }}')" title="Configure">
+                    Configure
+                </button>
             </div>
         </div>
         {% endfor %}
@@ -960,6 +1159,23 @@
     </div>
     <div class="status-toast-body" id="toastBody">
         <!-- Populated by JavaScript -->
+    </div>
+</div>
+
+<!-- Task Configuration Modal -->
+<div id="configModal" class="modal-overlay" onclick="closeConfigModal(event)">
+    <div class="modal-content" onclick="event.stopPropagation()" style="max-width: 600px;">
+        <div class="modal-header">
+            <h3 id="configModalTitle">Configure Task</h3>
+            <button class="modal-close" onclick="closeConfigModal()">&times;</button>
+        </div>
+        <div class="modal-body" id="configModalBody">
+            <div class="logs-loading">Loading configuration...</div>
+        </div>
+        <div class="modal-footer" style="padding: 16px 24px; border-top: 1px solid #e2e8f0; display: flex; justify-content: flex-end; gap: 12px;">
+            <button class="btn btn-secondary" onclick="closeConfigModal()">Cancel</button>
+            <button class="btn btn-success" id="saveConfigBtn" onclick="saveTaskConfig()">Save & Apply</button>
+        </div>
     </div>
 </div>
 
@@ -1538,6 +1754,7 @@
     document.addEventListener('keydown', function(e) {
         if (e.key === 'Escape') {
             closeLogsModal();
+            closeConfigModal();
         }
     });
 
@@ -1545,5 +1762,273 @@
     setTimeout(function() {
         location.reload();
     }, 120000);
+
+    // =========================================================================
+    // Task Configuration Modal Functions
+    // =========================================================================
+
+    let currentConfigTaskKey = '';
+
+    function showTaskConfig(taskKey, displayName) {
+        const modal = document.getElementById('configModal');
+        const title = document.getElementById('configModalTitle');
+        const body = document.getElementById('configModalBody');
+
+        currentConfigTaskKey = taskKey;
+        title.textContent = `Configure: ${displayName || taskKey}`;
+        body.innerHTML = '<div class="logs-loading">Loading configuration...</div>';
+
+        // Show modal
+        modal.classList.add('active');
+        document.body.style.overflow = 'hidden';
+
+        // Fetch configuration
+        fetch(`{% url "core:get_task_config" %}?task_key=${encodeURIComponent(taskKey)}`)
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    body.innerHTML = renderConfigForm(data);
+                } else {
+                    body.innerHTML = `
+                        <div class="logs-empty">
+                            <p>Error loading configuration: ${data.error || 'Unknown error'}</p>
+                        </div>
+                    `;
+                }
+            })
+            .catch(error => {
+                body.innerHTML = `
+                    <div class="logs-empty">
+                        <p>Error loading configuration: ${error}</p>
+                    </div>
+                `;
+            });
+    }
+
+    // Store current config data for form rendering
+    let currentConfigData = null;
+
+    function renderConfigForm(data) {
+        const { task_key, display_name, description, schedule_type, category, category_flag, fields, values } = data;
+
+        // Schedule type badge
+        const scheduleTypeLabel = {
+            'crontab': 'Fixed Time',
+            'interval': 'Recurring Interval',
+            'recurring': 'Recurring Window'
+        }[schedule_type] || schedule_type;
+
+        const scheduleTypeColor = {
+            'crontab': '#3182ce',
+            'interval': '#38a169',
+            'recurring': '#805ad5'
+        }[schedule_type] || '#718096';
+
+        if (!fields || fields.length === 0) {
+            return `
+                <div class="config-info">
+                    <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px;">
+                        <strong style="font-size: 16px;">${display_name || task_key}</strong>
+                        <span style="background: ${scheduleTypeColor}; color: white; padding: 4px 10px; border-radius: 12px; font-size: 11px; font-weight: 600;">
+                            ${scheduleTypeLabel}
+                        </span>
+                    </div>
+                    <p style="color: #4a5568; font-size: 13px; margin: 0;">${description || ''}</p>
+                </div>
+                <div class="logs-empty" style="padding: 30px;">
+                    <p style="font-size: 40px; margin-bottom: 12px;">&#128736;</p>
+                    <p style="font-weight: 600; margin-bottom: 8px;">Fixed Schedule Task</p>
+                    <p style="font-size: 13px; color: #718096;">This task runs on a fixed schedule that cannot be modified through the UI.</p>
+                    <p style="font-size: 12px; color: #a0aec0; margin-top: 12px;">Schedule is defined in the system configuration.</p>
+                </div>
+            `;
+        }
+
+        currentConfigData = data;
+
+        let html = `
+            <div class="config-info">
+                <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px;">
+                    <strong style="font-size: 16px;">${display_name || task_key}</strong>
+                    <span style="background: ${scheduleTypeColor}; color: white; padding: 4px 10px; border-radius: 12px; font-size: 11px; font-weight: 600;">
+                        ${scheduleTypeLabel}
+                    </span>
+                </div>
+                <p style="color: #4a5568; font-size: 13px; margin: 0;">${description || 'Configure schedule and timing for this task.'}</p>
+            </div>
+            <form class="config-form" id="taskConfigForm">
+                <input type="hidden" name="task_key" value="${escapeHtml(task_key)}">
+        `;
+
+        // Group fields by type
+        let timeFields = [];
+        let intervalFields = [];
+        let daysField = null;
+
+        for (const field of fields) {
+            if (field.type === 'days') {
+                daysField = field;
+            } else if (field.name.includes('hour') || field.name.includes('minute')) {
+                timeFields.push(field);
+            } else {
+                intervalFields.push(field);
+            }
+        }
+
+        // Render interval/recurring fields first if applicable
+        if (intervalFields.length > 0) {
+            const sectionTitle = schedule_type === 'interval' ? 'Interval Settings' : 'Frequency';
+            html += `<div class="config-section"><h4>${sectionTitle}</h4>`;
+            for (const field of intervalFields) {
+                html += renderField(field, values);
+            }
+            html += '</div>';
+        }
+
+        // Render time fields in rows
+        if (timeFields.length > 0) {
+            const sectionTitle = schedule_type === 'crontab' ? 'Run Time' :
+                                 schedule_type === 'recurring' ? 'Time Window' : 'Active Hours';
+            html += `<div class="config-section"><h4>${sectionTitle}</h4>`;
+            for (let i = 0; i < timeFields.length; i += 2) {
+                html += '<div class="config-row">';
+                html += renderField(timeFields[i], values);
+                if (timeFields[i + 1]) {
+                    html += renderField(timeFields[i + 1], values);
+                }
+                html += '</div>';
+            }
+            html += '</div>';
+        }
+
+        // Render days of week
+        if (daysField) {
+            html += renderDaysField(daysField, values);
+        }
+
+        html += `
+            </form>
+            <div class="config-warning">
+                <p><strong>Note:</strong> Saving changes will restart Celery Beat to apply the new schedule. Active tasks may be briefly interrupted.</p>
+            </div>
+        `;
+
+        return html;
+    }
+
+    function renderField(field, values) {
+        const value = values[field.name] !== undefined ? values[field.name] : field.default;
+        const min = field.min !== undefined ? `min="${field.min}"` : '';
+        const max = field.max !== undefined ? `max="${field.max}"` : '';
+        const unit = field.unit ? `<span class="field-unit">${field.unit}</span>` : '';
+
+        return `
+            <div class="config-field">
+                <label for="${field.name}">${field.label}</label>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <input type="number"
+                           id="${field.name}"
+                           name="${field.name}"
+                           value="${value}"
+                           ${min} ${max}
+                           required>
+                    ${unit}
+                </div>
+                ${field.help ? `<span class="field-help">${field.help}</span>` : ''}
+            </div>
+        `;
+    }
+
+    function renderDaysField(field, values) {
+        const dayNames = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+        const dayValues = values[field.name] || field.default || [0, 1, 2, 3, 4];
+
+        let html = `
+            <div class="config-section">
+                <h4>${field.label}</h4>
+                <div class="days-selector">
+        `;
+
+        for (let i = 0; i < 7; i++) {
+            const isChecked = dayValues.includes(i) ? 'checked' : '';
+            const isWeekend = i >= 5 ? 'weekend' : '';
+            html += `
+                <label class="day-checkbox ${isWeekend} ${isChecked ? 'active' : ''}">
+                    <input type="checkbox"
+                           name="${field.name}[]"
+                           value="${i}"
+                           ${isChecked}
+                           onchange="this.parentElement.classList.toggle('active', this.checked)">
+                    <span>${dayNames[i]}</span>
+                </label>
+            `;
+        }
+
+        html += `
+                </div>
+                ${field.help ? `<span class="field-help">${field.help}</span>` : ''}
+            </div>
+        `;
+
+        return html;
+    }
+
+    function closeConfigModal(event) {
+        if (event && event.target !== event.currentTarget) return;
+
+        const modal = document.getElementById('configModal');
+        modal.classList.remove('active');
+        document.body.style.overflow = '';
+        currentConfigTaskKey = '';
+    }
+
+    function saveTaskConfig() {
+        const form = document.getElementById('taskConfigForm');
+        if (!form) {
+            showStatusToast(currentConfigTaskKey, {error: 'No configuration form found'}, true);
+            return;
+        }
+
+        const saveBtn = document.getElementById('saveConfigBtn');
+        saveBtn.classList.add('loading');
+        saveBtn.textContent = 'Saving...';
+
+        const formData = new FormData(form);
+
+        fetch('{% url "core:save_task_config" %}', {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': '{{ csrf_token }}',
+            },
+            body: formData
+        })
+        .then(response => response.json())
+        .then(data => {
+            saveBtn.classList.remove('loading');
+            saveBtn.textContent = 'Save & Apply';
+
+            if (data.success) {
+                closeConfigModal();
+                showStatusToast(currentConfigTaskKey, {
+                    is_enabled: true,
+                    celery: data.celery || {},
+                    active_tasks: {},
+                    message: data.message
+                }, false);
+
+                // Reload page after a brief delay to show updated schedule
+                setTimeout(() => {
+                    location.reload();
+                }, 2000);
+            } else {
+                showStatusToast(currentConfigTaskKey, {error: data.error || 'Failed to save configuration'}, true);
+            }
+        })
+        .catch(error => {
+            saveBtn.classList.remove('loading');
+            saveBtn.textContent = 'Save & Apply';
+            showStatusToast(currentConfigTaskKey, {error: error.toString()}, true);
+        });
+    }
 </script>
 {% endblock %}

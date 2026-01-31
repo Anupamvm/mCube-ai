@@ -496,7 +496,7 @@
 <!-- Overview Stats Section -->
 <div class="section-card" id="overviewSection">
     <div class="section-header">
-        <h3 class="section-title">Overview Statistics</h3>
+        <h3 class="section-title" data-bs-toggle="tooltip" title="Key performance metrics aggregated across all your trades. Win Rate, Profit Factor, and Expectancy are the most important indicators of trading edge.">Overview Statistics <span class="info-tooltip">?</span></h3>
         <div class="section-fy-filter">
             <label>Asset:</label>
             <select id="overviewAssetFilter" onchange="loadSectionData('overview')">
@@ -605,7 +605,7 @@
 <!-- Streak Analysis -->
 <div class="section-card" id="streaksSection">
     <div class="section-header">
-        <h3 class="section-title">Streak Analysis</h3>
+        <h3 class="section-title" data-bs-toggle="tooltip" title="Analysis of winning and losing streaks. Long losing streaks may indicate need for strategy review or risk management adjustments.">Streak Analysis <span class="info-tooltip">?</span></h3>
         <div class="section-fy-filter">
             <label>Year:</label>
             <select id="streaksFyFilter" onchange="loadSectionData('streaks')">
@@ -663,7 +663,7 @@
     <!-- Segment Analysis (Futures vs Options) -->
     <div class="section-card" id="segmentsSection">
         <div class="section-header">
-            <h3 class="section-title">Segment Analysis</h3>
+            <h3 class="section-title" data-bs-toggle="tooltip" title="Performance breakdown by instrument type: Futures vs Options vs Equity. Identify which segment is most profitable for your trading style.">Segment Analysis <span class="info-tooltip">?</span></h3>
             <div class="section-fy-filter">
                 <label>Year:</label>
                 <select id="segmentsFyFilter" onchange="loadSectionData('segments')">
@@ -706,7 +706,7 @@
     <!-- Broker Comparison -->
     <div class="section-card" id="brokersSection">
         <div class="section-header">
-            <h3 class="section-title">Broker Comparison</h3>
+            <h3 class="section-title" data-bs-toggle="tooltip" title="Side-by-side comparison of trading performance across different broker accounts. Compare execution quality, fees, and overall profitability.">Broker Comparison <span class="info-tooltip">?</span></h3>
             <div class="section-fy-filter">
                 <label>Year:</label>
                 <select id="brokersFyFilter" onchange="loadSectionData('brokers')">
@@ -750,7 +750,7 @@
 <!-- Tax Calculation Section -->
 <div class="section-card" id="taxSection" style="margin-top: 1.5rem;">
     <div class="section-header">
-        <h3 class="section-title">Capital Gains Tax Calculator</h3>
+        <h3 class="section-title" data-bs-toggle="tooltip" title="Estimate your capital gains tax liability based on trade profits. STCG (15%) for trades held < 1 year, LTCG (10%) for > 1 year. Consult a tax advisor for actual filing.">Capital Gains Tax Calculator <span class="info-tooltip">?</span></h3>
         <div class="section-fy-filter">
             <label>Year:</label>
             <select id="taxFyFilter" onchange="loadSectionData('tax')">
@@ -855,7 +855,7 @@
 <!-- Symbol Performance -->
 <div class="section-card" id="symbolsSection">
     <div class="section-header">
-        <h3 class="section-title">Symbol Performance</h3>
+        <h3 class="section-title" data-bs-toggle="tooltip" title="Per-symbol trading statistics showing P&L, trade count, and win rate. Identify which instruments you trade best and which to avoid.">Symbol Performance <span class="info-tooltip">?</span></h3>
         <div class="section-fy-filter">
             <label>Year:</label>
             <select id="symbolsFyFilter" onchange="loadSectionData('symbols')">
@@ -974,7 +974,7 @@
     <!-- P&L Distribution -->
     <div class="section-card" id="distributionSection">
         <div class="section-header">
-            <h3 class="section-title">P&L Distribution</h3>
+            <h3 class="section-title" data-bs-toggle="tooltip" title="Statistical distribution of your trade profits and losses. A right-skewed distribution (more small losses, few large wins) indicates good risk management.">P&L Distribution <span class="info-tooltip">?</span></h3>
             <div class="section-fy-filter">
                 <label>Year:</label>
                 <select id="distributionFyFilter" onchange="loadSectionData('distribution')">
@@ -1040,7 +1040,7 @@
     <!-- Consistency Score -->
     <div class="section-card" id="consistencySection">
         <div class="section-header">
-            <h3 class="section-title">Trading Consistency</h3>
+            <h3 class="section-title" data-bs-toggle="tooltip" title="Measures how consistent your trading results are over time. High consistency indicates a repeatable edge; high variance may suggest strategy refinement needed.">Trading Consistency <span class="info-tooltip">?</span></h3>
             <div class="section-fy-filter">
                 <label>Year:</label>
                 <select id="consistencyFyFilter" onchange="loadSectionData('consistency')">
@@ -1090,7 +1090,7 @@
 <!-- Trading Timeline with Nifty Overlay -->
 <div class="section-card" id="timelineSection" style="margin-top: 1.5rem;">
     <div class="section-header">
-        <h3 class="section-title">Trading Timeline vs Nifty</h3>
+        <h3 class="section-title" data-bs-toggle="tooltip" title="Your portfolio equity curve overlaid with Nifty index. Outperforming Nifty indicates positive alpha generation from your trading strategy.">Trading Timeline vs Nifty <span class="info-tooltip">?</span></h3>
         <div class="section-fy-filter">
             <label>Year:</label>
             <select id="timelineFyFilter" onchange="loadSectionData('timeline')">
@@ -1180,7 +1180,7 @@
 <!-- Yearly Income Comparison -->
 <div class="section-card" id="yearlyComparisonSection" style="margin-top: 1.5rem;">
     <div class="section-header">
-        <h3 class="section-title">Year-wise Monthly Income Comparison</h3>
+        <h3 class="section-title" data-bs-toggle="tooltip" title="Month-by-month P&L comparison across financial years. Identify seasonal patterns and compare year-over-year performance growth.">Year-wise Monthly Income Comparison <span class="info-tooltip">?</span></h3>
         <div style="font-size: 0.75rem; color: var(--gray);">
             Total P&L / Months = Average Monthly Income
         </div>

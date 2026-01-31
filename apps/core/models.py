@@ -691,23 +691,23 @@ class SystemSettings(TimeStampedModel):
     # =========================================================================
 
     enable_market_data_tasks = models.BooleanField(
-        default=True,
+        default=False,
         help_text="Enable all market data fetching tasks"
     )
     enable_strategy_tasks = models.BooleanField(
-        default=True,
+        default=False,
         help_text="Enable strategy execution tasks"
     )
     enable_position_monitoring = models.BooleanField(
-        default=True,
+        default=False,
         help_text="Enable position monitoring tasks"
     )
     enable_risk_monitoring = models.BooleanField(
-        default=True,
+        default=False,
         help_text="Enable risk management tasks"
     )
     enable_reporting_tasks = models.BooleanField(
-        default=True,
+        default=False,
         help_text="Enable reporting and analytics tasks"
     )
 

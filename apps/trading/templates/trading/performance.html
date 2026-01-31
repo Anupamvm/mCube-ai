@@ -78,6 +78,26 @@
     }
     .pnl-positive { color: #16a34a; }
     .pnl-negative { color: #dc2626; }
+
+    /* Tooltip Styles */
+    .info-tooltip {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 14px;
+        height: 14px;
+        border-radius: 50%;
+        background: rgba(37, 99, 235, 0.15);
+        color: #2563eb;
+        font-size: 9px;
+        font-weight: 700;
+        cursor: help;
+        margin-left: 4px;
+        vertical-align: middle;
+    }
+    .info-tooltip:hover {
+        background: rgba(37, 99, 235, 0.3);
+    }
     .strategy-row {
         display: flex;
         align-items: center;
@@ -279,27 +299,27 @@
     <!-- KPI Cards -->
     <div class="row mb-4">
         <div class="col-md-3 mb-3">
-            <div class="kpi-card neutral">
+            <div class="kpi-card neutral" data-bs-toggle="tooltip" title="Total number of completed trades for this financial year. More trades = better statistical significance for performance metrics.">
                 <div class="kpi-value">{{ report.total_trades }}</div>
-                <div class="kpi-label">Total Trades</div>
+                <div class="kpi-label">Total Trades <span class="info-tooltip">?</span></div>
             </div>
         </div>
         <div class="col-md-3 mb-3">
-            <div class="kpi-card {% if report.win_rate >= 50 %}profit{% else %}loss{% endif %}">
+            <div class="kpi-card {% if report.win_rate >= 50 %}profit{% else %}loss{% endif %}" data-bs-toggle="tooltip" title="Percentage of trades that closed in profit. Formula: (Winning Trades ÷ Total Trades) × 100. Above 50% is generally good, but depends on your risk:reward ratio.">
                 <div class="kpi-value">{{ report.win_rate|floatformat:1 }}%</div>
-                <div class="kpi-label">Win Rate</div>
+                <div class="kpi-label">Win Rate <span class="info-tooltip">?</span></div>
             </div>
         </div>
         <div class="col-md-3 mb-3">
-            <div class="kpi-card {% if report.net_pnl >= 0 %}profit{% else %}loss{% endif %}">
+            <div class="kpi-card {% if report.net_pnl >= 0 %}profit{% else %}loss{% endif %}" data-bs-toggle="tooltip" title="Total profit minus total losses, after all charges (brokerage, STT, taxes). This is your actual bottom-line result for the financial year.">
                 <div class="kpi-value">{{ report.net_pnl|floatformat:0 }}</div>
-                <div class="kpi-label">Net P&L</div>
+                <div class="kpi-label">Net P&L <span class="info-tooltip">?</span></div>
             </div>
         </div>
         <div class="col-md-3 mb-3">
-            <div class="kpi-card {% if report.profit_factor >= 1 %}profit{% else %}loss{% endif %}">
+            <div class="kpi-card {% if report.profit_factor >= 1 %}profit{% else %}loss{% endif %}" data-bs-toggle="tooltip" title="Gross profit ÷ Gross loss. Above 1.0 = profitable | 1.5+ = good | 2.0+ = excellent. Shows how many rupees you make for every rupee you lose.">
                 <div class="kpi-value">{{ report.profit_factor|floatformat:2 }}</div>
-                <div class="kpi-label">Profit Factor</div>
+                <div class="kpi-label">Profit Factor <span class="info-tooltip">?</span></div>
             </div>
         </div>
     </div>
@@ -309,7 +329,7 @@
         <!-- Monthly P&L Chart -->
         <div class="col-md-8 mb-3">
             <div class="chart-container">
-                <h6 class="chart-title">Monthly P&L</h6>
+                <h6 class="chart-title">Monthly P&L <span class="info-tooltip" data-bs-toggle="tooltip" title="Bar chart showing profit/loss for each month. Green = profitable month, Red = losing month. Helps identify seasonal patterns in your trading performance.">?</span></h6>
                 <canvas id="monthlyPnlChart" height="250"></canvas>
             </div>
         </div>
@@ -317,7 +337,7 @@
         <!-- Win/Loss Pie -->
         <div class="col-md-4 mb-3">
             <div class="chart-container">
-                <h6 class="chart-title">Trade Outcomes</h6>
+                <h6 class="chart-title">Trade Outcomes <span class="info-tooltip" data-bs-toggle="tooltip" title="Distribution of trade results: Winning (green), Losing (red), and Breakeven (yellow). A healthy distribution shows consistent wins with controlled losses.">?</span></h6>
                 <canvas id="outcomeChart" height="250"></canvas>
             </div>
         </div>
@@ -328,22 +348,22 @@
         <!-- Detailed Stats -->
         <div class="col-md-4 mb-3">
             <div class="stats-card">
-                <div class="card-header">P&L Summary</div>
+                <div class="card-header">P&L Summary <span class="info-tooltip" data-bs-toggle="tooltip" title="Breakdown of your profits, losses, and trading charges. Shows how gross P&L translates to net P&L after costs.">?</span></div>
                 <table class="stats-table">
                     <tr>
-                        <td class="label">Gross Profit</td>
+                        <td class="label" data-bs-toggle="tooltip" title="Sum of all profitable trades before charges. This is your total winning amount.">Gross Profit <span class="info-tooltip">?</span></td>
                         <td class="value pnl-positive">{{ report.gross_profit|floatformat:0 }}</td>
                     </tr>
                     <tr>
-                        <td class="label">Gross Loss</td>
+                        <td class="label" data-bs-toggle="tooltip" title="Sum of all losing trades (absolute value). This is the total amount lost on unsuccessful trades.">Gross Loss <span class="info-tooltip">?</span></td>
                         <td class="value pnl-negative">{{ report.gross_loss|floatformat:0 }}</td>
                     </tr>
                     <tr>
-                        <td class="label">Total Charges</td>
+                        <td class="label" data-bs-toggle="tooltip" title="Total trading costs including brokerage, STT, exchange fees, GST, and stamp duty. Reducing charges improves net returns.">Total Charges <span class="info-tooltip">?</span></td>
                         <td class="value">{{ report.total_charges|floatformat:0 }}</td>
                     </tr>
                     <tr>
-                        <td class="label"><strong>Net P&L</strong></td>
+                        <td class="label" data-bs-toggle="tooltip" title="Final profit/loss = Gross Profit - Gross Loss - Total Charges. This is your actual take-home amount."><strong>Net P&L</strong> <span class="info-tooltip">?</span></td>
                         <td class="value {% if report.net_pnl >= 0 %}pnl-positive{% else %}pnl-negative{% endif %}">
                             <strong>{{ report.net_pnl|floatformat:0 }}</strong>
                         </td>
@@ -354,22 +374,22 @@
 
         <div class="col-md-4 mb-3">
             <div class="stats-card">
-                <div class="card-header">Trade Statistics</div>
+                <div class="card-header">Trade Statistics <span class="info-tooltip" data-bs-toggle="tooltip" title="Detailed breakdown of your trading performance by wins and losses. Compare average win to average loss to understand your risk:reward profile.">?</span></div>
                 <table class="stats-table">
                     <tr>
-                        <td class="label">Winning Trades</td>
+                        <td class="label" data-bs-toggle="tooltip" title="Number of trades that closed in profit. The ratio of winning to total trades gives you your win rate.">Winning Trades <span class="info-tooltip">?</span></td>
                         <td class="value pnl-positive">{{ report.winning_trades }}</td>
                     </tr>
                     <tr>
-                        <td class="label">Losing Trades</td>
+                        <td class="label" data-bs-toggle="tooltip" title="Number of trades that closed at a loss. Keeping this lower than winning trades (high win rate) or having larger average wins than losses is key to profitability.">Losing Trades <span class="info-tooltip">?</span></td>
                         <td class="value pnl-negative">{{ report.losing_trades }}</td>
                     </tr>
                     <tr>
-                        <td class="label">Average Win</td>
+                        <td class="label" data-bs-toggle="tooltip" title="Mean profit per winning trade. Larger average wins mean you're letting profits run and capturing good moves.">Average Win <span class="info-tooltip">?</span></td>
                         <td class="value pnl-positive">{{ report.average_win|floatformat:0 }}</td>
                     </tr>
                     <tr>
-                        <td class="label">Average Loss</td>
+                        <td class="label" data-bs-toggle="tooltip" title="Mean loss per losing trade. Smaller average losses indicate good risk management and disciplined stop-loss execution.">Average Loss <span class="info-tooltip">?</span></td>
                         <td class="value pnl-negative">{{ report.average_loss|floatformat:0 }}</td>
                     </tr>
                 </table>
@@ -378,22 +398,22 @@
 
         <div class="col-md-4 mb-3">
             <div class="stats-card">
-                <div class="card-header">Extremes & Drawdown</div>
+                <div class="card-header">Extremes & Drawdown <span class="info-tooltip" data-bs-toggle="tooltip" title="Your best and worst individual trades, plus drawdown metrics. These show the range of outcomes and worst-case scenarios you've experienced.">?</span></div>
                 <table class="stats-table">
                     <tr>
-                        <td class="label">Largest Win</td>
+                        <td class="label" data-bs-toggle="tooltip" title="Your single most profitable trade. Study what made this trade successful - timing, position size, market conditions.">Largest Win <span class="info-tooltip">?</span></td>
                         <td class="value pnl-positive">{{ report.largest_win|floatformat:0 }}</td>
                     </tr>
                     <tr>
-                        <td class="label">Largest Loss</td>
+                        <td class="label" data-bs-toggle="tooltip" title="Your single biggest losing trade. Analyze what went wrong - was it preventable with better stop-loss or position sizing?">Largest Loss <span class="info-tooltip">?</span></td>
                         <td class="value pnl-negative">{{ report.largest_loss|floatformat:0 }}</td>
                     </tr>
                     <tr>
-                        <td class="label">Max Drawdown</td>
+                        <td class="label" data-bs-toggle="tooltip" title="Maximum peak-to-trough decline in your account. This is the worst cumulative loss from any high point. Professional traders aim for <20%.">Max Drawdown <span class="info-tooltip">?</span></td>
                         <td class="value pnl-negative">{{ report.max_drawdown|floatformat:0 }}</td>
                     </tr>
                     <tr>
-                        <td class="label">Max Drawdown %</td>
+                        <td class="label" data-bs-toggle="tooltip" title="Maximum drawdown as a percentage of peak equity. Lower is better. 10-20% is acceptable, 30%+ is concerning, 50%+ needs immediate attention.">Max Drawdown % <span class="info-tooltip">?</span></td>
                         <td class="value">{{ report.max_drawdown_pct|floatformat:1 }}%</td>
                     </tr>
                 </table>
@@ -405,7 +425,7 @@
     <div class="row mb-4">
         <div class="col-md-6 mb-3">
             <div class="stats-card">
-                <div class="card-header">Best Month</div>
+                <div class="card-header">Best Month <span class="info-tooltip" data-bs-toggle="tooltip" title="Your most profitable month this FY. Study what you did differently - market conditions, position sizing, or strategy adjustments that worked well.">?</span></div>
                 <div class="p-3">
                     {% if report.best_month %}
                     <div class="d-flex justify-content-between align-items-center">
@@ -420,7 +440,7 @@
         </div>
         <div class="col-md-6 mb-3">
             <div class="stats-card">
-                <div class="card-header">Worst Month</div>
+                <div class="card-header">Worst Month <span class="info-tooltip" data-bs-toggle="tooltip" title="Your least profitable month this FY. Analyze what went wrong - unusual market conditions, overtrading, or strategy failures to avoid repeating.">?</span></div>
                 <div class="p-3">
                     {% if report.worst_month %}
                     <div class="d-flex justify-content-between align-items-center">
@@ -439,21 +459,21 @@
     <div class="row">
         <div class="col-12">
             <div class="stats-card">
-                <div class="card-header">Strategy Performance</div>
+                <div class="card-header">Strategy Performance <span class="info-tooltip" data-bs-toggle="tooltip" title="Performance breakdown by trading strategy. Identify which strategies are profitable and which need improvement or elimination from your trading plan.">?</span></div>
                 <div class="p-3">
                     {% for strategy in report.strategy_breakdown %}
-                    <div class="strategy-row">
+                    <div class="strategy-row" data-bs-toggle="tooltip" title="Strategy: {{ strategy.display_name }} | Trades: {{ strategy.total_trades }} | Win Rate: {{ strategy.win_rate }}% | P&L: ₹{{ strategy.net_pnl|floatformat:0 }}">
                         <div class="strategy-name">
                             <strong>{{ strategy.display_name }}</strong>
                             <br><small class="text-muted">{{ strategy.total_trades }} trades</small>
                         </div>
                         <div class="strategy-stats">
-                            <div class="strategy-winrate">
+                            <div class="strategy-winrate" data-bs-toggle="tooltip" title="Win rate for this strategy - percentage of trades that were profitable">
                                 <span class="badge {% if strategy.win_rate >= 50 %}bg-success{% else %}bg-danger{% endif %}">
                                     {{ strategy.win_rate }}%
                                 </span>
                             </div>
-                            <div class="strategy-pnl {% if strategy.net_pnl >= 0 %}pnl-positive{% else %}pnl-negative{% endif %}">
+                            <div class="strategy-pnl {% if strategy.net_pnl >= 0 %}pnl-positive{% else %}pnl-negative{% endif %}" data-bs-toggle="tooltip" title="Total P&L from this strategy">
                                 {{ strategy.net_pnl|floatformat:0 }}
                             </div>
                         </div>
@@ -522,6 +542,14 @@
 {% block extra_js %}
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script>
+// Initialize Bootstrap tooltips
+document.addEventListener('DOMContentLoaded', function() {
+    var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+    tooltipTriggerList.map(function(tooltipTriggerEl) {
+        return new bootstrap.Tooltip(tooltipTriggerEl, { html: true, placement: 'top', trigger: 'hover' });
+    });
+});
+
 // CSRF token for AJAX requests
 const csrfToken = '{{ csrf_token }}';
 

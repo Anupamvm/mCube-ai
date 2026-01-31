@@ -176,6 +176,28 @@
 
     .pnl-positive { color: var(--success); }
     .pnl-negative { color: var(--danger); }
+
+    /* Tooltip Styles */
+    .info-tooltip {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 16px;
+        height: 16px;
+        border-radius: 50%;
+        background: rgba(102, 126, 234, 0.15);
+        color: #667eea;
+        font-size: 10px;
+        font-weight: 700;
+        cursor: help;
+        margin-left: 4px;
+        vertical-align: middle;
+        transition: all 0.2s;
+    }
+    .info-tooltip:hover {
+        background: rgba(102, 126, 234, 0.3);
+        transform: scale(1.1);
+    }
 </style>
 {% endblock %}
 
@@ -221,39 +243,39 @@
 
 <!-- Summary Cards -->
 <div class="dashboard-grid" id="summary-cards">
-    <div class="summary-card">
+    <div class="summary-card" data-bs-toggle="tooltip" title="Total profit or loss across all closed trades for the selected period, including brokerage and taxes. Green = profit, Red = loss.">
         <div class="summary-card-header">
-            <span class="summary-card-label">Total P&L</span>
+            <span class="summary-card-label">Total P&L <span class="info-tooltip">?</span></span>
         </div>
         <div class="summary-card-value" id="total-pnl">--</div>
     </div>
-    <div class="summary-card">
+    <div class="summary-card" data-bs-toggle="tooltip" title="Percentage of trades that ended in profit. Formula: (Winning Trades ÷ Total Trades) × 100. Higher isn't always better - depends on risk:reward ratio.">
         <div class="summary-card-header">
-            <span class="summary-card-label">Win Rate</span>
+            <span class="summary-card-label">Win Rate <span class="info-tooltip">?</span></span>
         </div>
         <div class="summary-card-value" id="win-rate">--</div>
     </div>
-    <div class="summary-card">
+    <div class="summary-card" data-bs-toggle="tooltip" title="Total number of closed trades in the selected period. More trades provide better statistical significance for the other metrics.">
         <div class="summary-card-header">
-            <span class="summary-card-label">Total Trades</span>
+            <span class="summary-card-label">Total Trades <span class="info-tooltip">?</span></span>
         </div>
         <div class="summary-card-value" id="total-trades">--</div>
     </div>
-    <div class="summary-card">
+    <div class="summary-card" data-bs-toggle="tooltip" title="Gross profit divided by gross loss. Above 1.0 = profitable | 1.5+ = good | 2.0+ = excellent. Shows how much you make for every rupee lost.">
         <div class="summary-card-header">
-            <span class="summary-card-label">Profit Factor</span>
+            <span class="summary-card-label">Profit Factor <span class="info-tooltip">?</span></span>
         </div>
         <div class="summary-card-value" id="profit-factor">--</div>
     </div>
-    <div class="summary-card">
+    <div class="summary-card" data-bs-toggle="tooltip" title="Risk-adjusted return metric. Formula: (Return - Risk-Free Rate) ÷ Volatility. >1 = good | >2 = very good | >3 = excellent. Higher values mean better returns per unit of risk.">
         <div class="summary-card-header">
-            <span class="summary-card-label">Sharpe Ratio</span>
+            <span class="summary-card-label">Sharpe Ratio <span class="info-tooltip">?</span></span>
         </div>
         <div class="summary-card-value" id="sharpe-ratio">--</div>
     </div>
-    <div class="summary-card">
+    <div class="summary-card" data-bs-toggle="tooltip" title="Largest peak-to-trough decline in your equity. This is the worst loss from any high point. Professional traders aim for <20%. Critical for understanding worst-case scenarios.">
         <div class="summary-card-header">
-            <span class="summary-card-label">Max Drawdown</span>
+            <span class="summary-card-label">Max Drawdown <span class="info-tooltip">?</span></span>
         </div>
         <div class="summary-card-value" id="max-drawdown">--</div>
     </div>
@@ -263,8 +285,8 @@
 <div class="charts-grid">
     <div class="chart-card">
         <div class="chart-card-header">
-            <span class="chart-card-title">Daily P&L</span>
-            <select id="pnl-granularity" class="btn btn-sm">
+            <span class="chart-card-title">Daily P&L <span class="info-tooltip" data-bs-toggle="tooltip" title="Profit/Loss for each day, week, or month. Green bars = profitable periods, Red bars = losing periods. Helps identify patterns in your trading performance over time.">?</span></span>
+            <select id="pnl-granularity" class="btn btn-sm" data-bs-toggle="tooltip" title="Change the time granularity: Daily shows each trading day, Weekly aggregates by week, Monthly shows monthly totals.">
                 <option value="daily">Daily</option>
                 <option value="weekly">Weekly</option>
                 <option value="monthly">Monthly</option>
@@ -279,7 +301,7 @@
     </div>
     <div class="chart-card">
         <div class="chart-card-header">
-            <span class="chart-card-title">Equity Curve</span>
+            <span class="chart-card-title">Equity Curve <span class="info-tooltip" data-bs-toggle="tooltip" title="Cumulative profit/loss over time showing the growth or decline of your trading account. An upward sloping curve indicates consistent profitability. Smooth curves are better than volatile ones.">?</span></span>
         </div>
         <div class="chart-area" id="equity-chart-container">
             <div class="loading-overlay" id="equity-loading">
@@ -294,7 +316,7 @@
 <div class="charts-grid">
     <div class="chart-card">
         <div class="chart-card-header">
-            <span class="chart-card-title">Strategy Performance</span>
+            <span class="chart-card-title">Strategy Performance <span class="info-tooltip" data-bs-toggle="tooltip" title="P&L breakdown by trading strategy. Identifies which strategies are contributing positively and which need review or elimination.">?</span></span>
         </div>
         <div class="chart-area" id="strategy-chart-container">
             <div class="loading-overlay" id="strategy-loading">
@@ -305,7 +327,7 @@
     </div>
     <div class="chart-card">
         <div class="chart-card-header">
-            <span class="chart-card-title">Win/Loss Distribution</span>
+            <span class="chart-card-title">Win/Loss Distribution <span class="info-tooltip" data-bs-toggle="tooltip" title="Histogram showing the distribution of trade outcomes. Helps visualize your typical wins vs losses. A right-skewed distribution (more large wins than large losses) is ideal.">?</span></span>
         </div>
         <div class="chart-area" id="distribution-chart-container">
             <div class="loading-overlay" id="distribution-loading">
@@ -319,8 +341,8 @@
 <!-- Benchmark Comparison -->
 <div class="chart-card full-width" style="margin-bottom: 2rem;">
     <div class="chart-card-header">
-        <span class="chart-card-title">Performance vs Benchmark</span>
-        <select id="benchmark-select" class="btn btn-sm">
+        <span class="chart-card-title">Performance vs Benchmark <span class="info-tooltip" data-bs-toggle="tooltip" title="Compares your trading returns against a market benchmark. Helps assess if your active trading is outperforming a passive buy-and-hold strategy.">?</span></span>
+        <select id="benchmark-select" class="btn btn-sm" data-bs-toggle="tooltip" title="Select the benchmark index to compare against. Nifty 50 for broad market, Bank Nifty for banking sector focus.">
             <option value="NIFTY50">Nifty 50</option>
             <option value="BANKNIFTY">Bank Nifty</option>
         </select>
@@ -332,24 +354,24 @@
         <canvas id="benchmark-chart"></canvas>
     </div>
     <div class="benchmark-comparison" id="benchmark-stats">
-        <div class="benchmark-item">
-            <div class="benchmark-label">Portfolio Return</div>
+        <div class="benchmark-item" data-bs-toggle="tooltip" title="Your total return percentage for the selected period. Calculated as (Ending Value - Starting Value) / Starting Value × 100.">
+            <div class="benchmark-label">Portfolio Return <span class="info-tooltip">?</span></div>
             <div class="benchmark-value" id="portfolio-return">--</div>
         </div>
-        <div class="benchmark-item">
-            <div class="benchmark-label">Benchmark Return</div>
+        <div class="benchmark-item" data-bs-toggle="tooltip" title="The benchmark index return for the same period. This is what you would have earned with a passive investment in the index.">
+            <div class="benchmark-label">Benchmark Return <span class="info-tooltip">?</span></div>
             <div class="benchmark-value" id="benchmark-return">--</div>
         </div>
-        <div class="benchmark-item">
-            <div class="benchmark-label">Excess Return</div>
+        <div class="benchmark-item" data-bs-toggle="tooltip" title="Your return minus benchmark return. Positive = you outperformed the market. Negative = underperformed. Also called 'Alpha' in simple terms.">
+            <div class="benchmark-label">Excess Return <span class="info-tooltip">?</span></div>
             <div class="benchmark-value" id="excess-return">--</div>
         </div>
-        <div class="benchmark-item">
-            <div class="benchmark-label">Beta</div>
+        <div class="benchmark-item" data-bs-toggle="tooltip" title="Measures your portfolio's sensitivity to market movements. Beta=1 means you move with market. >1 means more volatile than market. <1 means less volatile.">
+            <div class="benchmark-label">Beta <span class="info-tooltip">?</span></div>
             <div class="benchmark-value" id="beta-value">--</div>
         </div>
-        <div class="benchmark-item">
-            <div class="benchmark-label">Alpha</div>
+        <div class="benchmark-item" data-bs-toggle="tooltip" title="Risk-adjusted excess return. Shows your skill as a trader after accounting for market risk. Positive alpha = you're adding value beyond market returns.">
+            <div class="benchmark-label">Alpha <span class="info-tooltip">?</span></div>
             <div class="benchmark-value" id="alpha-value">--</div>
         </div>
     </div>
@@ -359,14 +381,14 @@
 <div class="charts-grid">
     <div class="chart-card">
         <div class="chart-card-header">
-            <span class="chart-card-title">Best Trades</span>
+            <span class="chart-card-title">Best Trades <span class="info-tooltip" data-bs-toggle="tooltip" title="Your most profitable trades. Review these to understand what went right - entry timing, position sizing, exit execution. Try to replicate these conditions.">?</span></span>
         </div>
         <table class="trades-table" id="best-trades">
             <thead>
                 <tr>
-                    <th>Instrument</th>
-                    <th>Strategy</th>
-                    <th>P&L</th>
+                    <th data-bs-toggle="tooltip" title="Trading instrument/symbol">Instrument</th>
+                    <th data-bs-toggle="tooltip" title="Strategy used for this trade">Strategy</th>
+                    <th data-bs-toggle="tooltip" title="Profit/Loss from this trade">P&L</th>
                 </tr>
             </thead>
             <tbody></tbody>
@@ -374,14 +396,14 @@
     </div>
     <div class="chart-card">
         <div class="chart-card-header">
-            <span class="chart-card-title">Worst Trades</span>
+            <span class="chart-card-title">Worst Trades <span class="info-tooltip" data-bs-toggle="tooltip" title="Your biggest losing trades. Analyze these to identify mistakes - was it bad timing, wrong position size, or failure to cut losses? Learn from these to improve.">?</span></span>
         </div>
         <table class="trades-table" id="worst-trades">
             <thead>
                 <tr>
-                    <th>Instrument</th>
-                    <th>Strategy</th>
-                    <th>P&L</th>
+                    <th data-bs-toggle="tooltip" title="Trading instrument/symbol">Instrument</th>
+                    <th data-bs-toggle="tooltip" title="Strategy used for this trade">Strategy</th>
+                    <th data-bs-toggle="tooltip" title="Profit/Loss from this trade">P&L</th>
                 </tr>
             </thead>
             <tbody></tbody>
@@ -393,4 +415,17 @@
 {% block extra_js %}
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script src="{% static 'js/analytics/dashboard.js' %}"></script>
+<script>
+// Initialize Bootstrap tooltips
+document.addEventListener('DOMContentLoaded', function() {
+    var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+    var tooltipList = tooltipTriggerList.map(function(tooltipTriggerEl) {
+        return new bootstrap.Tooltip(tooltipTriggerEl, {
+            html: true,
+            placement: 'top',
+            trigger: 'hover'
+        });
+    });
+});
+</script>
 {% endblock %}

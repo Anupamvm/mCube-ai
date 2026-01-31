@@ -123,6 +123,24 @@
         font-weight: 500;
         padding: 0.5rem 0;
     }
+
+    /* Tooltip Styles */
+    .info-tooltip {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 14px;
+        height: 14px;
+        border-radius: 50%;
+        background: rgba(37, 99, 235, 0.15);
+        color: #2563eb;
+        font-size: 9px;
+        font-weight: 700;
+        cursor: help;
+        margin-left: 4px;
+        vertical-align: middle;
+    }
+    .info-tooltip:hover { background: rgba(37, 99, 235, 0.3); }
 </style>
 {% endblock %}
 
@@ -144,27 +162,27 @@
     <!-- Summary Stats -->
     <div class="row mb-4">
         <div class="col-md-3">
-            <div class="stat-card">
+            <div class="stat-card" data-bs-toggle="tooltip" title="Total number of trades (both active and closed) tracked in the system.">
                 <div class="stat-value" id="stat-total">{{ summary.total_trades }}</div>
-                <div class="stat-label">Total Trades</div>
+                <div class="stat-label">Total Trades <span class="info-tooltip">?</span></div>
             </div>
         </div>
         <div class="col-md-3">
-            <div class="stat-card">
+            <div class="stat-card" data-bs-toggle="tooltip" title="Currently open positions that haven't been closed yet. These trades are still running and P&L is unrealized.">
                 <div class="stat-value" id="stat-active">{{ summary.active_trades }}</div>
-                <div class="stat-label">Active Trades</div>
+                <div class="stat-label">Active Trades <span class="info-tooltip">?</span></div>
             </div>
         </div>
         <div class="col-md-3">
-            <div class="stat-card profit">
+            <div class="stat-card profit" data-bs-toggle="tooltip" title="Percentage of closed trades that ended in profit. Higher win rate with good risk:reward leads to profitability.">
                 <div class="stat-value" id="stat-winrate">{{ summary.win_rate }}%</div>
-                <div class="stat-label">Win Rate</div>
+                <div class="stat-label">Win Rate <span class="info-tooltip">?</span></div>
             </div>
         </div>
         <div class="col-md-3">
-            <div class="stat-card {% if summary.total_pnl >= 0 %}profit{% else %}loss{% endif %}">
+            <div class="stat-card {% if summary.total_pnl >= 0 %}profit{% else %}loss{% endif %}" data-bs-toggle="tooltip" title="Total realized profit or loss from all closed trades. Green = profit, Red = loss.">
                 <div class="stat-value" id="stat-pnl">{{ summary.total_pnl|floatformat:0 }}</div>
-                <div class="stat-label">Total P&L</div>
+                <div class="stat-label">Total P&L <span class="info-tooltip">?</span></div>
             </div>
         </div>
     </div>
@@ -172,17 +190,17 @@
     <!-- Tabs -->
     <ul class="nav trade-tabs" id="tradeTabs" role="tablist">
         <li class="nav-item" role="presentation">
-            <button class="nav-link active" id="active-tab" data-bs-toggle="tab" data-bs-target="#active-trades" type="button" role="tab">
+            <button class="nav-link active" id="active-tab" data-bs-toggle="tab" data-bs-target="#active-trades" type="button" role="tab" title="Currently open positions with unrealized P&L">
                 Active Trades <span class="badge bg-primary ms-1">{{ active_count }}</span>
             </button>
         </li>
         <li class="nav-item" role="presentation">
-            <button class="nav-link" id="closed-tab" data-bs-toggle="tab" data-bs-target="#closed-trades" type="button" role="tab">
+            <button class="nav-link" id="closed-tab" data-bs-toggle="tab" data-bs-target="#closed-trades" type="button" role="tab" title="Completed trades with realized P&L">
                 Closed Trades <span class="badge bg-secondary ms-1">{{ closed_count }}</span>
             </button>
         </li>
         <li class="nav-item" role="presentation">
-            <button class="nav-link" id="sync-tab" data-bs-toggle="tab" data-bs-target="#broker-sync" type="button" role="tab">
+            <button class="nav-link" id="sync-tab" data-bs-toggle="tab" data-bs-target="#broker-sync" type="button" role="tab" title="Fetch and reconcile trades from your broker accounts">
                 Broker Sync
             </button>
         </li>
@@ -283,14 +301,14 @@
                 <table class="table table-hover">
                     <thead class="table-light">
                         <tr>
-                            <th>Date</th>
-                            <th>Instrument</th>
-                            <th>Strategy</th>
-                            <th>Direction</th>
-                            <th class="text-end">Entry</th>
-                            <th class="text-end">Exit</th>
-                            <th class="text-end">P&L</th>
-                            <th>Outcome</th>
+                            <th data-bs-toggle="tooltip" title="Date when the trade was closed">Date</th>
+                            <th data-bs-toggle="tooltip" title="Trading instrument - stock, option, or futures contract">Instrument</th>
+                            <th data-bs-toggle="tooltip" title="Strategy that generated this trade">Strategy</th>
+                            <th data-bs-toggle="tooltip" title="Trade direction: LONG (bought) or SHORT (sold)">Direction</th>
+                            <th class="text-end" data-bs-toggle="tooltip" title="Price at which the position was entered">Entry</th>
+                            <th class="text-end" data-bs-toggle="tooltip" title="Price at which the position was closed">Exit</th>
+                            <th class="text-end" data-bs-toggle="tooltip" title="Net profit or loss from this trade after all charges">P&L</th>
+                            <th data-bs-toggle="tooltip" title="Trade result: PROFIT, LOSS, or BREAKEVEN">Outcome</th>
                             <th></th>
                         </tr>
                     </thead>
@@ -441,6 +459,14 @@
 
 {% block extra_js %}
 <script>
+// Initialize Bootstrap tooltips
+document.addEventListener('DOMContentLoaded', function() {
+    var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+    tooltipTriggerList.map(function(el) {
+        return new bootstrap.Tooltip(el, { html: true, placement: 'top', trigger: 'hover' });
+    });
+});
+
 // Quick Date Range Selection
 function setDateRange(range) {
     const today = new Date();

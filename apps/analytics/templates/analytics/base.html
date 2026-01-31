@@ -299,6 +299,26 @@
         background: #fee2e2;
         color: #991b1b;
     }
+
+    /* Tooltip Styles */
+    .info-tooltip {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 16px;
+        height: 16px;
+        border-radius: 50%;
+        background: rgba(102, 126, 234, 0.15);
+        color: #667eea;
+        font-size: 10px;
+        font-weight: 700;
+        cursor: help;
+        margin-left: 6px;
+        vertical-align: middle;
+    }
+    .info-tooltip:hover {
+        background: rgba(102, 126, 234, 0.3);
+    }
 </style>
 {% endblock %}
 
@@ -313,4 +333,14 @@
 <div class="page-content">
     {% block page_content %}{% endblock %}
 </div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+    tooltipTriggerList.map(function(el) {
+        return new bootstrap.Tooltip(el, { html: true, placement: 'top', trigger: 'hover' });
+    });
+});
+</script>
+{% block extra_js %}{% endblock %}
 {% endblock %}

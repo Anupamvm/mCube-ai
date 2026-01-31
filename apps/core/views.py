@@ -3291,56 +3291,88 @@ def system_settings(request):
 @user_passes_test(is_admin_user)
 def broker_settings(request):
     """
-    Broker Settings Page - Configure broker API credentials and settings
-    
-    Allows admins to configure all broker-related settings and API credentials
+    System Configuration Page - Comprehensive settings for all system configurations
+
+    Consolidates:
+    - Broker API credentials (Kotak, Breeze)
+    - External service credentials (Trendlyne, Telegram, GNews)
+    - Trading schedule configuration
+    - Background task settings
+    - System preferences
     """
     from django.contrib import messages
-    from apps.core.models import CredentialStore
-    
-    # Get or create credentials for each broker
+    from apps.core.models import CredentialStore, SystemSettings, TradingSchedule
+    from django.conf import settings as django_settings
+    import datetime as dt
+
+    # Get or create credentials for each service
     kotak_creds, _ = CredentialStore.objects.get_or_create(
         service='kotakneo',
         name='default',
         defaults={}
     )
-    
+
     breeze_creds, _ = CredentialStore.objects.get_or_create(
         service='breeze',
         name='default',
         defaults={}
     )
-    
+
     trendlyne_creds, _ = CredentialStore.objects.get_or_create(
         service='trendlyne',
         name='default',
         defaults={}
     )
-    
+
     telegram_creds, _ = CredentialStore.objects.get_or_create(
         service='telegram',
         name='default',
         defaults={}
     )
-    
+
+    gnews_creds, _ = CredentialStore.objects.get_or_create(
+        service='gnewsio',
+        name='default',
+        defaults={}
+    )
+
+    # Get system settings
+    settings_obj = SystemSettings.get_settings()
+
+    # Get or create today's trading schedule
+    today = dt.date.today()
+    schedule, _ = TradingSchedule.objects.get_or_create(
+        date=today,
+        defaults={
+            'open_time': dt.time(9, 15, 10),
+            'take_trade_time': dt.time(9, 30, 0),
+            'last_trade_time': dt.time(10, 15, 0),
+            'close_pos_time': dt.time(15, 25, 30),
+            'mkt_close_time': dt.time(15, 32, 0),
+            'close_day_time': dt.time(15, 45, 0),
+            'enabled': True,
+        }
+    )
+
     if request.method == 'POST':
         try:
+            # ===== INTEGRATIONS TAB =====
             # Kotak Neo Credentials
             kotak_creds.api_key = request.POST.get('kotak_api_key', '')
             kotak_creds.api_secret = request.POST.get('kotak_api_secret', '')
             kotak_creds.username = request.POST.get('kotak_username', '')
             kotak_creds.password = request.POST.get('kotak_password', '')
             kotak_creds.neo_password = request.POST.get('kotak_neo_password', '')
-            kotak_creds.pan = request.POST.get('kotak_pan', '')
+            kotak_creds.pan = request.POST.get('kotak_pan', '').upper()
             kotak_creds.save()
-            
+
             # ICICI Breeze Credentials
             breeze_creds.api_key = request.POST.get('breeze_api_key', '')
             breeze_creds.api_secret = request.POST.get('breeze_api_secret', '')
             breeze_creds.session_token = request.POST.get('breeze_session_token', '')
             breeze_creds.save()
-            
-            # Trendlyne Credentials (Web Scraping)
+
+            # Trendlyne Credentials
             trendlyne_creds.username = request.POST.get('trendlyne_username', '')
             trendlyne_creds.password = request.POST.get('trendlyne_password', '')
             trendlyne_creds.save()
@@ -3351,25 +3383,120 @@ def broker_settings(request):
             telegram_creds.username = request.POST.get('telegram_client_id', '')
             telegram_creds.session_token = request.POST.get('telegram_session_name', '')
             telegram_creds.save()
-            
-            messages.success(request, '✅ Broker settings saved successfully!')
-            logger.info(f"Broker settings updated by {request.user.username}")
-            
+
+            # GNews Credentials
+            gnews_creds.api_key = request.POST.get('gnews_api_key', '')
+            gnews_creds.save()
+
+            # ===== TRADING HOURS TAB =====
+            schedule.enabled = request.POST.get('trading_enabled') == 'on'
+            schedule.note = request.POST.get('schedule_note', '')
+
+            # Parse time fields
+            def parse_time(time_str):
+                if time_str:
+                    parts = time_str.split(':')
+                    return dt.time(int(parts[0]), int(parts[1]))
+                return None
+
+            if request.POST.get('open_time'):
+                schedule.open_time = parse_time(request.POST.get('open_time'))
+            if request.POST.get('take_trade_time'):
+                schedule.take_trade_time = parse_time(request.POST.get('take_trade_time'))
+            if request.POST.get('last_trade_time'):
+                schedule.last_trade_time = parse_time(request.POST.get('last_trade_time'))
+            if request.POST.get('close_pos_time'):
+                schedule.close_pos_time = parse_time(request.POST.get('close_pos_time'))
+            if request.POST.get('mkt_close_time'):
+                schedule.mkt_close_time = parse_time(request.POST.get('mkt_close_time'))
+            if request.POST.get('close_day_time'):
+                schedule.close_day_time = parse_time(request.POST.get('close_day_time'))
+            schedule.save()
+
+            # ===== AUTOMATION TAB =====
+            # Task Enable/Disable Flags
+            settings_obj.enable_market_data_tasks = request.POST.get('enable_market_data_tasks') == 'on'
+            settings_obj.enable_strategy_tasks = request.POST.get('enable_strategy_tasks') == 'on'
+            settings_obj.enable_position_monitoring = request.POST.get('enable_position_monitoring') == 'on'
+            settings_obj.enable_risk_monitoring = request.POST.get('enable_risk_monitoring') == 'on'
+            settings_obj.enable_reporting_tasks = request.POST.get('enable_reporting_tasks') == 'on'
+
+            # Market Data Task Timings
+            settings_obj.trendlyne_fetch_hour = int(request.POST.get('trendlyne_fetch_hour', 8))
+            settings_obj.trendlyne_fetch_minute = int(request.POST.get('trendlyne_fetch_minute', 30))
+            settings_obj.trendlyne_import_hour = int(request.POST.get('trendlyne_import_hour', 9))
+            settings_obj.trendlyne_import_minute = int(request.POST.get('trendlyne_import_minute', 0))
+            settings_obj.premarket_update_hour = int(request.POST.get('premarket_update_hour', 8))
+            settings_obj.premarket_update_minute = int(request.POST.get('premarket_update_minute', 30))
+            settings_obj.live_data_interval_minutes = int(request.POST.get('live_data_interval_minutes', 5))
+            settings_obj.live_data_start_hour = int(request.POST.get('live_data_start_hour', 9))
+            settings_obj.live_data_end_hour = int(request.POST.get('live_data_end_hour', 15))
+            settings_obj.postmarket_update_hour = int(request.POST.get('postmarket_update_hour', 15))
+            settings_obj.postmarket_update_minute = int(request.POST.get('postmarket_update_minute', 30))
+
+            # Strategy Task Timings
+            settings_obj.futures_screening_interval_minutes = int(request.POST.get('futures_screening_interval_minutes', 30))
+            settings_obj.futures_screening_start_hour = int(request.POST.get('futures_screening_start_hour', 9))
+            settings_obj.futures_screening_end_hour = int(request.POST.get('futures_screening_end_hour', 14))
+            settings_obj.futures_averaging_interval_minutes = int(request.POST.get('futures_averaging_interval_minutes', 10))
+
+            # Position Monitoring Task Timings
+            settings_obj.monitor_positions_interval_seconds = int(request.POST.get('monitor_positions_interval_seconds', 10))
+            settings_obj.update_pnl_interval_seconds = int(request.POST.get('update_pnl_interval_seconds', 15))
+            settings_obj.check_exit_interval_seconds = int(request.POST.get('check_exit_interval_seconds', 30))
+
+            # Risk Management Task Timings
+            settings_obj.risk_check_interval_seconds = int(request.POST.get('risk_check_interval_seconds', 60))
+            settings_obj.circuit_breaker_interval_seconds = int(request.POST.get('circuit_breaker_interval_seconds', 30))
+
+            # Reporting & Analytics Task Timings
+            settings_obj.daily_pnl_report_hour = int(request.POST.get('daily_pnl_report_hour', 16))
+            settings_obj.daily_pnl_report_minute = int(request.POST.get('daily_pnl_report_minute', 0))
+            settings_obj.learning_patterns_hour = int(request.POST.get('learning_patterns_hour', 17))
+            settings_obj.learning_patterns_minute = int(request.POST.get('learning_patterns_minute', 0))
+            settings_obj.weekly_summary_hour = int(request.POST.get('weekly_summary_hour', 18))
+            settings_obj.weekly_summary_minute = int(request.POST.get('weekly_summary_minute', 0))
+            settings_obj.weekly_summary_day_of_week = int(request.POST.get('weekly_summary_day_of_week', 4))
+
+            settings_obj.save()
+
+            messages.success(request, 'Configuration saved successfully!')
+            logger.info(f"System configuration updated by {request.user.username}")
+
         except Exception as e:
-            messages.error(request, f'❌ Error saving settings: {str(e)}')
-            logger.error(f"Error saving broker settings: {e}", exc_info=True)
-        
+            messages.error(request, f'Error saving configuration: {str(e)}')
+            logger.error(f"Error saving system configuration: {e}", exc_info=True)
+
         return redirect('core:broker_settings')
-    
+
     context = {
+        # Credentials
         'kotak_creds': kotak_creds,
         'breeze_creds': breeze_creds,
         'trendlyne_creds': trendlyne_creds,
         'telegram_creds': telegram_creds,
-        'page_title': 'Broker Settings',
+        'gnews_creds': gnews_creds,
+        # System Settings
+        'system_settings': settings_obj,
+        # Trading Schedule
+        'schedule': schedule,
+        # LLM Settings (from Django settings)
+        'ollama_base_url': getattr(django_settings, 'OLLAMA_BASE_URL', 'http://localhost:11434'),
+        'ollama_model': getattr(django_settings, 'OLLAMA_MODEL', 'deepseek-r1:7b'),
+        # Days of week for dropdown
+        'days_of_week': [
+            (0, 'Monday'),
+            (1, 'Tuesday'),
+            (2, 'Wednesday'),
+            (3, 'Thursday'),
+            (4, 'Friday'),
+            (5, 'Saturday'),
+            (6, 'Sunday'),
+        ],
+        'page_title': 'System Configuration',
     }
-    
-    return render(request, 'core/broker_settings.html', context)
+
+    return render(request, 'core/system_configuration.html', context)
 
 
 # =============================================================================
@@ -3615,12 +3742,17 @@ def celery_task_control(request):
         queue = config.get('options', {}).get('queue', 'default')
         category = categorize_task(key, queue)
 
+        # Get config fields for this task if available
+        config_info = TASK_CONFIG_FIELDS.get(key, {})
+
         task_info = {
             'key': key,
             'task': config.get('task', 'Unknown'),
             'schedule': str(config.get('schedule', 'Unknown')),
             'queue': queue,
             'is_enabled': is_enabled,
+            'config_fields': config_info.get('fields', []),
+            'display_name': config_info.get('display_name', key),
         }
 
         categorized_tasks[category].append(task_info)
@@ -3785,6 +3917,450 @@ def reload_celery_schedule(request):
         })
     except Exception as e:
         logger.error(f"Error reloading schedule: {e}")
+        return JsonResponse({'success': False, 'error': str(e)}, status=500)
+
+
+# Task configuration field mappings - uses fields from SystemSettings model
+# schedule_type: 'crontab' (fixed time) or 'interval' (recurring)
+# category_flag: The SystemSettings enable flag for this category
+# NOTE: Only includes fields that exist in SystemSettings model. Fields without model backing
+#       will use defaults and won't persist (shown for display purposes).
+TASK_CONFIG_FIELDS = {
+    # =========================================================================
+    # MARKET DATA TASKS
+    # =========================================================================
+    'morning-data-sync': {
+        'display_name': 'Morning Data Sync',
+        'description': 'Full morning data synchronization including market data, news, and indices',
+        'schedule_type': 'crontab',
+        'category': 'data',
+        'category_flag': 'enable_market_data_tasks',
+        'fields': []  # No configurable fields in SystemSettings
+    },
+    'update-pre-market-data': {
+        'display_name': 'Pre-Market Data Update',
+        'description': 'Fetches pre-market data before market opens',
+        'schedule_type': 'crontab',
+        'category': 'data',
+        'category_flag': 'enable_market_data_tasks',
+        'fields': [
+            {'name': 'premarket_update_hour', 'label': 'Hour', 'type': 'number', 'help': 'Hour to run (0-23)', 'min': 0, 'max': 23, 'default': 8},
+            {'name': 'premarket_update_minute', 'label': 'Minute', 'type': 'number', 'help': 'Minute (0-59)', 'min': 0, 'max': 59, 'default': 50},
+        ]
+    },
+    'update-live-market-data': {
+        'display_name': 'Live Market Data Update',
+        'description': 'Updates live market data during trading hours',
+        'schedule_type': 'interval',
+        'category': 'data',
+        'category_flag': 'enable_market_data_tasks',
+        'fields': [
+            {'name': 'live_data_interval_minutes', 'label': 'Interval', 'type': 'number', 'unit': 'minutes', 'help': 'Update every N minutes', 'min': 1, 'max': 60, 'default': 5},
+            {'name': 'live_data_start_hour', 'label': 'Start Hour', 'type': 'number', 'help': 'Start updating from this hour', 'min': 0, 'max': 23, 'default': 9},
+            {'name': 'live_data_end_hour', 'label': 'End Hour', 'type': 'number', 'help': 'Stop updating after this hour', 'min': 0, 'max': 23, 'default': 15},
+        ]
+    },
+    'update-post-market-data': {
+        'display_name': 'Post-Market Data Update',
+        'description': 'Updates data after market close for end-of-day analysis',
+        'schedule_type': 'crontab',
+        'category': 'data',
+        'category_flag': 'enable_market_data_tasks',
+        'fields': [
+            {'name': 'postmarket_update_hour', 'label': 'Hour', 'type': 'number', 'help': 'Hour to run (0-23)', 'min': 0, 'max': 23, 'default': 15},
+            {'name': 'postmarket_update_minute', 'label': 'Minute', 'type': 'number', 'help': 'Minute (0-59)', 'min': 0, 'max': 59, 'default': 35},
+        ]
+    },
+
+    # =========================================================================
+    # STRATEGY EXECUTION TASKS
+    # =========================================================================
+    'setup-trading-day': {
+        'display_name': 'Setup Trading Day',
+        'description': 'Prepares system for trading day (loads strategies, checks accounts)',
+        'schedule_type': 'crontab',
+        'category': 'strategies',
+        'category_flag': 'enable_strategy_tasks',
+        'fields': []  # No configurable fields in SystemSettings - uses fixed schedule
+    },
+    'start-trading-day': {
+        'display_name': 'Start Trading Day',
+        'description': 'Initiates trading at market open',
+        'schedule_type': 'crontab',
+        'category': 'strategies',
+        'category_flag': 'enable_strategy_tasks',
+        'fields': []  # No configurable fields - runs at market open
+    },
+    'evaluate-options-strategy': {
+        'display_name': 'Evaluate Options Strategy',
+        'description': 'Analyzes market conditions and selects options strategies',
+        'schedule_type': 'crontab',
+        'category': 'strategies',
+        'category_flag': 'enable_strategy_tasks',
+        'fields': []  # No configurable fields
+    },
+    'start-options-trade': {
+        'display_name': 'Start Options Trade',
+        'description': 'Executes options trades based on strategy evaluation',
+        'schedule_type': 'crontab',
+        'category': 'strategies',
+        'category_flag': 'enable_strategy_tasks',
+        'fields': []  # No configurable fields
+    },
+    'batch-options-averaging': {
+        'display_name': 'Options Averaging (Batch)',
+        'description': 'Runs averaging logic for options positions at regular intervals',
+        'schedule_type': 'recurring',
+        'category': 'strategies',
+        'category_flag': 'enable_strategy_tasks',
+        'fields': []  # Complex recurring - not easily configurable
+    },
+    'batch-options-averaging-10am': {
+        'display_name': 'Options Averaging (10 AM)',
+        'description': 'Continues options averaging after 10 AM',
+        'schedule_type': 'recurring',
+        'category': 'strategies',
+        'category_flag': 'enable_strategy_tasks',
+        'fields': []  # Complex recurring - not easily configurable
+    },
+    'screen-futures-opportunities': {
+        'display_name': 'Futures Screening',
+        'description': 'Scans for futures trading opportunities',
+        'schedule_type': 'interval',
+        'category': 'strategies',
+        'category_flag': 'enable_strategy_tasks',
+        'fields': [
+            {'name': 'futures_screening_interval_minutes', 'label': 'Interval', 'type': 'number', 'unit': 'minutes', 'help': 'Screen every N minutes', 'min': 5, 'max': 120, 'default': 30},
+            {'name': 'futures_screening_start_hour', 'label': 'Start Hour', 'type': 'number', 'help': 'Start from this hour', 'min': 0, 'max': 23, 'default': 9},
+            {'name': 'futures_screening_end_hour', 'label': 'End Hour', 'type': 'number', 'help': 'Stop after this hour', 'min': 0, 'max': 23, 'default': 14},
+        ]
+    },
+    'check-futures-averaging': {
+        'display_name': 'Futures Averaging Check',
+        'description': 'Checks and executes averaging for futures positions',
+        'schedule_type': 'interval',
+        'category': 'strategies',
+        'category_flag': 'enable_strategy_tasks',
+        'fields': [
+            {'name': 'futures_averaging_interval_minutes', 'label': 'Interval', 'type': 'number', 'unit': 'minutes', 'help': 'Check every N minutes', 'min': 1, 'max': 60, 'default': 10},
+        ]
+    },
+    'close-trading-day': {
+        'display_name': 'Close Trading Day',
+        'description': 'Closes positions and finalizes trading day',
+        'schedule_type': 'crontab',
+        'category': 'strategies',
+        'category_flag': 'enable_strategy_tasks',
+        'fields': []  # Fixed schedule - closes before market close
+    },
+
+    # =========================================================================
+    # POSITION MONITORING TASKS
+    # =========================================================================
+    'monitor-all-positions': {
+        'display_name': 'Position Monitoring',
+        'description': 'Real-time monitoring of all open positions',
+        'schedule_type': 'interval',
+        'category': 'monitoring',
+        'category_flag': 'enable_position_monitoring',
+        'fields': [
+            {'name': 'monitor_positions_interval_seconds', 'label': 'Interval', 'type': 'number', 'unit': 'seconds', 'help': 'Monitor every N seconds', 'min': 5, 'max': 300, 'default': 10},
+        ]
+    },
+    'update-position-pnl': {
+        'display_name': 'P&L Update',
+        'description': 'Updates profit/loss for all positions',
+        'schedule_type': 'interval',
+        'category': 'monitoring',
+        'category_flag': 'enable_position_monitoring',
+        'fields': [
+            {'name': 'update_pnl_interval_seconds', 'label': 'Interval', 'type': 'number', 'unit': 'seconds', 'help': 'Update P&L every N seconds', 'min': 5, 'max': 300, 'default': 15},
+        ]
+    },
+    'check-exit-conditions': {
+        'display_name': 'Exit Conditions Check',
+        'description': 'Checks stop-loss, target, and other exit conditions',
+        'schedule_type': 'interval',
+        'category': 'monitoring',
+        'category_flag': 'enable_position_monitoring',
+        'fields': [
+            {'name': 'check_exit_interval_seconds', 'label': 'Interval', 'type': 'number', 'unit': 'seconds', 'help': 'Check exits every N seconds', 'min': 10, 'max': 300, 'default': 30},
+        ]
+    },
+
+    # =========================================================================
+    # RISK MANAGEMENT TASKS
+    # =========================================================================
+    'check-risk-limits-all-accounts': {
+        'display_name': 'Risk Limits Check',
+        'description': 'Monitors risk limits across all trading accounts',
+        'schedule_type': 'interval',
+        'category': 'risk',
+        'category_flag': 'enable_risk_monitoring',
+        'fields': [
+            {'name': 'risk_check_interval_seconds', 'label': 'Interval', 'type': 'number', 'unit': 'seconds', 'help': 'Check risk every N seconds', 'min': 30, 'max': 600, 'default': 60},
+        ]
+    },
+    'monitor-circuit-breakers': {
+        'display_name': 'Circuit Breaker Monitor',
+        'description': 'Monitors market circuit breakers and trading halts',
+        'schedule_type': 'interval',
+        'category': 'risk',
+        'category_flag': 'enable_risk_monitoring',
+        'fields': [
+            {'name': 'circuit_breaker_interval_seconds', 'label': 'Interval', 'type': 'number', 'unit': 'seconds', 'help': 'Monitor every N seconds', 'min': 10, 'max': 300, 'default': 30},
+        ]
+    },
+
+    # =========================================================================
+    # REPORTING & ANALYTICS TASKS
+    # =========================================================================
+    'generate-daily-pnl-report': {
+        'display_name': 'Daily P&L Report',
+        'description': 'Generates end-of-day profit/loss report',
+        'schedule_type': 'crontab',
+        'category': 'reports',
+        'category_flag': 'enable_reporting_tasks',
+        'fields': [
+            {'name': 'daily_pnl_report_hour', 'label': 'Hour', 'type': 'number', 'help': 'Hour to generate report (0-23)', 'min': 0, 'max': 23, 'default': 16},
+            {'name': 'daily_pnl_report_minute', 'label': 'Minute', 'type': 'number', 'help': 'Minute (0-59)', 'min': 0, 'max': 59, 'default': 0},
+        ]
+    },
+    'sync-benchmark-data': {
+        'display_name': 'Sync Benchmark Data',
+        'description': 'Syncs benchmark indices for performance comparison',
+        'schedule_type': 'crontab',
+        'category': 'reports',
+        'category_flag': 'enable_reporting_tasks',
+        'fields': []  # No configurable fields in SystemSettings
+    },
+    'daily-data-aggregation': {
+        'display_name': 'Daily Data Aggregation',
+        'description': 'Aggregates daily trading data for analytics',
+        'schedule_type': 'crontab',
+        'category': 'reports',
+        'category_flag': 'enable_reporting_tasks',
+        'fields': []  # No configurable fields in SystemSettings
+    },
+    'update-equity-curves': {
+        'display_name': 'Update Equity Curves',
+        'description': 'Updates equity curves for portfolio tracking',
+        'schedule_type': 'crontab',
+        'category': 'reports',
+        'category_flag': 'enable_reporting_tasks',
+        'fields': []  # No configurable fields in SystemSettings
+    },
+}
+
+
+@login_required
+@user_passes_test(is_admin_user)
+def get_task_config(request):
+    """
+    Get configuration fields and current values for a specific task.
+
+    Query params:
+        task_key: The task key to get configuration for
+
+    Returns JSON with fields definition and current values from SystemSettings.
+    """
+    from apps.core.models import SystemSettings
+
+    task_key = request.GET.get('task_key', '')
+
+    if not task_key:
+        return JsonResponse({'success': False, 'error': 'task_key required'}, status=400)
+
+    config_info = TASK_CONFIG_FIELDS.get(task_key)
+
+    if not config_info:
+        return JsonResponse({
+            'success': True,
+            'task_key': task_key,
+            'display_name': task_key,
+            'description': '',
+            'schedule_type': 'unknown',
+            'category': '',
+            'category_flag': '',
+            'fields': [],
+            'values': {},
+            'message': 'No configurable options for this task'
+        })
+
+    # Get current values from SystemSettings
+    try:
+        settings = SystemSettings.get_settings()
+        values = {}
+        for field in config_info['fields']:
+            field_name = field['name']
+            field_type = field.get('type', 'number')
+
+            if hasattr(settings, field_name):
+                val = getattr(settings, field_name)
+                # Handle JSON fields (like days of week)
+                if field_type == 'days' and isinstance(val, str):
+                    import json
+                    try:
+                        val = json.loads(val)
+                    except:
+                        val = field.get('default', [0, 1, 2, 3, 4])
+                values[field_name] = val
+            else:
+                values[field_name] = field.get('default', 0 if field_type == 'number' else [])
+
+        # Get category enable flag value
+        category_flag = config_info.get('category_flag', '')
+        if category_flag and hasattr(settings, category_flag):
+            values[category_flag] = getattr(settings, category_flag)
+
+    except Exception as e:
+        logger.error(f"Error getting SystemSettings: {e}")
+        values = {}
+        for f in config_info['fields']:
+            default = f.get('default', 0 if f.get('type') == 'number' else [])
+            values[f['name']] = default
+
+    return JsonResponse({
+        'success': True,
+        'task_key': task_key,
+        'display_name': config_info.get('display_name', task_key),
+        'description': config_info.get('description', ''),
+        'schedule_type': config_info.get('schedule_type', 'crontab'),
+        'category': config_info.get('category', ''),
+        'category_flag': config_info.get('category_flag', ''),
+        'fields': config_info['fields'],
+        'values': values,
+    })
+
+
+@login_required
+@user_passes_test(is_admin_user)
+@require_POST
+def save_task_config(request):
+    """
+    Save configuration for a specific task and restart Celery Beat.
+
+    POST params:
+        task_key: The task key
+        <field_name>: Field values to update
+
+    Updates SystemSettings and restarts Celery Beat to apply changes.
+    """
+    from apps.core.models import SystemSettings
+    from django.contrib import messages
+
+    task_key = request.POST.get('task_key', '')
+
+    if not task_key:
+        return JsonResponse({'success': False, 'error': 'task_key required'}, status=400)
+
+    config_info = TASK_CONFIG_FIELDS.get(task_key)
+
+    if not config_info:
+        return JsonResponse({'success': False, 'error': 'Task has no configurable options'}, status=400)
+
+    try:
+        import json
+        settings = SystemSettings.get_settings()
+        updated_fields = []
+
+        for field in config_info['fields']:
+            field_name = field['name']
+            field_type = field.get('type', 'number')
+
+            if field_type == 'days':
+                # Handle days of week as a list from checkboxes
+                days_key = f"{field_name}[]"
+                if days_key in request.POST or field_name in request.POST:
+                    # Get list of selected days
+                    days_list = request.POST.getlist(days_key) or request.POST.getlist(field_name)
+                    try:
+                        new_value = [int(d) for d in days_list if d.isdigit()]
+                        new_value = sorted(set(new_value))  # Remove duplicates and sort
+
+                        # Store as JSON string if the field expects it
+                        if hasattr(settings, field_name):
+                            old_value = getattr(settings, field_name)
+                            # Convert old value to list for comparison
+                            if isinstance(old_value, str):
+                                try:
+                                    old_value = json.loads(old_value)
+                                except:
+                                    old_value = []
+
+                            if old_value != new_value:
+                                # Store as JSON string
+                                setattr(settings, field_name, json.dumps(new_value))
+                                updated_fields.append(field_name)
+                                logger.info(f"Task config updated: {field_name} = {new_value} (was {old_value})")
+                    except Exception as e:
+                        logger.warning(f"Invalid days value for {field_name}: {e}")
+
+            elif field_name in request.POST:
+                try:
+                    new_value = int(request.POST[field_name])
+
+                    # Validate min/max
+                    if 'min' in field and new_value < field['min']:
+                        new_value = field['min']
+                    if 'max' in field and new_value > field['max']:
+                        new_value = field['max']
+
+                    if hasattr(settings, field_name):
+                        old_value = getattr(settings, field_name, None)
+                        if old_value != new_value:
+                            setattr(settings, field_name, new_value)
+                            updated_fields.append(field_name)
+                            logger.info(f"Task config updated: {field_name} = {new_value} (was {old_value})")
+                except (ValueError, TypeError) as e:
+                    logger.warning(f"Invalid value for {field_name}: {request.POST[field_name]}")
+
+        # Handle category enable flag
+        category_flag = config_info.get('category_flag', '')
+        if category_flag and category_flag in request.POST:
+            try:
+                new_value = request.POST[category_flag].lower() in ('true', '1', 'on', 'yes')
+                if hasattr(settings, category_flag):
+                    old_value = getattr(settings, category_flag, False)
+                    if old_value != new_value:
+                        setattr(settings, category_flag, new_value)
+                        updated_fields.append(category_flag)
+                        logger.info(f"Category flag updated: {category_flag} = {new_value}")
+            except Exception as e:
+                logger.warning(f"Invalid category flag value: {e}")
+
+        if updated_fields:
+            settings.save()
+            logger.info(f"SystemSettings saved by {request.user.username} for task {task_key}: {updated_fields}")
+
+            # Restart Celery Beat to pick up the changes
+            celery_result = ensure_celery_running()
+
+            messages.success(request, f"Configuration for '{config_info.get('display_name', task_key)}' saved and Celery restarted.")
+
+            return JsonResponse({
+                'success': True,
+                'task_key': task_key,
+                'updated_fields': updated_fields,
+                'message': 'Configuration saved and Celery restarted',
+                'celery': {
+                    'success': celery_result.get('success', False),
+                    'worker_status': celery_result.get('worker_status', 'unknown'),
+                    'beat_status': celery_result.get('beat_status', 'unknown'),
+                    'beat_restarted': celery_result.get('beat_restarted', False),
+                }
+            })
+        else:
+            return JsonResponse({
+                'success': True,
+                'task_key': task_key,
+                'updated_fields': [],
+                'message': 'No changes detected',
+                'celery': {}
+            })
+
+    except Exception as e:
+        logger.error(f"Error saving task config for {task_key}: {e}", exc_info=True)
         return JsonResponse({'success': False, 'error': str(e)}, status=500)
 
 
