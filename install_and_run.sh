@@ -83,11 +83,33 @@ fi
 # Check for Python 3
 if ! command -v python3 &> /dev/null; then
     echo "❌ Python 3 is required but not found."
-    echo "   Install with: brew install python3"
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        echo "   Install with: brew install python3"
+    else
+        echo "   Install with: sudo apt-get install python3 python3-pip python3-venv"
+    fi
     exit 1
 else
     PYTHON_VERSION=$(python3 --version 2>&1 | cut -d' ' -f2)
     echo "✓ Python $PYTHON_VERSION is installed"
+fi
+
+# Check for python3-venv on Linux (required for creating virtual environments)
+if [[ "$OSTYPE" != "darwin"* ]]; then
+    if ! python3 -c "import venv" &> /dev/null; then
+        echo "python3-venv not found. Installing..."
+        if command -v apt-get &> /dev/null; then
+            sudo apt-get update && sudo apt-get install -y python3-venv python3-pip
+            echo "✓ python3-venv installed"
+        elif command -v yum &> /dev/null; then
+            sudo yum install -y python3-venv python3-pip
+            echo "✓ python3-venv installed"
+        else
+            echo "❌ Could not install python3-venv automatically."
+            echo "   Please install it manually: sudo apt-get install python3-venv python3-pip"
+            exit 1
+        fi
+    fi
 fi
 
 # Check for Redis
@@ -219,7 +241,24 @@ python3 -m pip install --upgrade pip setuptools wheel
 echo ""
 echo "Step 4/10: Clearing pip cache..."
 echo "--------------------------------------------"
-pip cache purge 2>/dev/null || true
+python3 -m pip cache purge 2>/dev/null || true
+
+# ============================================================================
+# STEP 4.5: Remove unused legacy packages that cause dependency conflicts
+# ============================================================================
+echo ""
+echo "Step 4.5/10: Removing unused legacy packages..."
+echo "--------------------------------------------"
+# These packages are not used by the project but may have been installed previously
+# and cause dependency conflicts with newer versions of common packages
+LEGACY_PACKAGES="mindsdb tensorflow tensorflow-cpu streamlit langchain langchain-core langchain-community snowflake-connector-python anthropic"
+for pkg in $LEGACY_PACKAGES; do
+    if python3 -m pip show "$pkg" > /dev/null 2>&1; then
+        echo "  Removing unused package: $pkg"
+        python3 -m pip uninstall -y "$pkg" > /dev/null 2>&1 || true
+    fi
+done
+echo "✓ Legacy packages cleaned up"
 
 # ============================================================================
 # STEP 5: Install Python requirements
@@ -227,7 +266,7 @@ pip cache purge 2>/dev/null || true
 echo ""
 echo "Step 5/10: Installing Python requirements..."
 echo "--------------------------------------------"
-pip install --no-cache-dir -r requirements.txt
+python3 -m pip install --no-cache-dir -r requirements.txt
 
 # ============================================================================
 # STEP 6: Install kotak-neo-api
@@ -235,7 +274,7 @@ pip install --no-cache-dir -r requirements.txt
 echo ""
 echo "Step 6/10: Installing kotak-neo-api..."
 echo "--------------------------------------------"
-pip install -e ./kotak-neo-api
+python3 -m pip install -e ./kotak-neo-api
 
 # ============================================================================
 # STEP 7: Create necessary directories
@@ -630,47 +669,80 @@ APPLESCRIPT
     sleep 1
 
 else
-    # Linux - Use gnome-terminal or xterm
+    # Linux - Use gnome-terminal, konsole, xterm, or run in background
+
+    # Ensure logs directory exists for background mode
+    mkdir -p "$SCRIPT_DIR/logs"
 
     if command -v gnome-terminal &> /dev/null; then
         echo "Opening gnome-terminal windows for each service..."
 
         # Django Server
-        gnome-terminal --title="mCube - Django Server" -- bash -c "cd '$SCRIPT_DIR' && ./venv/bin/python manage.py runserver 0.0.0.0:8000; exec bash"
+        gnome-terminal --title="mCube - Django Server" -- bash -c "cd '$SCRIPT_DIR' && source venv/bin/activate && python manage.py runserver 0.0.0.0:8000; exec bash"
         sleep 1
 
         # Telegram Bot
-        gnome-terminal --title="mCube - Telegram Bot" -- bash -c "cd '$SCRIPT_DIR' && ./venv/bin/python manage.py run_telegram_bot; exec bash"
+        gnome-terminal --title="mCube - Telegram Bot" -- bash -c "cd '$SCRIPT_DIR' && source venv/bin/activate && python manage.py run_telegram_bot; exec bash"
         sleep 1
 
-        # Celery Worker (use python -m celery for correct venv)
-        gnome-terminal --title="mCube - Celery Worker" -- bash -c "cd '$SCRIPT_DIR' && ./venv/bin/python -m celery -A mcube_ai worker -l info -Q data,strategies,monitoring,risk,reports,celery --concurrency=2; exec bash"
+        # Celery Worker
+        gnome-terminal --title="mCube - Celery Worker" -- bash -c "cd '$SCRIPT_DIR' && source venv/bin/activate && celery -A mcube_ai worker -l info -Q data,strategies,monitoring,risk,reports,celery --concurrency=2; exec bash"
         sleep 1
 
-        # Celery Beat (use python -m celery for correct venv)
-        gnome-terminal --title="mCube - Celery Beat" -- bash -c "cd '$SCRIPT_DIR' && ./venv/bin/python -m celery -A mcube_ai beat -l info; exec bash"
+        # Celery Beat
+        gnome-terminal --title="mCube - Celery Beat" -- bash -c "cd '$SCRIPT_DIR' && source venv/bin/activate && celery -A mcube_ai beat -l info; exec bash"
+
+        echo "✓ All services started in gnome-terminal windows"
+
+    elif command -v konsole &> /dev/null; then
+        echo "Opening konsole windows for each service..."
+
+        konsole --new-tab -e bash -c "cd '$SCRIPT_DIR' && source venv/bin/activate && python manage.py runserver 0.0.0.0:8000" &
+        sleep 1
+        konsole --new-tab -e bash -c "cd '$SCRIPT_DIR' && source venv/bin/activate && python manage.py run_telegram_bot" &
+        sleep 1
+        konsole --new-tab -e bash -c "cd '$SCRIPT_DIR' && source venv/bin/activate && celery -A mcube_ai worker -l info -Q data,strategies,monitoring,risk,reports,celery --concurrency=2" &
+        sleep 1
+        konsole --new-tab -e bash -c "cd '$SCRIPT_DIR' && source venv/bin/activate && celery -A mcube_ai beat -l info" &
+
+        echo "✓ All services started in konsole windows"
 
     elif command -v xterm &> /dev/null; then
         echo "Opening xterm windows for each service..."
 
-        xterm -title "mCube - Django Server" -e "cd '$SCRIPT_DIR' && ./venv/bin/python manage.py runserver 0.0.0.0:8000" &
+        xterm -title "mCube - Django Server" -e bash -c "cd '$SCRIPT_DIR' && source venv/bin/activate && python manage.py runserver 0.0.0.0:8000" &
         sleep 1
-        xterm -title "mCube - Telegram Bot" -e "cd '$SCRIPT_DIR' && ./venv/bin/python manage.py run_telegram_bot" &
+        xterm -title "mCube - Telegram Bot" -e bash -c "cd '$SCRIPT_DIR' && source venv/bin/activate && python manage.py run_telegram_bot" &
         sleep 1
-        xterm -title "mCube - Celery Worker" -e "cd '$SCRIPT_DIR' && ./venv/bin/python -m celery -A mcube_ai worker -l info -Q data,strategies,monitoring,risk,reports,celery --concurrency=2" &
+        xterm -title "mCube - Celery Worker" -e bash -c "cd '$SCRIPT_DIR' && source venv/bin/activate && celery -A mcube_ai worker -l info -Q data,strategies,monitoring,risk,reports,celery --concurrency=2" &
         sleep 1
-        xterm -title "mCube - Celery Beat" -e "cd '$SCRIPT_DIR' && ./venv/bin/python -m celery -A mcube_ai beat -l info" &
+        xterm -title "mCube - Celery Beat" -e bash -c "cd '$SCRIPT_DIR' && source venv/bin/activate && celery -A mcube_ai beat -l info" &
+
+        echo "✓ All services started in xterm windows"
 
     else
-        echo "No supported terminal emulator found (gnome-terminal or xterm)"
-        echo "Starting services in background instead..."
+        echo "No GUI terminal found. Starting services in background (headless mode)..."
+        echo "Logs will be written to: $SCRIPT_DIR/logs/"
 
+        cd "$SCRIPT_DIR"
         nohup ./venv/bin/python manage.py runserver 0.0.0.0:8000 > logs/django_server.log 2>&1 &
-        nohup ./venv/bin/python manage.py run_telegram_bot > logs/telegram_bot.log 2>&1 &
-        nohup ./venv/bin/python -m celery -A mcube_ai worker -l info -Q data,strategies,monitoring,risk,reports,celery --concurrency=2 > logs/celery_worker.log 2>&1 &
-        nohup ./venv/bin/python -m celery -A mcube_ai beat -l info > logs/celery_beat.log 2>&1 &
+        echo "  ✓ Django server started (PID: $!) - log: logs/django_server.log"
 
-        echo "Services started in background. Check logs/ directory for output."
+        nohup ./venv/bin/python manage.py run_telegram_bot > logs/telegram_bot.log 2>&1 &
+        echo "  ✓ Telegram bot started (PID: $!) - log: logs/telegram_bot.log"
+
+        nohup ./venv/bin/python -m celery -A mcube_ai worker -l info -Q data,strategies,monitoring,risk,reports,celery --concurrency=2 > logs/celery_worker.log 2>&1 &
+        echo "  ✓ Celery worker started (PID: $!) - log: logs/celery_worker.log"
+
+        nohup ./venv/bin/python -m celery -A mcube_ai beat -l info > logs/celery_beat.log 2>&1 &
+        echo "  ✓ Celery beat started (PID: $!) - log: logs/celery_beat.log"
+
+        echo ""
+        echo "To view logs in real-time:"
+        echo "  tail -f logs/django_server.log"
+        echo "  tail -f logs/telegram_bot.log"
+        echo "  tail -f logs/celery_worker.log"
+        echo "  tail -f logs/celery_beat.log"
     fi
 fi
 
