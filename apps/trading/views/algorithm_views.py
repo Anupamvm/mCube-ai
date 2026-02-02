@@ -71,7 +71,7 @@ def trigger_futures_algorithm(request):
         - Breeze API required for margin and futures price data
     """
     import json
-    from apps.trading.futures_analyzer import comprehensive_futures_analysis
+    from apps.trading.futures_analyzer import enhanced_futures_analysis
     from apps.data.models import ContractData
     from django.db.models import Q
     from datetime import datetime, timedelta
@@ -127,7 +127,7 @@ def trigger_futures_algorithm(request):
             try:
                 logger.info(f"Analyzing {contract.symbol} (expiry: {contract.expiry})")
 
-                analysis_result = comprehensive_futures_analysis(
+                analysis_result = enhanced_futures_analysis(
                     stock_symbol=contract.symbol,
                     expiry_date=contract.expiry,
                     contract=contract
@@ -182,7 +182,16 @@ def trigger_futures_algorithm(request):
                     'scores': analysis_result.get('scores', {}),
                     'sr_data': metrics.get('sr_details', None),  # Support/Resistance data
                     'breach_risks': analysis_result.get('breach_risks', None),  # Breach risk calculations
-                    'error': analysis_result.get('error', None) if not success else None
+                    'error': analysis_result.get('error', None) if not success else None,
+                    # Enhanced Analysis (12-component scoring) for UI display
+                    'enhanced_analysis': {
+                        'composite_score': composite_score,
+                        'recommendation': analysis_result.get('recommendation', 'N/A'),
+                        'hard_reject': analysis_result.get('hard_reject', False),
+                        'reject_reason': analysis_result.get('reject_reason'),
+                        'scores': analysis_result.get('scores', {}),
+                        'details': analysis_result.get('details', {}),
+                    }
                 })
 
                 execution_summary.append({
@@ -258,14 +267,15 @@ def trigger_futures_algorithm(request):
 
         logger.info(f"Analysis complete: {len(analyzed_results)} contracts analyzed, {len(passed_results)} passed")
 
-        # Save trade suggestions for top 3 PASS results with real Breeze margin
+        # Save trade suggestions for ALL PASS results with real Breeze margin
         suggestion_ids = []
         if passed_results:
             from apps.trading.models import TradeSuggestion
             from django.utils import timezone
-            from apps.trading.position_sizer import PositionSizer
             from apps.brokers.integrations.breeze import get_breeze_client, get_india_vix
             from apps.data.models import ContractData
+            from apps.trading.services.margin_service import get_available_margin
+            from apps.trading.services.position_service import calculate_position_sizing
             import json
             from datetime import date, datetime, timedelta
             from decimal import Decimal
@@ -293,25 +303,10 @@ def trigger_futures_algorithm(request):
             except Exception as vix_err:
                 logger.warning(f"Could not fetch VIX for suggestions: {vix_err}")
 
-            # Fetch available F&O margin from Breeze API (same logic as verify_future_trade)
-            available_margin = 5000000  # Default 50 lakh
-            if breeze:
-                try:
-                    margin_response = breeze.get_margin(exchange_code="NFO")
-                    if margin_response and margin_response.get('Status') == 200:
-                        margin_data = margin_response.get('Success', {})
-                        cash_limit = float(margin_data.get('cash_limit', 0))
-                        block_by_trade = float(margin_data.get('block_by_trade', 0))
-                        available_margin = cash_limit - block_by_trade
-                        logger.info(f"Available F&O margin from Breeze: ₹{available_margin:,.0f}")
-                    else:
-                        logger.warning("Could not fetch F&O margin, using default: ₹50,00,000")
-                except Exception as e:
-                    logger.warning(f"Error fetching F&O margin: {e}, using default")
-            else:
-                logger.warning("Breeze client not available, using default margin: ₹50,00,000")
+            # Fetch available F&O margin using shared service
+            available_margin = get_available_margin(breeze)
 
-            # Save ALL PASS results with real position sizing (not just top 3)
+            # Save ALL PASS results with real position sizing
             # This allows the collapsible UI to work for all passed contracts
             for result in passed_results:
                 try:
@@ -338,113 +333,45 @@ def trigger_futures_algorithm(request):
                     # Format expiry for Breeze API
                     expiry_breeze = expiry_dt.strftime('%d-%b-%Y').upper()
 
-                    # Calculate position sizing using same logic as verify_future_trade
-                    # Step 1: Get margin per lot from Breeze API
-                    margin_per_lot = 0
-                    if breeze:
-                        try:
-                            # Estimate quantity for margin call (1 lot)
-                            quantity = lot_size
-                            action = 'buy' if direction == 'LONG' else 'sell'
+                    # Calculate position sizing using shared service
+                    position_sizing = calculate_position_sizing(
+                        breeze=breeze,
+                        symbol=symbol,
+                        expiry=expiry_breeze,
+                        lot_size=lot_size,
+                        futures_price=futures_price,
+                        direction=direction,
+                        available_margin=available_margin
+                    )
 
-                            margin_resp = breeze.get_margin(
-                                exchange_code='NFO',
-                                product_type='futures',
-                                stock_code=symbol,
-                                quantity=str(quantity),
-                                price='0',  # Market price
-                                action=action,
-                                expiry_date=expiry_breeze,
-                                right='others',
-                                strike_price='0'
-                            )
+                    # Extract values from position sizing result
+                    position = position_sizing['position']
+                    margin_data = position_sizing['margin_data']
+                    risk_metrics = position_sizing['risk_metrics']
 
-                            if margin_resp and margin_resp.get('Status') == 200:
-                                margin_data_resp = margin_resp.get('Success', {})
-                                margin_per_lot = float(margin_data_resp.get('total', 0))
-                                logger.info(f"Breeze margin for {symbol}: ₹{margin_per_lot:,.0f} per lot")
-                            else:
-                                # Fallback: Estimate 17% of contract value
-                                margin_per_lot = float(futures_price * lot_size) * 0.17
-                                logger.warning(f"Margin API failed for {symbol}, estimating: ₹{margin_per_lot:,.0f}")
-                        except Exception as e:
-                            logger.warning(f"Error fetching margin for {symbol}: {e}")
-                            margin_per_lot = float(futures_price * lot_size) * 0.17
-                    else:
-                        # Fallback: Estimate 17% of contract value
-                        margin_per_lot = float(futures_price * lot_size) * 0.17
+                    recommended_lots = position['recommended_lots']
+                    margin_required = Decimal(str(position['total_margin_required']))
+                    margin_per_lot_decimal = Decimal(str(margin_data['margin_per_lot']))
+                    margin_available_decimal = Decimal(str(margin_data['available_margin']))
+                    margin_utilization = position['margin_utilization_percent']
 
-                    # Step 2: Apply 50% rule for initial position
-                    # Initial position should use 50% of available margin
-                    # Remaining 50% is reserved for averaging (2 more positions)
-                    safe_margin = available_margin * 0.5
+                    stop_loss_price = Decimal(str(position_sizing['stop_loss']))
+                    target_price = Decimal(str(position_sizing['target']))
 
-                    # Step 3: Calculate recommended lots to use 50% margin
-                    recommended_lots = max(1, int(safe_margin / margin_per_lot)) if margin_per_lot > 0 else 1
+                    max_loss_value = Decimal(str(risk_metrics['max_loss']))
+                    max_profit_value = Decimal(str(risk_metrics['max_profit']))
+                    risk_reward_ratio_value = Decimal(str(risk_metrics['risk_reward_ratio']))
 
-                    # Step 4: Calculate max lots possible with full available margin (for slider limit)
-                    max_lots_possible = int(available_margin / margin_per_lot) if margin_per_lot > 0 else 1
-
-                    # Step 5: Calculate position metrics
-                    margin_required = Decimal(str(margin_per_lot * recommended_lots))
-                    margin_per_lot_decimal = Decimal(str(margin_per_lot))
-                    margin_available_decimal = Decimal(str(available_margin))
-
-                    # Calculate margin utilization
-                    margin_utilization = 0
-                    if available_margin > 0:
-                        margin_utilization = (margin_required / margin_available_decimal) * 100
-
-                    logger.info(f"Position sizing for {symbol}: {recommended_lots} lots (50% of ₹{available_margin:,.0f} = ₹{margin_required:,.0f}, {margin_utilization:.1f}% used)")
-
-                    # Build position sizing data for saving
+                    # Build position sizing data for saving (already structured by service)
                     position_sizing_data = {
-                        'position': {
-                            'recommended_lots': recommended_lots,
-                            'total_margin_required': float(margin_required),
-                            'entry_value': float(futures_price * lot_size * recommended_lots),
-                            'margin_utilization_percent': float(margin_utilization)
-                        },
-                        'margin_data': {
-                            'available_margin': available_margin,
-                            'used_margin': float(margin_required),
-                            'total_margin': available_margin,
-                            'margin_per_lot': margin_per_lot,
-                            'max_lots_possible': max_lots_possible,
-                            'futures_price': float(futures_price),
-                            'source': 'Breeze API' if breeze else 'Estimated'
-                        },
-                        'stop_loss': 0,  # Will be calculated below
-                        'target': 0,  # Will be calculated below
+                        'position': position,
+                        'margin_data': margin_data,
+                        'stop_loss': position_sizing['stop_loss'],
+                        'target': position_sizing['target'],
                         'direction': direction
                     }
 
-                    # Calculate stop loss and target
-                    if direction == 'LONG':
-                        stop_loss_price = futures_price * Decimal('0.98')
-                        target_price = futures_price * Decimal('1.04')
-                    elif direction == 'SHORT':
-                        stop_loss_price = futures_price * Decimal('1.02')
-                        target_price = futures_price * Decimal('0.96')
-                    else:
-                        stop_loss_price = futures_price * Decimal('0.98')
-                        target_price = futures_price * Decimal('1.02')
-
-                    # Update position_sizing_data with stop loss and target
-                    position_sizing_data['stop_loss'] = float(stop_loss_price)
-                    position_sizing_data['target'] = float(target_price)
-
-                    # Calculate max profit and loss
-                    max_loss_value = abs(futures_price - stop_loss_price) * lot_size * recommended_lots
-                    max_profit_value = abs(target_price - futures_price) * lot_size * recommended_lots
-
-                    # Calculate risk/reward ratio
-                    risk_reward_ratio_value = Decimal('0')
-                    if max_loss_value > 0:
-                        risk_reward_ratio_value = max_profit_value / max_loss_value
-
                     # Convert data to JSON-safe format
-                    # Use .get() for all keys to avoid KeyError
                     algorithm_reasoning_safe = json.loads(
                         json.dumps({
                             'metrics': result.get('metrics', {}),
@@ -863,6 +790,62 @@ def trigger_nifty_strangle(request):
                 'message': f'Skipped: {str(e)[:100]}'
             })
             technical_analysis = None
+
+        # STEP 4b: Run Enhanced Multi-Factor Analysis (11-factor scoring)
+        enhanced_analysis = None
+        try:
+            from apps.strategies.analyzers.enhanced_strangle_analyzer import EnhancedStrangleAnalyzer
+
+            logger.info("Running Enhanced Strangle Analysis (11-factor scoring)")
+
+            # Gather market data for enhanced analysis
+            market_data = {
+                'vix': float(vix),
+                'spot_price': float(nifty_price),
+                'days_to_expiry': days_to_expiry,
+                'validation_report': validation_report,
+                'technical_analysis': technical_analysis,
+            }
+
+            analyzer = EnhancedStrangleAnalyzer(market_data)
+            enhanced_result = analyzer.analyze()
+
+            enhanced_analysis = {
+                'composite_score': enhanced_result.get('composite_score', 0),
+                'recommendation': enhanced_result.get('recommendation', 'N/A'),
+                'entry_bias': enhanced_result.get('entry_bias', 'SYMMETRIC'),
+                'hard_reject': enhanced_result.get('hard_reject', False),
+                'reject_reason': enhanced_result.get('reject_reason'),
+                'scores': enhanced_result.get('scores', {}),
+                'delta_adjustments': enhanced_result.get('delta_adjustments', {}),
+                'details': enhanced_result.get('details', {}),
+            }
+
+            ea_score = enhanced_analysis['composite_score']
+            ea_status = 'fail' if enhanced_analysis['hard_reject'] else ('pass' if ea_score >= 65 else 'warning' if ea_score >= 50 else 'fail')
+
+            execution_log.append({
+                'step': 6.5,
+                'action': 'Enhanced Multi-Factor Analysis',
+                'status': ea_status,
+                'message': f"Score: {ea_score}/100 | {enhanced_analysis['recommendation']} | Bias: {enhanced_analysis['entry_bias']}",
+                'details': {
+                    'component_scores': enhanced_analysis['scores'],
+                    'hard_reject': enhanced_analysis['hard_reject'],
+                }
+            })
+
+            if enhanced_analysis['hard_reject']:
+                logger.warning(f"Enhanced analysis HARD REJECT: {enhanced_analysis['reject_reason']}")
+
+        except Exception as e:
+            logger.warning(f"Enhanced strangle analysis failed: {e}, continuing without it")
+            execution_log.append({
+                'step': 6.5,
+                'action': 'Enhanced Multi-Factor Analysis',
+                'status': 'warning',
+                'message': f'Skipped: {str(e)[:100]}'
+            })
 
         # STEP 5: Calculate strikes using smart delta algorithm with technical analysis
         try:
@@ -1447,6 +1430,7 @@ def trigger_nifty_strangle(request):
             'execution_log': execution_log,
             'delta_details': strike_result,
             'validation_report': validation_report,  # Include validation report in response
+            'enhanced_analysis': enhanced_analysis,  # Include enhanced 11-factor analysis
             'breach_risks': breach_risks['breach_risks'] if breach_risks else None,  # Include S/R breach risks
             'sr_levels': {
                 'pivot_points': sr_data['pivot_points'] if 'sr_data' in locals() and sr_data else None,
@@ -1474,6 +1458,7 @@ def trigger_nifty_strangle(request):
             json.dumps({
                 'delta_details': strike_result,
                 'validation_report': validation_report,
+                'enhanced_analysis': enhanced_analysis,  # Include 11-factor analysis
                 'breach_risks': breach_risks['breach_risks'] if breach_risks else None,
                 'sr_levels': {
                     'pivot_points': sr_data['pivot_points'] if 'sr_data' in locals() and sr_data else None,

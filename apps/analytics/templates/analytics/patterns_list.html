@@ -852,6 +852,46 @@
     </div>
 </div>
 
+<!-- P&L Summary -->
+<div class="section-card" id="pnlSummarySection">
+    <div class="section-header">
+        <h3 class="section-title" data-bs-toggle="tooltip" title="Overall profit and loss summary. See how much you've earned vs lost and your net trading profit.">P&L Summary <span class="info-tooltip">?</span></h3>
+        <div class="section-fy-filter">
+            <label>Year:</label>
+            <select id="pnlSummaryFyFilter" onchange="loadSectionData('pnlSummary')">
+                <option value="ALL">All Years</option>
+                {% for fy in available_fys %}
+                <option value="{{ fy.value }}" {% if fy_filter == fy.value %}selected{% endif %}>{{ fy.label }}</option>
+                {% endfor %}
+            </select>
+        </div>
+    </div>
+    <div class="section-body">
+        <div class="section-loading"><span>Loading...</span></div>
+        <div class="section-content" id="pnlSummaryContent">
+            {% with summary=patterns_data.symbols.summary %}
+            <div class="stats-grid" style="grid-template-columns: repeat(3, 1fr);">
+                <div class="stat-card positive">
+                    <div class="stat-value" id="summary-total-earned">₹{{ summary.total_earned|floatformat:0|default:0 }}</div>
+                    <div class="stat-label">Total Earned</div>
+                    <div class="stat-subtitle"><span id="summary-winning-trades">{{ summary.winning_trades|default:0 }}</span> winning trades</div>
+                </div>
+                <div class="stat-card negative">
+                    <div class="stat-value" id="summary-total-lost">₹{{ summary.total_lost|floatformat:0|default:0 }}</div>
+                    <div class="stat-label">Total Lost</div>
+                    <div class="stat-subtitle"><span id="summary-losing-trades">{{ summary.losing_trades|default:0 }}</span> losing trades</div>
+                </div>
+                <div class="stat-card {% if summary.net_profit >= 0 %}positive{% else %}negative{% endif %}" id="summary-net-card">
+                    <div class="stat-value" id="summary-net-profit">₹{{ summary.net_profit|floatformat:0|default:0 }}</div>
+                    <div class="stat-label">Net Profit</div>
+                    <div class="stat-subtitle"><span id="summary-total-trades">{{ summary.total_trades|default:0 }}</span> total trades</div>
+                </div>
+            </div>
+            {% endwith %}
+        </div>
+    </div>
+</div>
+
 <!-- Symbol Performance -->
 <div class="section-card" id="symbolsSection">
     <div class="section-header">
@@ -871,7 +911,7 @@
         <div class="section-content" id="symbolsContent">
             <div class="symbol-tabs">
                 <button class="symbol-tab active" onclick="showSymbolTab('best')">Top Performers</button>
-                <button class="symbol-tab" onclick="showSymbolTab('worst')">Needs Improvement</button>
+                <button class="symbol-tab" onclick="showSymbolTab('worst')">Top Losers</button>
                 <button class="symbol-tab" onclick="showSymbolTab('most')">Most Traded</button>
             </div>
 
@@ -1257,6 +1297,7 @@ const API_ENDPOINTS = {
     brokers: '/analytics/api/patterns/brokers/',
     tax: '/analytics/api/patterns/tax/',
     symbols: '/analytics/api/patterns/symbols/',
+    pnlSummary: '/analytics/api/patterns/symbols/',
     distribution: '/analytics/api/patterns/distribution/',
     consistency: '/analytics/api/patterns/consistency/',
     timeline: '/analytics/api/patterns/timeline/'
@@ -1270,6 +1311,7 @@ const sectionFYs = {
     brokers: '{{ fy_filter|default:"ALL" }}',
     tax: '{{ fy_filter|default:"ALL" }}',
     symbols: '{{ fy_filter|default:"ALL" }}',
+    pnlSummary: '{{ fy_filter|default:"ALL" }}',
     distribution: '{{ fy_filter|default:"ALL" }}',
     consistency: '{{ fy_filter|default:"ALL" }}',
     timeline: '{{ fy_filter|default:"ALL" }}'
@@ -1437,6 +1479,9 @@ function updateSectionUI(section, data) {
             break;
         case 'symbols':
             updateSymbolsUI(data);
+            break;
+        case 'pnlSummary':
+            updatePnlSummaryUI(data);
             break;
         case 'distribution':
             updateDistributionUI(data);
@@ -1625,6 +1670,25 @@ function updateSymbolsUI(data) {
     renderTable(data.best, 'symbols-best-tbody');
     renderTable(data.worst, 'symbols-worst-tbody');
     renderTable(data.most_traded, 'symbols-most-tbody');
+}
+
+// Update P&L Summary UI
+function updatePnlSummaryUI(data) {
+    if (!data.summary) return;
+
+    const summary = data.summary;
+    document.getElementById('summary-total-earned').textContent = formatCurrency(summary.total_earned || 0);
+    document.getElementById('summary-total-lost').textContent = formatCurrency(summary.total_lost || 0);
+    document.getElementById('summary-net-profit').textContent = formatCurrency(summary.net_profit || 0);
+    document.getElementById('summary-winning-trades').textContent = summary.winning_trades || 0;
+    document.getElementById('summary-losing-trades').textContent = summary.losing_trades || 0;
+    document.getElementById('summary-total-trades').textContent = summary.total_trades || 0;
+
+    // Update card color based on net profit
+    const netCard = document.getElementById('summary-net-card');
+    if (netCard) {
+        netCard.className = 'stat-card ' + (summary.net_profit >= 0 ? 'positive' : 'negative');
+    }
 }
 
 // Update Distribution UI

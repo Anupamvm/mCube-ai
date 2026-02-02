@@ -136,6 +136,38 @@ def premarket_data_fetch():
             logger.error(f"❌ Event check failed: {e}")
             results['events'] = {'success': False, 'error': str(e)}
 
+        # 6. Analyze market news sentiment
+        logger.info("6. Analyzing market news sentiment...")
+        try:
+            from apps.strategies.services.strangle_news_analyzer import get_market_sentiment_for_strangle
+
+            news_sentiment = get_market_sentiment_for_strangle(hours_back=4)
+            results['news_sentiment'] = {
+                'success': True,
+                'articles_analyzed': news_sentiment.get('articles_analyzed', 0),
+                'average_sentiment': news_sentiment.get('average_sentiment', 0.0),
+                'market_outlook': news_sentiment.get('market_outlook', 'UNKNOWN'),
+                'blocking_articles': len(news_sentiment.get('blocking_articles', [])),
+                'confidence': news_sentiment.get('confidence', 0.0),
+            }
+
+            outlook = news_sentiment.get('market_outlook', 'UNKNOWN')
+            avg_score = news_sentiment.get('average_sentiment', 0.0)
+            articles = news_sentiment.get('articles_analyzed', 0)
+            blocking = len(news_sentiment.get('blocking_articles', []))
+
+            if blocking > 0:
+                logger.warning(f"⚠️ News: {outlook} ({avg_score:+.2f}), {articles} articles, {blocking} BLOCKING")
+            else:
+                logger.info(f"✅ News: {outlook} ({avg_score:+.2f}), {articles} articles analyzed")
+
+            # Store full sentiment for later use
+            results['news_sentiment']['full_analysis'] = news_sentiment
+
+        except Exception as e:
+            logger.error(f"❌ News sentiment analysis failed: {e}")
+            results['news_sentiment'] = {'success': False, 'error': str(e)}
+
         # Summary
         successful_fetches = sum(1 for r in results.values() if r.get('success'))
         total_fetches = len(results)
@@ -155,6 +187,20 @@ def premarket_data_fetch():
             message += f"US Dow: {results['us_markets']['dow_change']:+.2f}%\n"
         if results.get('vix', {}).get('success'):
             message += f"India VIX: {results['vix']['value']:.2f}\n"
+
+        if results.get('news_sentiment', {}).get('success'):
+            ns = results['news_sentiment']
+            outlook = ns.get('market_outlook', 'UNKNOWN')
+            avg_score = ns.get('average_sentiment', 0.0)
+            articles = ns.get('articles_analyzed', 0)
+            blocking = ns.get('blocking_articles', 0)
+
+            outlook_emoji = {'BULLISH': '+', 'BEARISH': '-', 'VOLATILE': '~', 'NEUTRAL': '='}.get(outlook, '?')
+            message += f"News: {outlook_emoji}{outlook} ({avg_score:+.2f})\n"
+            message += f"  Articles: {articles}"
+            if blocking > 0:
+                message += f" (WARNING: {blocking} blocking!)"
+            message += "\n"
 
         send_telegram_notification(message, notification_type='INFO')
 

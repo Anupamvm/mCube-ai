@@ -64,6 +64,20 @@ class NiftyMarketData(TimeStampedModel):
     declines = models.IntegerField(null=True, blank=True, help_text="Number of declining stocks")
     unchanged = models.IntegerField(null=True, blank=True, help_text="Number of unchanged stocks")
 
+    # News Sentiment Analysis
+    news_sentiment_score = models.DecimalField(
+        max_digits=4, decimal_places=2, null=True, blank=True,
+        help_text="News sentiment score (-1.0 to 1.0)"
+    )
+    news_market_outlook = models.CharField(
+        max_length=20, null=True, blank=True,
+        help_text="BULLISH, BEARISH, NEUTRAL, or VOLATILE"
+    )
+    news_analysis = models.JSONField(
+        default=dict, blank=True,
+        help_text="Full news analysis from NewsImpactAnalyzer"
+    )
+
     # Data Freshness
     is_stale = models.BooleanField(default=False, help_text="True if data is > 5 minutes old")
     data_source = models.CharField(max_length=50, default='breeze', help_text="Source: breeze, trendlyne, manual")

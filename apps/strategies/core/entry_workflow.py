@@ -69,6 +69,19 @@ class EntryWorkflow:
         if not filters_passed:
             return EntryResult(False, "Entry filters failed", details=filter_details)
 
+        # Step 3b: Enhanced Analysis (if strategy provides it)
+        enhanced_result = self._step_3b_enhanced_analysis()
+        if enhanced_result and not enhanced_result.get('passed', True):
+            return EntryResult(
+                False,
+                enhanced_result.get('message', 'Enhanced analysis rejected entry'),
+                details=enhanced_result
+            )
+
+        # Store enhanced analysis for use in reasoning
+        if enhanced_result:
+            filter_details['enhanced_analysis'] = enhanced_result
+
         # Step 4: Expiry Selection
         expiry_result = self._step_4_expiry_selection()
         if not expiry_result['success']:
@@ -170,6 +183,56 @@ class EntryWorkflow:
 
         filters = self.strategy.get_entry_filters()
         return run_filters(filters, self.logger)
+
+    def _step_3b_enhanced_analysis(self) -> Dict:
+        """
+        Step 3b: Enhanced Analysis (optional).
+
+        Strategies can override run_enhanced_analysis() to provide
+        comprehensive multi-factor scoring before entry.
+
+        Returns:
+            Dict with 'passed' bool, 'message', 'score', 'details'
+            or None if strategy doesn't implement enhanced analysis
+        """
+        if not hasattr(self.strategy, 'run_enhanced_analysis'):
+            return None
+
+        self.logger.info("")
+        self.logger.info("STEP 3b: Enhanced Multi-Factor Analysis")
+        self.logger.info("-" * 80)
+
+        try:
+            result = self.strategy.run_enhanced_analysis()
+
+            if result:
+                score = result.get('composite_score', 0)
+                recommendation = result.get('recommendation', 'UNKNOWN')
+
+                if result.get('hard_reject'):
+                    self.logger.warning(f"[HARD REJECT] {result.get('reject_reason')}")
+                    return {'passed': False, 'message': result.get('reject_reason'), **result}
+
+                # Check minimum score threshold
+                min_score = getattr(self.strategy, 'MIN_ENHANCED_SCORE', 50)
+                if score < min_score:
+                    self.logger.warning(f"[BLOCKED] Score {score}/100 below threshold ({min_score})")
+                    return {
+                        'passed': False,
+                        'message': f'Enhanced analysis score too low ({score}/{min_score})',
+                        **result
+                    }
+
+                self.logger.info(f"[OK] Enhanced Score: {score}/100 - {recommendation}")
+                self.logger.info("")
+                return {'passed': True, **result}
+
+            return None
+
+        except Exception as e:
+            self.logger.error(f"[ERROR] Enhanced analysis failed: {str(e)}", exc_info=True)
+            # Don't block entry on analysis error, just log it
+            return None
 
     def _step_4_expiry_selection(self) -> Dict:
         """

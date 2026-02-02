@@ -607,7 +607,7 @@ def trigger_futures_algorithm(request):
     4. Only passes contracts that pass both technical AND historical verification
     """
     import json
-    from apps.trading.futures_analyzer import comprehensive_futures_analysis, prepare_data_for_analysis
+    from apps.trading.futures_analyzer import enhanced_futures_analysis, prepare_data_for_analysis
     from apps.data.models import ContractData
     from apps.brokers.utils.security_master import update_security_master
     from django.db.models import Q
@@ -700,8 +700,8 @@ def trigger_futures_algorithm(request):
                         logger.error(f"  → Historical data error for {contract.symbol}: {hist_error}")
                         historical_passed = True  # Don't block on errors
 
-                # ===== STEP 2: TECHNICAL ANALYSIS =====
-                analysis_result = comprehensive_futures_analysis(
+                # ===== STEP 2: ENHANCED FUTURES ANALYSIS (12-component scoring) =====
+                analysis_result = enhanced_futures_analysis(
                     stock_symbol=contract.symbol,
                     expiry_date=contract.expiry,
                     contract=contract
@@ -2066,11 +2066,11 @@ def trigger_nifty_strangle(request):
 def verify_future_trade(request):
     """
     Verify a specific futures contract for trading
-    Runs comprehensive 9-step analysis using Breeze API
+    Runs enhanced 12-component futures analysis using Breeze API
     """
     try:
         from decimal import Decimal
-        from apps.trading.futures_analyzer import comprehensive_futures_analysis
+        from apps.trading.futures_analyzer import enhanced_futures_analysis
         from apps.data.models import ContractData
 
         contract_value = request.POST.get('contract', '').strip()
@@ -2100,8 +2100,8 @@ def verify_future_trade(request):
             expiry=expiry_date
         ).first()
 
-        # Run comprehensive analysis with Breeze API
-        analysis_result = comprehensive_futures_analysis(
+        # Run enhanced futures analysis (12-component scoring with hard reject filters)
+        analysis_result = enhanced_futures_analysis(
             stock_symbol=stock_symbol,
             expiry_date=expiry_date,
             contract=contract

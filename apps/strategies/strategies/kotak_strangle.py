@@ -15,12 +15,17 @@ Key Rules:
 - Minimum 50% profit to exit EOD
 - Delta monitoring (alert if |net_delta| > 300)
 - Exit Thursday 3:15 PM (if >=50% profit) or Friday EOD (mandatory)
+
+Enhanced Analysis (Phase 3):
+- 10-factor scoring system (250 pts, scaled to 100)
+- Hard reject filters (VIX range, blocking news, gap limits, FII outflow, events)
+- Asymmetric strike adjustment based on sentiment
 """
 
 import logging
 from decimal import Decimal
-from datetime import time
-from typing import Dict, Tuple
+from datetime import time, date
+from typing import Dict, Tuple, Optional
 
 from apps.strategies.core.base_strategy import BaseStrategy
 from apps.strategies.core.result_types import StrategyConfig, EntryResult
@@ -39,7 +44,15 @@ class KotakStrangleStrategy(BaseStrategy):
     - VIX-adjusted strike selection
     - Delta monitoring (alert if |net_delta| > 300)
     - Exit Thursday 3:15 PM (if >=50% profit) or Friday EOD
+
+    Enhanced Analysis (Phase 3):
+    - 10-factor multi-factor scoring
+    - Hard reject filters
+    - Asymmetric delta adjustments
     """
+
+    # Minimum enhanced analysis score to proceed with entry
+    MIN_ENHANCED_SCORE = 50
 
     def get_config(self) -> StrategyConfig:
         """Return strategy configuration."""
@@ -57,16 +70,184 @@ class KotakStrangleStrategy(BaseStrategy):
             }
         )
 
+    def run_enhanced_analysis(self) -> Optional[Dict]:
+        """
+        Run enhanced multi-factor analysis for strangle entry.
+
+        Implements 10-factor scoring with hard reject filters.
+
+        Returns:
+            Dict with:
+                - hard_reject: bool
+                - reject_reason: str or None
+                - composite_score: int (0-100)
+                - recommendation: str
+                - entry_bias: str ('SYMMETRIC', 'WIDEN_CALL', 'WIDEN_PUT')
+                - delta_adjustments: dict
+                - scores: dict of component scores
+                - details: dict of analysis details
+        """
+        from apps.strategies.analyzers.enhanced_strangle_analyzer import EnhancedStrangleAnalyzer
+
+        logger.info("Running Enhanced Strangle Analysis...")
+
+        # Get market data
+        spot_price = get_nifty_price()
+        vix = get_vix()
+        days_to_expiry = self._get_days_to_expiry()
+
+        # Initialize analyzer
+        analyzer = EnhancedStrangleAnalyzer(spot_price, vix, days_to_expiry)
+
+        # Gather comprehensive market data
+        market_data = self._gather_enhanced_market_data(spot_price, vix)
+        analyzer.set_market_data(market_data)
+
+        # Run analysis
+        result = analyzer.analyze()
+
+        # Store enhanced analysis for use in entry parameters and reasoning
+        self._enhanced_analysis_result = result
+
+        return result
+
+    def _get_days_to_expiry(self) -> int:
+        """Get days to the nearest weekly expiry."""
+        from apps.core.services.expiry_selector import get_next_weekly_expiry
+
+        try:
+            next_expiry = get_next_weekly_expiry('NIFTY')
+            return (next_expiry - date.today()).days
+        except Exception:
+            return 3  # Default
+
+    def _gather_enhanced_market_data(self, spot_price: Decimal, vix: Decimal) -> Dict:
+        """
+        Gather comprehensive market data for enhanced analysis.
+
+        Returns:
+            Dict with all data needed for EnhancedStrangleAnalyzer
+        """
+        market_data = {}
+
+        # 1. News sentiment
+        try:
+            from apps.strategies.services.strangle_news_analyzer import get_market_sentiment_for_strangle
+            market_data['news_sentiment'] = get_market_sentiment_for_strangle(hours_back=4)
+        except Exception as e:
+            logger.warning(f"Failed to get news sentiment: {e}")
+            market_data['news_sentiment'] = None
+
+        # 2. FII/DII data
+        try:
+            from apps.data.services.fii_dii_service import get_fii_dii_data
+            market_data['fii_dii_data'] = get_fii_dii_data()
+        except Exception as e:
+            logger.warning(f"Failed to get FII/DII data: {e}")
+            market_data['fii_dii_data'] = None
+
+        # 3. Option chain data (PCR, OI patterns)
+        try:
+            from apps.brokers.services.option_chain_service import get_nifty_option_chain_summary
+            market_data['option_chain'] = get_nifty_option_chain_summary()
+        except Exception as e:
+            logger.warning(f"Failed to get option chain data: {e}")
+            market_data['option_chain'] = None
+
+        # 4. Market breadth
+        try:
+            from apps.data.services.market_breadth_service import get_market_breadth
+            market_data['market_breadth'] = get_market_breadth()
+        except Exception as e:
+            logger.warning(f"Failed to get market breadth: {e}")
+            market_data['market_breadth'] = None
+
+        # 5. Economic events
+        try:
+            from apps.strategies.filters.event_calendar import get_upcoming_events
+            market_data['economic_events'] = get_upcoming_events(days_ahead=7)
+        except Exception as e:
+            logger.warning(f"Failed to get economic events: {e}")
+            market_data['economic_events'] = None
+
+        # 6. Global markets
+        try:
+            from apps.strategies.models import SGXNiftyData, MarketOpeningState
+            from datetime import date as date_module
+
+            sgx_data = SGXNiftyData.objects.filter(trading_date=date_module.today()).first()
+            market_state = MarketOpeningState.objects.filter(trading_date=date_module.today()).first()
+
+            market_data['global_markets'] = {
+                'sgx_change': float(sgx_data.sgx_change_percent) if sgx_data and sgx_data.sgx_change_percent else None,
+                'nasdaq_change': float(sgx_data.us_nasdaq_change) if sgx_data and hasattr(sgx_data, 'us_nasdaq_change') and sgx_data.us_nasdaq_change else None,
+                'dow_change': float(sgx_data.us_dow_change) if sgx_data and hasattr(sgx_data, 'us_dow_change') and sgx_data.us_dow_change else None,
+                'gift_change': float(market_state.gap_percent) if market_state and market_state.gap_percent else None,
+            }
+        except Exception as e:
+            logger.warning(f"Failed to get global markets data: {e}")
+            market_data['global_markets'] = None
+
+        # 7. Price data
+        try:
+            from apps.strategies.models import MarketOpeningState
+            from datetime import date as date_module
+
+            market_state = MarketOpeningState.objects.filter(trading_date=date_module.today()).first()
+
+            if market_state:
+                market_data['prev_close'] = market_state.prev_close
+                market_data['open_price'] = market_state.nifty_open
+                market_data['price_915'] = market_state.nifty_9_15_price
+                market_data['price_930'] = market_state.nifty_9_30_price
+            else:
+                market_data['prev_close'] = spot_price
+                market_data['open_price'] = spot_price
+                market_data['price_915'] = spot_price
+                market_data['price_930'] = spot_price
+        except Exception as e:
+            logger.warning(f"Failed to get price data: {e}")
+
+        # 8. Technical indicators (DMAs)
+        try:
+            from apps.data.services.technical_service import get_nifty_dmas
+            dmas = get_nifty_dmas()
+            market_data['dma_5'] = dmas.get('dma_5')
+            market_data['dma_20'] = dmas.get('dma_20')
+            market_data['dma_50'] = dmas.get('dma_50')
+            market_data['dma_200'] = dmas.get('dma_200')
+        except Exception as e:
+            logger.warning(f"Failed to get DMA data: {e}")
+
+        # 9. Recent Nifty Momentum (1D and 3D change) - IMPORTANT
+        try:
+            from apps.strategies.filters.global_markets import get_nifty_change
+            market_data['nifty_1d_change'] = get_nifty_change(days=1)
+            market_data['nifty_3d_change'] = get_nifty_change(days=3)
+            logger.info(f"Nifty momentum: 1D={market_data['nifty_1d_change']:+.2f}%, 3D={market_data['nifty_3d_change']:+.2f}%")
+        except Exception as e:
+            logger.warning(f"Failed to get Nifty momentum data: {e}")
+            market_data['nifty_1d_change'] = None
+            market_data['nifty_3d_change'] = None
+
+        return market_data
+
     def calculate_entry_parameters(self, market_data: Dict) -> Dict:
         """Calculate strikes and premiums for strangle."""
         spot_price = market_data.get('spot_price') or get_nifty_price()
         vix = market_data.get('vix') or get_vix()
 
-        # Calculate strikes using shared utility
+        # Get enhanced analysis delta adjustments if available
+        delta_adjustments = None
+        if hasattr(self, '_enhanced_analysis_result') and self._enhanced_analysis_result:
+            delta_adjustments = self._enhanced_analysis_result.get('delta_adjustments')
+
+        # Calculate strikes using shared utility with enhanced adjustments
         strikes = calculate_strangle_strikes(
             spot_price=spot_price,
             days_to_expiry=market_data['days_to_expiry'],
-            vix=vix
+            vix=vix,
+            delta_adjustments=delta_adjustments  # Pass enhanced adjustments
         )
 
         # Get option premiums
@@ -76,7 +257,7 @@ class KotakStrangleStrategy(BaseStrategy):
             market_data['expiry']
         )
 
-        return {
+        result = {
             'spot_price': spot_price,
             'vix': vix,
             'strikes': strikes,
@@ -86,6 +267,21 @@ class KotakStrangleStrategy(BaseStrategy):
             'expiry': market_data['expiry'],
             'days_to_expiry': market_data['days_to_expiry']
         }
+
+        # Include enhanced analysis in result if available
+        if hasattr(self, '_enhanced_analysis_result') and self._enhanced_analysis_result:
+            result['enhanced_analysis'] = {
+                'composite_score': self._enhanced_analysis_result.get('composite_score'),
+                'recommendation': self._enhanced_analysis_result.get('recommendation'),
+                'entry_bias': self._enhanced_analysis_result.get('entry_bias'),
+                'delta_adjustments': delta_adjustments,
+                'scores': self._enhanced_analysis_result.get('scores', {}),
+                'hard_reject': self._enhanced_analysis_result.get('hard_reject', False),
+                'reject_reason': self._enhanced_analysis_result.get('reject_reason'),
+                'details': self._enhanced_analysis_result.get('details', {}),
+            }
+
+        return result
 
     def build_position_details(self, entry_params: Dict, sizing: Dict) -> Dict:
         """Build position details for trade suggestion."""
@@ -171,9 +367,22 @@ class KotakStrangleStrategy(BaseStrategy):
             resistance_level=entry_params['spot_price'] * Decimal('1.01')
         )
 
-        return {
-            'title': 'Kotak Strangle Strategy',
-            'summary': 'Short Strangle position to collect premium',
+        # Build enhanced analysis section if available
+        enhanced_analysis_section = None
+        if hasattr(self, '_enhanced_analysis_result') and self._enhanced_analysis_result:
+            ea = self._enhanced_analysis_result
+            enhanced_analysis_section = {
+                'composite_score': ea.get('composite_score'),
+                'recommendation': ea.get('recommendation'),
+                'entry_bias': ea.get('entry_bias'),
+                'component_scores': ea.get('scores', {}),
+                'delta_adjustments': ea.get('delta_adjustments'),
+                'score_breakdown': self._format_score_breakdown(ea.get('scores', {})),
+            }
+
+        reasoning = {
+            'title': 'Kotak Strangle Strategy (Enhanced Analysis)',
+            'summary': 'Short Strangle position with multi-factor scoring',
             'calculations': {
                 'spot_price': str(entry_params['spot_price']),
                 'vix': str(entry_params['vix']),
@@ -226,6 +435,26 @@ class KotakStrangleStrategy(BaseStrategy):
                 }
             }
         }
+
+        # Add enhanced analysis if available
+        if enhanced_analysis_section:
+            reasoning['enhanced_analysis'] = enhanced_analysis_section
+
+        return reasoning
+
+    def _format_score_breakdown(self, scores: Dict) -> str:
+        """Format score breakdown as readable string."""
+        from apps.strategies.analyzers.enhanced_strangle_analyzer import EnhancedStrangleAnalyzer
+
+        weights = EnhancedStrangleAnalyzer.WEIGHTS
+        lines = []
+
+        for component, score in scores.items():
+            max_score = weights.get(component, 0)
+            pct = int((score / max_score) * 100) if max_score > 0 else 0
+            lines.append(f"{component}: {score}/{max_score} ({pct}%)")
+
+        return " | ".join(lines)
 
 
 # ============================================================================

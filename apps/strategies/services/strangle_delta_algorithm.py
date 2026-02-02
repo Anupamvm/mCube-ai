@@ -59,6 +59,11 @@ class StrangleDeltaAlgorithm:
         self.volatility_adjustment = Decimal('1.0')
         self.oi_adjustment = Decimal('1.0')
         self.pcr_adjustment = Decimal('1.0')
+        self.news_adjustment = Decimal('1.0')
+
+        # News-based asymmetric bias
+        self.news_call_bias = Decimal('1.0')
+        self.news_put_bias = Decimal('1.0')
 
         # Final adjusted delta
         self.adjusted_delta = self.base_delta
@@ -277,6 +282,89 @@ class StrangleDeltaAlgorithm:
 
         return adj
 
+    def calculate_news_adjustment(self, news_sentiment: Optional[Dict] = None) -> Decimal:
+        """
+        Calculate news-based delta adjustment
+
+        Logic:
+            - BULLISH news: Widen call more (call_bias=1.15, put_bias=0.95)
+            - BEARISH news: Widen put more (call_bias=0.95, put_bias=1.15)
+            - VOLATILE news: Widen both (both=1.1)
+            - NEUTRAL news: No adjustment (both=1.0)
+
+        Args:
+            news_sentiment: Dict with news analysis from StrangleNewsAnalyzer:
+                - market_outlook: str (BULLISH/BEARISH/NEUTRAL/VOLATILE)
+                - average_sentiment: float (-1.0 to 1.0)
+                - confidence: float (0.0 to 1.0)
+
+        Returns:
+            Decimal: News adjustment multiplier
+        """
+        if news_sentiment is None:
+            self.calculation_log.append({
+                'factor': 'News Sentiment',
+                'value': 'N/A',
+                'multiplier': 1.0,
+                'reason': 'No news sentiment data - no adjustment'
+            })
+            return Decimal('1.0')
+
+        outlook = news_sentiment.get('market_outlook', 'NEUTRAL')
+        avg_score = news_sentiment.get('average_sentiment', 0.0)
+        confidence = news_sentiment.get('confidence', 0.5)
+
+        # Base adjustments by outlook
+        if outlook == 'BULLISH':
+            adj = Decimal('1.1')
+            self.news_call_bias = Decimal('1.15')
+            self.news_put_bias = Decimal('0.95')
+            reason = f"Bullish news ({avg_score:+.2f}) - widening call side"
+        elif outlook == 'BEARISH':
+            adj = Decimal('1.1')
+            self.news_call_bias = Decimal('0.95')
+            self.news_put_bias = Decimal('1.15')
+            reason = f"Bearish news ({avg_score:+.2f}) - widening put side"
+        elif outlook == 'VOLATILE':
+            adj = Decimal('1.15')
+            self.news_call_bias = Decimal('1.1')
+            self.news_put_bias = Decimal('1.1')
+            reason = f"Volatile/mixed news - widening both sides"
+        else:  # NEUTRAL
+            adj = Decimal('1.0')
+            self.news_call_bias = Decimal('1.0')
+            self.news_put_bias = Decimal('1.0')
+            reason = "Neutral news sentiment - no adjustment"
+
+        # Scale by confidence (lower confidence = smaller adjustment)
+        if confidence < 0.5:
+            scale = Decimal(str(0.5 + confidence))  # 0.5 to 1.0
+            adj = Decimal('1.0') + (adj - Decimal('1.0')) * scale
+            self.news_call_bias = Decimal('1.0') + (self.news_call_bias - Decimal('1.0')) * scale
+            self.news_put_bias = Decimal('1.0') + (self.news_put_bias - Decimal('1.0')) * scale
+            reason += f" (scaled by {float(scale):.0%} confidence)"
+
+        self.news_adjustment = adj
+        self.calculation_log.append({
+            'factor': 'News Sentiment',
+            'value': {
+                'outlook': outlook,
+                'avg_score': avg_score,
+                'confidence': confidence
+            },
+            'multiplier': float(adj),
+            'call_bias': float(self.news_call_bias),
+            'put_bias': float(self.news_put_bias),
+            'reason': reason
+        })
+
+        logger.info(
+            f"News adjustment: {float(adj):.2f}x (call_bias={float(self.news_call_bias):.2f}, "
+            f"put_bias={float(self.news_put_bias):.2f})"
+        )
+
+        return adj
+
     def calculate_adjusted_delta(self, market_conditions: Optional[Dict] = None) -> Decimal:
         """
         Calculate final adjusted delta based on all factors
@@ -304,6 +392,8 @@ class StrangleDeltaAlgorithm:
                 market_conditions.get('put_oi_buildup', 'NEUTRAL')
             )
             self.calculate_pcr_adjustment(market_conditions.get('pcr'))
+            # Step 3: Apply news sentiment adjustment
+            self.calculate_news_adjustment(market_conditions.get('news_sentiment'))
 
         # Calculate final adjusted delta
         self.adjusted_delta = (
@@ -312,7 +402,8 @@ class StrangleDeltaAlgorithm:
             self.trend_adjustment *
             self.volatility_adjustment *
             self.oi_adjustment *
-            self.pcr_adjustment
+            self.pcr_adjustment *
+            self.news_adjustment
         )
 
         self.calculation_log.append({
@@ -374,6 +465,19 @@ class StrangleDeltaAlgorithm:
                 })
                 logger.info(f"Applying technical analysis: Call {float(call_multiplier):.2f}x, Put {float(put_multiplier):.2f}x")
 
+        # Apply news-based asymmetric bias
+        call_multiplier = call_multiplier * self.news_call_bias
+        put_multiplier = put_multiplier * self.news_put_bias
+
+        if self.news_call_bias != Decimal('1.0') or self.news_put_bias != Decimal('1.0'):
+            self.calculation_log.append({
+                'factor': 'NEWS BIAS',
+                'value': f"Call: {float(self.news_call_bias):.2f}x, Put: {float(self.news_put_bias):.2f}x",
+                'multiplier': 1.0,
+                'reason': 'News-based asymmetric strike adjustment'
+            })
+            logger.info(f"Applying news bias: Call {float(self.news_call_bias):.2f}x, Put {float(self.news_put_bias):.2f}x")
+
         # Calculate asymmetric strike distances
         call_distance = strike_distance * call_multiplier
         put_distance = strike_distance * put_multiplier
@@ -403,6 +507,9 @@ class StrangleDeltaAlgorithm:
                 'volatility_multiplier': float(self.volatility_adjustment),
                 'oi_multiplier': float(self.oi_adjustment),
                 'pcr_multiplier': float(self.pcr_adjustment),
+                'news_multiplier': float(self.news_adjustment),
+                'news_call_bias': float(self.news_call_bias),
+                'news_put_bias': float(self.news_put_bias),
             },
             'is_asymmetric': call_multiplier != put_multiplier,
             'call_multiplier': float(call_multiplier),

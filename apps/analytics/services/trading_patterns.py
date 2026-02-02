@@ -243,17 +243,36 @@ class TradingPatternsAnalyzer:
 
         return results
 
-    def get_symbol_performance(self, limit: int = 10) -> Dict[str, List[Dict]]:
+    def get_symbol_performance(self, limit: int = 10) -> Dict[str, Any]:
         """
-        Get best and worst performing symbols.
+        Get best and worst performing symbols with summary stats.
 
         Args:
             limit: Number of symbols to return for each category
 
         Returns:
-            Dict with 'best' and 'worst' lists
+            Dict with 'best', 'worst', 'most_traded' lists and 'summary' stats
         """
         qs = self.get_base_queryset()
+
+        # Get summary stats first
+        summary_stats = qs.aggregate(
+            total_earned=Sum('net_pnl', filter=Q(net_pnl__gt=0)),
+            total_lost=Sum('net_pnl', filter=Q(net_pnl__lt=0)),
+            net_profit=Sum('net_pnl'),
+            total_trades=Count('id'),
+            winning_trades=Count('id', filter=Q(net_pnl__gt=0)),
+            losing_trades=Count('id', filter=Q(net_pnl__lt=0)),
+        )
+
+        summary = {
+            'total_earned': float(summary_stats['total_earned'] or 0),
+            'total_lost': abs(float(summary_stats['total_lost'] or 0)),  # Make positive for display
+            'net_profit': float(summary_stats['net_profit'] or 0),
+            'total_trades': summary_stats['total_trades'] or 0,
+            'winning_trades': summary_stats['winning_trades'] or 0,
+            'losing_trades': summary_stats['losing_trades'] or 0,
+        }
 
         symbol_stats = qs.values('symbol').annotate(
             trades=Count('id'),
@@ -269,7 +288,7 @@ class TradingPatternsAnalyzer:
             item['avg_pnl'] = float(item['avg_pnl'] or 0)
             item['win_rate'] = round((item['winners'] / item['trades'] * 100), 1) if item['trades'] > 0 else 0
 
-        # Worst performers
+        # Worst performers (Top Losers - sorted by total P&L ascending)
         worst = list(symbol_stats.order_by('total_pnl')[:limit])
         for item in worst:
             item['total_pnl'] = float(item['total_pnl'] or 0)
@@ -284,6 +303,7 @@ class TradingPatternsAnalyzer:
             item['win_rate'] = round((item['winners'] / item['trades'] * 100), 1) if item['trades'] > 0 else 0
 
         return {
+            'summary': summary,
             'best': best,
             'worst': worst,
             'most_traded': most_traded,

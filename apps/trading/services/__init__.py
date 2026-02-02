@@ -39,3 +39,50 @@ try:
     __all__.append('IronCondorPositionSizer')
 except ImportError:
     pass
+
+# New shared services for futures algorithm unification
+try:
+    from .margin_service import (
+        get_available_margin,
+        get_margin_per_lot,
+        get_margin_summary
+    )
+    __all__.extend(['get_available_margin', 'get_margin_per_lot', 'get_margin_summary'])
+except ImportError:
+    pass
+
+try:
+    from .position_service import (
+        calculate_position_sizing,
+        calculate_stop_loss_target,
+        calculate_risk_metrics,
+        build_position_sizing_response
+    )
+    __all__.extend([
+        'calculate_position_sizing',
+        'calculate_stop_loss_target',
+        'calculate_risk_metrics',
+        'build_position_sizing_response'
+    ])
+except ImportError:
+    pass
+
+try:
+    from .analysis_service import (
+        run_basic_analysis,
+        run_historical_verification,
+        run_news_verification,
+        run_analyst_verification,
+        run_full_analysis,
+        format_analysis_for_response
+    )
+    __all__.extend([
+        'run_basic_analysis',
+        'run_historical_verification',
+        'run_news_verification',
+        'run_analyst_verification',
+        'run_full_analysis',
+        'format_analysis_for_response'
+    ])
+except ImportError:
+    pass

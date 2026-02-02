@@ -592,3 +592,478 @@
 .animate-slide-in { animation: slideIn 0.3s ease; }
 .animate-fade-in { animation: fadeIn 0.3s ease; }
 .animate-scale-in { animation: scaleIn 0.3s ease; }
+
+/* ========== Horizontal Accordion System ========== */
+
+/* Accordion Container */
+.accordion-container {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin: 20px 0;
+}
+
+/* Individual Accordion Item */
+.accordion-item {
+    background: white;
+    border: 1px solid #e5e7eb;
+    border-radius: 10px;
+    overflow: hidden;
+    transition: all 0.2s ease;
+}
+
+.accordion-item:hover {
+    border-color: #d1d5db;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+}
+
+.accordion-item.expanded {
+    border-color: #3b82f6;
+    box-shadow: 0 4px 12px rgba(59, 130, 246, 0.15);
+}
+
+/* Accordion Header - The clickable bar */
+.accordion-header {
+    display: flex;
+    align-items: center;
+    padding: 14px 18px;
+    cursor: pointer;
+    background: linear-gradient(to right, #fafbfc, #f8fafc);
+    transition: background 0.2s ease;
+    user-select: none;
+    gap: 12px;
+}
+
+.accordion-header:hover {
+    background: linear-gradient(to right, #f3f4f6, #f1f5f9);
+}
+
+.accordion-item.expanded .accordion-header {
+    background: linear-gradient(to right, #eff6ff, #f0f9ff);
+    border-bottom: 1px solid #e5e7eb;
+}
+
+/* Step Number Circle */
+.accordion-step {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: #e5e7eb;
+    color: #6b7280;
+    font-size: 0.8rem;
+    font-weight: 700;
+    flex-shrink: 0;
+    transition: all 0.2s ease;
+}
+
+.accordion-item.expanded .accordion-step {
+    background: #3b82f6;
+    color: white;
+}
+
+.accordion-item.status-pass .accordion-step {
+    background: #10b981;
+    color: white;
+}
+
+.accordion-item.status-fail .accordion-step {
+    background: #ef4444;
+    color: white;
+}
+
+.accordion-item.status-warning .accordion-step {
+    background: #f59e0b;
+    color: white;
+}
+
+/* Icon in header */
+.accordion-icon {
+    font-size: 1.2rem;
+    flex-shrink: 0;
+}
+
+/* Title and Summary Container */
+.accordion-title-group {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.accordion-title {
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: #1f2937;
+    margin: 0;
+    line-height: 1.3;
+}
+
+.accordion-summary {
+    font-size: 0.8rem;
+    color: #6b7280;
+    line-height: 1.3;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* Status Badge */
+.accordion-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 10px;
+    border-radius: 20px;
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    flex-shrink: 0;
+}
+
+.accordion-status.status-pass {
+    background: #d1fae5;
+    color: #059669;
+}
+
+.accordion-status.status-fail {
+    background: #fee2e2;
+    color: #dc2626;
+}
+
+.accordion-status.status-warning {
+    background: #fef3c7;
+    color: #d97706;
+}
+
+.accordion-status.status-info {
+    background: #dbeafe;
+    color: #2563eb;
+}
+
+/* Toggle Arrow */
+.accordion-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    border-radius: 6px;
+    background: #e5e7eb;
+    color: #6b7280;
+    font-size: 0.65rem;
+    transition: all 0.2s ease;
+    flex-shrink: 0;
+}
+
+.accordion-item:hover .accordion-toggle {
+    background: #d1d5db;
+}
+
+.accordion-item.expanded .accordion-toggle {
+    background: #3b82f6;
+    color: white;
+    transform: rotate(180deg);
+}
+
+/* Accordion Content */
+.accordion-content {
+    max-height: 0;
+    overflow: hidden;
+    transition: max-height 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+    background: #fafbfc;
+}
+
+.accordion-content.expanded {
+    max-height: 3000px;
+}
+
+.accordion-content-inner {
+    padding: 20px;
+    border-top: 1px solid #e5e7eb;
+}
+
+/* ========== Legacy Collapsible Support ========== */
+.collapsible-section {
+    background: white;
+    border: 1px solid #e5e7eb;
+    border-radius: 10px;
+    margin-bottom: 8px;
+    overflow: hidden;
+    transition: all 0.2s ease;
+}
+
+.collapsible-section:hover {
+    border-color: #d1d5db;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+}
+
+.collapsible-section.expanded {
+    border-color: #3b82f6;
+    box-shadow: 0 4px 12px rgba(59, 130, 246, 0.15);
+}
+
+.collapsible-header {
+    display: flex;
+    align-items: center;
+    padding: 14px 18px;
+    cursor: pointer;
+    background: linear-gradient(to right, #fafbfc, #f8fafc);
+    transition: background 0.2s ease;
+    user-select: none;
+    gap: 12px;
+}
+
+.collapsible-header:hover {
+    background: linear-gradient(to right, #f3f4f6, #f1f5f9);
+}
+
+.collapsible-section.expanded .collapsible-header {
+    background: linear-gradient(to right, #eff6ff, #f0f9ff);
+    border-bottom: 1px solid #e5e7eb;
+}
+
+.collapsible-header .header-left {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex: 1;
+    min-width: 0;
+}
+
+.collapsible-header .section-icon {
+    font-size: 1.2rem;
+    flex-shrink: 0;
+}
+
+.collapsible-header .section-title {
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: #1f2937;
+    margin: 0;
+}
+
+.collapsible-header .header-right {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-shrink: 0;
+}
+
+.collapsible-header .section-summary {
+    font-size: 0.8rem;
+    color: #6b7280;
+    max-width: 350px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.collapsible-header .toggle-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    border-radius: 6px;
+    background: #e5e7eb;
+    color: #6b7280;
+    font-size: 0.65rem;
+    transition: all 0.2s ease;
+}
+
+.collapsible-section:hover .toggle-icon {
+    background: #d1d5db;
+}
+
+.collapsible-section.expanded .toggle-icon {
+    background: #3b82f6;
+    color: white;
+    transform: rotate(180deg);
+}
+
+.collapsible-section:not(.expanded) .toggle-icon {
+    transform: rotate(0deg);
+}
+
+.collapsible-content {
+    max-height: 0;
+    overflow: hidden;
+    transition: max-height 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+    background: #fafbfc;
+}
+
+.collapsible-content.expanded {
+    max-height: 3000px;
+}
+
+.collapsible-content.collapsed {
+    max-height: 0;
+}
+
+.collapsible-content.expanded,
+.collapsible-content.collapsed {
+    padding: 0;
+}
+
+.collapsible-content > *:first-child {
+    padding: 20px;
+}
+
+/* Section status indicators */
+.collapsible-header .status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 10px;
+    border-radius: 20px;
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.status-badge.status-pass {
+    background: #d1fae5;
+    color: #059669;
+}
+
+.status-badge.status-fail {
+    background: #fee2e2;
+    color: #dc2626;
+}
+
+.status-badge.status-warning {
+    background: #fef3c7;
+    color: #d97706;
+}
+
+.status-badge.status-info {
+    background: #dbeafe;
+    color: #2563eb;
+}
+
+/* Legacy class support */
+.status-badge.pass { background: #d1fae5; color: #059669; }
+.status-badge.fail { background: #fee2e2; color: #dc2626; }
+.status-badge.warning { background: #fef3c7; color: #d97706; }
+.status-badge.info { background: #dbeafe; color: #2563eb; }
+
+/* Collapsible card variant (for contract cards) */
+.collapsible-card {
+    background: white;
+    border: 2px solid #e5e7eb;
+    border-radius: 12px;
+    margin-bottom: 20px;
+    overflow: hidden;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.collapsible-card.verdict-pass {
+    border-color: #10b981;
+}
+
+.collapsible-card.verdict-fail {
+    border-color: #e5e7eb;
+}
+
+.collapsible-card.verdict-warning {
+    border-color: #f59e0b;
+}
+
+.collapsible-card:hover {
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.collapsible-card .card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    padding: 20px;
+    cursor: pointer;
+    transition: background-color 0.2s ease;
+}
+
+.collapsible-card .card-header:hover {
+    background: #f9fafb;
+}
+
+.collapsible-card .card-header .header-main {
+    flex: 1;
+}
+
+.collapsible-card .card-header .header-score {
+    text-align: right;
+}
+
+.collapsible-card .card-content {
+    border-top: 1px solid #e5e7eb;
+}
+
+/* Quick stats row in card header */
+.quick-stats-row {
+    display: flex;
+    gap: 15px;
+    margin-top: 12px;
+    flex-wrap: wrap;
+}
+
+.quick-stat {
+    background: #f9fafb;
+    padding: 8px 12px;
+    border-radius: 6px;
+    min-width: 100px;
+}
+
+.quick-stat .stat-label {
+    font-size: 0.7rem;
+    color: #6b7280;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.quick-stat .stat-value {
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: #1f2937;
+}
+
+/* Nested collapsible sections */
+.collapsible-section .collapsible-section {
+    margin: 0;
+    border-radius: 0;
+    box-shadow: none;
+    border-bottom: 1px solid #e5e7eb;
+}
+
+.collapsible-section .collapsible-section:last-child {
+    border-bottom: none;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .collapsible-header .section-summary {
+        display: none;
+    }
+
+    .collapsible-header {
+        padding: 12px 15px;
+    }
+
+    .collapsible-content.expanded {
+        padding: 15px;
+    }
+
+    .quick-stats-row {
+        gap: 8px;
+    }
+
+    .quick-stat {
+        padding: 6px 10px;
+        min-width: 80px;
+    }
+}

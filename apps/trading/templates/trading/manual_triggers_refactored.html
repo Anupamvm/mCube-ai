@@ -5,7 +5,7 @@
 
 {% block extra_css %}
 <!-- Custom CSS for Trading Triggers -->
-<link rel="stylesheet" href="{% static 'css/trading/triggers.css' %}">
+<link rel="stylesheet" href="{% static 'css/trading/triggers.css' %}?v=2">
 <style>
     /* Override body margin since we have navbar */
     body {
@@ -478,7 +478,7 @@
 
 <!-- Component Modules -->
 <script src="{% static 'js/trading/components/position-sizing.js' %}"></script>
-<script src="{% static 'js/trading/components/ui-builders.js' %}?v=2"></script>
+<script src="{% static 'js/trading/components/ui-builders.js' %}?v=4"></script>
 
 <!-- Feature Modules (to be created) -->
 <script>
@@ -648,7 +648,7 @@ const FuturesAlgorithm = {
         const allContracts = response.all_contracts || [];
         const totalAnalyzed = response.total_analyzed || 0;
         const totalPassed = response.total_passed || 0;
-        const totalHistFail = response.total_hist_fail || 0;  // Technical passed but historical failed
+        const totalHistFail = response.total_hist_fail || 0;
         const totalFailed = response.total_failed || 0;
         const totalErrors = response.total_errors || 0;
         const histValidationEnabled = response.historical_validation_enabled || false;
@@ -696,101 +696,10 @@ const FuturesAlgorithm = {
             </div>
         `;
 
-        // Display contracts
+        // Display contracts using collapsible cards
         if (allContracts.length > 0) {
             allContracts.forEach((contract, index) => {
-                // Determine colors and icons based on verdict
-                let verdictColor, verdictBg, verdictIcon, borderColor;
-                switch(contract.verdict) {
-                    case 'PASS':
-                        verdictColor = '#10b981';
-                        verdictBg = '#d1fae5';
-                        verdictIcon = '✅';
-                        borderColor = '#10b981';
-                        break;
-                    case 'HIST_FAIL':
-                        verdictColor = '#f59e0b';
-                        verdictBg = '#fef3c7';
-                        verdictIcon = '⚠️';
-                        borderColor = '#f59e0b';
-                        break;
-                    case 'FAIL':
-                        verdictColor = '#ef4444';
-                        verdictBg = '#fee2e2';
-                        verdictIcon = '❌';
-                        borderColor = '#e5e7eb';
-                        break;
-                    default:
-                        verdictColor = '#6b7280';
-                        verdictBg = '#f3f4f6';
-                        verdictIcon = '⚪';
-                        borderColor = '#e5e7eb';
-                }
-
-                // Historical validation badge
-                const histBadge = histValidationEnabled && contract.historical_passed !== undefined
-                    ? `<span style="background: ${contract.historical_passed ? '#d1fae5' : '#fee2e2'}; color: ${contract.historical_passed ? '#10b981' : '#ef4444'}; padding: 2px 8px; border-radius: 12px; font-size: 0.75rem; margin-left: 5px;">
-                        ${contract.historical_passed ? '📈 Hist OK' : '📉 Hist Fail'}
-                       </span>`
-                    : '';
-
-                html += `
-                    <div style="background: white; border: 2px solid ${borderColor}; border-radius: 12px; padding: 20px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
-                        <!-- Header -->
-                        <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 15px;">
-                            <div>
-                                <h3 style="color: #1f2937; margin: 0 0 5px 0; font-size: 1.5rem; display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
-                                    ${contract.symbol}
-                                    <span style="background: ${verdictBg}; color: ${verdictColor}; padding: 4px 12px; border-radius: 20px; font-size: 0.875rem; font-weight: 600;">
-                                        ${verdictIcon} ${contract.verdict === 'HIST_FAIL' ? 'HIST FAIL' : contract.verdict}
-                                    </span>
-                                    ${histBadge}
-                                </h3>
-                                <div style="color: #6b7280; font-size: 0.875rem;">Expiry: ${contract.expiry}</div>
-                            </div>
-                            <div style="text-align: right;">
-                                <div style="font-size: 2rem; font-weight: 700; color: ${verdictColor};">${contract.composite_score}</div>
-                                <div style="color: #6b7280; font-size: 0.875rem;">Score</div>
-                            </div>
-                        </div>
-
-                        <!-- Quick Stats -->
-                        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 12px; margin-bottom: 15px;">
-                            <div style="background: #f9fafb; padding: 10px; border-radius: 6px;">
-                                <div style="color: #6b7280; font-size: 0.75rem;">Direction</div>
-                                <div style="font-weight: 700; color: ${contract.direction === 'LONG' ? '#10b981' : '#ef4444'};">${contract.direction}</div>
-                            </div>
-                            <div style="background: #f9fafb; padding: 10px; border-radius: 6px;">
-                                <div style="color: #6b7280; font-size: 0.75rem;">Spot Price</div>
-                                <div style="font-weight: 700;">₹${contract.spot_price ? contract.spot_price.toFixed(2) : 'N/A'}</div>
-                            </div>
-                            <div style="background: #f9fafb; padding: 10px; border-radius: 6px;">
-                                <div style="color: #6b7280; font-size: 0.75rem;">Futures Price</div>
-                                <div style="font-weight: 700;">₹${contract.futures_price ? contract.futures_price.toFixed(2) : 'N/A'}</div>
-                            </div>
-                            <div style="background: #f9fafb; padding: 10px; border-radius: 6px;">
-                                <div style="color: #6b7280; font-size: 0.75rem;">Lot Size</div>
-                                <div style="font-weight: 700;">${contract.lot_size}</div>
-                            </div>
-                        </div>
-
-                        ${contract.verdict === 'PASS' ? `
-                        <!-- Action Button for PASS contracts -->
-                        <button onclick="FuturesAlgorithm.showContractDetails(${index})"
-                                style="width: 100%; padding: 12px; background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%); color: white; border: none; border-radius: 8px; font-weight: 600; cursor: pointer; font-size: 1rem;">
-                            📊 View Details & Place Order
-                        </button>
-                        ` : contract.verdict === 'HIST_FAIL' ? `
-                        <!-- Warning for HIST_FAIL contracts -->
-                        <div style="background: #fef3c7; border: 1px solid #f59e0b; border-radius: 8px; padding: 12px; margin-top: 10px;">
-                            <strong style="color: #92400e;">⚠️ Technical analysis passed but historical verification failed.</strong>
-                            <p style="color: #78350f; margin: 5px 0 0 0; font-size: 0.875rem;">
-                                Risk checks detected potential issues in price history. Review carefully before trading.
-                            </p>
-                        </div>
-                        ` : ''}
-                    </div>
-                `;
+                html += this.buildContractCard(contract, index, histValidationEnabled);
             });
         } else {
             html += `
@@ -806,6 +715,275 @@ const FuturesAlgorithm = {
 
         // Store contracts for later reference
         this.analyzedContracts = allContracts;
+    },
+
+    // Build a collapsible contract card with sections
+    buildContractCard(contract, index, histValidationEnabled) {
+        // Determine styling based on verdict
+        const verdictStyles = {
+            'PASS': { color: '#10b981', bg: '#d1fae5', icon: '✅', border: '#10b981' },
+            'FAIL': { color: '#ef4444', bg: '#fee2e2', icon: '❌', border: '#e5e7eb' },
+            'HIST_FAIL': { color: '#f59e0b', bg: '#fef3c7', icon: '⚠️', border: '#f59e0b' },
+            'HARD REJECT': { color: '#7c3aed', bg: '#ede9fe', icon: '🚫', border: '#7c3aed' },
+            'BLOCKED': { color: '#dc2626', bg: '#fef2f2', icon: '🛑', border: '#dc2626' },
+            'ERROR': { color: '#6b7280', bg: '#f3f4f6', icon: '⚪', border: '#e5e7eb' }
+        };
+        const style = verdictStyles[contract.verdict] || verdictStyles['ERROR'];
+        const directionColor = contract.direction === 'LONG' ? '#10b981' : '#ef4444';
+
+        // Build score breakdown summary
+        const scores = contract.scores || {};
+        const scoreItems = [];
+        if (scores.oi) scoreItems.push(`OI:${scores.oi}`);
+        if (scores.technical) scoreItems.push(`Tech:${scores.technical}`);
+        if (scores.dma) scoreItems.push(`DMA:${scores.dma}`);
+        if (scores.sector) scoreItems.push(`Sector:${scores.sector}`);
+        const scoreSummary = scoreItems.length > 0 ? scoreItems.join(', ') : 'N/A';
+
+        // Historical badge
+        const histBadge = histValidationEnabled && contract.historical_passed !== undefined
+            ? `<span style="background: ${contract.historical_passed ? '#d1fae5' : '#fee2e2'}; color: ${contract.historical_passed ? '#10b981' : '#ef4444'}; padding: 2px 8px; border-radius: 12px; font-size: 0.75rem; margin-left: 5px;">
+                ${contract.historical_passed ? '📈 Hist OK' : '📉 Hist Fail'}
+               </span>`
+            : '';
+
+        // Build collapsible sections for PASS contracts
+        let sectionsHtml = '';
+        if (contract.verdict === 'PASS') {
+            // Score Breakdown Section
+            sectionsHtml += UIBuilders.buildCollapsibleSection({
+                id: `score-${index}`,
+                title: 'Score Breakdown',
+                icon: '🎯',
+                summary: `Score: ${contract.composite_score}/100 (${scoreSummary})`,
+                expanded: false,
+                content: this.buildScoreBreakdownContent(contract)
+            });
+
+            // Enhanced Analysis Section (12-Factor for Futures)
+            if (contract.enhanced_analysis) {
+                const ea = contract.enhanced_analysis;
+                sectionsHtml += UIBuilders.buildCollapsibleSection({
+                    id: `enhanced-${index}`,
+                    title: 'Enhanced Multi-Factor Analysis',
+                    icon: '🧠',
+                    summary: `Score: ${ea.composite_score || 0}/100 | ${ea.recommendation || 'N/A'}`,
+                    expanded: false,
+                    content: UIBuilders.buildEnhancedScoreCard(ea, 'FUTURES')
+                });
+            }
+
+            // Technical Indicators Section (if available)
+            if (contract.metrics && (contract.metrics.sma_20 || contract.metrics.support_1)) {
+                sectionsHtml += UIBuilders.buildCollapsibleSection({
+                    id: `tech-${index}`,
+                    title: 'Technical Indicators',
+                    icon: '📈',
+                    summary: `SMA20: ₹${contract.metrics.sma_20 ? contract.metrics.sma_20.toFixed(0) : 'N/A'}`,
+                    expanded: false,
+                    content: this.buildTechnicalContent(contract)
+                });
+            }
+
+            // Execution Log Section
+            if (contract.execution_log && contract.execution_log.length > 0) {
+                sectionsHtml += UIBuilders.buildCollapsibleSection({
+                    id: `log-${index}`,
+                    title: 'Execution Log',
+                    icon: '📋',
+                    summary: `${contract.execution_log.length} steps completed`,
+                    expanded: false,
+                    content: this.buildExecutionLogContent(contract.execution_log)
+                });
+            }
+        }
+
+        // Build action button for PASS contracts
+        let actionHtml = '';
+        if (contract.verdict === 'PASS') {
+            actionHtml = `
+                <div style="padding: 15px 20px; border-top: 1px solid #e5e7eb;">
+                    <button onclick="FuturesAlgorithm.showContractDetails(${index})"
+                            style="width: 100%; padding: 12px; background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%); color: white; border: none; border-radius: 8px; font-weight: 600; cursor: pointer; font-size: 1rem;">
+                        📊 View Full Details & Place Order
+                    </button>
+                </div>
+            `;
+        } else if (contract.verdict === 'HIST_FAIL') {
+            actionHtml = `
+                <div style="padding: 15px 20px; border-top: 1px solid #e5e7eb;">
+                    <div style="background: #fef3c7; border: 1px solid #f59e0b; border-radius: 8px; padding: 12px;">
+                        <strong style="color: #92400e;">⚠️ Technical analysis passed but historical verification failed.</strong>
+                        <p style="color: #78350f; margin: 5px 0 0 0; font-size: 0.875rem;">
+                            Risk checks detected potential issues in price history. Review carefully before trading.
+                        </p>
+                    </div>
+                </div>
+            `;
+        } else if (contract.verdict === 'HARD REJECT') {
+            // Show hard reject reason from enhanced analyzer
+            const rejectReason = contract.reject_reason || contract.reason || 'Failed hard reject filter';
+            actionHtml = `
+                <div style="padding: 15px 20px; border-top: 1px solid #e5e7eb;">
+                    <div style="background: #ede9fe; border: 1px solid #7c3aed; border-radius: 8px; padding: 12px;">
+                        <strong style="color: #5b21b6;">🚫 Hard Reject Filter Failed</strong>
+                        <p style="color: #6b21a8; margin: 5px 0 0 0; font-size: 0.875rem;">
+                            ${rejectReason}
+                        </p>
+                        <p style="color: #7c3aed; margin: 8px 0 0 0; font-size: 0.75rem; font-style: italic;">
+                            This stock failed one of the mandatory quality filters (MWPL, Volatility, Piotroski, Promoter Pledge, FII Change, News, or Analyst Upside).
+                        </p>
+                    </div>
+                </div>
+            `;
+        } else if (contract.verdict === 'BLOCKED' || (contract.verdict && contract.verdict.includes('BLOCKED'))) {
+            // Show blocked reason (news, analyst, etc.)
+            const blockReason = contract.reason || 'Trade blocked by verification checks';
+            actionHtml = `
+                <div style="padding: 15px 20px; border-top: 1px solid #e5e7eb;">
+                    <div style="background: #fef2f2; border: 1px solid #dc2626; border-radius: 8px; padding: 12px;">
+                        <strong style="color: #991b1b;">🛑 Trade Blocked</strong>
+                        <p style="color: #b91c1c; margin: 5px 0 0 0; font-size: 0.875rem;">
+                            ${blockReason}
+                        </p>
+                    </div>
+                </div>
+            `;
+        }
+
+        return `
+            <div class="collapsible-card ${contract.verdict === 'PASS' ? 'verdict-pass' : contract.verdict === 'HIST_FAIL' ? 'verdict-warning' : 'verdict-fail'}"
+                 data-card="contract-${index}" style="border: 2px solid ${style.border};">
+                <!-- Card Header (always visible) -->
+                <div class="card-header" ${contract.verdict === 'PASS' ? `onclick="UIBuilders.toggleCard('contract-${index}')"` : ''}>
+                    <div class="header-main">
+                        <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+                            <h3 style="margin: 0; font-size: 1.5rem; color: #1f2937;">${contract.symbol}</h3>
+                            <span style="background: ${style.bg}; color: ${style.color}; padding: 4px 12px; border-radius: 20px; font-size: 0.875rem; font-weight: 600;">
+                                ${style.icon} ${contract.verdict === 'HIST_FAIL' ? 'HIST FAIL' : contract.verdict}
+                            </span>
+                            <span style="color: ${directionColor}; font-weight: 600;">${contract.direction}</span>
+                            ${histBadge}
+                        </div>
+                        <div style="color: #6b7280; font-size: 0.875rem; margin-top: 5px;">Expiry: ${contract.expiry}</div>
+
+                        <!-- Quick Stats Row -->
+                        <div class="quick-stats-row">
+                            <div class="quick-stat">
+                                <div class="stat-label">Spot</div>
+                                <div class="stat-value">₹${contract.spot_price ? contract.spot_price.toFixed(2) : 'N/A'}</div>
+                            </div>
+                            <div class="quick-stat">
+                                <div class="stat-label">Futures</div>
+                                <div class="stat-value">₹${contract.futures_price ? contract.futures_price.toFixed(2) : 'N/A'}</div>
+                            </div>
+                            <div class="quick-stat">
+                                <div class="stat-label">Lot Size</div>
+                                <div class="stat-value">${contract.lot_size}</div>
+                            </div>
+                            <div class="quick-stat">
+                                <div class="stat-label">Volume</div>
+                                <div class="stat-value">${(contract.volume || 0).toLocaleString()}</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="header-score">
+                        <div style="font-size: 2rem; font-weight: 700; color: ${style.color};">${contract.composite_score}</div>
+                        <div style="color: #6b7280; font-size: 0.875rem;">Score</div>
+                        ${contract.verdict === 'PASS' ? '<div style="font-size: 0.7rem; color: #9ca3af; margin-top: 5px;">Click to expand</div>' : ''}
+                    </div>
+                </div>
+
+                <!-- Collapsible Content (for PASS, HIST_FAIL, HARD REJECT, BLOCKED) -->
+                ${contract.verdict === 'PASS' || contract.verdict === 'HIST_FAIL' || contract.verdict === 'HARD REJECT' || (contract.verdict && contract.verdict.includes('BLOCKED')) ? `
+                    <div class="card-content" style="${contract.verdict === 'HARD REJECT' || (contract.verdict && contract.verdict.includes('BLOCKED')) ? '' : 'display: none;'}">
+                        ${sectionsHtml}
+                        ${actionHtml}
+                    </div>
+                ` : ''}
+            </div>
+        `;
+    },
+
+    // Build score breakdown content for collapsible section
+    buildScoreBreakdownContent(contract) {
+        const scores = contract.scores || {};
+        const metrics = contract.metrics || {};
+
+        return `
+            <div style="display: grid; gap: 10px;">
+                ${this.buildScoreBar('Basis Analysis', scores.basis || 0, 10, 'Contango/Backwardation')}
+                ${this.buildScoreBar('Open Interest', scores.oi || 0, 15, 'OI buildup pattern')}
+                ${this.buildScoreBar('Moving Averages', scores.dma || 0, 15, 'DMA trend analysis')}
+                ${this.buildScoreBar('Sector Health', scores.sector || 0, 20, 'Sector performance')}
+                ${this.buildScoreBar('Volume Analysis', scores.volume || 0, 10, 'Liquidity check')}
+                ${this.buildScoreBar('Technical Score', scores.technical || 0, 15, 'RSI, MACD, BB')}
+                ${this.buildScoreBar('S/R Proximity', scores.sr || 0, 5, 'Support/Resistance')}
+            </div>
+            <div style="margin-top: 15px; padding: 10px; background: #f9fafb; border-radius: 6px;">
+                <strong>Explanation:</strong>
+                <ul style="margin: 5px 0 0 15px; color: #6b7280; font-size: 0.875rem;">
+                    ${(contract.explanation || []).map(e => `<li>${e}</li>`).join('')}
+                </ul>
+            </div>
+        `;
+    },
+
+    // Build a score bar component
+    buildScoreBar(label, score, maxScore, description) {
+        const percentage = (score / maxScore) * 100;
+        const color = percentage >= 60 ? '#10b981' : percentage >= 40 ? '#f59e0b' : '#ef4444';
+
+        return `
+            <div>
+                <div style="display: flex; justify-content: space-between; font-size: 0.8rem; margin-bottom: 4px;">
+                    <span style="color: #374151;">${label}</span>
+                    <span style="color: #6b7280; font-weight: 600;">${score}/${maxScore}</span>
+                </div>
+                <div style="height: 6px; background: #e5e7eb; border-radius: 3px; overflow: hidden;">
+                    <div style="height: 100%; background: ${color}; width: ${percentage}%;"></div>
+                </div>
+                <div style="font-size: 0.7rem; color: #9ca3af;">${description}</div>
+            </div>
+        `;
+    },
+
+    // Build technical indicators content
+    buildTechnicalContent(contract) {
+        const metrics = contract.metrics || {};
+        const srData = contract.sr_data || {};
+
+        return `
+            ${UIBuilders.buildResultGrid([
+                metrics.sma_20 ? { label: '20-Day SMA', value: '₹' + parseFloat(metrics.sma_20).toFixed(2) } : null,
+                metrics.sma_50 ? { label: '50-Day SMA', value: '₹' + parseFloat(metrics.sma_50).toFixed(2) } : null,
+                srData.support_1 || metrics.support_1 ? { label: 'Support 1', value: '₹' + parseFloat(srData.support_1 || metrics.support_1).toFixed(2) } : null,
+                srData.resistance_1 || metrics.resistance_1 ? { label: 'Resistance 1', value: '₹' + parseFloat(srData.resistance_1 || metrics.resistance_1).toFixed(2) } : null,
+                metrics.rsi ? { label: 'RSI', value: parseFloat(metrics.rsi).toFixed(1) } : null,
+                metrics.basis_pct ? { label: 'Basis %', value: parseFloat(metrics.basis_pct).toFixed(2) + '%' } : null
+            ].filter(item => item !== null))}
+        `;
+    },
+
+    // Build execution log content
+    buildExecutionLogContent(executionLog) {
+        return `
+            <div style="max-height: 300px; overflow-y: auto;">
+                ${executionLog.map(log => {
+                    const statusColor = log.status === 'success' ? '#10b981' : log.status === 'warning' ? '#f59e0b' : log.status === 'fail' ? '#ef4444' : '#6b7280';
+                    const statusIcon = log.status === 'success' ? '✅' : log.status === 'warning' ? '⚠️' : log.status === 'fail' ? '❌' : '➡️';
+                    return `
+                        <div style="display: flex; gap: 10px; padding: 8px; border-bottom: 1px solid #f3f4f6;">
+                            <span>${statusIcon}</span>
+                            <div style="flex: 1;">
+                                <div style="font-weight: 500; color: #374151; font-size: 0.875rem;">${log.action}</div>
+                                <div style="color: #6b7280; font-size: 0.8rem;">${log.message}</div>
+                            </div>
+                        </div>
+                    `;
+                }).join('')}
+            </div>
+        `;
     },
 
     async showContractDetails(contractIndex) {
@@ -1034,26 +1212,106 @@ const NiftyStrangle = {
 
             let html = '<div style="margin-top: 20px;">';
 
-            // Execution Summary Card
-            html += this.buildExecutionSummaryCard(strangle);
+            // Build accordion sections for organized display
+            const accordionSections = [];
 
-            // Market Validation Report
+            // Section 1: Execution Summary (expanded by default)
+            accordionSections.push({
+                id: 'strangle-summary',
+                title: 'Nifty Strangle Position',
+                summary: `Spot: ${strangle.spot_price.toFixed(0)} | VIX: ${strangle.vix.toFixed(2)} | ${strangle.days_to_expiry} DTE`,
+                icon: '📊',
+                expanded: true,
+                content: this.buildExecutionSummaryContent(strangle),
+                statusBadge: 'status-info',
+                statusText: 'SELL'
+            });
+
+            // Section 2: Market Validation Report
             if (strangle.validation_report) {
-                html += this.buildValidationReport(strangle.validation_report);
+                const validation = strangle.validation_report;
+                const validationStatus = validation.trade_allowed ? 'pass' :
+                    (validation.overall_verdict.includes('CAUTION') ? 'warning' : 'fail');
+                const statusSummary = validation.status_summary || {};
+
+                accordionSections.push({
+                    id: 'strangle-validation',
+                    title: 'Market Condition Validation',
+                    summary: `${statusSummary.PASS || 0} Pass | ${statusSummary.WARNING || 0} Warn | ${statusSummary.FAIL || 0} Fail`,
+                    icon: '🛡️',
+                    expanded: !validation.trade_allowed,  // Expand if there are issues
+                    content: this.buildValidationContent(validation),
+                    statusBadge: `status-${validationStatus}`,
+                    statusText: validation.trade_allowed ? 'ALLOWED' : 'BLOCKED'
+                });
             }
 
-            // Strike Analysis
-            html += this.buildStrikeAnalysis(strangle);
+            // Section 2b: Enhanced Analysis (11-Factor Scoring)
+            if (strangle.enhanced_analysis) {
+                const ea = strangle.enhanced_analysis;
+                const eaScore = ea.composite_score || 0;
+                const eaStatus = ea.hard_reject ? 'fail' : (eaScore >= 65 ? 'pass' : eaScore >= 50 ? 'warning' : 'fail');
+                const eaStatusText = ea.hard_reject ? 'HARD REJECT' : (ea.recommendation || 'ANALYZING');
 
-            // Position Sizing Card with Edit Capability
+                accordionSections.push({
+                    id: 'strangle-enhanced',
+                    title: 'Enhanced Multi-Factor Analysis',
+                    summary: `Score: ${eaScore}/100 | ${ea.entry_bias || 'SYMMETRIC'}`,
+                    icon: '🧠',
+                    expanded: ea.hard_reject || eaScore < 50,  // Expand if issues
+                    content: UIBuilders.buildEnhancedScoreCard(ea, 'STRANGLE'),
+                    statusBadge: `status-${eaStatus}`,
+                    statusText: eaStatusText
+                });
+            }
+
+            // Section 3: Strike Analysis
+            const totalPremium = (strangle.call_premium + strangle.put_premium).toFixed(2);
+            accordionSections.push({
+                id: 'strangle-strikes',
+                title: 'Strike Selection',
+                summary: `CE: ${strangle.call_strike} | PE: ${strangle.put_strike} | Premium: ₹${totalPremium}`,
+                icon: '🎯',
+                expanded: false,
+                content: this.buildStrikeAnalysisContent(strangle),
+                statusBadge: 'status-info',
+                statusText: 'EDITABLE'
+            });
+
+            // Section 4: Position Sizing
             if (strangle.position_sizing) {
                 console.log('[Strangle] Position sizing data:', strangle.position_sizing);
-                html += this.buildPositionSizingCard(strangle.position_sizing);
+                const position = strangle.position_sizing.position || {};
+                const marginData = strangle.position_sizing.margin_data || {};
+                const utilizationPct = marginData.available_margin > 0
+                    ? ((position.total_margin_required / marginData.available_margin) * 100).toFixed(0)
+                    : '0';
+
+                accordionSections.push({
+                    id: 'strangle-position',
+                    title: 'Position Sizing',
+                    summary: `${position.call_lots || 0} Lots | Margin: ${utilizationPct}% utilized`,
+                    icon: '💰',
+                    expanded: false,
+                    content: this.buildPositionSizingContent(strangle.position_sizing),
+                    statusBadge: utilizationPct > 80 ? 'status-warning' : 'status-pass',
+                    statusText: utilizationPct > 80 ? 'HIGH' : 'OK'
+                });
             } else {
                 console.warn('[Strangle] No position sizing data available');
             }
 
-            // Execution Buttons
+            // Build accordion container
+            html += '<div class="accordion-container">';
+            accordionSections.forEach((section, index) => {
+                html += UIBuilders.buildCollapsibleSection({
+                    ...section,
+                    step: index + 1
+                });
+            });
+            html += '</div>';
+
+            // Execution Buttons (outside accordion)
             html += this.buildExecutionButtons();
 
             html += '</div>';
@@ -1416,6 +1674,267 @@ const NiftyStrangle = {
                         style="background: #f3f4f6; color: #6b7280; padding: 14px 40px; border: 2px solid #e5e7eb; border-radius: 8px; font-size: 1.125rem; font-weight: 600; cursor: pointer; transition: all 0.3s;">
                     Cancel
                 </button>
+            </div>
+        `;
+    },
+
+    // ==========================================
+    // Accordion Content Builder Functions
+    // Return inner content for collapsible sections
+    // ==========================================
+
+    buildExecutionSummaryContent(strangle) {
+        return `
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px;">
+                <div>
+                    <div style="color: #6b7280; font-size: 0.875rem;">Spot Price</div>
+                    <div style="font-size: 1.25rem; font-weight: 600;">₹${strangle.spot_price.toFixed(2)}</div>
+                </div>
+                <div>
+                    <div style="color: #6b7280; font-size: 0.875rem;">VIX</div>
+                    <div style="font-size: 1.25rem; font-weight: 600;">${strangle.vix.toFixed(2)}</div>
+                </div>
+                <div>
+                    <div style="color: #6b7280; font-size: 0.875rem;">Expiry</div>
+                    <div style="font-size: 1.25rem; font-weight: 600;">${strangle.expiry_date}</div>
+                    <div style="color: #6b7280; font-size: 0.75rem;">${strangle.days_to_expiry} days</div>
+                </div>
+                <div>
+                    <div style="color: #6b7280; font-size: 0.875rem;">Strategy</div>
+                    <div style="font-size: 1.25rem; font-weight: 600; color: #10b981;">SELL STRANGLE</div>
+                </div>
+            </div>
+        `;
+    },
+
+    buildValidationContent(validation) {
+        const results = validation.validation_results || [];
+        let verdictColor = '#10b981';
+        let verdictBg = '#d1fae5';
+
+        if (validation.overall_verdict.includes('NO TRADE')) {
+            verdictColor = '#ef4444';
+            verdictBg = '#fee2e2';
+        } else if (validation.overall_verdict.includes('CAUTION')) {
+            verdictColor = '#f59e0b';
+            verdictBg = '#fef3c7';
+        }
+
+        return `
+            <div style="background: rgba(16, 185, 129, 0.1); padding: 15px; border-radius: 6px; margin-bottom: 15px;">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div>
+                        <div style="font-size: 0.875rem; color: #6b7280;">Overall Verdict</div>
+                        <div style="font-size: 1.25rem; font-weight: 700; color: #1f2937; margin-top: 5px;">${validation.overall_verdict}</div>
+                    </div>
+                    <div style="background: ${verdictBg}; color: ${verdictColor}; padding: 8px 16px; border-radius: 6px; font-weight: 600;">
+                        ${validation.trade_allowed ? '✓ ALLOWED' : '✗ BLOCKED'}
+                    </div>
+                </div>
+            </div>
+            <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px;">
+                <div style="background: #f0fdf4; padding: 10px; border-radius: 6px; text-align: center;">
+                    <div style="font-size: 1.5rem; font-weight: 700; color: #10b981;">${validation.status_summary.PASS || 0}</div>
+                    <div style="font-size: 0.75rem; color: #6b7280;">PASSED</div>
+                </div>
+                <div style="background: #fef3c7; padding: 10px; border-radius: 6px; text-align: center;">
+                    <div style="font-size: 1.5rem; font-weight: 700; color: #f59e0b;">${validation.status_summary.WARNING || 0}</div>
+                    <div style="font-size: 0.75rem; color: #6b7280;">WARNINGS</div>
+                </div>
+                <div style="background: #fef2f2; padding: 10px; border-radius: 6px; text-align: center;">
+                    <div style="font-size: 1.5rem; font-weight: 700; color: #ef4444;">${validation.status_summary.FAIL || 0}</div>
+                    <div style="font-size: 0.75rem; color: #6b7280;">FAILED</div>
+                </div>
+                <div style="background: #f3f4f6; padding: 10px; border-radius: 6px; text-align: center;">
+                    <div style="font-size: 1.5rem; font-weight: 700; color: #6b7280;">${validation.status_summary.SKIP || 0}</div>
+                    <div style="font-size: 0.75rem; color: #6b7280;">SKIPPED</div>
+                </div>
+            </div>
+            ${results.length > 0 ? `
+                <div style="margin-top: 15px; border-top: 1px solid #e5e7eb; padding-top: 15px;">
+                    <div style="font-size: 0.875rem; font-weight: 600; color: #374151; margin-bottom: 10px;">Filter Results:</div>
+                    <div style="display: flex; flex-direction: column; gap: 8px;">
+                        ${results.map(r => `
+                            <div style="display: flex; align-items: center; gap: 10px; padding: 8px 12px; background: ${r.status === 'PASS' ? '#f0fdf4' : r.status === 'WARNING' ? '#fef3c7' : r.status === 'FAIL' ? '#fef2f2' : '#f9fafb'}; border-radius: 4px; border-left: 3px solid ${r.status === 'PASS' ? '#10b981' : r.status === 'WARNING' ? '#f59e0b' : r.status === 'FAIL' ? '#ef4444' : '#9ca3af'};">
+                                <span style="font-weight: 600; color: ${r.status === 'PASS' ? '#10b981' : r.status === 'WARNING' ? '#f59e0b' : r.status === 'FAIL' ? '#ef4444' : '#6b7280'}; min-width: 60px;">${r.status}</span>
+                                <span style="color: #374151;">${r.filter_name}</span>
+                                <span style="color: #6b7280; font-size: 0.875rem; margin-left: auto;">${r.message || ''}</span>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            ` : ''}
+        `;
+    },
+
+    buildStrikeAnalysisContent(strangle) {
+        const deltaDetails = strangle.delta_details || {};
+        const calculation_log = deltaDetails.calculation_log || [];
+
+        let deltaFlowHTML = '';
+        if (calculation_log.length > 0) {
+            deltaFlowHTML = `
+                <div style="background: #f9fafb; padding: 15px; border-radius: 6px; margin-top: 15px; border: 1px solid #e5e7eb;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                        <h4 style="color: #374151; margin: 0; font-size: 0.9rem;">Delta Evolution Timeline</h4>
+                        <span style="background: #3b82f6; color: white; padding: 2px 8px; border-radius: 12px; font-size: 0.7rem; font-weight: 500;">MULTI-FACTOR</span>
+                    </div>
+                    <div style="display: flex; flex-direction: column; gap: 8px;">
+                        ${calculation_log.map((log, idx) => `
+                            <div style="display: flex; align-items: center; gap: 10px; padding: 8px; background: white; border-radius: 4px; border-left: 3px solid ${log.factor === 'FINAL DELTA' ? '#10b981' : log.factor === 'TECHNICAL ANALYSIS' ? '#f59e0b' : '#6b7280'};">
+                                <span style="font-size: 1.2rem; min-width: 24px;">${idx + 1}</span>
+                                <div style="flex: 1;">
+                                    <div style="font-weight: 600; color: #1f2937; font-size: 0.875rem;">${log.factor}</div>
+                                    <div style="color: #6b7280; font-size: 0.75rem;">${log.reason}</div>
+                                </div>
+                                <div style="font-weight: 700; color: ${log.multiplier > 1 ? '#10b981' : log.multiplier < 1 ? '#ef4444' : '#6b7280'}; min-width: 50px; text-align: right;">
+                                    ${log.multiplier !== 1.0 ? (log.multiplier * 100 - 100 > 0 ? '+' : '') + (log.multiplier * 100 - 100).toFixed(0) + '%' : '—'}
+                                </div>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            `;
+        }
+
+        return `
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+                <!-- Call Strike Editor -->
+                <div style="background: #f0fdf4; padding: 15px; border-radius: 6px; border-left: 4px solid #10b981;">
+                    <h4 style="color: #059669; margin-bottom: 10px;">CALL (CE)</h4>
+                    <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 10px;">
+                        <button onclick="NiftyStrangle.adjustStrike('call', -50)"
+                                style="background: #ef4444; color: white; width: 32px; height: 32px; border: none; border-radius: 6px; font-size: 1.1rem; cursor: pointer;">−</button>
+                        <input type="number" id="callStrikeInput" value="${strangle.call_strike}" step="50" min="0"
+                               style="flex: 1; padding: 8px; border: 2px solid #10b981; border-radius: 6px; text-align: center; font-size: 1.25rem; font-weight: 700; color: #1f2937;"
+                               onchange="NiftyStrangle.updateStrikes()">
+                        <button onclick="NiftyStrangle.adjustStrike('call', 50)"
+                                style="background: #10b981; color: white; width: 32px; height: 32px; border: none; border-radius: 6px; font-size: 1.1rem; cursor: pointer;">+</button>
+                    </div>
+                    <div id="callStrikeDetails">
+                        <div style="color: #6b7280; margin-top: 5px;">Premium: ₹<span id="callPremiumDisplay">${strangle.call_premium.toFixed(2)}</span></div>
+                        <div style="color: #6b7280; font-size: 0.875rem;">Distance: <span id="callDistanceDisplay">${(strangle.call_strike - strangle.spot_price).toFixed(0)}</span> pts</div>
+                    </div>
+                </div>
+
+                <!-- Put Strike Editor -->
+                <div style="background: #fef2f2; padding: 15px; border-radius: 6px; border-left: 4px solid #ef4444;">
+                    <h4 style="color: #dc2626; margin-bottom: 10px;">PUT (PE)</h4>
+                    <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 10px;">
+                        <button onclick="NiftyStrangle.adjustStrike('put', -50)"
+                                style="background: #ef4444; color: white; width: 32px; height: 32px; border: none; border-radius: 6px; font-size: 1.1rem; cursor: pointer;">−</button>
+                        <input type="number" id="putStrikeInput" value="${strangle.put_strike}" step="50" min="0"
+                               style="flex: 1; padding: 8px; border: 2px solid #ef4444; border-radius: 6px; text-align: center; font-size: 1.25rem; font-weight: 700; color: #1f2937;"
+                               onchange="NiftyStrangle.updateStrikes()">
+                        <button onclick="NiftyStrangle.adjustStrike('put', 50)"
+                                style="background: #10b981; color: white; width: 32px; height: 32px; border: none; border-radius: 6px; font-size: 1.1rem; cursor: pointer;">+</button>
+                    </div>
+                    <div id="putStrikeDetails">
+                        <div style="color: #6b7280; margin-top: 5px;">Premium: ₹<span id="putPremiumDisplay">${strangle.put_premium.toFixed(2)}</span></div>
+                        <div style="color: #6b7280; font-size: 0.875rem;">Distance: <span id="putDistanceDisplay">${(strangle.spot_price - strangle.put_strike).toFixed(0)}</span> pts</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Summary -->
+            <div style="background: #f9fafb; padding: 15px; border-radius: 6px; margin-top: 15px;">
+                <div style="display: flex; justify-content: space-between;">
+                    <span style="color: #6b7280;">Total Premium per Lot:</span>
+                    <span style="font-weight: 600; color: #1f2937;">₹<span id="totalPremiumDisplay">${(strangle.call_premium + strangle.put_premium).toFixed(2)}</span></span>
+                </div>
+                <div style="display: flex; justify-content: space-between; margin-top: 8px; padding-top: 8px; border-top: 1px solid #e5e7eb;">
+                    <span style="color: #6b7280; font-size: 0.875rem;">Strike Width:</span>
+                    <span style="font-weight: 600; color: #1f2937; font-size: 0.875rem;"><span id="strikeWidthDisplay">${strangle.call_strike - strangle.put_strike}</span> pts</span>
+                </div>
+            </div>
+
+            ${deltaFlowHTML}
+        `;
+    },
+
+    buildPositionSizingContent(positionSizing) {
+        const position = positionSizing.position || {};
+        const marginData = positionSizing.margin_data || {};
+
+        return `
+            <!-- Margin Info Cards -->
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 15px; margin-bottom: 20px;">
+                <div style="background: #f3f4f6; padding: 15px; border-radius: 8px; border-left: 4px solid #3b82f6;">
+                    <div style="color: #6b7280; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em;">Available Margin</div>
+                    <div style="font-size: 1.25rem; font-weight: 700; color: #1f2937; margin-top: 5px;">₹${this.formatIndianNumber(marginData.available_margin)}</div>
+                </div>
+                <div style="background: #f3f4f6; padding: 15px; border-radius: 8px; border-left: 4px solid #8b5cf6;">
+                    <div style="color: #6b7280; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em;">Margin per Lot</div>
+                    <div style="font-size: 1.25rem; font-weight: 700; color: #1f2937; margin-top: 5px;">₹${this.formatIndianNumber(position.margin_per_lot)}</div>
+                </div>
+                <div style="background: #f3f4f6; padding: 15px; border-radius: 8px; border-left: 4px solid #10b981;">
+                    <div style="color: #6b7280; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em;">Recommended Lots</div>
+                    <div style="font-size: 1.25rem; font-weight: 700; color: #1f2937; margin-top: 5px;">${position.call_lots}</div>
+                </div>
+            </div>
+
+            <!-- Lot Size Editors -->
+            <div style="background: #f9fafb; border-radius: 10px; padding: 20px; margin-bottom: 20px;">
+                <h4 style="color: #374151; margin-bottom: 15px; font-size: 0.9rem; text-transform: uppercase; letter-spacing: 0.05em;">Adjust Position Size</h4>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 25px;">
+                    <!-- Call Lots Editor -->
+                    <div>
+                        <label style="display: flex; align-items: center; gap: 8px; margin-bottom: 10px; color: #059669; font-weight: 600;">
+                            <span style="background: #10b981; color: white; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem;">CE</span>
+                            Call Lots
+                        </label>
+                        <div style="display: flex; align-items: center; gap: 10px;">
+                            <button onclick="NiftyStrangle.adjustLots('call', -1)"
+                                    style="background: #ef4444; color: white; width: 36px; height: 36px; border: none; border-radius: 6px; font-size: 1.25rem; cursor: pointer;">−</button>
+                            <input type="number" id="callLotsInput" value="${position.call_lots}" min="1" max="100"
+                                   style="flex: 1; padding: 10px; border: 2px solid #e5e7eb; border-radius: 6px; text-align: center; font-size: 1.125rem; font-weight: 600;"
+                                   onchange="NiftyStrangle.updatePositionSize()">
+                            <button onclick="NiftyStrangle.adjustLots('call', 1)"
+                                    style="background: #10b981; color: white; width: 36px; height: 36px; border: none; border-radius: 6px; font-size: 1.25rem; cursor: pointer;">+</button>
+                        </div>
+                        <div style="margin-top: 8px; color: #6b7280; font-size: 0.875rem;">
+                            Quantity: <strong id="callQuantity">${position.call_lots * 50}</strong> |
+                            Premium: <strong>₹${this.formatIndianNumber(position.call_lots * this.currentData.strangle.call_premium * 50)}</strong>
+                        </div>
+                    </div>
+
+                    <!-- Put Lots Editor -->
+                    <div>
+                        <label style="display: flex; align-items: center; gap: 8px; margin-bottom: 10px; color: #dc2626; font-weight: 600;">
+                            <span style="background: #ef4444; color: white; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem;">PE</span>
+                            Put Lots
+                        </label>
+                        <div style="display: flex; align-items: center; gap: 10px;">
+                            <button onclick="NiftyStrangle.adjustLots('put', -1)"
+                                    style="background: #ef4444; color: white; width: 36px; height: 36px; border: none; border-radius: 6px; font-size: 1.25rem; cursor: pointer;">−</button>
+                            <input type="number" id="putLotsInput" value="${position.put_lots}" min="1" max="100"
+                                   style="flex: 1; padding: 10px; border: 2px solid #e5e7eb; border-radius: 6px; text-align: center; font-size: 1.125rem; font-weight: 600;"
+                                   onchange="NiftyStrangle.updatePositionSize()">
+                            <button onclick="NiftyStrangle.adjustLots('put', 1)"
+                                    style="background: #10b981; color: white; width: 36px; height: 36px; border: none; border-radius: 6px; font-size: 1.25rem; cursor: pointer;">+</button>
+                        </div>
+                        <div style="margin-top: 8px; color: #6b7280; font-size: 0.875rem;">
+                            Quantity: <strong id="putQuantity">${position.put_lots * 50}</strong> |
+                            Premium: <strong>₹${this.formatIndianNumber(position.put_lots * this.currentData.strangle.put_premium * 50)}</strong>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Quick Selection Buttons -->
+                <div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #e5e7eb;">
+                    <div style="color: #6b7280; font-size: 0.875rem; margin-bottom: 10px;">Quick Selection:</div>
+                    <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                        <button onclick="NiftyStrangle.setLots(10, 10)" style="padding: 6px 12px; background: white; border: 1px solid #d1d5db; border-radius: 6px; font-size: 0.875rem; cursor: pointer;">10 Lots</button>
+                        <button onclick="NiftyStrangle.setLots(20, 20)" style="padding: 6px 12px; background: white; border: 1px solid #d1d5db; border-radius: 6px; font-size: 0.875rem; cursor: pointer;">20 Lots</button>
+                        <button onclick="NiftyStrangle.setLots(${position.call_lots}, ${position.put_lots})" style="padding: 6px 12px; background: #dbeafe; border: 1px solid #3b82f6; border-radius: 6px; font-size: 0.875rem; cursor: pointer; color: #1e40af;">Recommended</button>
+                        <button onclick="NiftyStrangle.setLots(50, 50)" style="padding: 6px 12px; background: white; border: 1px solid #d1d5db; border-radius: 6px; font-size: 0.875rem; cursor: pointer;">50 Lots</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Live Position Summary -->
+            <div id="positionSummary" style="background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%); padding: 20px; border-radius: 10px; border: 2px solid #3b82f6;">
+                ${this.buildPositionSummary(position)}
             </div>
         `;
     },
@@ -2390,179 +2909,274 @@ const BrokenIronCondor = {
             `;
         });
 
+        // Build Market Data content for accordion
+        const marketDataContent = `
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px;">
+                <div style="background: white; padding: 15px; border-radius: 8px; border: 1px solid #e5e7eb;">
+                    <div style="font-size: 0.7rem; color: #6b7280; text-transform: uppercase; letter-spacing: 0.5px;">Underlying</div>
+                    <div style="font-size: 1.25rem; font-weight: 700; color: #1f2937;">${ic.underlying}</div>
+                </div>
+                <div style="background: white; padding: 15px; border-radius: 8px; border: 1px solid #e5e7eb;">
+                    <div style="font-size: 0.7rem; color: #6b7280; text-transform: uppercase; letter-spacing: 0.5px;">Spot Price</div>
+                    <div style="font-size: 1.25rem; font-weight: 700; color: #1f2937;">₹${ic.current_price.toFixed(2)}</div>
+                </div>
+                <div style="background: white; padding: 15px; border-radius: 8px; border: 1px solid #e5e7eb;">
+                    <div style="font-size: 0.7rem; color: #6b7280; text-transform: uppercase; letter-spacing: 0.5px;">India VIX</div>
+                    <div style="font-size: 1.25rem; font-weight: 700; color: ${parseFloat(ic.vix) > 20 ? '#ef4444' : '#10b981'};">${ic.vix}</div>
+                </div>
+                <div style="background: white; padding: 15px; border-radius: 8px; border: 1px solid #e5e7eb;">
+                    <div style="font-size: 0.7rem; color: #6b7280; text-transform: uppercase; letter-spacing: 0.5px;">Expiry</div>
+                    <div style="font-size: 1.1rem; font-weight: 700; color: #1f2937;">${ic.expiry_date}</div>
+                    <div style="font-size: 0.75rem; color: #6b7280;">${ic.days_to_expiry} days</div>
+                </div>
+            </div>
+        `;
+
+        // Build Position Legs content for accordion
+        const positionLegsContent = `
+            <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 20px; border-radius: 12px; color: white;">
+                <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px;">
+                    <div style="background: rgba(255,255,255,0.15); padding: 15px; border-radius: 8px;">
+                        <div style="font-size: 0.7rem; opacity: 0.8; text-transform: uppercase; letter-spacing: 0.5px;">LEG 1 - SELL</div>
+                        <div style="font-size: 1.75rem; font-weight: 700; margin: 8px 0;">${ic.call_strike} CE</div>
+                        <div style="font-size: 0.9rem; opacity: 0.9;">Premium: ₹${ic.call_premium.toFixed(2)}</div>
+                        <div style="font-size: 0.75rem; opacity: 0.7; margin-top: 4px;">Credit: +₹${this.formatIndian(ic.call_premium * ic.quantity)}</div>
+                    </div>
+                    <div style="background: rgba(255,255,255,0.15); padding: 15px; border-radius: 8px;">
+                        <div style="font-size: 0.7rem; opacity: 0.8; text-transform: uppercase; letter-spacing: 0.5px;">LEG 2 - SELL</div>
+                        <div style="font-size: 1.75rem; font-weight: 700; margin: 8px 0;">${ic.put_strike} PE</div>
+                        <div style="font-size: 0.9rem; opacity: 0.9;">Premium: ₹${ic.put_premium.toFixed(2)}</div>
+                        <div style="font-size: 0.75rem; opacity: 0.7; margin-top: 4px;">Credit: +₹${this.formatIndian(ic.put_premium * ic.quantity)}</div>
+                    </div>
+                    <div style="background: rgba(16, 185, 129, 0.4); padding: 15px; border-radius: 8px; border: 2px solid rgba(255,255,255,0.5);">
+                        <div style="font-size: 0.7rem; opacity: 0.9; text-transform: uppercase; letter-spacing: 0.5px;">LEG 3 - BUY (Insurance)</div>
+                        <div style="font-size: 1.75rem; font-weight: 700; margin: 8px 0;" id="insuranceStrikeDisplay">${insurance.insurance_strike} PE</div>
+                        <div style="font-size: 0.9rem; opacity: 0.9;" id="insurancePremiumDisplay">Premium: ₹${insurance.insurance_premium.toFixed(2)}</div>
+                        <div style="font-size: 0.75rem; opacity: 0.7; margin-top: 4px;">Debit: -₹${this.formatIndian(insurance.insurance_premium * ic.quantity)}</div>
+                    </div>
+                </div>
+                <div style="margin-top: 15px; padding: 12px; background: rgba(255,255,255,0.1); border-radius: 8px; display: flex; justify-content: space-around; text-align: center;">
+                    <div>
+                        <div style="font-size: 0.7rem; opacity: 0.7;">Total Credit</div>
+                        <div style="font-size: 1.1rem; font-weight: 600;">₹${this.formatIndian((ic.call_premium + ic.put_premium) * ic.quantity)}</div>
+                    </div>
+                    <div style="border-left: 1px solid rgba(255,255,255,0.3); padding-left: 20px;">
+                        <div style="font-size: 0.7rem; opacity: 0.7;">Insurance Cost</div>
+                        <div style="font-size: 1.1rem; font-weight: 600;">-₹${this.formatIndian(insurance.insurance_premium * ic.quantity)}</div>
+                    </div>
+                    <div style="border-left: 1px solid rgba(255,255,255,0.3); padding-left: 20px;">
+                        <div style="font-size: 0.7rem; opacity: 0.7;">Net Credit</div>
+                        <div style="font-size: 1.1rem; font-weight: 700; color: #a7f3d0;">₹${this.formatIndian(ic.net_premium * ic.quantity)}</div>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        // Build Risk/Reward content for accordion
+        const riskRewardContent = `
+            <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px; margin-bottom: 15px;">
+                <div style="background: linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%); padding: 20px; border-radius: 10px; border: 2px solid #10b981;">
+                    <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
+                        <span style="font-size: 1.5rem;">💰</span>
+                        <span style="font-size: 0.9rem; color: #059669; font-weight: 600;">Max Profit (Net Premium)</span>
+                    </div>
+                    <div style="font-size: 2rem; font-weight: 700; color: #047857;" id="maxProfitDisplay">
+                        ₹${this.formatIndian(ic.net_premium * ic.quantity)}
+                    </div>
+                    <div style="font-size: 0.8rem; color: #6b7280; margin-top: 5px;">
+                        Per share: ₹${ic.net_premium.toFixed(2)} | Achieved if spot stays between strikes
+                    </div>
+                </div>
+                <div style="background: linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%); padding: 20px; border-radius: 10px; border: 2px solid #ef4444;">
+                    <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
+                        <span style="font-size: 1.5rem;">🛡️</span>
+                        <span style="font-size: 0.9rem; color: #dc2626; font-weight: 600;">Max Loss (Put Side - Capped)</span>
+                    </div>
+                    <div style="font-size: 2rem; font-weight: 700; color: #b91c1c;" id="maxLossDisplay">
+                        ₹${this.formatIndian(insurance.max_loss_on_put_side)}
+                    </div>
+                    <div style="font-size: 0.8rem; color: #6b7280; margin-top: 5px;">
+                        Call side: Unlimited (use SL) | Put side capped by insurance
+                    </div>
+                </div>
+            </div>
+            <div style="background: #f8fafc; padding: 15px; border-radius: 8px; border: 1px solid #e2e8f0;">
+                <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; text-align: center;">
+                    <div>
+                        <div style="font-size: 0.75rem; color: #6b7280;">Upper Breakeven</div>
+                        <div style="font-size: 1.1rem; font-weight: 600; color: #1f2937;">₹${(ic.call_strike + ic.net_premium).toFixed(0)}</div>
+                    </div>
+                    <div>
+                        <div style="font-size: 0.75rem; color: #6b7280;">Profit Zone</div>
+                        <div style="font-size: 1.1rem; font-weight: 600; color: #10b981;">${ic.put_strike} - ${ic.call_strike}</div>
+                    </div>
+                    <div>
+                        <div style="font-size: 0.75rem; color: #6b7280;">Lower Breakeven</div>
+                        <div style="font-size: 1.1rem; font-weight: 600; color: #1f2937;">₹${(ic.put_strike - ic.net_premium).toFixed(0)}</div>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        // Build Position Sizing content for accordion
+        const positionSizingContent = `
+            <div style="background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%); padding: 20px; border-radius: 10px; border: 2px solid #22c55e;">
+                <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 15px;">
+                    <span style="background: #22c55e; color: white; padding: 4px 12px; border-radius: 20px; font-size: 0.75rem; font-weight: 600;">
+                        RECOMMENDED: ${ic.lots} LOTS
+                    </span>
+                </div>
+                <div style="background: white; padding: 20px; border-radius: 10px; margin-bottom: 15px; display: flex; align-items: center; gap: 20px; flex-wrap: wrap;">
+                    <div style="flex: 1; min-width: 200px;">
+                        <label style="font-size: 0.875rem; color: #374151; font-weight: 600; display: block; margin-bottom: 8px;">
+                            Number of Lots
+                        </label>
+                        <div style="display: flex; align-items: center; gap: 10px;">
+                            <button onclick="BrokenIronCondor.decrementLots()"
+                                    style="width: 40px; height: 40px; border: 2px solid #d1d5db; border-radius: 8px; background: #f9fafb; font-size: 1.25rem; cursor: pointer; font-weight: bold;">
+                                −
+                            </button>
+                            <input type="number" id="icLotsInput"
+                                   value="${ic.lots}"
+                                   min="1"
+                                   max="${ic.max_lots_possible || 50}"
+                                   onchange="BrokenIronCondor.updateLots()"
+                                   style="width: 100px; padding: 10px; border: 3px solid #22c55e; border-radius: 8px; font-size: 1.5rem; font-weight: 700; text-align: center;">
+                            <button onclick="BrokenIronCondor.incrementLots()"
+                                    style="width: 40px; height: 40px; border: 2px solid #d1d5db; border-radius: 8px; background: #f9fafb; font-size: 1.25rem; cursor: pointer; font-weight: bold;">
+                                +
+                            </button>
+                        </div>
+                        <div style="font-size: 0.75rem; color: #6b7280; margin-top: 8px;">
+                            Max available: <strong>${ic.max_lots_possible || 'N/A'}</strong> lots (50% margin rule)
+                        </div>
+                    </div>
+                    <div style="font-size: 2rem; color: #22c55e;">→</div>
+                    <div style="flex: 1; min-width: 150px; text-align: center;">
+                        <label style="font-size: 0.875rem; color: #374151; font-weight: 600; display: block; margin-bottom: 8px;">
+                            Total Quantity
+                        </label>
+                        <div id="icQuantityDisplay" style="font-size: 2rem; font-weight: 700; color: #15803d;">
+                            ${ic.quantity}
+                        </div>
+                        <div id="icLotsCalc" style="font-size: 0.75rem; color: #6b7280;">
+                            ${ic.lots} lots × ${ic.lot_size || 50} = ${ic.quantity}
+                        </div>
+                    </div>
+                </div>
+                <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px;">
+                    <div style="background: white; padding: 12px; border-radius: 8px; text-align: center; border: 1px solid #e5e7eb;">
+                        <div style="font-size: 0.7rem; color: #6b7280; margin-bottom: 4px;">Margin Required</div>
+                        <div id="icMarginRequired" style="font-size: 1.1rem; font-weight: 700; color: #dc2626;">
+                            ₹${this.formatIndian(ic.margin_required || 0)}
+                        </div>
+                    </div>
+                    <div style="background: white; padding: 12px; border-radius: 8px; text-align: center; border: 1px solid #e5e7eb;">
+                        <div style="font-size: 0.7rem; color: #6b7280; margin-bottom: 4px;">Margin Available</div>
+                        <div style="font-size: 1.1rem; font-weight: 700; color: #059669;">
+                            ₹${this.formatIndian(ic.position_sizing?.available_margin || 0)}
+                        </div>
+                    </div>
+                    <div style="background: white; padding: 12px; border-radius: 8px; text-align: center; border: 1px solid #e5e7eb;">
+                        <div style="font-size: 0.7rem; color: #6b7280; margin-bottom: 4px;">Margin Per Lot</div>
+                        <div style="font-size: 1.1rem; font-weight: 700; color: #374151;">
+                            ₹${this.formatIndian(ic.margin_per_lot || 0)}
+                        </div>
+                    </div>
+                    <div style="background: white; padding: 12px; border-radius: 8px; text-align: center; border: 1px solid #e5e7eb;">
+                        <div style="font-size: 0.7rem; color: #6b7280; margin-bottom: 4px;">Batches</div>
+                        <div id="icBatchCount" style="font-size: 1.1rem; font-weight: 700; color: #3b82f6;">
+                            ${Math.ceil((ic.lots || 1) / 20)}
+                        </div>
+                        <div style="font-size: 0.6rem; color: #9ca3af;">~${Math.ceil((ic.lots || 1) / 20) * 20}s</div>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        // Build Insurance Options content for accordion
+        const insuranceOptionsContent = `
+            <div style="margin-bottom: 10px; padding: 12px; background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%); border-radius: 8px; border: 1px solid #93c5fd;">
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <span style="font-size: 1.2rem;">💡</span>
+                    <span style="font-size: 0.85rem; color: #1e40af;">
+                        <strong>Risk Budget = Max Profit × Risk Multiplier.</strong> Higher multiplier = cheaper insurance but wider max loss.
+                    </span>
+                </div>
+            </div>
+            <div id="insuranceOptionsContainer">
+                ${optionsHtml}
+            </div>
+        `;
+
+        // Build accordion sections using UIBuilders
+        const sectionsHtml = `
+            <div class="accordion-container" style="margin-top: 15px;">
+                ${UIBuilders.buildCollapsibleSection({
+                    id: 'ic-market-data',
+                    title: 'Market Data',
+                    icon: '📊',
+                    summary: ic.underlying + ' @ ₹' + ic.current_price.toFixed(0) + ' | VIX: ' + ic.vix,
+                    expanded: true,
+                    content: marketDataContent
+                })}
+                ${UIBuilders.buildCollapsibleSection({
+                    id: 'ic-position-legs',
+                    title: 'Position Legs',
+                    icon: '🦿',
+                    summary: 'SELL ' + ic.call_strike + 'CE + SELL ' + ic.put_strike + 'PE + BUY ' + insurance.insurance_strike + 'PE',
+                    expanded: true,
+                    content: positionLegsContent
+                })}
+                ${UIBuilders.buildCollapsibleSection({
+                    id: 'ic-risk-reward',
+                    title: 'Risk/Reward Analysis',
+                    icon: '⚖️',
+                    summary: 'Max Profit: ₹' + this.formatIndian(ic.net_premium * ic.quantity) + ' | Max Loss: ₹' + this.formatIndian(insurance.max_loss_on_put_side),
+                    expanded: true,
+                    content: riskRewardContent
+                })}
+                ${UIBuilders.buildCollapsibleSection({
+                    id: 'ic-position-sizing',
+                    title: 'Position Sizing',
+                    icon: '📐',
+                    summary: ic.lots + ' lots (' + ic.quantity + ' shares) | Margin: ₹' + this.formatIndian(ic.margin_required || 0),
+                    expanded: true,
+                    content: positionSizingContent
+                })}
+                ${UIBuilders.buildCollapsibleSection({
+                    id: 'ic-insurance-options',
+                    title: 'Insurance Level Selection',
+                    icon: '🎯',
+                    summary: 'Current: ' + this.currentRiskMultiplier + 'x (' + (insuranceOptions.find(o => Math.abs(o.risk_multiplier - this.currentRiskMultiplier) < 0.01)?.label || 'Custom') + ')',
+                    expanded: false,
+                    content: insuranceOptionsContent
+                })}
+            </div>
+        `;
+
         results.innerHTML = `
             <div class="trigger-card" style="margin-top: 20px;">
-                <h3 style="color: #1f2937; margin-bottom: 20px; display: flex; align-items: center; gap: 10px;">
-                    🛡️ Broken Iron Condor Position
-                    <span style="background: #10b981; color: white; padding: 4px 12px; border-radius: 20px; font-size: 0.75rem;">
-                        3 LEGS
-                    </span>
-                </h3>
-
-                <!-- Market Data -->
-                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 15px; margin-bottom: 20px;">
-                    <div style="background: #f9fafb; padding: 12px; border-radius: 8px;">
-                        <div style="font-size: 0.75rem; color: #6b7280;">Underlying</div>
-                        <div style="font-weight: 600;">${ic.underlying}</div>
-                    </div>
-                    <div style="background: #f9fafb; padding: 12px; border-radius: 8px;">
-                        <div style="font-size: 0.75rem; color: #6b7280;">Spot Price</div>
-                        <div style="font-weight: 600;">₹${ic.current_price.toFixed(2)}</div>
-                    </div>
-                    <div style="background: #f9fafb; padding: 12px; border-radius: 8px;">
-                        <div style="font-size: 0.75rem; color: #6b7280;">VIX</div>
-                        <div style="font-weight: 600;">${ic.vix}</div>
-                    </div>
-                    <div style="background: #f9fafb; padding: 12px; border-radius: 8px;">
-                        <div style="font-size: 0.75rem; color: #6b7280;">Expiry</div>
-                        <div style="font-weight: 600;">${ic.expiry_date} (${ic.days_to_expiry}d)</div>
-                    </div>
-                </div>
-
-                <!-- 3 Legs Display -->
-                <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                            padding: 20px; border-radius: 12px; color: white; margin-bottom: 20px;">
-                    <h4 style="margin: 0 0 15px 0;">Position Legs</h4>
-                    <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px;">
-                        <!-- Leg 1: Sell Call -->
-                        <div style="background: rgba(255,255,255,0.15); padding: 15px; border-radius: 8px;">
-                            <div style="font-size: 0.75rem; opacity: 0.8;">LEG 1 - SELL</div>
-                            <div style="font-size: 1.5rem; font-weight: 700;">${ic.call_strike} CE</div>
-                            <div style="font-size: 0.875rem;">Premium: ₹${ic.call_premium.toFixed(2)}</div>
-                        </div>
-                        <!-- Leg 2: Sell Put -->
-                        <div style="background: rgba(255,255,255,0.15); padding: 15px; border-radius: 8px;">
-                            <div style="font-size: 0.75rem; opacity: 0.8;">LEG 2 - SELL</div>
-                            <div style="font-size: 1.5rem; font-weight: 700;">${ic.put_strike} PE</div>
-                            <div style="font-size: 0.875rem;">Premium: ₹${ic.put_premium.toFixed(2)}</div>
-                        </div>
-                        <!-- Leg 3: Buy Insurance Put -->
-                        <div style="background: rgba(16, 185, 129, 0.3); padding: 15px; border-radius: 8px; border: 2px solid rgba(255,255,255,0.5);">
-                            <div style="font-size: 0.75rem; opacity: 0.8;">LEG 3 - BUY (Insurance)</div>
-                            <div style="font-size: 1.5rem; font-weight: 700;" id="insuranceStrikeDisplay">${insurance.insurance_strike} PE</div>
-                            <div style="font-size: 0.875rem;" id="insurancePremiumDisplay">Premium: ₹${insurance.insurance_premium.toFixed(2)}</div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Risk/Reward Summary -->
-                <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px; margin-bottom: 20px;">
-                    <div style="background: #ecfdf5; padding: 20px; border-radius: 8px; border-left: 4px solid #10b981;">
-                        <div style="font-size: 0.875rem; color: #059669;">Net Premium (Max Profit)</div>
-                        <div style="font-size: 1.5rem; font-weight: 700; color: #047857;" id="maxProfitDisplay">
-                            ₹${this.formatIndian(ic.net_premium * ic.quantity)}
-                        </div>
-                        <div style="font-size: 0.75rem; color: #6b7280;">
-                            Per share: ₹${ic.net_premium.toFixed(2)}
-                        </div>
-                    </div>
-                    <div style="background: #fef2f2; padding: 20px; border-radius: 8px; border-left: 4px solid #ef4444;">
-                        <div style="font-size: 0.875rem; color: #dc2626;">Max Loss (Put Side - Capped)</div>
-                        <div style="font-size: 1.5rem; font-weight: 700; color: #b91c1c;" id="maxLossDisplay">
-                            ₹${this.formatIndian(insurance.max_loss_on_put_side)}
-                        </div>
-                        <div style="font-size: 0.75rem; color: #6b7280;">
-                            Call side: Unlimited (use SL)
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Position Sizing Section - Prominent UI like Strangle -->
-                <div style="background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%); padding: 24px; border-radius: 12px; margin-bottom: 20px; border: 3px solid #22c55e; box-shadow: 0 4px 6px rgba(34, 197, 94, 0.1);">
-                    <h4 style="margin: 0 0 20px 0; color: #15803d; display: flex; align-items: center; gap: 10px;">
-                        📊 Position Sizing
-                        <span style="background: #22c55e; color: white; padding: 4px 12px; border-radius: 20px; font-size: 0.7rem; font-weight: 600;">
-                            RECOMMENDED: ${ic.lots} LOTS
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                    <h3 style="color: #1f2937; margin: 0; display: flex; align-items: center; gap: 10px;">
+                        🛡️ Broken Iron Condor Position
+                        <span style="background: #10b981; color: white; padding: 4px 12px; border-radius: 20px; font-size: 0.75rem;">
+                            3 LEGS
                         </span>
-                    </h4>
-
-                    <!-- Main Lot Selection Row -->
-                    <div style="background: white; padding: 20px; border-radius: 10px; margin-bottom: 20px; display: flex; align-items: center; gap: 20px; flex-wrap: wrap;">
-                        <!-- Lot Input with +/- buttons -->
-                        <div style="flex: 1; min-width: 200px;">
-                            <label style="font-size: 0.875rem; color: #374151; font-weight: 600; display: block; margin-bottom: 8px;">
-                                Number of Lots
-                            </label>
-                            <div style="display: flex; align-items: center; gap: 10px;">
-                                <button onclick="BrokenIronCondor.decrementLots()"
-                                        style="width: 40px; height: 40px; border: 2px solid #d1d5db; border-radius: 8px; background: #f9fafb; font-size: 1.25rem; cursor: pointer; font-weight: bold;">
-                                    −
-                                </button>
-                                <input type="number" id="icLotsInput"
-                                       value="${ic.lots}"
-                                       min="1"
-                                       max="${ic.max_lots_possible || 50}"
-                                       onchange="BrokenIronCondor.updateLots()"
-                                       style="width: 100px; padding: 10px; border: 3px solid #22c55e; border-radius: 8px; font-size: 1.5rem; font-weight: 700; text-align: center;">
-                                <button onclick="BrokenIronCondor.incrementLots()"
-                                        style="width: 40px; height: 40px; border: 2px solid #d1d5db; border-radius: 8px; background: #f9fafb; font-size: 1.25rem; cursor: pointer; font-weight: bold;">
-                                    +
-                                </button>
-                            </div>
-                            <div style="font-size: 0.75rem; color: #6b7280; margin-top: 8px;">
-                                Max available: <strong>${ic.max_lots_possible || 'N/A'}</strong> lots (50% margin rule)
-                            </div>
-                        </div>
-
-                        <!-- Arrow -->
-                        <div style="font-size: 2rem; color: #22c55e;">→</div>
-
-                        <!-- Quantity Display -->
-                        <div style="flex: 1; min-width: 150px; text-align: center;">
-                            <label style="font-size: 0.875rem; color: #374151; font-weight: 600; display: block; margin-bottom: 8px;">
-                                Total Quantity
-                            </label>
-                            <div id="icQuantityDisplay" style="font-size: 2rem; font-weight: 700; color: #15803d;">
-                                ${ic.quantity}
-                            </div>
-                            <div id="icLotsCalc" style="font-size: 0.75rem; color: #6b7280;">
-                                ${ic.lots} lots × ${ic.lot_size || 50} = ${ic.quantity}
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Margin & Batch Details Grid -->
-                    <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px;">
-                        <div style="background: white; padding: 15px; border-radius: 8px; text-align: center;">
-                            <div style="font-size: 0.75rem; color: #6b7280; margin-bottom: 5px;">Margin Required</div>
-                            <div id="icMarginRequired" style="font-size: 1.25rem; font-weight: 700; color: #dc2626;">
-                                ₹${this.formatIndian(ic.margin_required || 0)}
-                            </div>
-                        </div>
-                        <div style="background: white; padding: 15px; border-radius: 8px; text-align: center;">
-                            <div style="font-size: 0.75rem; color: #6b7280; margin-bottom: 5px;">Margin Available</div>
-                            <div style="font-size: 1.25rem; font-weight: 700; color: #059669;">
-                                ₹${this.formatIndian(ic.position_sizing?.available_margin || 0)}
-                            </div>
-                        </div>
-                        <div style="background: white; padding: 15px; border-radius: 8px; text-align: center;">
-                            <div style="font-size: 0.75rem; color: #6b7280; margin-bottom: 5px;">Margin Per Lot</div>
-                            <div style="font-size: 1.25rem; font-weight: 700; color: #374151;">
-                                ₹${this.formatIndian(ic.margin_per_lot || 0)}
-                            </div>
-                        </div>
-                        <div style="background: white; padding: 15px; border-radius: 8px; text-align: center;">
-                            <div style="font-size: 0.75rem; color: #6b7280; margin-bottom: 5px;">Batches</div>
-                            <div id="icBatchCount" style="font-size: 1.25rem; font-weight: 700; color: #3b82f6;">
-                                ${Math.ceil((ic.lots || 1) / 20)}
-                            </div>
-                            <div style="font-size: 0.65rem; color: #9ca3af;">~${Math.ceil((ic.lots || 1) / 20) * 20}s</div>
-                        </div>
+                    </h3>
+                    <div style="display: flex; gap: 8px;">
+                        <button onclick="UIBuilders.expandAllSections('ironCondorResults')"
+                                style="padding: 6px 12px; background: #f3f4f6; border: 1px solid #d1d5db; border-radius: 6px; font-size: 0.75rem; cursor: pointer;">
+                            Expand All
+                        </button>
+                        <button onclick="UIBuilders.collapseAllSections('ironCondorResults')"
+                                style="padding: 6px 12px; background: #f3f4f6; border: 1px solid #d1d5db; border-radius: 6px; font-size: 0.75rem; cursor: pointer;">
+                            Collapse All
+                        </button>
                     </div>
                 </div>
 
-                <!-- Insurance Options Selection -->
-                <div style="background: #f9fafb; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
-                    <h4 style="margin: 0 0 15px 0; color: #1f2937;">
-                        🎯 Select Insurance Level
-                        <span style="font-size: 0.75rem; font-weight: normal; color: #6b7280;">
-                            (Click to change)
-                        </span>
-                    </h4>
-                    <div id="insuranceOptionsContainer">
-                        ${optionsHtml}
-                    </div>
-                </div>
+                ${sectionsHtml}
 
                 <!-- Action Buttons -->
                 <div style="display: flex; gap: 15px; margin-top: 20px;">
@@ -2609,7 +3223,24 @@ const BrokenIronCondor = {
             // Calculate new net premium and max profit
             const ic = this.data.iron_condor;
             const netPremium = ic.call_premium + ic.put_premium - selected.insurance_premium;
-            document.getElementById('maxProfitDisplay').textContent = '₹' + this.formatIndian(netPremium * ic.quantity);
+            const newMaxProfit = netPremium * ic.quantity;
+            document.getElementById('maxProfitDisplay').textContent = '₹' + this.formatIndian(newMaxProfit);
+
+            // Update accordion section summaries
+            const positionLegsSection = document.querySelector('[data-section="ic-position-legs"] .section-summary');
+            if (positionLegsSection) {
+                positionLegsSection.textContent = 'SELL ' + ic.call_strike + 'CE + SELL ' + ic.put_strike + 'PE + BUY ' + selected.insurance_strike + 'PE';
+            }
+
+            const riskRewardSection = document.querySelector('[data-section="ic-risk-reward"] .section-summary');
+            if (riskRewardSection) {
+                riskRewardSection.textContent = 'Max Profit: ₹' + this.formatIndian(newMaxProfit) + ' | Max Loss: ₹' + this.formatIndian(selected.max_loss_on_put_side);
+            }
+
+            const insuranceSection = document.querySelector('[data-section="ic-insurance-options"] .section-summary');
+            if (insuranceSection) {
+                insuranceSection.textContent = 'Current: ' + this.currentRiskMultiplier + 'x (' + (selected.label || 'Custom') + ')';
+            }
 
             // Update option styling
             const container = document.getElementById('insuranceOptionsContainer');
@@ -2715,6 +3346,17 @@ const BrokenIronCondor = {
 
             document.getElementById('maxProfitDisplay').textContent = '₹' + this.formatIndian(newMaxProfit);
             document.getElementById('maxLossDisplay').textContent = '₹' + this.formatIndian(newMaxLoss);
+
+            // Update accordion section summaries
+            const positionSizingSection = document.querySelector('[data-section="ic-position-sizing"] .section-summary');
+            if (positionSizingSection) {
+                positionSizingSection.textContent = newLots + ' lots (' + newQuantity + ' shares) | Margin: ₹' + this.formatIndian(newMargin);
+            }
+
+            const riskRewardSection = document.querySelector('[data-section="ic-risk-reward"] .section-summary');
+            if (riskRewardSection) {
+                riskRewardSection.textContent = 'Max Profit: ₹' + this.formatIndian(newMaxProfit) + ' | Max Loss: ₹' + this.formatIndian(newMaxLoss);
+            }
         }
 
         // Save to database
@@ -3336,7 +3978,7 @@ const TradeVerification = {
 
         let html = '<div style="margin-top: 20px;">';
 
-        // Verdict Banner
+        // Verdict Banner (always visible)
         const verdictColor = data.passed ? '#10b981' : '#ef4444';
         const verdictBg = data.passed ? 'linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%)' : 'linear-gradient(135deg, #fee2e2 0%, #fecaca 100%)';
         const verdictIcon = data.passed ? '✅' : '❌';
@@ -3356,7 +3998,7 @@ const TradeVerification = {
             </div>
         `;
 
-        // Contract Summary
+        // Contract Summary (always visible)
         html += `
             <div style="background: white; border-radius: 8px; padding: 20px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
                 <h3 style="color: #1f2937; margin-bottom: 15px;">📊 Contract Summary</h3>
@@ -3374,140 +4016,170 @@ const TradeVerification = {
             </div>
         `;
 
-        // Technical Indicators
-        if (analysis.sma_20 || analysis.support_1 || analysis.resistance_1) {
-            html += `
-                <div style="background: white; border-radius: 8px; padding: 20px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
-                    <h3 style="color: #1f2937; margin-bottom: 15px;">📈 Technical Indicators</h3>
-                    ${UIBuilders.buildResultGrid([
-                        analysis.sma_20 ? { label: '20-Day SMA', value: `₹${parseFloat(analysis.sma_20).toFixed(2)}` } : null,
-                        analysis.sma_50 ? { label: '50-Day SMA', value: `₹${parseFloat(analysis.sma_50).toFixed(2)}` } : null,
-                        analysis.support_1 ? { label: 'Support 1', value: `₹${parseFloat(analysis.support_1).toFixed(2)}`, className: 'text-red-600' } : null,
-                        analysis.support_2 ? { label: 'Support 2', value: `₹${parseFloat(analysis.support_2).toFixed(2)}`, className: 'text-red-600' } : null,
-                        analysis.resistance_1 ? { label: 'Resistance 1', value: `₹${parseFloat(analysis.resistance_1).toFixed(2)}`, className: 'text-green-600' } : null,
-                        analysis.resistance_2 ? { label: 'Resistance 2', value: `₹${parseFloat(analysis.resistance_2).toFixed(2)}`, className: 'text-green-600' } : null
-                    ].filter(item => item !== null))}
+        // Build accordion sections with step numbers
+        html += '<div class="accordion-container">';
+        let stepNumber = 1;
 
-                    <div style="margin-top: 15px; padding: 15px; background: #f9fafb; border-radius: 6px; border-left: 4px solid #3b82f6;">
-                        <h4 style="color: #1f2937; font-size: 0.875rem; margin-bottom: 10px; font-weight: 600;">📚 How Support & Resistance are Calculated:</h4>
-                        <ul style="margin: 0; padding-left: 20px; color: #6b7280; font-size: 0.875rem; line-height: 1.6;">
-                            <li><strong>Data Source:</strong> 1 year of NIFTY historical data from Breeze API (stored in HistoricalPrice table)</li>
-                            <li><strong>Pivot Points Method:</strong> Uses last 5 days average → Pivot = (High + Low + Close) / 3</li>
-                            <li><strong>Resistance Levels:</strong> R1 = (2 × Pivot) - Low | R2 = Pivot + (High - Low) | R3 = High + 2(Pivot - Low)</li>
-                            <li><strong>Support Levels:</strong> S1 = (2 × Pivot) - High | S2 = Pivot - (High - Low) | S3 = Low - 2(High - Pivot)</li>
-                            <li><strong>Moving Averages:</strong> Simple Moving Average calculated from historical closes (20/50/100/200 days)</li>
-                        </ul>
-                    </div>
-                </div>
-            `;
+        // Step 1: Technical Indicators
+        if (analysis.sma_20 || analysis.support_1 || analysis.resistance_1) {
+            const techSummary = `SMA20: ₹${analysis.sma_20 ? parseFloat(analysis.sma_20).toFixed(0) : 'N/A'} | S1: ₹${analysis.support_1 ? parseFloat(analysis.support_1).toFixed(0) : 'N/A'} | R1: ₹${analysis.resistance_1 ? parseFloat(analysis.resistance_1).toFixed(0) : 'N/A'}`;
+            html += UIBuilders.buildCollapsibleSection({
+                id: 'verify-technical',
+                step: stepNumber++,
+                title: 'Technical Indicators',
+                icon: '📈',
+                summary: techSummary,
+                expanded: false,
+                content: this.buildTechnicalContent(analysis)
+            });
         }
 
-        // Score Breakdown Section
+        // Step 2: Score Breakdown
         if (analysis.score_breakdown || analysis.composite_score) {
             const scoreBreakdown = analysis.score_breakdown || {};
             const compositeScore = analysis.composite_score || 0;
+            const bullish = analysis.bullish_signals || 0;
+            const bearish = analysis.bearish_signals || 0;
+            const scoreSummary = `Score: ${compositeScore.toFixed(0)}/100 | ${bullish} bullish, ${bearish} bearish`;
 
-            console.log('[Verify] Score breakdown data:', {
-                scoreBreakdown: scoreBreakdown,
-                compositeScore: compositeScore,
-                basis: scoreBreakdown.basis,
-                oi: scoreBreakdown.oi,
-                dma: scoreBreakdown.dma,
-                sector: scoreBreakdown.sector,
-                volume: scoreBreakdown.volume,
-                technical: scoreBreakdown.technical,
-                sr: scoreBreakdown.sr
+            html += UIBuilders.buildCollapsibleSection({
+                id: 'verify-score',
+                step: stepNumber++,
+                title: 'Composite Score Breakdown',
+                icon: '🎯',
+                summary: scoreSummary,
+                statusBadge: compositeScore >= 50 ? 'status-pass' : 'status-fail',
+                statusText: compositeScore >= 50 ? 'PASS' : 'FAIL',
+                expanded: false,
+                content: this.buildScoreBreakdownContent(analysis)
             });
-
-            html += `
-                <div style="background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%); border-radius: 8px; padding: 20px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); border: 1px solid #3b82f6;">
-                    <h3 style="color: #1f2937; margin-bottom: 15px;">🎯 Composite Score Breakdown</h3>
-
-                    <!-- Overall Score -->
-                    <div style="background: white; padding: 15px; border-radius: 6px; margin-bottom: 15px; text-align: center;">
-                        <div style="font-size: 0.875rem; color: #6b7280; margin-bottom: 5px;">Total Composite Score</div>
-                        <div style="font-size: 2.5rem; font-weight: 700; color: ${compositeScore >= 50 ? '#10b981' : '#ef4444'};">${compositeScore.toFixed(1)}<span style="font-size: 1.5rem;">/100</span></div>
-                        <div style="font-size: 0.875rem; color: #6b7280; margin-top: 5px;">${compositeScore >= 50 ? '✅ PASS (≥50)' : '❌ FAIL (<50)'}</div>
-                    </div>
-
-                    <!-- Component Scores -->
-                    <div style="background: white; padding: 15px; border-radius: 6px;">
-                        <h4 style="color: #1f2937; font-size: 0.875rem; margin-bottom: 12px; font-weight: 600;">Component Scores:</h4>
-                        <div style="display: grid; gap: 10px;">
-                            ${this.buildScoreBar('Basis Analysis', scoreBreakdown.basis || 0, 10, 'Contango/Backwardation check (Futures vs Spot)')}
-                            ${this.buildScoreBar('Open Interest', scoreBreakdown.oi || 0, 15, 'OI buildup pattern (Long/Short/Neutral)')}
-                            ${this.buildScoreBar('Moving Averages', scoreBreakdown.dma || 0, 15, '20/50/100/200 DMA trend analysis')}
-                            ${this.buildScoreBar('Sector Health', scoreBreakdown.sector || 0, 20, 'Sector performance and correlation')}
-                            ${this.buildScoreBar('Volume Analysis', scoreBreakdown.volume || 0, 10, 'Spot & Futures volume liquidity')}
-                            ${this.buildScoreBar('Technical Score', scoreBreakdown.technical || 0, 15, 'RSI, MACD, Bollinger bands')}
-                            ${this.buildScoreBar('S/R Proximity', scoreBreakdown.sr || 0, 5, 'Distance from support/resistance')}
-                        </div>
-                    </div>
-
-                    <!-- Signal Analysis -->
-                    <div style="background: white; padding: 15px; border-radius: 6px; margin-top: 15px;">
-                        <h4 style="color: #1f2937; font-size: 0.875rem; margin-bottom: 12px; font-weight: 600;">Signal Analysis:</h4>
-                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
-                            <div>
-                                <div style="font-size: 0.75rem; color: #6b7280; margin-bottom: 5px;">Bullish Signals</div>
-                                <div style="font-size: 1.5rem; font-weight: 700; color: #10b981;">${analysis.bullish_signals || 0}</div>
-                                <div style="font-size: 0.7rem; color: #6b7280; margin-top: 3px;">Contango, DMA Up, Sector↑</div>
-                            </div>
-                            <div>
-                                <div style="font-size: 0.75rem; color: #6b7280; margin-bottom: 5px;">Bearish Signals</div>
-                                <div style="font-size: 1.5rem; font-weight: 700; color: #ef4444;">${analysis.bearish_signals || 0}</div>
-                                <div style="font-size: 0.7rem; color: #6b7280; margin-top: 3px;">Backwardation, DMA Down, Sector↓</div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Calculation Logic -->
-                    <div style="margin-top: 15px; padding: 15px; background: rgba(255,255,255,0.7); border-radius: 6px; border-left: 4px solid #3b82f6;">
-                        <h4 style="color: #1f2937; font-size: 0.875rem; margin-bottom: 10px; font-weight: 600;">📚 How Composite Score is Calculated:</h4>
-                        <ul style="margin: 0; padding-left: 20px; color: #6b7280; font-size: 0.875rem; line-height: 1.6;">
-                            <li><strong>9-Step Analysis:</strong> Each step scores the stock on different parameters</li>
-                            <li><strong>Weighted Components:</strong> Sector (20pts) > OI+DMA+Tech (15pts each) > Basis+Volume (10pts each) > S/R (5pts)</li>
-                            <li><strong>Direction Logic:</strong> Bullish signals > Bearish signals (≥2) → LONG | Bearish > Bullish (≥2) → SHORT | Else → NEUTRAL</li>
-                            <li><strong>Pass Criteria:</strong> Score ≥50 AND Direction ≠ NEUTRAL</li>
-                            <li><strong>Data Sources:</strong> All from Breeze API (Live quotes, Historical data, OI, Sector indices)</li>
-                        </ul>
-                    </div>
-                </div>
-            `;
         }
 
-        // Position Sizing Card - make it editable like strangle
+        // Step 2b: Enhanced Multi-Factor Analysis (if available)
+        if (data.enhanced_analysis || analysis.enhanced_analysis) {
+            const ea = data.enhanced_analysis || analysis.enhanced_analysis;
+            const eaScore = ea.composite_score || 0;
+            const eaStatus = ea.hard_reject ? 'fail' : (eaScore >= 65 ? 'pass' : eaScore >= 50 ? 'warning' : 'fail');
+            const eaStatusText = ea.hard_reject ? 'HARD REJECT' : (ea.recommendation || 'ANALYZING');
+            const eaSummary = ea.hard_reject
+                ? `🚫 ${ea.reject_reason || 'Entry blocked'}`
+                : `Score: ${eaScore}/100 | ${ea.recommendation || 'N/A'}`;
+
+            html += UIBuilders.buildCollapsibleSection({
+                id: 'verify-enhanced',
+                step: stepNumber++,
+                title: 'Enhanced Multi-Factor Analysis',
+                icon: '🧠',
+                summary: eaSummary,
+                statusBadge: `status-${eaStatus}`,
+                statusText: eaStatusText,
+                expanded: ea.hard_reject || eaScore < 50,  // Expand if issues
+                content: UIBuilders.buildEnhancedScoreCard(ea, 'FUTURES')
+            });
+        }
+
+        // Step 3: Position Sizing
         if (Object.keys(positionSizing).length > 0) {
-            html += this.buildPositionSizingCard(positionSizing, analysis);
+            const recLots = position.recommended_lots || 1;
+            const marginReq = (marginData.margin_per_lot || 0) * recLots;
+            const positionSummary = `Recommended: ${recLots} lots | Margin: ₹${this.formatNumber(marginReq)}`;
+
+            html += UIBuilders.buildCollapsibleSection({
+                id: 'verify-position',
+                step: stepNumber++,
+                title: 'Position Sizing & Risk',
+                icon: '💰',
+                summary: positionSummary,
+                expanded: true, // Position sizing is important, keep expanded
+                content: this.buildPositionSizingContent(positionSizing, analysis)
+            });
         }
 
-        // News Section - Add news related to stock, industry, and competitors
+        // Step 4: Live News (only if passed)
         if (data.passed) {
-            html += this.buildNewsSection(data.symbol);
+            html += UIBuilders.buildCollapsibleSection({
+                id: 'verify-news',
+                step: stepNumber++,
+                title: 'Live News & Market Intelligence',
+                icon: '📰',
+                summary: 'Loading news...',
+                expanded: false,
+                content: `<div id="newsContent" style="text-align: center; padding: 40px; color: #6b7280;">
+                    <div style="font-size: 2rem; margin-bottom: 10px;">⏳</div>
+                    <div>Loading news...</div>
+                </div>`
+            });
         }
 
-        // Historical Data Verification Section - Risk Checks
-        console.log('[Verify] Historical verification data:', data.historical_verification);
+        // Step 5: Historical Data Verification
         if (data.historical_verification) {
-            html += this.buildHistoricalVerificationSection(data.historical_verification);
-        } else {
-            console.log('[Verify] No historical_verification in response');
+            const histVerif = data.historical_verification;
+            const riskSummary = histVerif.risk_summary || {};
+            const histPassed = histVerif.trade_allowed !== false;
+            const totalChecks = (riskSummary.passed || 0) + (riskSummary.failed || 0);
+            const histSummary = `${riskSummary.passed || 0}/${totalChecks} checks passed | ${riskSummary.warnings || 0} warnings`;
+
+            html += UIBuilders.buildCollapsibleSection({
+                id: 'verify-historical',
+                step: stepNumber++,
+                title: 'Historical Data Verification',
+                icon: '📊',
+                summary: histSummary,
+                statusBadge: histPassed ? 'status-pass' : 'status-fail',
+                statusText: histPassed ? 'PASS' : 'FAIL',
+                expanded: !histPassed, // Expand if failed to show issues
+                content: this.buildHistoricalVerificationContent(histVerif)
+            });
         }
 
-        // Historical News Analysis Section - Top 5 impactful articles from database
+        // Step 6: Historical News Analysis
         if (data.historical_news && data.historical_news.articles && data.historical_news.articles.length > 0) {
-            html += this.buildHistoricalNewsSection(data.historical_news);
+            const histNews = data.historical_news;
+            const summary = histNews.summary || {};
+            const newsCount = histNews.articles?.length || 0;
+            const blocking = summary.blocking_count || 0;
+            const histNewsSummary = blocking > 0 ? `⚠️ ${blocking} high-impact article(s) found` : `${newsCount} articles analyzed | Avg: ${(summary.average_score || 0).toFixed(2)}`;
+
+            html += UIBuilders.buildCollapsibleSection({
+                id: 'verify-hist-news',
+                step: stepNumber++,
+                title: 'Historical News Analysis',
+                icon: '📜',
+                summary: histNewsSummary,
+                statusBadge: blocking > 0 ? 'status-warning' : 'status-pass',
+                statusText: blocking > 0 ? 'ALERT' : 'OK',
+                expanded: blocking > 0,
+                content: this.buildHistoricalNewsContent(histNews)
+            });
         }
 
-        // Analyst Report Verification Section - Price targets and research reports
-        console.log('[Verify] Analyst verification data:', data.analyst_verification);
+        // Step 7: Analyst Report Verification
         if (data.analyst_verification) {
-            html += this.buildAnalystVerificationSection(data.analyst_verification);
-        } else {
-            console.log('[Verify] No analyst_verification in response');
+            const analystVerif = data.analyst_verification;
+            const priceTarget = analystVerif.price_target || {};
+            const upside = priceTarget.upside_pct || 0;
+            const analystCount = priceTarget.analyst_count || 0;
+            const analystSummary = analystCount > 0
+                ? `Target: ₹${priceTarget.avg_target_price ? priceTarget.avg_target_price.toLocaleString('en-IN', {maximumFractionDigits: 0}) : 'N/A'} (${upside >= 0 ? '+' : ''}${upside.toFixed(1)}% upside) | ${analystCount} analysts`
+                : 'No analyst data available';
+            const analystPassed = analystVerif.trade_allowed !== false;
+
+            html += UIBuilders.buildCollapsibleSection({
+                id: 'verify-analyst',
+                step: stepNumber++,
+                title: 'Analyst Research Verification',
+                icon: '🔬',
+                summary: analystSummary,
+                statusBadge: analystPassed ? 'status-pass' : 'status-fail',
+                statusText: analystPassed ? 'PASS' : 'BLOCKED',
+                expanded: !analystPassed,
+                content: this.buildAnalystVerificationContent(analystVerif)
+            });
         }
 
-        // Execution Buttons
+        html += '</div>'; // End accordion-container
+
+        // Execution Buttons (always visible at bottom)
         if (data.passed) {
             html += this.buildExecutionButtons();
         } else {
@@ -3528,6 +4200,431 @@ const TradeVerification = {
         if (data.passed && data.symbol) {
             this.fetchAndDisplayNews(data.symbol);
         }
+    },
+
+    // Helper: Build Technical Indicators content for collapsible
+    buildTechnicalContent(analysis) {
+        return `
+            ${UIBuilders.buildResultGrid([
+                analysis.sma_20 ? { label: '20-Day SMA', value: `₹${parseFloat(analysis.sma_20).toFixed(2)}` } : null,
+                analysis.sma_50 ? { label: '50-Day SMA', value: `₹${parseFloat(analysis.sma_50).toFixed(2)}` } : null,
+                analysis.support_1 ? { label: 'Support 1', value: `₹${parseFloat(analysis.support_1).toFixed(2)}`, className: 'text-red-600' } : null,
+                analysis.support_2 ? { label: 'Support 2', value: `₹${parseFloat(analysis.support_2).toFixed(2)}`, className: 'text-red-600' } : null,
+                analysis.resistance_1 ? { label: 'Resistance 1', value: `₹${parseFloat(analysis.resistance_1).toFixed(2)}`, className: 'text-green-600' } : null,
+                analysis.resistance_2 ? { label: 'Resistance 2', value: `₹${parseFloat(analysis.resistance_2).toFixed(2)}`, className: 'text-green-600' } : null
+            ].filter(item => item !== null))}
+
+            <div style="margin-top: 15px; padding: 15px; background: #f9fafb; border-radius: 6px; border-left: 4px solid #3b82f6;">
+                <h4 style="color: #1f2937; font-size: 0.875rem; margin-bottom: 10px; font-weight: 600;">📚 How Support & Resistance are Calculated:</h4>
+                <ul style="margin: 0; padding-left: 20px; color: #6b7280; font-size: 0.875rem; line-height: 1.6;">
+                    <li><strong>Data Source:</strong> 1 year of NIFTY historical data from Breeze API (stored in HistoricalPrice table)</li>
+                    <li><strong>Pivot Points Method:</strong> Uses last 5 days average → Pivot = (High + Low + Close) / 3</li>
+                    <li><strong>Resistance Levels:</strong> R1 = (2 × Pivot) - Low | R2 = Pivot + (High - Low) | R3 = High + 2(Pivot - Low)</li>
+                    <li><strong>Support Levels:</strong> S1 = (2 × Pivot) - High | S2 = Pivot - (High - Low) | S3 = Low - 2(High - Pivot)</li>
+                    <li><strong>Moving Averages:</strong> Simple Moving Average calculated from historical closes (20/50/100/200 days)</li>
+                </ul>
+            </div>
+        `;
+    },
+
+    // Helper: Build Score Breakdown content for collapsible
+    buildScoreBreakdownContent(analysis) {
+        const scoreBreakdown = analysis.score_breakdown || {};
+        const compositeScore = analysis.composite_score || 0;
+
+        return `
+            <!-- Overall Score -->
+            <div style="background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%); padding: 15px; border-radius: 6px; margin-bottom: 15px; text-align: center;">
+                <div style="font-size: 0.875rem; color: #6b7280; margin-bottom: 5px;">Total Composite Score</div>
+                <div style="font-size: 2.5rem; font-weight: 700; color: ${compositeScore >= 50 ? '#10b981' : '#ef4444'};">${compositeScore.toFixed(1)}<span style="font-size: 1.5rem;">/100</span></div>
+                <div style="font-size: 0.875rem; color: #6b7280; margin-top: 5px;">${compositeScore >= 50 ? '✅ PASS (≥50)' : '❌ FAIL (<50)'}</div>
+            </div>
+
+            <!-- Component Scores -->
+            <div style="background: #f8fafc; padding: 15px; border-radius: 6px;">
+                <h4 style="color: #1f2937; font-size: 0.875rem; margin-bottom: 12px; font-weight: 600;">Component Scores:</h4>
+                <div style="display: grid; gap: 10px;">
+                    ${this.buildScoreBar('Basis Analysis', scoreBreakdown.basis || 0, 10, 'Contango/Backwardation check (Futures vs Spot)')}
+                    ${this.buildScoreBar('Open Interest', scoreBreakdown.oi || 0, 15, 'OI buildup pattern (Long/Short/Neutral)')}
+                    ${this.buildScoreBar('Moving Averages', scoreBreakdown.dma || 0, 15, '20/50/100/200 DMA trend analysis')}
+                    ${this.buildScoreBar('Sector Health', scoreBreakdown.sector || 0, 20, 'Sector performance and correlation')}
+                    ${this.buildScoreBar('Volume Analysis', scoreBreakdown.volume || 0, 10, 'Spot & Futures volume liquidity')}
+                    ${this.buildScoreBar('Technical Score', scoreBreakdown.technical || 0, 15, 'RSI, MACD, Bollinger bands')}
+                    ${this.buildScoreBar('S/R Proximity', scoreBreakdown.sr || 0, 5, 'Distance from support/resistance')}
+                </div>
+            </div>
+
+            <!-- Signal Analysis -->
+            <div style="background: #f8fafc; padding: 15px; border-radius: 6px; margin-top: 15px;">
+                <h4 style="color: #1f2937; font-size: 0.875rem; margin-bottom: 12px; font-weight: 600;">Signal Analysis:</h4>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                    <div>
+                        <div style="font-size: 0.75rem; color: #6b7280; margin-bottom: 5px;">Bullish Signals</div>
+                        <div style="font-size: 1.5rem; font-weight: 700; color: #10b981;">${analysis.bullish_signals || 0}</div>
+                        <div style="font-size: 0.7rem; color: #6b7280; margin-top: 3px;">Contango, DMA Up, Sector↑</div>
+                    </div>
+                    <div>
+                        <div style="font-size: 0.75rem; color: #6b7280; margin-bottom: 5px;">Bearish Signals</div>
+                        <div style="font-size: 1.5rem; font-weight: 700; color: #ef4444;">${analysis.bearish_signals || 0}</div>
+                        <div style="font-size: 0.7rem; color: #6b7280; margin-top: 3px;">Backwardation, DMA Down, Sector↓</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Calculation Logic -->
+            <div style="margin-top: 15px; padding: 15px; background: #f9fafb; border-radius: 6px; border-left: 4px solid #3b82f6;">
+                <h4 style="color: #1f2937; font-size: 0.875rem; margin-bottom: 10px; font-weight: 600;">📚 How Composite Score is Calculated:</h4>
+                <ul style="margin: 0; padding-left: 20px; color: #6b7280; font-size: 0.875rem; line-height: 1.6;">
+                    <li><strong>9-Step Analysis:</strong> Each step scores the stock on different parameters</li>
+                    <li><strong>Weighted Components:</strong> Sector (20pts) > OI+DMA+Tech (15pts each) > Basis+Volume (10pts each) > S/R (5pts)</li>
+                    <li><strong>Direction Logic:</strong> Bullish signals > Bearish signals (≥2) → LONG | Bearish > Bullish (≥2) → SHORT | Else → NEUTRAL</li>
+                    <li><strong>Pass Criteria:</strong> Score ≥50 AND Direction ≠ NEUTRAL</li>
+                    <li><strong>Data Sources:</strong> All from Breeze API (Live quotes, Historical data, OI, Sector indices)</li>
+                </ul>
+            </div>
+        `;
+    },
+
+    // Helper: Build Position Sizing content for collapsible (without outer card wrapper)
+    buildPositionSizingContent(positionSizing, analysis) {
+        const position = positionSizing.position || {};
+        const marginData = positionSizing.margin_data || {};
+
+        const recommendedLots = position.recommended_lots || 1;
+        const lotSize = analysis.position_details?.lot_size || 0;
+        const futuresPrice = analysis.contract_price || analysis.entry_price || 0;
+        const stopLoss = analysis.stop_loss || 0;
+        const target = analysis.target || 0;
+
+        return `
+            <div style="background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%); border-radius: 12px; padding: 25px; color: white;">
+                <!-- Lot Size Editor -->
+                <div style="background: rgba(255,255,255,0.15); padding: 20px; border-radius: 8px; margin-bottom: 20px;">
+                    <h4 style="color: white; margin-bottom: 15px; font-size: 1rem;">🎯 Adjust Position Size</h4>
+                    <div style="display: flex; align-items: center; gap: 15px; justify-content: center;">
+                        <button onclick="TradeVerification.adjustLots(-1)"
+                                style="background: #ef4444; color: white; width: 40px; height: 40px; border: none; border-radius: 8px; font-size: 1.5rem; cursor: pointer; font-weight: 700;">−</button>
+                        <div style="text-align: center;">
+                            <input type="number"
+                                   id="verifyLotsInput"
+                                   value="${recommendedLots}"
+                                   min="1"
+                                   max="100"
+                                   onchange="TradeVerification.updatePosition()"
+                                   style="width: 100px; padding: 12px; border: none; border-radius: 8px; text-align: center; font-size: 1.25rem; font-weight: 700;">
+                            <div style="font-size: 0.875rem; margin-top: 5px;">Lots</div>
+                        </div>
+                        <button onclick="TradeVerification.adjustLots(1)"
+                                style="background: #10b981; color: white; width: 40px; height: 40px; border: none; border-radius: 8px; font-size: 1.5rem; cursor: pointer; font-weight: 700;">+</button>
+                    </div>
+                    <div style="display: flex; gap: 10px; justify-content: center; margin-top: 15px;">
+                        <button onclick="TradeVerification.setLots(5)" style="padding: 8px 16px; background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.3); border-radius: 6px; color: white; cursor: pointer; font-size: 0.875rem;">5 Lots</button>
+                        <button onclick="TradeVerification.setLots(10)" style="padding: 8px 16px; background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.3); border-radius: 6px; color: white; cursor: pointer; font-size: 0.875rem;">10 Lots</button>
+                        <button onclick="TradeVerification.setLots(20)" style="padding: 8px 16px; background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.3); border-radius: 6px; color: white; cursor: pointer; font-size: 0.875rem;">20 Lots</button>
+                    </div>
+                </div>
+
+                <!-- Live Position Summary -->
+                <div id="verifyPositionSummary" style="background: rgba(255,255,255,0.15); padding: 20px; border-radius: 8px;">
+                    ${this.buildPositionSummary(position, marginData, analysis, recommendedLots)}
+                </div>
+            </div>
+        `;
+    },
+
+    // Helper: Build Historical Verification content for collapsible (without outer wrapper)
+    buildHistoricalVerificationContent(verification) {
+        if (!verification) return '<div style="padding: 20px; color: #6b7280; text-align: center;">No historical verification data</div>';
+
+        const tradeAllowed = verification.trade_allowed !== false;
+        const riskChecks = verification.risk_checks || [];
+        const summary = verification.risk_summary || {};
+        const recommendations = verification.recommendations || [];
+
+        const headerBg = tradeAllowed
+            ? 'linear-gradient(135deg, #10b981 0%, #059669 100%)'
+            : 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)';
+        const headerIcon = tradeAllowed ? '✅' : '🚫';
+        const headerText = tradeAllowed ? 'Historical Data Verification PASSED' : 'Historical Data Verification FAILED';
+
+        let html = `
+            <!-- Header -->
+            <div style="background: ${headerBg}; border-radius: 8px; padding: 20px; margin-bottom: 20px; color: white;">
+                <div style="display: flex; align-items: center; gap: 15px;">
+                    <span style="font-size: 2rem;">${headerIcon}</span>
+                    <div>
+                        <h4 style="margin: 0; font-size: 1.2rem; font-weight: 700;">${headerText}</h4>
+                        <p style="margin: 5px 0 0 0; font-size: 0.9rem; opacity: 0.95;">${verification.verdict_message || ''}</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Summary Stats -->
+            <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; margin-bottom: 20px;">
+                <div style="background: #f0fdf4; padding: 15px; border-radius: 8px; text-align: center; border: 1px solid #bbf7d0;">
+                    <div style="font-size: 1.5rem; font-weight: 700; color: #10b981;">${summary.passed || 0}</div>
+                    <div style="font-size: 0.8rem; color: #166534; font-weight: 500;">Passed</div>
+                </div>
+                <div style="background: #fef2f2; padding: 15px; border-radius: 8px; text-align: center; border: 1px solid #fecaca;">
+                    <div style="font-size: 1.5rem; font-weight: 700; color: #ef4444;">${summary.failed || 0}</div>
+                    <div style="font-size: 0.8rem; color: #991b1b; font-weight: 500;">Failed</div>
+                </div>
+                <div style="background: #fffbeb; padding: 15px; border-radius: 8px; text-align: center; border: 1px solid #fde68a;">
+                    <div style="font-size: 1.5rem; font-weight: 700; color: #f59e0b;">${summary.warnings || 0}</div>
+                    <div style="font-size: 0.8rem; color: #92400e; font-weight: 500;">Warnings</div>
+                </div>
+                <div style="background: #f3f4f6; padding: 15px; border-radius: 8px; text-align: center; border: 1px solid #d1d5db;">
+                    <div style="font-size: 1.5rem; font-weight: 700; color: #374151;">${summary.pass_rate || 0}%</div>
+                    <div style="font-size: 0.8rem; color: #6b7280; font-weight: 500;">Pass Rate</div>
+                </div>
+            </div>
+
+            <!-- Risk Checks -->
+            <h4 style="color: #1f2937; margin-bottom: 15px; font-size: 1rem; font-weight: 600;">📋 Risk Assessment Checks</h4>
+            <div style="display: flex; flex-direction: column; gap: 10px;">
+        `;
+
+        riskChecks.forEach(check => {
+            let statusColor, statusBg, statusIcon;
+            switch (check.status) {
+                case 'PASS': statusColor = '#10b981'; statusBg = '#f0fdf4'; statusIcon = '✅'; break;
+                case 'FAIL': statusColor = '#ef4444'; statusBg = '#fef2f2'; statusIcon = '❌'; break;
+                case 'WARNING': statusColor = '#f59e0b'; statusBg = '#fffbeb'; statusIcon = '⚠️'; break;
+                default: statusColor = '#6b7280'; statusBg = '#f3f4f6'; statusIcon = '⏭️';
+            }
+
+            html += `
+                <div style="background: ${statusBg}; border-radius: 8px; padding: 12px; border-left: 4px solid ${statusColor};">
+                    <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+                        <div style="display: flex; align-items: center; gap: 8px;">
+                            <span style="font-size: 1rem;">${statusIcon}</span>
+                            <div>
+                                <div style="font-weight: 600; color: #1f2937; font-size: 0.9rem;">${check.name}</div>
+                                <div style="font-size: 0.75rem; color: #6b7280;">${check.description}</div>
+                            </div>
+                        </div>
+                        <span style="background: ${statusColor}; color: white; padding: 3px 10px; border-radius: 4px; font-size: 0.75rem; font-weight: 600;">${check.status}</span>
+                    </div>
+                    <div style="font-size: 0.8rem; color: #374151; margin-top: 8px;">
+                        <strong>Result:</strong> ${check.value || 'N/A'} | <strong>Threshold:</strong> ${check.threshold || 'N/A'}
+                    </div>
+                    ${check.message ? `<div style="margin-top: 5px; font-size: 0.8rem; color: ${statusColor}; font-weight: 500;">${check.message}</div>` : ''}
+                </div>
+            `;
+        });
+
+        html += '</div>';
+
+        if (recommendations.length > 0) {
+            html += `
+                <div style="margin-top: 20px; background: #fffbeb; border-radius: 8px; padding: 15px; border: 1px solid #fde68a;">
+                    <h4 style="color: #92400e; margin: 0 0 10px 0; font-size: 0.9rem; font-weight: 600;">💡 Recommendations</h4>
+                    <ul style="margin: 0; padding-left: 20px; color: #78350f; font-size: 0.85rem;">
+                        ${recommendations.map(rec => `<li style="margin-bottom: 5px;">${rec}</li>`).join('')}
+                    </ul>
+                </div>
+            `;
+        }
+
+        return html;
+    },
+
+    // Helper: Build Historical News content for collapsible (without outer wrapper)
+    buildHistoricalNewsContent(historicalNews) {
+        if (!historicalNews || !historicalNews.articles || historicalNews.articles.length === 0) {
+            return '<div style="padding: 20px; color: #6b7280; text-align: center;">No historical news data</div>';
+        }
+
+        const articles = historicalNews.articles;
+        const summary = historicalNews.summary || {};
+        const blockingCount = summary.blocking_count || 0;
+        const hasBlockingNews = blockingCount > 0;
+
+        const headerBg = hasBlockingNews
+            ? 'linear-gradient(135deg, #dc2626 0%, #991b1b 100%)'
+            : 'linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%)';
+        const headerIcon = hasBlockingNews ? '🚨' : '📰';
+        const headerText = hasBlockingNews
+            ? `Historical News Alert: ${blockingCount} High-Impact Article${blockingCount > 1 ? 's' : ''}`
+            : 'Historical News Analysis (7 Days)';
+
+        let html = `
+            <div style="background: ${headerBg}; border-radius: 8px; padding: 12px 16px; margin-bottom: 15px; color: white; display: flex; justify-content: space-between; align-items: center;">
+                <div style="display: flex; align-items: center; gap: 10px;">
+                    <span style="font-size: 1.2rem;">${headerIcon}</span>
+                    <div>
+                        <h4 style="margin: 0; font-size: 0.95rem; font-weight: 600;">${headerText}</h4>
+                        <span style="font-size: 0.7rem; opacity: 0.9;">Top ${articles.length} impactful articles</span>
+                    </div>
+                </div>
+                <div style="display: flex; gap: 10px; font-size: 0.7rem;">
+                    <span style="background: rgba(255,255,255,0.2); padding: 4px 10px; border-radius: 12px;">Avg: ${(summary.average_score || 0).toFixed(2)}</span>
+                    <span style="background: rgba(255,255,255,0.2); padding: 4px 10px; border-radius: 12px;">${summary.negative_count || 0} Negative</span>
+                </div>
+            </div>
+            <div style="display: flex; flex-direction: column; gap: 8px;">
+        `;
+
+        articles.forEach((article) => {
+            const isBlocking = article.could_block_trade;
+            const score = article.impact_score || 0;
+            const scoreColor = score <= -0.6 ? '#dc2626' : score <= -0.3 ? '#f59e0b' : score >= 0.3 ? '#10b981' : '#6b7280';
+            const bgColor = isBlocking ? '#fef2f2' : '#f9fafb';
+            const borderColor = isBlocking ? '#fecaca' : '#e5e7eb';
+            const impactBadge = article.impact_label || (score <= -0.6 ? 'HIGHLY_NEGATIVE' : score <= -0.3 ? 'NEGATIVE' : 'NEUTRAL');
+
+            html += `
+                <div style="background: ${bgColor}; border: 1px solid ${borderColor}; border-radius: 8px; padding: 10px 14px; ${isBlocking ? 'border-left: 3px solid #dc2626;' : ''}">
+                    <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 12px;">
+                        <div style="flex: 1; min-width: 0;">
+                            <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 4px; flex-wrap: wrap;">
+                                <span style="background: ${score <= -0.6 ? '#fef2f2' : score <= -0.3 ? '#fffbeb' : '#f3f4f6'}; color: ${scoreColor}; padding: 2px 6px; border-radius: 4px; font-size: 0.6rem; font-weight: 700;">${impactBadge}</span>
+                                ${isBlocking ? '<span style="background: #dc2626; color: white; padding: 2px 6px; border-radius: 4px; font-size: 0.6rem; font-weight: 600;">BLOCKS</span>' : ''}
+                            </div>
+                            <a href="${article.url}" target="_blank" style="color: #1f2937; text-decoration: none; font-size: 0.85rem; font-weight: 500; line-height: 1.3; display: block;">${article.title}</a>
+                            ${article.impact_reasoning ? `<div style="color: #6b7280; font-size: 0.75rem; margin-top: 4px;">💡 ${article.impact_reasoning}</div>` : ''}
+                        </div>
+                        <div style="text-align: right; flex-shrink: 0;">
+                            <div style="font-size: 0.9rem; font-weight: 700; color: ${scoreColor};">${score >= 0 ? '+' : ''}${score.toFixed(2)}</div>
+                            <div style="font-size: 0.6rem; color: #9ca3af;">${article.source || ''}</div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        });
+
+        html += '</div>';
+        return html;
+    },
+
+    // Helper: Build Analyst Verification content for collapsible (without outer wrapper)
+    buildAnalystVerificationContent(verification) {
+        if (!verification) return '<div style="padding: 20px; color: #6b7280; text-align: center;">No analyst verification data</div>';
+
+        const tradeAllowed = verification.trade_allowed !== false;
+        const blockingReasons = verification.blocking_reasons || [];
+        const priceTarget = verification.price_target || {};
+        const reportsSummary = verification.reports_summary || {};
+        const dataSource = verification.data_source || 'unknown';
+
+        const hasData = priceTarget && (priceTarget.avg_target_price || priceTarget.analyst_count > 0);
+        const hasReports = reportsSummary && reportsSummary.total_reports > 0;
+
+        const headerBg = tradeAllowed
+            ? 'linear-gradient(135deg, #8b5cf6 0%, #6d28d9 100%)'
+            : 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)';
+        const headerIcon = tradeAllowed ? '📊' : '🚫';
+
+        const dataSourceBadge = dataSource === 'fresh_fetch'
+            ? '<span style="background: #10b981; padding: 2px 8px; border-radius: 10px; font-size: 0.65rem; font-weight: 600;">🔄 FRESH</span>'
+            : dataSource === 'cache'
+            ? '<span style="background: rgba(255,255,255,0.3); padding: 2px 8px; border-radius: 10px; font-size: 0.65rem; font-weight: 600;">📦 CACHED</span>'
+            : '<span style="background: rgba(255,255,255,0.2); padding: 2px 8px; border-radius: 10px; font-size: 0.65rem; font-weight: 600;">⚠️ NO DATA</span>';
+
+        let html = `
+            <!-- Header -->
+            <div style="background: ${headerBg}; border-radius: 8px; padding: 15px; margin-bottom: 20px; color: white;">
+                <div style="display: flex; align-items: center; justify-content: space-between;">
+                    <div style="display: flex; align-items: center; gap: 12px;">
+                        <span style="font-size: 1.8rem;">${headerIcon}</span>
+                        <div>
+                            <div style="display: flex; align-items: center; gap: 8px;">
+                                <h4 style="margin: 0; font-size: 1.1rem; font-weight: 700;">${tradeAllowed ? 'Analyst Data Supports Trade' : 'Trade Blocked by Analyst Data'}</h4>
+                                ${dataSourceBadge}
+                            </div>
+                            <p style="margin: 3px 0 0 0; font-size: 0.85rem; opacity: 0.95;">
+                                ${tradeAllowed ? (hasData ? 'All checks passed' : 'No blocking data') : blockingReasons.join('; ')}
+                            </p>
+                        </div>
+                    </div>
+                    <div style="text-align: right;">
+                        <div style="font-size: 0.7rem; opacity: 0.9;">Recommendation</div>
+                        <div style="font-size: 1rem; font-weight: 700;">${verification.recommendation || 'PROCEED'}</div>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        if (hasData) {
+            const upside = priceTarget.upside_pct || 0;
+            const upsideColor = upside >= 8 ? '#10b981' : upside >= 0 ? '#f59e0b' : '#ef4444';
+
+            html += `
+                <div style="background: linear-gradient(135deg, #f3e8ff 0%, #ede9fe 100%); border-radius: 10px; padding: 15px; margin-bottom: 15px; border: 1px solid #c4b5fd;">
+                    <h4 style="color: #6d28d9; margin: 0 0 12px 0; font-size: 0.95rem; font-weight: 600;">🎯 Price Target Consensus</h4>
+                    <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px;">
+                        <div style="background: white; padding: 12px; border-radius: 6px; text-align: center;">
+                            <div style="font-size: 0.7rem; color: #6b7280; margin-bottom: 3px;">Current</div>
+                            <div style="font-size: 1.1rem; font-weight: 700; color: #1f2937;">₹${priceTarget.current_price ? priceTarget.current_price.toLocaleString('en-IN', {maximumFractionDigits: 0}) : 'N/A'}</div>
+                        </div>
+                        <div style="background: white; padding: 12px; border-radius: 6px; text-align: center;">
+                            <div style="font-size: 0.7rem; color: #6b7280; margin-bottom: 3px;">Avg Target</div>
+                            <div style="font-size: 1.1rem; font-weight: 700; color: #6d28d9;">₹${priceTarget.avg_target_price ? priceTarget.avg_target_price.toLocaleString('en-IN', {maximumFractionDigits: 0}) : 'N/A'}</div>
+                        </div>
+                        <div style="background: white; padding: 12px; border-radius: 6px; text-align: center;">
+                            <div style="font-size: 0.7rem; color: #6b7280; margin-bottom: 3px;">Upside</div>
+                            <div style="font-size: 1.1rem; font-weight: 700; color: ${upsideColor};">${upside ? upside.toFixed(1) : 'N/A'}%</div>
+                        </div>
+                        <div style="background: white; padding: 12px; border-radius: 6px; text-align: center;">
+                            <div style="font-size: 0.7rem; color: #6b7280; margin-bottom: 3px;">Analysts</div>
+                            <div style="font-size: 1.1rem; font-weight: 700; color: #1f2937;">${priceTarget.analyst_count || 0}</div>
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            // Recommendation breakdown
+            const totalRecs = (priceTarget.strong_buy_count || 0) + (priceTarget.buy_count || 0) + (priceTarget.hold_count || 0) + (priceTarget.sell_count || 0) + (priceTarget.strong_sell_count || 0);
+            if (totalRecs > 0) {
+                html += `
+                    <div style="background: #f8fafc; border-radius: 10px; padding: 15px; margin-bottom: 15px; border: 1px solid #e2e8f0;">
+                        <h4 style="color: #1f2937; margin: 0 0 12px 0; font-size: 0.9rem; font-weight: 600;">📈 Recommendations</h4>
+                        <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                            <span style="background: #dcfce7; color: #166534; padding: 6px 12px; border-radius: 6px; font-weight: 600; font-size: 0.8rem;">Strong Buy: ${priceTarget.strong_buy_count || 0}</span>
+                            <span style="background: #d1fae5; color: #047857; padding: 6px 12px; border-radius: 6px; font-weight: 600; font-size: 0.8rem;">Buy: ${priceTarget.buy_count || 0}</span>
+                            <span style="background: #f3f4f6; color: #374151; padding: 6px 12px; border-radius: 6px; font-weight: 600; font-size: 0.8rem;">Hold: ${priceTarget.hold_count || 0}</span>
+                            <span style="background: #fef3c7; color: #92400e; padding: 6px 12px; border-radius: 6px; font-weight: 600; font-size: 0.8rem;">Sell: ${priceTarget.sell_count || 0}</span>
+                            <span style="background: #fee2e2; color: #991b1b; padding: 6px 12px; border-radius: 6px; font-weight: 600; font-size: 0.8rem;">Strong Sell: ${priceTarget.strong_sell_count || 0}</span>
+                        </div>
+                    </div>
+                `;
+            }
+        } else {
+            html += `
+                <div style="background: #fffbeb; border-radius: 8px; padding: 15px; text-align: center; border: 1px solid #fde68a;">
+                    <span style="font-size: 1.2rem;">⚠️</span>
+                    <span style="color: #92400e; font-weight: 500; margin-left: 10px;">No analyst price target data available</span>
+                </div>
+            `;
+        }
+
+        if (hasReports) {
+            html += `
+                <div style="background: #f8fafc; border-radius: 10px; padding: 15px; border: 1px solid #e2e8f0;">
+                    <h4 style="color: #1f2937; margin: 0 0 12px 0; font-size: 0.9rem; font-weight: 600;">📝 Research Reports (3 Months)</h4>
+                    <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px;">
+                        <div style="background: white; padding: 10px; border-radius: 6px; text-align: center; border: 1px solid #e5e7eb;">
+                            <div style="font-size: 1.2rem; font-weight: 700; color: #1f2937;">${reportsSummary.total_reports}</div>
+                            <div style="font-size: 0.7rem; color: #6b7280;">Total</div>
+                        </div>
+                        <div style="background: #f0fdf4; padding: 10px; border-radius: 6px; text-align: center; border: 1px solid #bbf7d0;">
+                            <div style="font-size: 1.2rem; font-weight: 700; color: #10b981;">${reportsSummary.bullish_count || 0}</div>
+                            <div style="font-size: 0.7rem; color: #166534;">Bullish</div>
+                        </div>
+                        <div style="background: #fef2f2; padding: 10px; border-radius: 6px; text-align: center; border: 1px solid #fecaca;">
+                            <div style="font-size: 1.2rem; font-weight: 700; color: #ef4444;">${reportsSummary.bearish_count || 0}</div>
+                            <div style="font-size: 0.7rem; color: #991b1b;">Bearish</div>
+                        </div>
+                        <div style="background: #f3f4f6; padding: 10px; border-radius: 6px; text-align: center; border: 1px solid #d1d5db;">
+                            <div style="font-size: 1.2rem; font-weight: 700; color: #374151;">${reportsSummary.neutral_count || 0}</div>
+                            <div style="font-size: 0.7rem; color: #6b7280;">Neutral</div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        return html;
     },
 
     buildScoreBar(label, score, maxScore, description) {
@@ -3714,6 +4811,28 @@ const TradeVerification = {
         const industryNews = newsData.industry_news || {};
         const competitorNews = newsData.competitor_news || {};
         const newsVerification = newsData.news_verification || {};
+
+        // Update the collapsible section summary
+        const newsSection = document.querySelector('[data-section="verify-news"]');
+        if (newsSection) {
+            const summaryEl = newsSection.querySelector('.section-summary');
+            if (summaryEl) {
+                const totalArticles = (stockNews.totalArticles || 0) + (industryNews.totalArticles || 0) + (competitorNews.totalArticles || 0);
+                const blockingCount = newsVerification.blocking_articles?.length || 0;
+                const warningCount = newsVerification.warning_articles?.length || 0;
+
+                if (blockingCount > 0) {
+                    summaryEl.textContent = `${blockingCount} blocking, ${warningCount} warnings`;
+                    summaryEl.style.color = '#ef4444';
+                } else if (warningCount > 0) {
+                    summaryEl.textContent = `${warningCount} warnings, ${totalArticles} articles`;
+                    summaryEl.style.color = '#f59e0b';
+                } else {
+                    summaryEl.textContent = `${totalArticles} articles analyzed`;
+                    summaryEl.style.color = '#10b981';
+                }
+            }
+        }
 
         let html = '';
 

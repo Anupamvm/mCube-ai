@@ -631,7 +631,7 @@ def verify_future_trade(request):
     """
     try:
         from decimal import Decimal
-        from apps.trading.futures_analyzer import comprehensive_futures_analysis
+        from apps.trading.futures_analyzer import enhanced_futures_analysis
         from apps.data.models import ContractData
         from apps.brokers.utils.security_master import update_security_master
 
@@ -669,8 +669,8 @@ def verify_future_trade(request):
             expiry=expiry_date
         ).first()
 
-        # Run comprehensive analysis with Breeze API
-        analysis_result = comprehensive_futures_analysis(
+        # Run enhanced futures analysis (12-component scoring with hard reject filters)
+        analysis_result = enhanced_futures_analysis(
             stock_symbol=stock_symbol,
             expiry_date=expiry_date,
             contract=contract
@@ -1268,13 +1268,13 @@ def verify_future_trade(request):
         # Trade only passes if analysis, historical checks, news checks, AND analyst checks pass
         passed = analysis_passed and historical_passed and news_passed and analyst_passed
 
-        # Calculate position sizing with 50% margin rule (like options)
+        # Calculate position sizing with 50% margin rule using shared services
         position_details = {}
         position_sizing = {}
 
         if futures_price > 0:
-            from apps.trading.position_sizer import PositionSizer
             from apps.brokers.integrations.breeze import get_breeze_client
+            from apps.trading.services.position_service import calculate_position_sizing, build_position_sizing_response
 
             # Get lot size from contract or use estimated fallback
             if contract and contract.lot_size:
@@ -1300,132 +1300,35 @@ def verify_future_trade(request):
             expiry_dt = datetime.strptime(expiry_date, '%Y-%m-%d')
             expiry_breeze = expiry_dt.strftime('%d-%b-%Y').upper()
 
-            # Initialize position sizer with Breeze client
+            # Calculate position sizing using shared service
             try:
                 breeze = get_breeze_client()
-                sizer = PositionSizer(breeze_client=breeze)
 
-                # Fetch margin for 1 lot (using estimation since Breeze doesn't provide per-contract margin)
-                margin_response = sizer.fetch_margin_requirement(
-                    stock_code=stock_symbol,
+                position_sizing_result = calculate_position_sizing(
+                    breeze=breeze,
+                    symbol=stock_symbol,
                     expiry=expiry_breeze,
-                    quantity=lot_size,  # 1 lot
-                    direction=direction,
-                    futures_price=futures_price
+                    lot_size=lot_size,
+                    futures_price=futures_price,
+                    direction=direction
                 )
 
-                if margin_response.get('success'):
-                    margin_per_lot = margin_response.get('margin_per_lot', 0)
-                    total_margin_for_one = margin_response.get('total_margin', 0)
+                # Build standardized response
+                sizing_response = build_position_sizing_response(
+                    position_sizing=position_sizing_result,
+                    lot_size=lot_size,
+                    direction=direction
+                )
 
-                    logger.info(f"Breeze margin for {stock_symbol}: ₹{margin_per_lot:,.0f} per lot")
+                position_sizing = {
+                    'position': position_sizing_result['position'],
+                    'margin_data': position_sizing_result['margin_data']
+                }
 
-                    # Get available margin from Breeze account (F&O margin)
-                    try:
-                        # Use get_margin for F&O segment
-                        margin_response = breeze.get_margin(exchange_code="NFO")
-                        if margin_response and margin_response.get('Status') == 200:
-                            margin_data = margin_response.get('Success', {})
+                position_details = sizing_response['position_details']
 
-                            # Breeze F&O margin fields:
-                            # - cash_limit: Total margin limit
-                            # - amount_allocated: Currently allocated
-                            # - block_by_trade: Blocked by active trades
-                            cash_limit = float(margin_data.get('cash_limit', 0))
-                            amount_allocated = float(margin_data.get('amount_allocated', 0))
-                            block_by_trade = float(margin_data.get('block_by_trade', 0))
-
-                            # Available margin = cash_limit - block_by_trade
-                            available_margin = cash_limit - block_by_trade
-
-                            logger.info(f"Available F&O margin from Breeze: ₹{available_margin:,.0f} (cash_limit: ₹{cash_limit:,.0f}, blocked: ₹{block_by_trade:,.0f})")
-                        else:
-                            # Fallback: use estimated value
-                            available_margin = 5000000  # 50 lakh default
-                            logger.warning("Could not fetch F&O margin, using default: ₹50,00,000")
-                    except Exception as e:
-                        logger.warning(f"Error fetching F&O margin: {e}, using default available margin")
-                        available_margin = 5000000
-
-                    # Apply 50% rule for initial position
-                    # Initial position should use 50% of available margin
-                    # Remaining 50% is reserved for averaging (2 more positions)
-                    safe_margin = available_margin * 0.5
-
-                    # Calculate recommended lots to use 50% margin (not 25%)
-                    # This is the initial position size
-                    recommended_lots = max(1, int(safe_margin / margin_per_lot)) if margin_per_lot > 0 else 0
-
-                    # Max lots possible with full available margin (for slider limit)
-                    max_lots_possible = int(available_margin / margin_per_lot) if margin_per_lot > 0 else 0
-
-                    # Calculate position metrics
-                    total_margin_required = margin_per_lot * recommended_lots
-                    entry_value = futures_price * lot_size * recommended_lots
-                    margin_utilization = (total_margin_required / available_margin * 100) if available_margin > 0 else 0
-
-                    # Calculate stop loss and targets
-                    if direction == 'LONG':
-                        stop_loss = futures_price * 0.98
-                        target = futures_price * 1.04
-                    elif direction == 'SHORT':
-                        stop_loss = futures_price * 1.02
-                        target = futures_price * 0.96
-                    else:
-                        stop_loss = futures_price * 0.98
-                        target = futures_price * 1.02
-
-                    risk_amount = abs(futures_price - stop_loss) * lot_size * recommended_lots
-                    reward_amount = abs(target - futures_price) * lot_size * recommended_lots
-                    risk_reward_ratio = reward_amount / risk_amount if risk_amount > 0 else 0
-
-                    # Build position sizing data
-                    position_sizing = {
-                        'position': {
-                            'recommended_lots': recommended_lots,
-                            'total_margin_required': total_margin_required,
-                            'entry_value': entry_value,
-                            'margin_utilization_percent': round(margin_utilization, 2)
-                        },
-                        'margin_data': {
-                            'available_margin': available_margin,
-                            'used_margin': total_margin_required,
-                            'total_margin': available_margin,
-                            'margin_per_lot': margin_per_lot,
-                            'max_lots_possible': max_lots_possible,
-                            'futures_price': futures_price,  # Add futures price for trade execution
-                            'source': 'Breeze API'
-                        }
-                    }
-
-                    position_details = {
-                        'lot_size': lot_size,
-                        'recommended_lots': recommended_lots,
-                        'entry_value': entry_value,
-                        'risk_amount': risk_amount,
-                        'reward_amount': reward_amount,
-                        'risk_reward_ratio': round(risk_reward_ratio, 2),
-                        'margin_required': total_margin_required,
-                        'margin_per_lot': margin_per_lot,
-                        'available_margin': available_margin,
-                        'margin_utilization_pct': round(margin_utilization, 2),
-                        'max_lots_possible': max_lots_possible,
-                        'stop_loss': stop_loss,
-                        'target': target
-                    }
-
-                    logger.info(f"Position sizing: {recommended_lots} lots (50% rule: {max_lots_possible} max → {recommended_lots} recommended)")
-
-                else:
-                    # Fallback if margin fetch fails
-                    logger.warning(f"Could not fetch margin: {margin_response.get('error')}")
-                    position_details = {
-                        'lot_size': lot_size,
-                        'recommended_lots': 1,
-                        'entry_value': futures_price * lot_size,
-                        'margin_required': 0,
-                        'error': 'Margin data unavailable'
-                    }
+                logger.info(f"Position sizing: {position_details['recommended_lots']} lots "
+                           f"(50% rule: {position_details['max_lots_possible']} max → {position_details['recommended_lots']} recommended)")
 
             except Exception as e:
                 logger.error(f"Error in position sizing: {e}", exc_info=True)
@@ -1476,12 +1379,21 @@ def verify_future_trade(request):
         }
 
         # Build verdict message considering analysis, historical verification, news verification, AND analyst verification
+        # Check for hard reject from enhanced analyzer
+        hard_reject = analysis_result.get('hard_reject', False)
+        reject_reason = analysis_result.get('reject_reason', None)
+
         if passed:
             verdict_text = f'PASS - Score: {composite_score}/100'
             reason_text = f'Composite score: {composite_score}/100. Direction: {direction}'
         elif not analysis_passed:
-            verdict_text = f'FAIL - Score: {composite_score}/100'
-            reason_text = f'Analysis failed: Composite score {composite_score}/100 below threshold'
+            if hard_reject and reject_reason:
+                # Hard reject from enhanced analyzer (MWPL, Volatility, Piotroski, etc.)
+                verdict_text = f'HARD REJECT'
+                reason_text = f'Failed hard reject filter: {reject_reason}'
+            else:
+                verdict_text = f'FAIL - Score: {composite_score}/100'
+                reason_text = f'Analysis failed: Composite score {composite_score}/100 below threshold (65 required)'
         elif not historical_passed:
             # Analysis passed but historical verification failed
             hist_verdict = historical_verification.get('verdict', 'BLOCKED')
@@ -1560,6 +1472,17 @@ def verify_future_trade(request):
                 'fetch_status': analyst_verification.get('fetch_status', 'unknown'),
                 'debug_info': analyst_verification.get('debug_info', []),
                 'report_quick_summaries': analyst_verification.get('report_quick_summaries', [])
+            },
+            # Enhanced Analysis Results (12-component scoring)
+            'enhanced_analysis': {
+                'hard_reject': hard_reject,
+                'reject_reason': reject_reason,
+                'composite_score': analysis_result.get('composite_score', 0),
+                'recommendation': analysis_result.get('recommendation', 'N/A'),
+                'scores': analysis_result.get('scores', {}),
+                'component_scores': analysis_result.get('component_scores', {}),
+                'details': analysis_result.get('details', {}),
+                'entry_params': analysis_result.get('entry_params')
             }
         }
 
@@ -2338,7 +2261,7 @@ def market_news_dashboard(request):
     from apps.data.services.gnews_client import get_gnews_client
     from apps.llm.services.news_impact_analyzer import get_news_impact_analyzer
     from apps.data.models import NewsArticle
-    from datetime import datetime
+    from datetime import datetime, timedelta
     from django.utils import timezone as django_timezone
 
     context = {
@@ -2352,7 +2275,71 @@ def market_news_dashboard(request):
     # Check if this is an AJAX request for news data
     if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
         try:
-            logger.info("[Market News] Fetching market news for dashboard")
+            # Check if we have recent market news in database (within 8 hours)
+            cache_hours = 8
+            cache_cutoff = django_timezone.now() - timedelta(hours=cache_hours)
+
+            cached_articles = NewsArticle.objects.filter(
+                news_type='MARKET',
+                processed=True,
+                processed_at__gte=cache_cutoff
+            ).exclude(
+                sentiment_score__isnull=True
+            ).order_by('-relevance_score', 'sentiment_score')[:20]
+
+            if cached_articles.exists():
+                logger.info(f"[Market News] Using {cached_articles.count()} cached articles (processed within {cache_hours} hours)")
+
+                # Convert database articles to response format
+                articles_data = []
+                category_counts = {}
+
+                for article in cached_articles:
+                    impact_category = article.impact_category or 'Other'
+                    category_counts[impact_category] = category_counts.get(impact_category, 0) + 1
+
+                    articles_data.append({
+                        'title': article.title,
+                        'description': article.summary,
+                        'content': article.content,
+                        'url': article.url,
+                        'image': article.image_url,
+                        'publishedAt': article.published_at.isoformat() if article.published_at else None,
+                        'source': {'name': article.source, 'url': ''},
+                        'impact_score': article.sentiment_score,
+                        'impact_label': article.sentiment_label,
+                        'impact_reasoning': article.impact_reasoning,
+                        'market_direction': article.market_direction,
+                        'relevance': article.relevance_score,
+                        'impact_category': impact_category,
+                    })
+
+                # Calculate summary
+                scores = [a.sentiment_score for a in cached_articles if a.sentiment_score is not None]
+                avg_score = sum(scores) / len(scores) if scores else 0
+                positive_count = sum(1 for s in scores if s > 0.3)
+                negative_count = sum(1 for s in scores if s < -0.3)
+
+                historical_market_news = get_historical_market_news(limit=5)
+
+                return JsonResponse({
+                    'success': True,
+                    'articles': articles_data,
+                    'summary': {
+                        'total_analyzed': len(articles_data),
+                        'average_impact_score': round(avg_score, 2),
+                        'positive_count': positive_count,
+                        'negative_count': negative_count,
+                        'neutral_count': len(scores) - positive_count - negative_count,
+                    },
+                    'category_breakdown': category_counts,
+                    'historical_news': historical_market_news,
+                    'cached': True,
+                    'cache_age_hours': cache_hours
+                })
+
+            # No cached articles, fetch fresh ones
+            logger.info("[Market News] No cached articles found, fetching fresh market news")
 
             # Fetch market news from GNews API
             gnews = get_gnews_client()
@@ -2487,12 +2474,76 @@ def stream_market_news(request):
     from apps.data.services.gnews_client import get_gnews_client
     from apps.llm.services.news_impact_analyzer import get_news_impact_analyzer
     from apps.data.models import NewsArticle
-    from datetime import datetime
+    from datetime import datetime, timedelta
     from django.utils import timezone as django_timezone
 
     def generate_events():
         try:
             logger.info("[Market News Stream] Starting streaming news analysis")
+
+            # Check if we have recent market news in database (within 8 hours)
+            cache_hours = 8
+            cache_cutoff = django_timezone.now() - timedelta(hours=cache_hours)
+
+            cached_articles = NewsArticle.objects.filter(
+                news_type='MARKET',
+                processed=True,
+                processed_at__gte=cache_cutoff
+            ).exclude(
+                sentiment_score__isnull=True
+            ).order_by('-relevance_score', 'sentiment_score')[:20]
+
+            if cached_articles.exists():
+                logger.info(f"[Market News Stream] Using {cached_articles.count()} cached articles (processed within {cache_hours} hours)")
+
+                yield f"data: {json.dumps({'type': 'status', 'message': 'Loading cached news analysis...'})}\n\n"
+
+                # Convert database articles to response format
+                articles_data = []
+                category_counts = {}
+
+                for article in cached_articles:
+                    impact_category = article.impact_category or 'Other'
+                    category_counts[impact_category] = category_counts.get(impact_category, 0) + 1
+
+                    articles_data.append({
+                        'title': article.title,
+                        'description': article.summary,
+                        'content': article.content,
+                        'url': article.url,
+                        'image': article.image_url,
+                        'publishedAt': article.published_at.isoformat() if article.published_at else None,
+                        'source': {'name': article.source, 'url': ''},
+                        'impact_score': article.sentiment_score,
+                        'impact_label': article.sentiment_label,
+                        'impact_reasoning': article.impact_reasoning,
+                        'market_direction': article.market_direction,
+                        'relevance': article.relevance_score,
+                        'impact_category': impact_category,
+                    })
+
+                # Calculate summary
+                scores = [a.sentiment_score for a in cached_articles if a.sentiment_score is not None]
+                avg_score = sum(scores) / len(scores) if scores else 0
+                positive_count = sum(1 for s in scores if s > 0.3)
+                negative_count = sum(1 for s in scores if s < -0.3)
+
+                # Determine market outlook
+                if avg_score > 0.2:
+                    market_outlook = 'BULLISH'
+                elif avg_score < -0.2:
+                    market_outlook = 'BEARISH'
+                else:
+                    market_outlook = 'NEUTRAL'
+
+                historical_market_news = get_historical_market_news(limit=5)
+
+                # Send complete event with cached data
+                yield f"data: {json.dumps({'type': 'complete', 'articles': articles_data, 'summary': {'total_analyzed': len(articles_data), 'average_impact_score': round(avg_score, 2), 'positive_count': positive_count, 'negative_count': negative_count, 'neutral_count': len(scores) - positive_count - negative_count, 'bullish_count': positive_count, 'bearish_count': negative_count, 'market_outlook': market_outlook}, 'category_breakdown': category_counts, 'historical_news': historical_market_news, 'cached': True, 'cache_age_hours': cache_hours})}\n\n"
+                return
+
+            # No cached articles, fetch fresh ones
+            logger.info("[Market News Stream] No cached articles found, fetching fresh market news")
 
             # Send initial status
             yield f"data: {json.dumps({'type': 'status', 'message': 'Fetching market news...'})}\n\n"

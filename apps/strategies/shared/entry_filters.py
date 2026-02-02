@@ -18,6 +18,7 @@ def get_default_filters() -> List[Callable]:
     1. Global Market Stability (SGX Nifty, US markets)
     2. Economic Event Calendar (next 5 days)
     3. Market Regime (VIX, Bollinger Bands)
+    4. News Sentiment (market news analysis)
 
     Returns:
         List of filter callables
@@ -25,11 +26,13 @@ def get_default_filters() -> List[Callable]:
     from apps.strategies.filters.global_markets import check_global_market_stability
     from apps.strategies.filters.event_calendar import check_economic_events
     from apps.strategies.filters.volatility import check_market_regime
+    from apps.strategies.filters.news_sentiment import check_market_news_sentiment
 
     return [
         check_global_market_stability,
         lambda: check_economic_events(days_ahead=5),
         check_market_regime,
+        check_market_news_sentiment,
     ]
 
 
@@ -65,7 +68,7 @@ def run_filters(filters: List[Callable], log: logging.Logger = None) -> Tuple[bo
     filters_failed = []
 
     # Standard filter names for logging
-    filter_names = ['Global Markets', 'Economic Events', 'Market Regime']
+    filter_names = ['Global Markets', 'Economic Events', 'Market Regime', 'News Sentiment']
 
     for i, filter_func in enumerate(filters):
         name = filter_names[i] if i < len(filter_names) else f"Filter {i+1}"

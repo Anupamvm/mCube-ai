@@ -356,7 +356,7 @@ class ContractStockDataImporter:
                 pcr_oi = total_put_oi / total_call_oi if total_call_oi > 0 else 0
                 pcr_vol = total_put_vol / total_call_vol if total_call_vol > 0 else 0
 
-                # Get average IV for volatility
+                # Get average IV for volatility (IV is already in percentage form)
                 avg_iv = contracts.filter(iv__isnull=False).aggregate(Avg('iv'))['iv__avg'] or 0
 
                 stock_data, created = ContractStockData.objects.update_or_create(
@@ -365,7 +365,7 @@ class ContractStockDataImporter:
                         'stock_name': tl_stock.stock_name if tl_stock else symbol,
                         'current_price': tl_stock.current_price if tl_stock else 0,
                         'industry_name': tl_stock.industry_name if tl_stock else '',
-                        'annualized_volatility': avg_iv * 100,
+                        'annualized_volatility': avg_iv,  # IV is already percentage
 
                         'fno_total_oi': total_call_oi + total_put_oi,
                         'fno_total_call_oi': total_call_oi,

@@ -773,6 +773,18 @@
                     <span class="docs-nav-icon">🤖</span>
                     Trading Algorithms
                 </a>
+                <a href="#position-sizing" class="docs-nav-link">
+                    <span class="docs-nav-icon">📐</span>
+                    Position Sizing
+                </a>
+                <a href="#margin-calculation" class="docs-nav-link">
+                    <span class="docs-nav-icon">💰</span>
+                    Margin Calculation
+                </a>
+                <a href="#averaging" class="docs-nav-link">
+                    <span class="docs-nav-icon">📉</span>
+                    Averaging Logic
+                </a>
                 <a href="#positions" class="docs-nav-link">
                     <span class="docs-nav-icon">📈</span>
                     Position Management
@@ -796,6 +808,10 @@
                 <a href="#api" class="docs-nav-link">
                     <span class="docs-nav-icon">🔗</span>
                     API Reference
+                </a>
+                <a href="#code-reference" class="docs-nav-link">
+                    <span class="docs-nav-icon">📁</span>
+                    Code Reference
                 </a>
             </div>
         </nav>
@@ -1057,6 +1073,7 @@
             <div class="docs-section-header">
                 <h1>🎯 Trading Engine</h1>
                 <p>Core trading functionality and algorithms</p>
+                <p style="font-size: 0.85rem; color: #6b7280; margin-top: 8px;">📁 <code>apps/trading/</code> | <code>apps/strategies/</code></p>
             </div>
 
             <div class="module-grid">
@@ -1065,17 +1082,22 @@
                         <div class="module-icon">🎯</div>
                         <div class="module-title">
                             <h3>Futures Algorithm</h3>
-                            <p>Stock futures screening</p>
+                            <p>Enhanced 12-factor screening (Phase 2)</p>
                         </div>
                     </div>
                     <div class="module-body">
                         <ul class="module-features">
-                            <li>Screens top 300 stocks by market cap</li>
-                            <li>7-factor scoring system (Volume, Price, OI, etc.)</li>
-                            <li>Historical validation checks</li>
-                            <li>Risk/reward analysis</li>
-                            <li>Position sizing recommendations</li>
+                            <li>12-factor scoring system (300 pts scaled to 100)</li>
+                            <li>Hard reject filters (MWPL, Volatility, Piotroski)</li>
+                            <li>Beta/Volatility-adjusted position sizing</li>
+                            <li>52W breakout & delivery trend detection</li>
+                            <li>LLM validation (70% confidence required)</li>
+                            <li>Sector alignment across ALL timeframes</li>
                         </ul>
+                        <p style="margin-top: 12px; font-size: 0.8rem; color: #6b7280;">
+                            📁 <code>apps/strategies/strategies/icici_futures.py</code><br>
+                            📁 <code>apps/strategies/analyzers/enhanced_futures_analyzer.py</code>
+                        </p>
                     </div>
                 </div>
 
@@ -1084,17 +1106,22 @@
                         <div class="module-icon">📊</div>
                         <div class="module-title">
                             <h3>Nifty Strangle</h3>
-                            <p>Weekly options strategy</p>
+                            <p>Enhanced 10-factor screening (Phase 3)</p>
                         </div>
                     </div>
                     <div class="module-body">
                         <ul class="module-features">
-                            <li>VIX-based strike selection</li>
-                            <li>Automatic position sizing</li>
-                            <li>Margin calculation</li>
-                            <li>Batch order execution</li>
-                            <li>No-trade day detection</li>
+                            <li>10-factor scoring system (275 pts scaled to 100)</li>
+                            <li>Hard reject filters (VIX, News, Momentum)</li>
+                            <li>Multi-factor delta adjustment</li>
+                            <li>News sentiment with asymmetric strikes</li>
+                            <li>50% margin rule with 15% buffer</li>
                         </ul>
+                        <p style="margin-top: 12px; font-size: 0.8rem; color: #6b7280;">
+                            📁 <code>apps/strategies/strategies/kotak_strangle.py</code><br>
+                            📁 <code>apps/strategies/services/strangle_delta_algorithm.py</code><br>
+                            📁 <code>apps/strategies/services/strangle_news_analyzer.py</code>
+                        </p>
                     </div>
                 </div>
 
@@ -1114,6 +1141,10 @@
                             <li>Real-time progress tracking</li>
                             <li>Automatic strike optimization</li>
                         </ul>
+                        <p style="margin-top: 12px; font-size: 0.8rem; color: #6b7280;">
+                            📁 <code>apps/strategies/strategies/kotak_broken_iron_condor.py</code><br>
+                            📁 <code>apps/trading/services/iron_condor_position_sizer.py</code>
+                        </p>
                     </div>
                 </div>
             </div>
@@ -1132,6 +1163,7 @@
             <div class="docs-section-header">
                 <h1>📊 Analytics</h1>
                 <p>Performance tracking and insights</p>
+                <p style="font-size: 0.85rem; color: #6b7280; margin-top: 8px;">📁 <code>apps/analytics/</code></p>
             </div>
 
             <div class="docs-card">
@@ -1195,6 +1227,7 @@
             <div class="docs-section-header">
                 <h1>🔌 Broker Integration</h1>
                 <p>Connecting to trading platforms</p>
+                <p style="font-size: 0.85rem; color: #6b7280; margin-top: 8px;">📁 <code>apps/brokers/</code></p>
             </div>
 
             <div class="module-grid">
@@ -1214,6 +1247,10 @@
                             <li>OTP-based authentication</li>
                             <li>Margin and position APIs</li>
                         </ul>
+                        <p style="margin-top: 12px; font-size: 0.8rem; color: #6b7280;">
+                            📁 <code>apps/brokers/kotak/</code><br>
+                            📁 <code>tools/neo.py</code>
+                        </p>
                     </div>
                 </div>
 
@@ -1233,6 +1270,10 @@
                             <li>Session-based authentication</li>
                             <li>Market data streaming</li>
                         </ul>
+                        <p style="margin-top: 12px; font-size: 0.8rem; color: #6b7280;">
+                            📁 <code>apps/brokers/breeze/</code><br>
+                            📁 <code>tools/breeze.py</code>
+                        </p>
                     </div>
                 </div>
             </div>
@@ -1279,6 +1320,7 @@
             <div class="docs-section-header">
                 <h1>🛡️ Risk Management</h1>
                 <p>Protecting your capital with smart controls</p>
+                <p style="font-size: 0.85rem; color: #6b7280; margin-top: 8px;">📁 <code>apps/trading/services/position_sizer.py</code> | <code>apps/strategies/shared/entry_filters.py</code></p>
             </div>
 
             <div class="docs-card">
@@ -1337,76 +1379,1020 @@
             <div class="docs-section-header">
                 <h1>🤖 Trading Algorithms</h1>
                 <p>Understanding the algorithm logic</p>
+                <p style="font-size: 0.85rem; color: #6b7280; margin-top: 8px;">📁 <code>apps/strategies/strategies/</code> | <code>apps/strategies/core/</code> | <code>apps/strategies/shared/</code></p>
             </div>
 
             <div class="docs-card">
-                <h3>📊 Futures Algorithm Scoring</h3>
-                <p>The Futures Algorithm uses a 7-factor scoring system to rank trading opportunities:</p>
+                <h3>📊 Futures Algorithm - Enhanced 12-Factor Scoring (Phase 2)</h3>
+                <p>The Futures Algorithm uses an advanced 12-factor scoring system (300 points scaled to 100):</p>
+                <p style="font-size: 0.85rem; color: #6b7280; margin-top: 8px;">
+                    📁 <code>apps/strategies/strategies/icici_futures.py</code> |
+                    <code>apps/strategies/analyzers/enhanced_futures_analyzer.py</code>
+                </p>
 
                 <table class="docs-table">
                     <thead>
                         <tr>
                             <th>Factor</th>
-                            <th>Weight</th>
-                            <th>Description</th>
+                            <th>Points</th>
+                            <th>Components</th>
                         </tr>
                     </thead>
                     <tbody>
                         <tr>
-                            <td><strong>Volume Score</strong></td>
-                            <td>15%</td>
-                            <td>Trading volume relative to average</td>
+                            <td><strong>OI & F&O Analysis</strong></td>
+                            <td>45</td>
+                            <td>OI Buildup, PCR, MWPL, Rollover</td>
                         </tr>
                         <tr>
-                            <td><strong>Price Action</strong></td>
-                            <td>20%</td>
-                            <td>Recent price momentum and trend</td>
+                            <td><strong>Technical Momentum</strong></td>
+                            <td>35</td>
+                            <td>RSI, MACD, MFI, ADX, ROC</td>
                         </tr>
                         <tr>
-                            <td><strong>OI Analysis</strong></td>
-                            <td>15%</td>
-                            <td>Open interest buildup patterns</td>
+                            <td><strong>Trend Confirmation</strong></td>
+                            <td>30</td>
+                            <td>DMA Position, Range, Breakout, 52W Breakout</td>
                         </tr>
                         <tr>
-                            <td><strong>Sector Performance</strong></td>
-                            <td>10%</td>
-                            <td>Sector strength and rotation</td>
+                            <td><strong>Volume Quality</strong></td>
+                            <td>25</td>
+                            <td>Volume Surge, Delivery %, VWAP, Delivery Trend</td>
                         </tr>
                         <tr>
-                            <td><strong>Volatility</strong></td>
-                            <td>15%</td>
-                            <td>Historical and implied volatility</td>
+                            <td><strong>Institutional Flow</strong></td>
+                            <td>25</td>
+                            <td>FII Change, MF Change, Promoter Change</td>
                         </tr>
                         <tr>
-                            <td><strong>Technical Signals</strong></td>
-                            <td>15%</td>
-                            <td>Key support/resistance levels</td>
+                            <td><strong>Fundamental Quality</strong></td>
+                            <td>20</td>
+                            <td>Piotroski Score, Profit Growth, ROE</td>
                         </tr>
                         <tr>
-                            <td><strong>AI Confidence</strong></td>
-                            <td>10%</td>
-                            <td>LLM-based sentiment analysis</td>
+                            <td><strong>Risk Adjustment</strong></td>
+                            <td>30</td>
+                            <td>Beta, Volatility, P/E Ratio</td>
+                        </tr>
+                        <tr>
+                            <td><strong>News Sentiment</strong></td>
+                            <td>25</td>
+                            <td>Stock News, Market News, Sector News</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Analyst Consensus</strong></td>
+                            <td>20</td>
+                            <td>Upside %, Recommendations, Coverage</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Research Reports</strong></td>
+                            <td>15</td>
+                            <td>Report Sentiment, Risk/Catalysts</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Investor Calls</strong></td>
+                            <td>10</td>
+                            <td>Management Tone, Trading Signal</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Momentum Acceleration</strong></td>
+                            <td>20</td>
+                            <td>Acceleration Pattern, Consistency, Direction</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <h4 style="margin-top: 20px;">Scoring Thresholds</h4>
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>Score</th>
+                            <th>Signal</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>>= 80</strong></td>
+                            <td><span class="badge badge-green">STRONG_ENTRY</span></td>
+                            <td>High conviction trade</td>
+                        </tr>
+                        <tr>
+                            <td><strong>>= 65</strong></td>
+                            <td><span class="badge badge-blue">ENTRY</span></td>
+                            <td>Qualified trade (minimum)</td>
+                        </tr>
+                        <tr>
+                            <td><strong>>= 50</strong></td>
+                            <td><span class="badge badge-orange">WEAK_ENTRY</span></td>
+                            <td>Low conviction, caution</td>
+                        </tr>
+                        <tr>
+                            <td><strong>< 50</strong></td>
+                            <td><span class="badge badge-orange">NO_ENTRY</span></td>
+                            <td>Skip this stock</td>
                         </tr>
                     </tbody>
                 </table>
             </div>
 
             <div class="docs-card">
-                <h3>📈 Strangle Strike Selection</h3>
-                <p>The Nifty Strangle algorithm selects strikes based on VIX levels:</p>
+                <h3>🚫 Futures Hard Reject Filters</h3>
+                <p>Before scoring, stocks must pass ALL hard reject filters:</p>
+
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>Filter</th>
+                            <th>Threshold</th>
+                            <th>Reason</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>MWPL</strong></td>
+                            <td>< 80%</td>
+                            <td>Not near trading ban</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Volatility</strong></td>
+                            <td>< 60%</td>
+                            <td>Manageable risk</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Piotroski Score</strong></td>
+                            <td>>= 4</td>
+                            <td>Minimum financial health</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Promoter Pledge</strong></td>
+                            <td>< 30%</td>
+                            <td>No financial stress</td>
+                        </tr>
+                        <tr>
+                            <td><strong>FII Change</strong></td>
+                            <td>> -2%</td>
+                            <td>No institutional exodus</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Analyst Upside (LONG)</strong></td>
+                            <td>>= 8%</td>
+                            <td>Minimum analyst support</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Blocking News</strong></td>
+                            <td>None</td>
+                            <td>No negative sentiment</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="docs-card">
+                <h3>📐 Futures Position Sizing</h3>
+                <p>Dynamic position sizing with beta, volatility, and score adjustments:</p>
+
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>Adjustment</th>
+                            <th>Condition</th>
+                            <th>Multiplier</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td rowspan="4"><strong>Beta</strong></td>
+                            <td>Very High (> 1.5)</td>
+                            <td>0.70x</td>
+                        </tr>
+                        <tr>
+                            <td>High (1.2-1.5)</td>
+                            <td>0.85x</td>
+                        </tr>
+                        <tr>
+                            <td>Normal (0.7-1.2)</td>
+                            <td>1.00x</td>
+                        </tr>
+                        <tr>
+                            <td>Low (< 0.7)</td>
+                            <td>1.00x</td>
+                        </tr>
+                        <tr>
+                            <td rowspan="3"><strong>Volatility</strong></td>
+                            <td>High (> 50%)</td>
+                            <td>0.70x</td>
+                        </tr>
+                        <tr>
+                            <td>Elevated (40-50%)</td>
+                            <td>0.85x</td>
+                        </tr>
+                        <tr>
+                            <td>Low (< 20%)</td>
+                            <td>1.10x</td>
+                        </tr>
+                        <tr>
+                            <td rowspan="3"><strong>Score</strong></td>
+                            <td>>= 80</td>
+                            <td>1.20x (high conviction)</td>
+                        </tr>
+                        <tr>
+                            <td>>= 70</td>
+                            <td>1.10x</td>
+                        </tr>
+                        <tr>
+                            <td>< 50</td>
+                            <td>0.75x (weak)</td>
+                        </tr>
+                    </tbody>
+                </table>
+                <p style="margin-top: 12px; font-size: 0.9rem;"><strong>Final Multiplier:</strong> Beta × Volatility × Score (capped 0.5x - 1.5x)</p>
+            </div>
+
+            <div class="docs-card">
+                <h3>🔄 Futures Averaging Strategy</h3>
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>Parameter</th>
+                            <th>Value</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>Max Averaging Attempts</strong></td>
+                            <td>2 additional (3 entries total)</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Trigger</strong></td>
+                            <td>1% loss from average price</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Initial Stop Loss</strong></td>
+                            <td>2% from entry</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Stop Loss After Averaging</strong></td>
+                            <td>Tightened to 0.5%</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Targets After Averaging</strong></td>
+                            <td>T1: 2%, T2: 4%, T3: 6% from avg</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="docs-card">
+                <h3>⚡ Futures Strategy Configuration</h3>
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>Parameter</th>
+                            <th>Value</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>Account</strong></td>
+                            <td>ICICI Securities</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Entry Time</strong></td>
+                            <td>9:15 AM - 3:00 PM</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Margin Usage</strong></td>
+                            <td>50% for first trade</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Min Days to Expiry</strong></td>
+                            <td>15 days</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Direction</strong></td>
+                            <td>LONG or SHORT based on screening</td>
+                        </tr>
+                        <tr>
+                            <td><strong>LLM Confidence Required</strong></td>
+                            <td>70% minimum</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Sector Alignment</strong></td>
+                            <td>ALL timeframes must align</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="docs-card">
+                <h3>📈 Nifty Strangle Strategy - Enhanced 10-Factor Analysis (Phase 3)</h3>
+                <p>The Nifty Strangle uses an advanced 10-factor scoring system (275 points scaled to 100):</p>
+
+                <div class="callout info">
+                    <span class="callout-icon">📁</span>
+                    <div class="callout-content">
+                        <h4>Source Code Reference</h4>
+                        <p><code>apps/strategies/strategies/kotak_strangle.py</code> - Strategy configuration<br>
+                        <code>apps/strategies/services/strangle_delta_algorithm.py</code> - Multi-factor delta calculations<br>
+                        <code>apps/strategies/services/strangle_news_analyzer.py</code> - News sentiment analysis</p>
+                    </div>
+                </div>
+
+                <h4 style="margin-top: 20px;">10-Factor Scoring System</h4>
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>Factor</th>
+                            <th>Max Points</th>
+                            <th>Optimal Range</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr><td><strong>VIX Regime</strong></td><td>35</td><td>12-14 (sweet spot)</td></tr>
+                        <tr><td><strong>Global Markets</strong></td><td>30</td><td>SGX/US flat (&lt;0.3%)</td></tr>
+                        <tr><td><strong>Market Breadth</strong></td><td>25</td><td>A/D ratio 0.8-1.2</td></tr>
+                        <tr><td><strong>News Sentiment</strong></td><td>30</td><td>Neutral/slightly positive</td></tr>
+                        <tr><td><strong>PCR Analysis</strong></td><td>25</td><td>0.85-1.15 PCR ratio</td></tr>
+                        <tr><td><strong>OI Patterns</strong></td><td>25</td><td>Neutral buildup both sides</td></tr>
+                        <tr><td><strong>Event Proximity</strong></td><td>20</td><td>&gt;7 days from high-impact</td></tr>
+                        <tr><td><strong>Gap/Movement</strong></td><td>25</td><td>&lt;0.5% intraday movement</td></tr>
+                        <tr><td><strong>Nifty Momentum</strong></td><td>25</td><td>&lt;0.5% 1D, &lt;1.5% 3D change</td></tr>
+                        <tr><td><strong>FII/DII Flow</strong></td><td>20</td><td>Net inflow or balanced</td></tr>
+                    </tbody>
+                </table>
+
+                <h4 style="margin-top: 20px;">Recommendation Thresholds</h4>
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>Score</th>
+                            <th>Recommendation</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr><td><strong>≥80</strong></td><td>STRONG_ENTRY</td></tr>
+                        <tr><td><strong>70-79</strong></td><td>GOOD_ENTRY</td></tr>
+                        <tr><td><strong>60-69</strong></td><td>MODERATE_ENTRY</td></tr>
+                        <tr><td><strong>50-59</strong></td><td>WEAK_ENTRY</td></tr>
+                        <tr><td><strong>&lt;50</strong></td><td>NO_ENTRY</td></tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="docs-card">
+                <h3>🚫 Strangle Hard Reject Filters</h3>
+                <p>Before scoring, these hard reject filters must ALL pass:</p>
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>Filter</th>
+                            <th>Threshold</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr><td><strong>VIX Range</strong></td><td>10.0 &lt; VIX &lt; 18.0</td><td>Blocks low premium/extreme volatility</td></tr>
+                        <tr><td><strong>News Sentiment</strong></td><td>avg_sentiment ≥ -0.4</td><td>Blocks blocking news</td></tr>
+                        <tr><td><strong>Gap at Open</strong></td><td>|gap %| &lt; 1.5%</td><td>Blocks extreme overnight moves</td></tr>
+                        <tr><td><strong>9:15-9:30 Movement</strong></td><td>&lt; 0.5%</td><td>Warns if volatile opening</td></tr>
+                        <tr><td><strong>FII Outflow (3D)</strong></td><td>&lt; ₹2,000 Cr</td><td>Blocks institutional exodus</td></tr>
+                        <tr><td><strong>Economic Events</strong></td><td>&gt; 2 days away</td><td>No high-impact events nearby</td></tr>
+                        <tr><td><strong>Nifty 1D Change</strong></td><td>|change %| &lt; 1.5%</td><td>Blocks yesterday trending</td></tr>
+                        <tr><td><strong>Nifty 3D Momentum</strong></td><td>|change %| &lt; 2.5%</td><td>Blocks 3-day trending</td></tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="docs-card">
+                <h3>🎯 Multi-Factor Delta Adjustment</h3>
+                <p>Strikes are calculated using a multi-factor delta adjustment system:</p>
+
+                <h4 style="margin-top: 16px;">Base Delta</h4>
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>Days to Expiry</th>
+                            <th>Base Delta</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr><td><strong>≤ 2 days</strong></td><td>0.75%</td></tr>
+                        <tr><td><strong>&gt; 2 days</strong></td><td>0.50%</td></tr>
+                    </tbody>
+                </table>
+
+                <h4 style="margin-top: 16px;">VIX Adjustment (Primary)</h4>
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>VIX Range</th>
+                            <th>Multiplier</th>
+                            <th>Effect</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr><td><strong>&lt; 10</strong></td><td>0.9x</td><td>Tighter strikes (higher premium needed)</td></tr>
+                        <tr><td><strong>10 - 12.5</strong></td><td>1.0x</td><td>Standard</td></tr>
+                        <tr><td><strong>12.5 - 14</strong></td><td>1.5x</td><td>Widen 50% for safety</td></tr>
+                        <tr><td><strong>14 - 18</strong></td><td>1.8x</td><td>Widen 80%</td></tr>
+                        <tr><td><strong>≥ 18</strong></td><td>2.0x</td><td>Widen 100% (extreme volatility)</td></tr>
+                    </tbody>
+                </table>
+
+                <h4 style="margin-top: 16px;">Additional Adjustments</h4>
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>Factor</th>
+                            <th>Condition</th>
+                            <th>Multiplier</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr><td><strong>Market Trend</strong></td><td>Bullish/Bearish</td><td>1.05x + asymmetric bias</td></tr>
+                        <tr><td><strong>Recent Volatility</strong></td><td>5D vol &gt; VIX × 1.2</td><td>1.15x (widen for realized risk)</td></tr>
+                        <tr><td><strong>OI Pattern</strong></td><td>Directional buildup</td><td>1.1x (widen)</td></tr>
+                        <tr><td><strong>PCR</strong></td><td>&gt; 1.3 or &lt; 0.7</td><td>1.05x (slight widening)</td></tr>
+                        <tr><td><strong>News Sentiment</strong></td><td>Bullish/Bearish/Volatile</td><td>1.1x-1.15x + asymmetric</td></tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="docs-card">
+                <h3>📰 News Sentiment & Asymmetric Strikes</h3>
+                <p>News sentiment analysis adjusts strike selection asymmetrically:</p>
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>Outlook</th>
+                            <th>Multiplier</th>
+                            <th>Call Bias</th>
+                            <th>Put Bias</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr><td><strong>BULLISH</strong></td><td>1.1x</td><td>1.15 (widen)</td><td>0.95 (tighten)</td></tr>
+                        <tr><td><strong>BEARISH</strong></td><td>1.1x</td><td>0.95 (tighten)</td><td>1.15 (widen)</td></tr>
+                        <tr><td><strong>VOLATILE</strong></td><td>1.15x</td><td>1.1 (widen)</td><td>1.1 (widen)</td></tr>
+                        <tr><td><strong>NEUTRAL</strong></td><td>1.0x</td><td>1.0</td><td>1.0</td></tr>
+                    </tbody>
+                </table>
+                <p style="margin-top: 12px; font-size: 0.85rem; color: #6b7280;">
+                    📁 <code>apps/strategies/services/strangle_news_analyzer.py</code>
+                </p>
+            </div>
+
+            <div class="docs-card">
+                <h3>📊 Strangle Position Sizing</h3>
+                <p>Position sizing uses a margin-based approach with conservative limits:</p>
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>Parameter</th>
+                            <th>Value</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr><td><strong>Margin per Lot</strong></td><td>Higher_Strike × 50 × 16%</td></tr>
+                        <tr><td><strong>Max Margin Utilization</strong></td><td>50% of available</td></tr>
+                        <tr><td><strong>Max Position</strong></td><td>30% of total margin</td></tr>
+                        <tr><td><strong>Min Margin Buffer</strong></td><td>15% kept unmolested</td></tr>
+                        <tr><td><strong>Lot Calculation</strong></td><td>(Available ÷ Margin per Lot) ÷ 2</td></tr>
+                    </tbody>
+                </table>
+                <p style="margin-top: 12px; font-size: 0.85rem; color: #6b7280;">
+                    📁 <code>apps/trading/services/strangle_position_sizer.py</code>
+                </p>
+            </div>
+
+            <div class="docs-card">
+                <h3>📈 Strangle Averaging Protocol</h3>
+                <p>3-attempt averaging protocol triggered when position is down 1%:</p>
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>Attempt</th>
+                            <th>Trigger</th>
+                            <th>Allocation</th>
+                            <th>Premium Assumption</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr><td><strong>1</strong></td><td>Down 1%</td><td>20% of balance</td><td>90% of initial</td></tr>
+                        <tr><td><strong>2</strong></td><td>Down 2% total</td><td>50% of remaining</td><td>80% of initial</td></tr>
+                        <tr><td><strong>3</strong></td><td>Down 3% total</td><td>50% of remaining</td><td>70% of initial</td></tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="docs-card">
+                <h3>⚙️ Strangle Strategy Configuration</h3>
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>Parameter</th>
+                            <th>Value</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr><td><strong>Entry Window</strong></td><td>9:00 AM - 11:30 AM</td></tr>
+                        <tr><td><strong>Min Days to Expiry</strong></td><td>1 day</td></tr>
+                        <tr><td><strong>Profit Target</strong></td><td>50% of premium</td></tr>
+                        <tr><td><strong>Exit Schedule</strong></td><td>Thursday 3:15 PM (if 50%+) or Friday mandatory</td></tr>
+                        <tr><td><strong>Delta Alert Threshold</strong></td><td>|net_delta| &gt; 300</td></tr>
+                        <tr><td><strong>VIX Range</strong></td><td>10.0 - 18.0</td></tr>
+                        <tr><td><strong>Max Averaging Attempts</strong></td><td>3</td></tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="docs-card">
+                <h3>🛡️ Broken Iron Condor Strategy</h3>
+                <p>
+                    The Broken Iron Condor is a <strong>3-leg strategy</strong> that adds downside protection to a regular strangle.
+                    Unlike a standard 4-leg Iron Condor, this "broken" version only hedges the put side.
+                </p>
+
+                <div class="callout info">
+                    <span class="callout-icon">📁</span>
+                    <div class="callout-content">
+                        <h4>Source Code Reference</h4>
+                        <p><code>apps/strategies/strategies/kotak_broken_iron_condor.py</code> - Strategy implementation<br>
+                        <code>apps/trading/services/iron_condor_position_sizer.py</code> (Lines 20-287) - Position sizing</p>
+                    </div>
+                </div>
+
+                <table class="docs-table" style="margin-top: 16px;">
+                    <thead>
+                        <tr>
+                            <th>Leg</th>
+                            <th>Action</th>
+                            <th>Strike</th>
+                            <th>Purpose</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>Leg 1</strong></td>
+                            <td>SELL</td>
+                            <td>OTM Call (CE)</td>
+                            <td>Collect premium on upside</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Leg 2</strong></td>
+                            <td>SELL</td>
+                            <td>OTM Put (PE)</td>
+                            <td>Collect premium on downside</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Leg 3</strong></td>
+                            <td>BUY</td>
+                            <td>Further OTM Put (PE)</td>
+                            <td>Insurance - caps downside loss</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="docs-card">
+                <h3>🎯 Insurance Put Calculation</h3>
+                <p>The insurance strike is calculated based on your risk appetite using a <strong>Risk Multiplier</strong>:</p>
 
                 <div class="code-block">
                     <code>
-<span class="comment"># Strike Selection Logic</span>
-<span class="keyword">if</span> VIX < <span class="string">13</span>:
-    strike_distance = <span class="string">200</span>  <span class="comment"># Conservative</span>
-<span class="keyword">elif</span> VIX < <span class="string">18</span>:
-    strike_distance = <span class="string">300</span>  <span class="comment"># Moderate</span>
-<span class="keyword">elif</span> VIX < <span class="string">25</span>:
-    strike_distance = <span class="string">400</span>  <span class="comment"># Aggressive</span>
-<span class="keyword">else</span>:
-    <span class="function">no_trade_day</span>()  <span class="comment"># VIX too high</span>
+<span class="comment"># Insurance Strike Calculation</span>
+risk_budget = max_profit * risk_multiplier
+max_loss_per_share = risk_budget / quantity
+insurance_strike = put_strike - max_loss_per_share
+<span class="comment"># Round to nearest 100 (Nifty strike interval)</span>
                     </code>
+                </div>
+
+                <table class="docs-table" style="margin-top: 16px;">
+                    <thead>
+                        <tr>
+                            <th>Risk Profile</th>
+                            <th>Multiplier</th>
+                            <th>Description</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><span class="badge badge-green">Conservative</span></td>
+                            <td>1.5x</td>
+                            <td>Closer insurance, lower max loss, higher premium cost</td>
+                        </tr>
+                        <tr>
+                            <td><span class="badge badge-blue">Moderate</span></td>
+                            <td>2.0x</td>
+                            <td>Balanced risk/reward (Recommended)</td>
+                        </tr>
+                        <tr>
+                            <td><span class="badge badge-orange">Aggressive</span></td>
+                            <td>2.5x - 3.0x</td>
+                            <td>Wider spread, higher max loss, cheaper insurance</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="docs-card">
+                <h3>📊 Broken Iron Condor P&L Profile</h3>
+                <p>Understanding the risk/reward characteristics:</p>
+
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>Scenario</th>
+                            <th>Outcome</th>
+                            <th>Risk Level</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>Max Profit</strong></td>
+                            <td>Net Premium = (CE + PE premium) - Insurance cost</td>
+                            <td><span class="badge badge-green">Target</span></td>
+                        </tr>
+                        <tr>
+                            <td><strong>Downside Loss</strong></td>
+                            <td>Capped at (Put Strike - Insurance Strike) × Qty</td>
+                            <td><span class="badge badge-blue">Defined</span></td>
+                        </tr>
+                        <tr>
+                            <td><strong>Upside Loss</strong></td>
+                            <td>Unlimited (managed via stop-loss)</td>
+                            <td><span class="badge badge-orange">Managed</span></td>
+                        </tr>
+                        <tr>
+                            <td><strong>Profit Zone</strong></td>
+                            <td>Between Put Breakeven and Call Breakeven</td>
+                            <td><span class="badge badge-green">Ideal</span></td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <div class="callout info" style="margin-top: 16px;">
+                    <span class="callout-icon">💡</span>
+                    <div class="callout-content">
+                        <h4>Why "Broken" Iron Condor?</h4>
+                        <p>A standard Iron Condor has 4 legs with hedges on both sides. Our version is "broken" because we only hedge the put side (downside protection), keeping the call side unhedged for higher premium collection. This is ideal when you expect range-bound markets with slightly bullish bias.</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="docs-card">
+                <h3>🔍 Entry Filters - What Must Pass</h3>
+                <p>Before any trade is taken, the system runs 4 sequential filters. ALL must pass:</p>
+
+                <div class="callout info">
+                    <span class="callout-icon">📁</span>
+                    <div class="callout-content">
+                        <h4>Source Code Reference</h4>
+                        <p><code>apps/strategies/shared/entry_filters.py</code> (Lines 39-120)</p>
+                    </div>
+                </div>
+
+                <table class="docs-table" style="margin-top: 16px;">
+                    <thead>
+                        <tr>
+                            <th>Filter</th>
+                            <th>What It Checks</th>
+                            <th>Blocks Entry If</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>1. Global Market Stability</strong></td>
+                            <td>SGX Nifty futures, US market overnight performance</td>
+                            <td>Major overnight gap or global selloff detected</td>
+                        </tr>
+                        <tr>
+                            <td><strong>2. Economic Event Calendar</strong></td>
+                            <td>RBI meetings, GDP releases, inflation data (next 5 days)</td>
+                            <td>High-impact event scheduled within window</td>
+                        </tr>
+                        <tr>
+                            <td><strong>3. Market Regime</strong></td>
+                            <td>VIX levels, Bollinger Band position, trend strength</td>
+                            <td>VIX > 25, market at extreme Bollinger levels</td>
+                        </tr>
+                        <tr>
+                            <td><strong>4. News Sentiment</strong></td>
+                            <td>LLM analysis of recent market news</td>
+                            <td>Strongly negative sentiment detected</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="docs-card">
+                <h3>📤 Exit Logic</h3>
+                <p>Positions are exited based on profit targets and timing rules:</p>
+
+                <div class="callout info">
+                    <span class="callout-icon">📁</span>
+                    <div class="callout-content">
+                        <h4>Source Code Reference</h4>
+                        <p><code>apps/strategies/tasks.py</code> (Lines 107-175) - Exit evaluation<br>
+                        <code>apps/strategies/tasks_strangle.py</code> (Lines 895-927) - Exit timing analysis</p>
+                    </div>
+                </div>
+
+                <table class="docs-table" style="margin-top: 16px;">
+                    <thead>
+                        <tr>
+                            <th>Exit Condition</th>
+                            <th>Rule</th>
+                            <th>Timing</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>Profit Target</strong></td>
+                            <td>Exit when P&L >= 50% of premium collected</td>
+                            <td>Any time during market hours</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Threshold Exit</strong></td>
+                            <td>Exit when absolute profit >= Rs 10,000 (configurable)</td>
+                            <td>Any time during market hours</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Weekly Target Exit</strong></td>
+                            <td>Exit if >= 50% profit achieved</td>
+                            <td>Thursday 3:15 PM</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Mandatory Exit</strong></td>
+                            <td>Close position regardless of P&L</td>
+                            <td>Friday EOD (end of day)</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Stop Loss</strong></td>
+                            <td>Triggered when premium goes to zero or breach levels</td>
+                            <td>Real-time monitoring</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- Position Sizing Section -->
+        <section id="position-sizing" class="docs-section">
+            <div class="docs-section-header">
+                <h1>📐 Position Sizing Logic</h1>
+                <p>How the system calculates optimal position sizes</p>
+                <p style="font-size: 0.85rem; color: #6b7280; margin-top: 8px;">
+                    📁 <code>apps/trading/services/position_sizer.py</code> |
+                    <code>strangle_position_sizer.py</code> |
+                    <code>iron_condor_position_sizer.py</code>
+                </p>
+            </div>
+
+            <div class="docs-card">
+                <h3>📊 Key Constants</h3>
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>Parameter</th>
+                            <th>Futures</th>
+                            <th>Strangle</th>
+                            <th>Iron Condor</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>Max Position %</strong></td>
+                            <td>25%</td>
+                            <td>30%</td>
+                            <td>50%</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Margin Buffer</strong></td>
+                            <td>20%</td>
+                            <td>15%</td>
+                            <td>15%</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Averaging Multiplier</strong></td>
+                            <td>3x</td>
+                            <td>-</td>
+                            <td>-</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Lot Size (Nifty)</strong></td>
+                            <td>-</td>
+                            <td>50</td>
+                            <td>75</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="docs-card">
+                <h3>🔄 Position Sizing Flow</h3>
+                <p>System applies 4 constraints and takes minimum for safety:</p>
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>Constraint</th>
+                            <th>Formula</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>1</strong></td>
+                            <td>Available margin</td>
+                            <td><code>available_margin / margin_per_lot</code></td>
+                        </tr>
+                        <tr>
+                            <td><strong>2</strong></td>
+                            <td>Max position % limit</td>
+                            <td><code>total_margin × 0.25 / margin_per_lot</code></td>
+                        </tr>
+                        <tr>
+                            <td><strong>3</strong></td>
+                            <td>Averaging reserve</td>
+                            <td><code>constraint_1 / 3</code></td>
+                        </tr>
+                        <tr>
+                            <td><strong>4</strong></td>
+                            <td>Hard cap</td>
+                            <td><code>10 lots</code> (futures), <code>20 lots</code> (options)</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="docs-card">
+                <h3>💵 Margin Per Lot Formulas</h3>
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>Strategy</th>
+                            <th>Formula</th>
+                            <th>Example</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>Futures</strong></td>
+                            <td><code>entry_price × lot_size × 0.20</code></td>
+                            <td>Rs 2500 × 250 × 0.20 = Rs 1.25L</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Strangle</strong></td>
+                            <td><code>higher_strike × lot_size × 0.16</code></td>
+                            <td>Rs 22000 × 50 × 0.16 = Rs 1.76L</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Iron Condor</strong></td>
+                            <td><code>(base_margin - insurance_credit)</code></td>
+                            <td>Reduced by spread width</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Buy Options</strong></td>
+                            <td><code>premium × lot_size</code></td>
+                            <td>Premium is max loss</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Sell Options</strong></td>
+                            <td><code>strike × lot_size × 0.25</code></td>
+                            <td>Conservative SPAN estimate</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- Margin Calculation Section -->
+        <section id="margin-calculation" class="docs-section">
+            <div class="docs-section-header">
+                <h1>💰 Margin Calculation</h1>
+                <p>How available margin and required margins are determined</p>
+                <p style="font-size: 0.85rem; color: #6b7280; margin-top: 8px;">📁 <code>apps/trading/services/margin_service.py</code></p>
+            </div>
+
+            <div class="docs-card">
+                <h3>🏦 Broker Margin APIs</h3>
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>Broker</th>
+                            <th>Used For</th>
+                            <th>API Calculation</th>
+                            <th>Fallback</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>ICICI Breeze</strong></td>
+                            <td>Futures</td>
+                            <td><code>cash_limit - block_by_trade</code></td>
+                            <td>Rs 50 Lakh</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Kotak Neo</strong></td>
+                            <td>Options</td>
+                            <td><code>available_margin</code> from API</td>
+                            <td>Zero (blocks trading)</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="docs-card">
+                <h3>📈 Margin Utilization Levels</h3>
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>Level</th>
+                            <th>Status</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>0-50%</strong></td>
+                            <td><span class="badge badge-green">Optimal</span></td>
+                            <td>Room for averaging and new positions</td>
+                        </tr>
+                        <tr>
+                            <td><strong>50-70%</strong></td>
+                            <td><span class="badge badge-blue">Moderate</span></td>
+                            <td>Averaging possible, no new positions</td>
+                        </tr>
+                        <tr>
+                            <td><strong>70-85%</strong></td>
+                            <td><span class="badge badge-orange">High</span></td>
+                            <td>Limited averaging, monitor closely</td>
+                        </tr>
+                        <tr>
+                            <td><strong>>85%</strong></td>
+                            <td><span class="badge badge-orange">Critical</span></td>
+                            <td>Risk of margin call</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- Averaging Logic Section -->
+        <section id="averaging" class="docs-section">
+            <div class="docs-section-header">
+                <h1>📉 Averaging Logic</h1>
+                <p>How the system handles adding to losing positions</p>
+                <p style="font-size: 0.85rem; color: #6b7280; margin-top: 8px;">📁 <code>apps/trading/services/position_sizer.py</code> | <code>strangle_position_sizer.py</code></p>
+            </div>
+
+            <div class="docs-card">
+                <h3>📊 Futures Averaging</h3>
+                <p>Plans for 3 total entries at decreasing prices (entry, -5%, -10%). Reserves 3x margin upfront.</p>
+            </div>
+
+            <div class="docs-card">
+                <h3>📈 Strangle Averaging Protocol</h3>
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>Attempt</th>
+                            <th>% of Balance</th>
+                            <th>Trigger</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>Initial Entry</strong></td>
+                            <td>50% of usable margin</td>
+                            <td>Entry signal</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Attempt 1</strong></td>
+                            <td>20% of remaining</td>
+                            <td>Position down 1%</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Attempt 2</strong></td>
+                            <td>50% of remaining</td>
+                            <td>Down another 1%</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Attempt 3</strong></td>
+                            <td>50% of remaining</td>
+                            <td>Down another 1%</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <div class="callout warning" style="margin-top: 16px;">
+                    <span class="callout-icon">⚠️</span>
+                    <div class="callout-content">
+                        <h4>Averaging Down Risk</h4>
+                        <p>System limits to 3 attempts. After 3 averages, no further additions regardless of price movement.</p>
+                    </div>
                 </div>
             </div>
         </section>
@@ -1416,6 +2402,7 @@
             <div class="docs-section-header">
                 <h1>📈 Position Management</h1>
                 <p>Tracking and managing open positions</p>
+                <p style="font-size: 0.85rem; color: #6b7280; margin-top: 8px;">📁 <code>apps/trading/services/position_service.py</code> | <code>apps/trading/models.py</code></p>
             </div>
 
             <div class="feature-grid">
@@ -1447,6 +2434,7 @@
             <div class="docs-section-header">
                 <h1>🔔 Alerts & Notifications</h1>
                 <p>Stay informed with real-time alerts</p>
+                <p style="font-size: 0.85rem; color: #6b7280; margin-top: 8px;">📁 <code>apps/alerts/</code> | <code>tools/telegram.py</code></p>
             </div>
 
             <div class="docs-card">
@@ -1497,6 +2485,7 @@
             <div class="docs-section-header">
                 <h1>🧠 AI/LLM Features</h1>
                 <p>Artificial intelligence in trading</p>
+                <p style="font-size: 0.85rem; color: #6b7280; margin-top: 8px;">📁 <code>apps/strategies/services/strangle_news_analyzer.py</code> | <code>apps/strategies/filters/news_sentiment.py</code></p>
             </div>
 
             <div class="docs-card">
@@ -1532,6 +2521,7 @@
             <div class="docs-section-header">
                 <h1>⚙️ System Settings</h1>
                 <p>Configuring your trading environment</p>
+                <p style="font-size: 0.85rem; color: #6b7280; margin-top: 8px;">📁 <code>apps/core/models.py</code> | <code>apps/core/views/config_views.py</code></p>
             </div>
 
             <div class="docs-card">
@@ -1576,6 +2566,7 @@
             <div class="docs-section-header">
                 <h1>🔗 API Reference</h1>
                 <p>Internal API endpoints</p>
+                <p style="font-size: 0.85rem; color: #6b7280; margin-top: 8px;">📁 <code>apps/trading/views/</code> | <code>apps/trading/urls.py</code></p>
             </div>
 
             <div class="docs-card">
@@ -1609,6 +2600,160 @@ GET /analytics/insights/            <span class="comment"># Smart insights</span
                     <h4>Authentication Required</h4>
                     <p>All API endpoints require user authentication. Session-based auth is used for web UI, while broker APIs use token-based authentication.</p>
                 </div>
+            </div>
+        </section>
+
+        <!-- Code Reference Section -->
+        <section id="code-reference" class="docs-section">
+            <div class="docs-section-header">
+                <h1>📁 Code Reference</h1>
+                <p>Quick reference to key source files</p>
+            </div>
+
+            <div class="docs-card">
+                <h3>📂 Key Directories</h3>
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>Module</th>
+                            <th>Path</th>
+                            <th>Purpose</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>Trading Services</strong></td>
+                            <td><code>apps/trading/services/</code></td>
+                            <td>Position sizing, margin, order execution</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Strategies</strong></td>
+                            <td><code>apps/strategies/strategies/</code></td>
+                            <td>Strangle, Iron Condor implementations</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Entry/Exit Logic</strong></td>
+                            <td><code>apps/strategies/core/</code></td>
+                            <td>Workflow, filters, validation</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Shared Utils</strong></td>
+                            <td><code>apps/strategies/shared/</code></td>
+                            <td>Strike calculator, entry filters</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Algorithm Services</strong></td>
+                            <td><code>apps/strategies/services/</code></td>
+                            <td>Delta algorithm, news analyzer</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Broker Integration</strong></td>
+                            <td><code>apps/brokers/</code></td>
+                            <td>Kotak Neo, ICICI Breeze APIs</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Tools</strong></td>
+                            <td><code>tools/</code></td>
+                            <td>neo.py, breeze.py, telegram.py</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="docs-card">
+                <h3>📄 Key Files</h3>
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>File</th>
+                            <th>Contains</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>position_sizer.py</code></td>
+                            <td>General position sizing, futures/options calculations</td>
+                        </tr>
+                        <tr>
+                            <td><code>strangle_position_sizer.py</code></td>
+                            <td>Strangle sizing, Neo margin, averaging protocol</td>
+                        </tr>
+                        <tr>
+                            <td><code>margin_service.py</code></td>
+                            <td>Breeze margin API, fallback calculations</td>
+                        </tr>
+                        <tr>
+                            <td><code>kotak_strangle.py</code></td>
+                            <td>Strategy config, entry parameters, timing</td>
+                        </tr>
+                        <tr>
+                            <td><code>strangle_delta_algorithm.py</code></td>
+                            <td>Strike selection, VIX/trend adjustments</td>
+                        </tr>
+                        <tr>
+                            <td><code>entry_filters.py</code></td>
+                            <td>Market stability, VIX, news sentiment filters</td>
+                        </tr>
+                        <tr>
+                            <td><code>entry_workflow.py</code></td>
+                            <td>9-step entry validation workflow</td>
+                        </tr>
+                        <tr>
+                            <td><code>tasks.py</code> / <code>tasks_strangle.py</code></td>
+                            <td>Exit logic, Celery background tasks</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="docs-card">
+                <h3>⚙️ Key Constants</h3>
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>Constant</th>
+                            <th>Value</th>
+                            <th>Location</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>MAX_POSITION_PERCENT</td>
+                            <td>25% (Futures), 30% (Strangle)</td>
+                            <td>position_sizer.py</td>
+                        </tr>
+                        <tr>
+                            <td>MARGIN_BUFFER</td>
+                            <td>15-20%</td>
+                            <td>position_sizer.py</td>
+                        </tr>
+                        <tr>
+                            <td>STRANGLE_MARGIN_FACTOR</td>
+                            <td>16% of notional</td>
+                            <td>strangle_position_sizer.py</td>
+                        </tr>
+                        <tr>
+                            <td>ENTRY_WINDOW</td>
+                            <td>9:00 AM - 11:30 AM</td>
+                            <td>kotak_strangle.py</td>
+                        </tr>
+                        <tr>
+                            <td>PROFIT_TARGET</td>
+                            <td>50% of premium</td>
+                            <td>kotak_strangle.py</td>
+                        </tr>
+                        <tr>
+                            <td>BASE_DELTA</td>
+                            <td>0.5% (0.75% for short expiry)</td>
+                            <td>strangle_delta_algorithm.py</td>
+                        </tr>
+                        <tr>
+                            <td>AVERAGING_TRIGGER</td>
+                            <td>1% loss</td>
+                            <td>strangle_position_sizer.py</td>
+                        </tr>
+                    </tbody>
+                </table>
             </div>
         </section>
 

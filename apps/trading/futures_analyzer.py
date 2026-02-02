@@ -1434,6 +1434,439 @@ def comprehensive_futures_analysis(
 
 
 # ============================================================================
+# ENHANCED FUTURES ANALYSIS (Uses EnhancedFuturesAnalyzer with Breeze prices)
+# ============================================================================
+
+def enhanced_futures_analysis(
+    stock_symbol: str,
+    expiry_date: str,
+    contract: Optional[ContractData] = None
+) -> Dict:
+    """
+    Enhanced futures analysis using EnhancedFuturesAnalyzer with Breeze API prices.
+
+    This function combines:
+    - Real-time price fetching from Breeze API
+    - EnhancedFuturesAnalyzer's 12-component scoring system
+    - 7 hard reject filters (MWPL, Volatility, Piotroski, etc.)
+
+    Returns:
+        dict: {
+            'success': bool,
+            'execution_log': list of step-by-step analysis,
+            'metrics': dict of all calculated metrics,
+            'verdict': 'PASS' or 'FAIL',
+            'direction': 'LONG', 'SHORT', or 'NEUTRAL',
+            'composite_score': int (0-100),
+            'scores': dict of component scores,
+            'hard_reject': bool,
+            'reject_reason': str or None,
+            'analysis': detailed analysis dict
+        }
+    """
+    from apps.strategies.analyzers.enhanced_futures_analyzer import (
+        EnhancedFuturesAnalyzer,
+        HardRejectError
+    )
+
+    logger.info("=" * 100)
+    logger.info(f"ENHANCED FUTURES ANALYSIS: {stock_symbol} (Expiry: {expiry_date})")
+    logger.info("=" * 100)
+
+    execution_log = []
+    metrics = {}
+
+    try:
+        # ============================================================================
+        # STEP 0: Resolve Breeze Symbol
+        # ============================================================================
+        logger.info("\n" + "=" * 80)
+        logger.info("STEP 0: Resolving Breeze Symbol")
+        logger.info("=" * 80)
+
+        from apps.brokers.utils.security_master import get_futures_instrument
+
+        expiry_dt = datetime.strptime(expiry_date, '%Y-%m-%d')
+        expiry_formatted_sm = expiry_dt.strftime('%d-%b-%Y')
+
+        instrument_info = get_futures_instrument(stock_symbol, expiry_formatted_sm)
+        breeze_symbol = stock_symbol
+        lot_size = 0
+
+        if instrument_info and instrument_info.get('short_name'):
+            breeze_symbol = instrument_info['short_name']
+            lot_size = instrument_info.get('lot_size', 0)
+            logger.info(f"SecurityMaster: {stock_symbol} -> {breeze_symbol}")
+        else:
+            symbol_resolution = resolve_breeze_symbol(stock_symbol, expiry_date)
+            if symbol_resolution.get('success'):
+                breeze_symbol = symbol_resolution.get('short_name', stock_symbol)
+                lot_size = symbol_resolution.get('lot_size', 0)
+
+        execution_log.append({
+            'step': 0,
+            'action': 'Symbol Resolution',
+            'status': 'PASS',
+            'message': f"Resolved to Breeze code: {breeze_symbol}",
+            'details': {'breeze_symbol': breeze_symbol, 'lot_size': lot_size}
+        })
+
+        # ============================================================================
+        # STEP 1: Fetch Real-Time Prices from Breeze API
+        # ============================================================================
+        logger.info("\n" + "=" * 80)
+        logger.info("STEP 1: Fetching Real-Time Prices from Breeze API")
+        logger.info("=" * 80)
+
+        breeze = get_breeze_client()
+
+        # Fetch spot price
+        spot_price = 0.0
+        spot_source = "Breeze API"
+
+        try:
+            spot_resp = breeze.get_quotes(
+                stock_code=breeze_symbol,
+                exchange_code="NSE",
+                product_type="cash",
+                expiry_date="",
+                right="",
+                strike_price=""
+            )
+
+            if spot_resp and spot_resp.get("Status") == 200 and spot_resp.get("Success"):
+                spot_data = spot_resp["Success"][0] if spot_resp["Success"] else {}
+                spot_price = float(spot_data.get('ltp', 0))
+                logger.info(f"✅ Spot Price: ₹{spot_price:.2f}")
+        except Exception as e:
+            logger.warning(f"Spot price fetch error: {e}")
+
+        # Fallback to database
+        if spot_price == 0:
+            stock_data = ContractStockData.objects.filter(nse_code=stock_symbol).first()
+            if stock_data and stock_data.current_price:
+                spot_price = float(stock_data.current_price)
+                spot_source = "Trendlyne (Cached)"
+                logger.info(f"✅ Using fallback - Spot Price: ₹{spot_price:.2f}")
+
+        # Fetch futures price
+        futures_price = 0.0
+        futures_source = "Breeze API"
+        expiry_formatted = expiry_dt.strftime('%d-%b-%Y').upper()
+
+        try:
+            futures_resp = breeze.get_quotes(
+                stock_code=breeze_symbol,
+                exchange_code="NFO",
+                product_type="futures",
+                expiry_date=expiry_formatted,
+                right="others",
+                strike_price=""
+            )
+
+            if futures_resp and futures_resp.get("Status") == 200 and futures_resp.get("Success"):
+                futures_data = futures_resp["Success"][0] if futures_resp["Success"] else {}
+                futures_price = float(futures_data.get('ltp', 0))
+                logger.info(f"✅ Futures Price: ₹{futures_price:.2f}")
+        except Exception as e:
+            logger.warning(f"Futures price fetch error: {e}")
+
+        # Fallback to contract data
+        if futures_price == 0 and contract and contract.price:
+            futures_price = float(contract.price)
+            futures_source = "Trendlyne (Cached)"
+            logger.info(f"✅ Using fallback - Futures Price: ₹{futures_price:.2f}")
+
+        # Estimate if still no futures price
+        if futures_price == 0 and spot_price > 0:
+            futures_price = spot_price * 1.01
+            futures_source = "Estimated from Spot"
+
+        metrics['spot_price'] = spot_price
+        metrics['futures_price'] = futures_price
+        metrics['breeze_symbol'] = breeze_symbol
+
+        step1_pass = spot_price > 0 and futures_price > 0
+
+        execution_log.append({
+            'step': 1,
+            'action': 'Real-Time Price Fetch',
+            'status': 'PASS' if step1_pass else 'FAIL',
+            'message': f"Spot: ₹{spot_price:.2f} ({spot_source}), Futures: ₹{futures_price:.2f} ({futures_source})",
+            'details': {
+                'spot_price': spot_price,
+                'futures_price': futures_price,
+                'spot_source': spot_source,
+                'futures_source': futures_source
+            }
+        })
+
+        if not step1_pass:
+            return {
+                'success': False,
+                'execution_log': execution_log,
+                'metrics': metrics,
+                'verdict': 'FAIL',
+                'direction': 'NEUTRAL',
+                'composite_score': 0,
+                'error': 'Could not fetch prices'
+            }
+
+        # ============================================================================
+        # STEP 2: Calculate Basis & Determine Initial Direction
+        # ============================================================================
+        logger.info("\n" + "=" * 80)
+        logger.info("STEP 2: Calculating Basis & Cost of Carry")
+        logger.info("=" * 80)
+
+        basis = futures_price - spot_price
+        basis_pct = (basis / spot_price * 100) if spot_price > 0 else 0
+
+        # Calculate cost of carry (annualized)
+        days_to_expiry = (expiry_dt.date() - datetime.now().date()).days
+        days_to_expiry = max(days_to_expiry, 1)  # Avoid division by zero
+        cost_of_carry = (basis_pct * 365 / days_to_expiry) if basis_pct else 0
+
+        # Determine initial direction from basis
+        if basis_pct > 0.5:
+            initial_direction = 'LONG'
+            basis_signal = 'CONTANGO'
+        elif basis_pct < -0.5:
+            initial_direction = 'SHORT'
+            basis_signal = 'BACKWARDATION'
+        else:
+            initial_direction = 'LONG'  # Default to LONG for neutral basis
+            basis_signal = 'NEUTRAL'
+
+        metrics['basis'] = basis
+        metrics['basis_pct'] = basis_pct
+        metrics['cost_of_carry'] = cost_of_carry
+        metrics['basis_signal'] = basis_signal
+        metrics['days_to_expiry'] = days_to_expiry
+
+        execution_log.append({
+            'step': 2,
+            'action': 'Basis & Cost of Carry',
+            'status': 'PASS',
+            'message': f"Basis: ₹{basis:.2f} ({basis_pct:.2f}%), CoC: {cost_of_carry:.2f}% p.a.",
+            'details': {
+                'basis': basis,
+                'basis_pct': basis_pct,
+                'cost_of_carry': cost_of_carry,
+                'days_to_expiry': days_to_expiry,
+                'basis_signal': basis_signal,
+                'initial_direction': initial_direction
+            }
+        })
+
+        logger.info(f"Basis: ₹{basis:.2f} ({basis_pct:.2f}%), Initial Direction: {initial_direction}")
+
+        # ============================================================================
+        # STEP 3: Run Enhanced Futures Analyzer (12-component scoring)
+        # ============================================================================
+        logger.info("\n" + "=" * 80)
+        logger.info(f"STEP 3: Enhanced Multi-Factor Analysis ({initial_direction})")
+        logger.info("=" * 80)
+
+        analyzer = EnhancedFuturesAnalyzer(
+            symbol=stock_symbol,
+            direction=initial_direction,
+            expiry=expiry_date
+        )
+
+        analysis_result = analyzer.analyze()
+
+        # Extract results
+        hard_reject = analysis_result.get('hard_reject', False)
+        reject_reason = analysis_result.get('reject_reason')
+        composite_score = analysis_result.get('composite_score', 0)
+        scores = analysis_result.get('scores', {})
+        details = analysis_result.get('details', {})
+        recommendation = analysis_result.get('recommendation', 'NO_ENTRY')
+        entry_params = analysis_result.get('entry_params')
+
+        # Map scores to legacy format for compatibility
+        legacy_scores = {
+            'basis': 10 if basis_pct > 0.5 else 5 if basis_pct > 0 else 0,
+            'oi': int(scores.get('oi_fno', 0) / 45 * 15),  # Scale to max 15
+            'dma': int(scores.get('trend_confirmation', 0) / 30 * 15),  # Scale to max 15
+            'sector': 20 if details.get('sector_aligned', False) else 0,
+            'volume': int(scores.get('volume_quality', 0) / 25 * 10),  # Scale to max 10
+            'technical': int(scores.get('technical_momentum', 0) / 35 * 15),  # Scale to max 15
+            'sr': 5  # Default
+        }
+
+        # Log hard reject checks
+        hard_reject_checks = details.get('hard_reject_checks', {})
+        for check_name, check_result in hard_reject_checks.items():
+            passed = check_result.get('passed', True)
+            execution_log.append({
+                'step': 3,
+                'action': f'Hard Reject: {check_name.upper()}',
+                'status': 'PASS' if passed else 'FAIL',
+                'message': check_result.get('reason', ''),
+                'details': check_result
+            })
+
+        if hard_reject:
+            execution_log.append({
+                'step': 3,
+                'action': 'Enhanced Analysis',
+                'status': 'FAIL',
+                'message': f"HARD REJECT: {reject_reason}",
+                'details': {
+                    'hard_reject': True,
+                    'reject_reason': reject_reason,
+                    'hard_reject_checks': hard_reject_checks
+                }
+            })
+
+            return {
+                'success': True,  # Analysis completed successfully
+                'execution_log': execution_log,
+                'metrics': metrics,
+                'scores': legacy_scores,
+                'verdict': 'FAIL',
+                'direction': initial_direction,
+                'composite_score': 0,
+                'hard_reject': True,
+                'reject_reason': reject_reason,
+                'details': details,
+                'error': reject_reason
+            }
+
+        # ============================================================================
+        # STEP 4: Sector Alignment Check
+        # ============================================================================
+        logger.info("\n" + "=" * 80)
+        logger.info("STEP 4: Sector Alignment Check")
+        logger.info("=" * 80)
+
+        sector_analysis = analyze_sector(stock_symbol)
+        sector_aligned = False
+
+        if sector_analysis:
+            if initial_direction == 'LONG' and sector_analysis.get('allow_long', False):
+                sector_aligned = True
+            elif initial_direction == 'SHORT' and sector_analysis.get('allow_short', False):
+                sector_aligned = True
+
+            metrics['sector_verdict'] = sector_analysis.get('verdict', 'NEUTRAL')
+            metrics['sector_allow_long'] = sector_analysis.get('allow_long', False)
+            metrics['sector_allow_short'] = sector_analysis.get('allow_short', False)
+
+        details['sector_aligned'] = sector_aligned
+        legacy_scores['sector'] = 20 if sector_aligned else 0
+
+        execution_log.append({
+            'step': 4,
+            'action': 'Sector Alignment',
+            'status': 'PASS' if sector_aligned else 'WARNING',
+            'message': f"Sector {'aligned' if sector_aligned else 'NOT aligned'} with {initial_direction}",
+            'details': {
+                'sector_verdict': sector_analysis.get('verdict', 'N/A') if sector_analysis else 'N/A',
+                'allow_long': sector_analysis.get('allow_long', False) if sector_analysis else False,
+                'allow_short': sector_analysis.get('allow_short', False) if sector_analysis else False,
+                'sector_aligned': sector_aligned
+            }
+        })
+
+        # ============================================================================
+        # STEP 5: Final Scoring & Verdict
+        # ============================================================================
+        logger.info("\n" + "=" * 80)
+        logger.info("STEP 5: Final Scoring & Verdict")
+        logger.info("=" * 80)
+
+        # Determine verdict: Pass if score >= 65 and not hard rejected
+        # Also consider sector alignment as a factor but not a blocker
+        if composite_score >= 65:
+            verdict = 'PASS'
+        elif composite_score >= 50:
+            verdict = 'WEAK_PASS'  # May need manual review
+        else:
+            verdict = 'FAIL'
+
+        metrics['composite_score'] = composite_score
+        metrics['direction'] = initial_direction
+        metrics['verdict'] = verdict
+        metrics['recommendation'] = recommendation
+
+        execution_log.append({
+            'step': 5,
+            'action': 'Final Scoring & Verdict',
+            'status': verdict,
+            'message': f"{verdict}: Score {composite_score}/100, Direction: {initial_direction}, Recommendation: {recommendation}",
+            'details': {
+                'composite_score': composite_score,
+                'raw_score': analysis_result.get('raw_score', 0),
+                'max_score': analysis_result.get('max_score', 300),
+                'direction': initial_direction,
+                'recommendation': recommendation,
+                'sector_aligned': sector_aligned,
+                'component_scores': scores,
+                'score_breakdown': legacy_scores
+            }
+        })
+
+        logger.info(f"\n{'='*80}")
+        logger.info(f"FINAL VERDICT: {verdict}")
+        logger.info(f"{'='*80}")
+        logger.info(f"Composite Score: {composite_score}/100")
+        logger.info(f"Direction: {initial_direction}")
+        logger.info(f"Recommendation: {recommendation}")
+        logger.info(f"Sector Aligned: {sector_aligned}")
+        logger.info(f"\nComponent Scores:")
+        for component, score in scores.items():
+            weight = EnhancedFuturesAnalyzer.WEIGHTS.get(component, 0)
+            logger.info(f"  {component}: {score}/{weight}")
+
+        # Add broker routing info
+        metrics['broker_code'] = 'ICICI'
+        metrics['transaction_code'] = 'ICICI_FUTURES'
+        metrics['instrument_type'] = 'FUTURES'
+
+        return {
+            'success': True,
+            'execution_log': execution_log,
+            'metrics': metrics,
+            'scores': legacy_scores,
+            'verdict': verdict if verdict != 'WEAK_PASS' else 'PASS',  # Treat weak pass as pass for now
+            'direction': initial_direction,
+            'composite_score': composite_score,
+            'hard_reject': False,
+            'reject_reason': None,
+            'details': details,
+            'entry_params': entry_params,
+            'component_scores': scores,
+            'recommendation': recommendation,
+            'broker_code': 'ICICI',
+            'transaction_code': 'ICICI_FUTURES',
+            'instrument_type': 'FUTURES'
+        }
+
+    except Exception as e:
+        logger.error(f"Error in enhanced futures analysis: {str(e)}", exc_info=True)
+        execution_log.append({
+            'step': len(execution_log) + 1,
+            'action': 'Analysis Error',
+            'status': 'FAIL',
+            'message': f"Error: {str(e)}",
+            'details': {'error': str(e)}
+        })
+
+        return {
+            'success': False,
+            'execution_log': execution_log,
+            'metrics': metrics,
+            'verdict': 'FAIL',
+            'direction': 'NEUTRAL',
+            'composite_score': 0,
+            'error': str(e)
+        }
+
+
+# ============================================================================
 # HISTORICAL DATA COLLECTION FOR RELATED INSTRUMENTS
 # ============================================================================
 
