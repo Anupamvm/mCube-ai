@@ -50,25 +50,25 @@ def get_static_schedule():
     # =========================================================================
 
     'morning-data-sync': {
-        'task': 'apps.data.tasks.morning_data_sync',
+        'task': 'morning_data_sync',  # Uses custom name from @shared_task(name='morning_data_sync')
         'schedule': crontab(hour=7, minute=0),  # 7:00 AM daily - full morning data sync
         'options': {'queue': 'data'},
     },
 
     'update-pre-market-data': {
-        'task': 'apps.data.tasks.update_pre_market_data',
+        'task': 'update_pre_market_data',  # Uses custom name from @shared_task
         'schedule': crontab(hour=8, minute=50, day_of_week='1-5'),  # Mon-Fri 8:50 AM
         'options': {'queue': 'data'},
     },
 
     'update-live-market-data': {
-        'task': 'apps.data.tasks.update_live_market_data',
+        'task': 'update_live_market_data',  # Uses custom name from @shared_task
         'schedule': crontab(hour=9, minute=15, day_of_week='1-5'),  # Mon-Fri 9:15 AM (market open)
         'options': {'queue': 'data'},
     },
 
     'update-post-market-data': {
-        'task': 'apps.data.tasks.update_post_market_data',
+        'task': 'update_post_market_data',  # Uses custom name from @shared_task
         'schedule': crontab(hour=15, minute=35, day_of_week='1-5'),  # Mon-Fri 3:35 PM (after close)
         'options': {'queue': 'data'},
     },

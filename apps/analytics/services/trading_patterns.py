@@ -939,25 +939,45 @@ def get_available_fys() -> List[Dict[str, str]]:
     """
     Get list of available financial years from the data.
 
+    Checks both BrokerContractPnL (CSV imports) and BrokerTradeHistory (API syncs)
+    to get all available fiscal years.
+
     Returns:
         List of dicts with 'value' (e.g., '2024-25') and 'label' (e.g., 'FY 2024-25')
     """
-    from apps.brokers.models import BrokerContractPnL
+    from apps.brokers.models import BrokerContractPnL, BrokerTradeHistory
+    from django.db.models.functions import ExtractYear, ExtractMonth
 
-    # Get distinct FY values from the 'fy' field (populated during CSV import)
+    seen = set()
+
+    # Get distinct FY values from BrokerContractPnL 'fy' field (CSV imports)
     fy_values = BrokerContractPnL.objects.exclude(
         fy=''
     ).values('fy').distinct().values_list('fy', flat=True)
 
-    fys = []
-    seen = set()
     for fy_value in fy_values:
-        if fy_value and fy_value not in seen:
+        if fy_value:
             seen.add(fy_value)
-            fys.append({
-                'value': fy_value,
-                'label': f"FY {fy_value}",
-            })
+
+    # Get distinct year/month combinations from BrokerTradeHistory (API syncs)
+    # This is more efficient than fetching all trade dates
+    year_months = BrokerTradeHistory.objects.annotate(
+        year=ExtractYear('trade_date'),
+        month=ExtractMonth('trade_date')
+    ).values('year', 'month').distinct()
+
+    for ym in year_months:
+        year, month = ym['year'], ym['month']
+        if year and month:
+            # FY runs April 1 to March 31
+            if month >= 4:  # April onwards
+                fy_value = f"{year}-{str(year + 1)[-2:]}"
+            else:  # Jan-Mar
+                fy_value = f"{year - 1}-{str(year)[-2:]}"
+            seen.add(fy_value)
+
+    # Build result list
+    fys = [{'value': fy, 'label': f"FY {fy}"} for fy in seen]
 
     # Sort by FY value (newest first)
     fys.sort(key=lambda x: x['value'], reverse=True)

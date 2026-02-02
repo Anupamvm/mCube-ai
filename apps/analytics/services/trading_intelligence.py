@@ -54,11 +54,13 @@ def get_available_fys() -> List[str]:
 
     Uses the fy field directly from BrokerContractPnL for accuracy,
     with fallback to date-based calculation for records without fy field.
+    Also includes FYs from BrokerTradeHistory trade dates.
 
     Returns:
         List of FY strings like ['2024-25', '2023-24', '2022-23']
     """
-    from apps.brokers.models import BrokerContractPnL, CSVImportLog
+    from apps.brokers.models import BrokerContractPnL, BrokerTradeHistory, CSVImportLog
+    from django.db.models.functions import ExtractYear, ExtractMonth
 
     # First, get distinct FY values directly from the fy field (most accurate)
     direct_fys = set(
@@ -116,8 +118,23 @@ def get_available_fys() -> List[str]:
         for year in range(start_year, end_year + 1):
             date_based_fys.add(f"{year}-{str(year + 1)[-2:]}")
 
-    # Combine both sets and sort descending
-    all_fys = direct_fys | date_based_fys
+    # Also get FYs from BrokerTradeHistory trade dates (API syncs)
+    trade_history_fys = set()
+    year_months = BrokerTradeHistory.objects.annotate(
+        year=ExtractYear('trade_date'),
+        month=ExtractMonth('trade_date')
+    ).values('year', 'month').distinct()
+
+    for ym in year_months:
+        year, month = ym['year'], ym['month']
+        if year and month:
+            if month >= 4:  # April onwards
+                trade_history_fys.add(f"{year}-{str(year + 1)[-2:]}")
+            else:  # Jan-Mar
+                trade_history_fys.add(f"{year - 1}-{str(year)[-2:]}")
+
+    # Combine all sets and sort descending
+    all_fys = direct_fys | date_based_fys | trade_history_fys
 
     # Sort by year descending
     def fy_sort_key(fy: str) -> int:

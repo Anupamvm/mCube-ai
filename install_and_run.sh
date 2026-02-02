@@ -641,30 +641,34 @@ APPLESCRIPT
     sleep 1
 
     # Terminal 3: Celery Worker (use venv python -m celery to ensure correct environment)
+    # Using tee to write to both terminal AND log file
     osascript <<APPLESCRIPT
     tell application "Terminal"
         activate
-        do script "cd '$SCRIPT_DIR' && echo '============================================' && echo 'mCube Celery Worker' && echo '============================================' && echo '' && ./venv/bin/python -m celery -A mcube_ai worker -l info -Q data,strategies,monitoring,risk,reports,celery --concurrency=2"
+        do script "cd '$SCRIPT_DIR' && echo '============================================' && echo 'mCube Celery Worker' && echo '============================================' && echo 'Logs: logs/celery_worker.log' && echo '' && ./venv/bin/python -m celery -A mcube_ai worker -l info -Q data,strategies,monitoring,risk,reports,celery --concurrency=2 2>&1 | tee -a logs/celery_worker.log"
         set custom title of front window to "mCube - Celery Worker"
     end tell
 APPLESCRIPT
 
     echo "✓ Celery worker starting in new terminal..."
     echo "  Queues: data, strategies, monitoring, risk, reports, celery"
+    echo "  Log file: logs/celery_worker.log"
 
     sleep 1
 
     # Terminal 4: Celery Beat (Scheduler) (use venv python -m celery)
+    # Using tee to write to both terminal AND log file
     osascript <<APPLESCRIPT
     tell application "Terminal"
         activate
-        do script "cd '$SCRIPT_DIR' && echo '============================================' && echo 'mCube Celery Beat (Scheduler)' && echo '============================================' && echo '' && ./venv/bin/python -m celery -A mcube_ai beat -l info"
+        do script "cd '$SCRIPT_DIR' && echo '============================================' && echo 'mCube Celery Beat (Scheduler)' && echo '============================================' && echo 'Logs: logs/celery_beat.log' && echo '' && ./venv/bin/python -m celery -A mcube_ai beat -l info 2>&1 | tee -a logs/celery_beat.log"
         set custom title of front window to "mCube - Celery Beat"
     end tell
 APPLESCRIPT
 
     echo "✓ Celery beat (scheduler) starting in new terminal..."
     echo "  Scheduled tasks enabled"
+    echo "  Log file: logs/celery_beat.log"
 
     sleep 1
 
@@ -685,12 +689,12 @@ else
         gnome-terminal --title="mCube - Telegram Bot" -- bash -c "cd '$SCRIPT_DIR' && source venv/bin/activate && python manage.py run_telegram_bot; exec bash"
         sleep 1
 
-        # Celery Worker
-        gnome-terminal --title="mCube - Celery Worker" -- bash -c "cd '$SCRIPT_DIR' && source venv/bin/activate && celery -A mcube_ai worker -l info -Q data,strategies,monitoring,risk,reports,celery --concurrency=2; exec bash"
+        # Celery Worker (with tee to log file)
+        gnome-terminal --title="mCube - Celery Worker" -- bash -c "cd '$SCRIPT_DIR' && source venv/bin/activate && celery -A mcube_ai worker -l info -Q data,strategies,monitoring,risk,reports,celery --concurrency=2 2>&1 | tee -a logs/celery_worker.log; exec bash"
         sleep 1
 
-        # Celery Beat
-        gnome-terminal --title="mCube - Celery Beat" -- bash -c "cd '$SCRIPT_DIR' && source venv/bin/activate && celery -A mcube_ai beat -l info; exec bash"
+        # Celery Beat (with tee to log file)
+        gnome-terminal --title="mCube - Celery Beat" -- bash -c "cd '$SCRIPT_DIR' && source venv/bin/activate && celery -A mcube_ai beat -l info 2>&1 | tee -a logs/celery_beat.log; exec bash"
 
         echo "✓ All services started in gnome-terminal windows"
 
@@ -701,9 +705,9 @@ else
         sleep 1
         konsole --new-tab -e bash -c "cd '$SCRIPT_DIR' && source venv/bin/activate && python manage.py run_telegram_bot" &
         sleep 1
-        konsole --new-tab -e bash -c "cd '$SCRIPT_DIR' && source venv/bin/activate && celery -A mcube_ai worker -l info -Q data,strategies,monitoring,risk,reports,celery --concurrency=2" &
+        konsole --new-tab -e bash -c "cd '$SCRIPT_DIR' && source venv/bin/activate && celery -A mcube_ai worker -l info -Q data,strategies,monitoring,risk,reports,celery --concurrency=2 2>&1 | tee -a logs/celery_worker.log" &
         sleep 1
-        konsole --new-tab -e bash -c "cd '$SCRIPT_DIR' && source venv/bin/activate && celery -A mcube_ai beat -l info" &
+        konsole --new-tab -e bash -c "cd '$SCRIPT_DIR' && source venv/bin/activate && celery -A mcube_ai beat -l info 2>&1 | tee -a logs/celery_beat.log" &
 
         echo "✓ All services started in konsole windows"
 
@@ -714,9 +718,9 @@ else
         sleep 1
         xterm -title "mCube - Telegram Bot" -e bash -c "cd '$SCRIPT_DIR' && source venv/bin/activate && python manage.py run_telegram_bot" &
         sleep 1
-        xterm -title "mCube - Celery Worker" -e bash -c "cd '$SCRIPT_DIR' && source venv/bin/activate && celery -A mcube_ai worker -l info -Q data,strategies,monitoring,risk,reports,celery --concurrency=2" &
+        xterm -title "mCube - Celery Worker" -e bash -c "cd '$SCRIPT_DIR' && source venv/bin/activate && celery -A mcube_ai worker -l info -Q data,strategies,monitoring,risk,reports,celery --concurrency=2 2>&1 | tee -a logs/celery_worker.log" &
         sleep 1
-        xterm -title "mCube - Celery Beat" -e bash -c "cd '$SCRIPT_DIR' && source venv/bin/activate && celery -A mcube_ai beat -l info" &
+        xterm -title "mCube - Celery Beat" -e bash -c "cd '$SCRIPT_DIR' && source venv/bin/activate && celery -A mcube_ai beat -l info 2>&1 | tee -a logs/celery_beat.log" &
 
         echo "✓ All services started in xterm windows"
 

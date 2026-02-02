@@ -49,30 +49,29 @@ stop_existing
 
 # Start Celery Beat (Scheduler)
 echo -e "${YELLOW}Starting Celery Beat (Scheduler)...${NC}"
-celery -A mcube_ai beat \
-    --loglevel=info \
-    --logfile="$LOG_DIR/celery_beat.log" \
-    --pidfile="$PID_DIR/celery_beat.pid" \
-    --detach
+nohup celery -A mcube_ai beat --loglevel=info >> "$LOG_DIR/celery_beat.log" 2>&1 &
+BEAT_PID=$!
+echo $BEAT_PID > "$PID_DIR/celery_beat.pid"
+sleep 2
 
-if [ $? -eq 0 ]; then
-    echo -e "${GREEN}[OK] Celery Beat started${NC}"
+if ps -p $BEAT_PID > /dev/null 2>&1; then
+    echo -e "${GREEN}[OK] Celery Beat started (PID: $BEAT_PID)${NC}"
 else
     echo -e "${RED}[FAILED] Celery Beat failed to start${NC}"
 fi
 
 # Start Celery Worker with all queues
 echo -e "${YELLOW}Starting Celery Worker (all queues)...${NC}"
-celery -A mcube_ai worker \
-    --queues=data,strategies,monitoring,risk,reports \
+nohup celery -A mcube_ai worker \
+    --queues=data,strategies,monitoring,risk,reports,celery \
     --loglevel=info \
-    --logfile="$LOG_DIR/celery_worker.log" \
-    --pidfile="$PID_DIR/celery_worker.pid" \
-    --concurrency=4 \
-    --detach
+    --concurrency=4 >> "$LOG_DIR/celery_worker.log" 2>&1 &
+WORKER_PID=$!
+echo $WORKER_PID > "$PID_DIR/celery_worker.pid"
+sleep 2
 
-if [ $? -eq 0 ]; then
-    echo -e "${GREEN}[OK] Celery Worker started${NC}"
+if ps -p $WORKER_PID > /dev/null 2>&1; then
+    echo -e "${GREEN}[OK] Celery Worker started (PID: $WORKER_PID)${NC}"
 else
     echo -e "${RED}[FAILED] Celery Worker failed to start${NC}"
 fi

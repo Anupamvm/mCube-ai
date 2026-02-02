@@ -43,7 +43,7 @@ def manual_triggers_refactored(request):
         'stock_count': 0,
         'last_updated': None,
         'last_updated_display': 'Never',
-        'is_stale': True,  # Data older than 24 hours
+        'is_stale': True,  # Data older than 8 hours
     }
 
     try:
@@ -85,8 +85,8 @@ def manual_triggers_refactored(request):
                 days = int(age.total_seconds() / 86400)
                 data_freshness['last_updated_display'] = f'{days} day(s) ago'
 
-            # Check if stale (older than 24 hours)
-            data_freshness['is_stale'] = age.total_seconds() > 86400
+            # Check if stale (older than 8 hours)
+            data_freshness['is_stale'] = age.total_seconds() > 28800
 
     except Exception as e:
         logger.warning(f"Error getting data freshness: {e}")

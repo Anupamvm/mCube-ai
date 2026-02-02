@@ -136,6 +136,36 @@
                     </p>
                 </div>
 
+                <!-- Data Freshness Section -->
+                <div class="trigger-content" style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin: 20px 0;">
+                    <h4 style="color: #1f2937; margin-bottom: 15px;">📊 Data Freshness</h4>
+                    <div style="display: flex; gap: 10px; margin-bottom: 12px;">
+                        <button onclick="FuturesAlgorithm.fetchFreshData()"
+                                id="btnFetchTrendlyneFutures"
+                                style="background: #3b82f6; color: white; padding: 10px 20px; border: none; border-radius: 6px; font-size: 0.875rem; font-weight: 600; cursor: pointer; transition: background 0.2s;">
+                            📥 Fetch Fresh Data
+                        </button>
+                    </div>
+                    <!-- Data Freshness Info -->
+                    <div id="dataFreshnessInfoFutures" style="font-size: 0.75rem; padding: 10px; background: {% if data_freshness.is_stale %}#fef3c7{% else %}#d1fae5{% endif %}; border-radius: 6px; border-left: 3px solid {% if data_freshness.is_stale %}#f59e0b{% else %}#10b981{% endif %};">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                            <span style="font-weight: 600; color: {% if data_freshness.is_stale %}#92400e{% else %}#065f46{% endif %};">
+                                {% if data_freshness.is_stale %}⚠️ Data may be stale{% else %}✅ Data is fresh{% endif %}
+                            </span>
+                            <span style="color: #6b7280;">
+                                Last updated: <strong id="lastUpdatedTimeFutures">{{ data_freshness.last_updated_display }}</strong>
+                            </span>
+                        </div>
+                        <div style="color: #4b5563; display: flex; gap: 15px;">
+                            <span>📊 F&O Contracts: <strong id="contractDataCountFutures">{{ data_freshness.contract_count|default:"0" }}</strong></span>
+                            <span>📈 Stocks: <strong id="stockDataCountFutures">{{ data_freshness.stock_count|default:"0" }}</strong></span>
+                        </div>
+                    </div>
+                    <div style="font-size: 0.7rem; color: #9ca3af; margin-top: 8px; font-style: italic;">
+                        <strong>Note:</strong> Data is considered fresh if updated within the last 8 hours. Click "Fetch Fresh Data" to download latest from Trendlyne (2-3 min).
+                    </div>
+                </div>
+
                 <button class="btn btn-primary" onclick="FuturesAlgorithm.run()" id="futuresButton">
                     🎯 Find Top 3 Opportunities
                 </button>
@@ -885,6 +915,16 @@ const FuturesAlgorithm = {
         const modal = document.getElementById('futuresDetailModal');
         modal.style.display = 'none';
         document.body.style.overflow = ''; // Restore scrolling
+    },
+
+    async fetchFreshData() {
+        const btn = document.getElementById('btnFetchTrendlyneFutures');
+
+        btn.disabled = true;
+        btn.textContent = '⏳ Opening...';
+
+        // Use the shared TrendlyneLogger with SSE streaming
+        TrendlyneLogger.startFetch();
     },
 
     init() {
@@ -3016,10 +3056,17 @@ const TrendlyneLogger = {
             window.location.reload();
             return;
         }
-        // Reset button state
-        const btn = document.getElementById('btnFetchTrendlyne');
-        btn.disabled = false;
-        btn.textContent = '📥 Fetch Fresh Data';
+        // Reset button state for both Verify and Futures Algorithm tabs
+        const btnVerify = document.getElementById('btnFetchTrendlyne');
+        if (btnVerify) {
+            btnVerify.disabled = false;
+            btnVerify.textContent = '📥 Fetch Fresh Data';
+        }
+        const btnFutures = document.getElementById('btnFetchTrendlyneFutures');
+        if (btnFutures) {
+            btnFutures.disabled = false;
+            btnFutures.textContent = '📥 Fetch Fresh Data';
+        }
     },
 
     addLog(message, level = 'info') {
