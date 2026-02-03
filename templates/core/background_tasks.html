@@ -347,8 +347,9 @@
 
     <!-- Section Tabs -->
     <div class="section-tabs">
-        <div class="section-tab active" onclick="showSection('celery')">Celery Tasks</div>
-        <div class="section-tab" onclick="showSection('background')">Task Management</div>
+        <div class="section-tab active" onclick="showSection('celery', this)">Celery Tasks</div>
+        <div class="section-tab" onclick="showSection('timeline', this)">📅 Execution Timeline</div>
+        <div class="section-tab" onclick="showSection('background', this)">Task Management</div>
     </div>
 
     <!-- Celery Tasks Section -->
@@ -439,6 +440,52 @@
         {% empty %}
         <div class="empty-state"><p>No system tasks found.</p></div>
         {% endfor %}
+    </div>
+
+    <!-- Execution Timeline Section -->
+    <div id="timeline-section" class="task-section">
+        <div class="section-header">
+            <h2>📅 Task Execution Timeline</h2>
+            <div class="header-actions-inline">
+                <select id="timeline-filter" class="form-select" onchange="filterTimeline()" style="padding: 8px 12px; border-radius: 6px; border: 1px solid #cbd5e0;">
+                    <option value="all">All Tasks</option>
+                    <option value="strategy">Strategy</option>
+                    <option value="data">Market Data</option>
+                    <option value="position">Position</option>
+                    <option value="risk">Risk</option>
+                </select>
+                <select id="timeline-status" class="form-select" onchange="filterTimeline()" style="padding: 8px 12px; border-radius: 6px; border: 1px solid #cbd5e0; margin-left: 8px;">
+                    <option value="all">All Status</option>
+                    <option value="success">Success</option>
+                    <option value="error">Error</option>
+                    <option value="warning">Warning</option>
+                </select>
+                <button class="btn btn-sm btn-primary" onclick="loadTimeline()" style="margin-left: 8px;">🔄 Refresh</button>
+            </div>
+        </div>
+
+        <!-- Today's Schedule Overview -->
+        <div class="schedule-overview" style="margin-bottom: 25px;">
+            <h3 style="font-size: 16px; color: #2d3748; margin-bottom: 15px;">📆 Today's Schedule ({{ timestamp|date:"D, d M Y" }})</h3>
+            <div class="timeline-visual" style="position: relative; padding: 20px 0; overflow-x: auto;">
+                <div class="timeline-hours" style="display: flex; position: relative; min-width: 800px;">
+                    {% for hour in "07 08 09 10 11 12 13 14 15 16"|make_list %}
+                    <div class="hour-block" style="flex: 1; text-align: center; padding: 10px; border-left: 1px solid #e2e8f0;">
+                        <div style="font-size: 11px; color: #718096; margin-bottom: 8px;">{{ hour }}:00</div>
+                        <div class="hour-tasks" id="hour-{{ hour }}" style="min-height: 60px;"></div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+
+        <!-- Recent Executions -->
+        <div class="recent-executions">
+            <h3 style="font-size: 16px; color: #2d3748; margin-bottom: 15px;">🕐 Recent Executions (Last 24 Hours)</h3>
+            <div id="timeline-content" style="max-height: 500px; overflow-y: auto;">
+                <div class="loading-state">Loading timeline...</div>
+            </div>
+        </div>
     </div>
 
     <!-- Celery Task Management Section -->
@@ -607,19 +654,86 @@
         margin-top: 16px;
     }
     .config-warning p { margin: 0; font-size: 13px; color: #744210; }
+
+    /* Timeline Styles */
+    .schedule-overview {
+        background: linear-gradient(135deg, #f8fafc 0%, #edf2f7 100%);
+        border-radius: 12px;
+        padding: 20px;
+        border: 1px solid #e2e8f0;
+    }
+    .timeline-visual {
+        background: white;
+        border-radius: 8px;
+        padding: 15px;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+    }
+    .hour-block {
+        min-width: 80px;
+    }
+    .hour-block:first-child {
+        border-left: none;
+    }
+    .schedule-marker {
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+    .schedule-marker:hover {
+        transform: scale(1.05);
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+    }
+    .timeline-date-group {
+        animation: fadeIn 0.3s ease;
+    }
+    .timeline-item {
+        animation: slideIn 0.3s ease;
+        transition: all 0.2s;
+    }
+    .timeline-item:hover {
+        background: #edf2f7 !important;
+        transform: translateX(4px);
+    }
+    @keyframes fadeIn {
+        from { opacity: 0; }
+        to { opacity: 1; }
+    }
+    @keyframes slideIn {
+        from { opacity: 0; transform: translateX(-10px); }
+        to { opacity: 1; transform: translateX(0); }
+    }
+    .recent-executions {
+        background: white;
+        border-radius: 12px;
+        padding: 20px;
+        border: 1px solid #e2e8f0;
+    }
 </style>
 {% endblock %}
 
 {% block extra_js %}
 <script>
-    function showSection(section) {
-        // Update tabs
+    function showSection(section, clickedTab) {
+        // Update tabs - use clickedTab if provided, otherwise find by section name
         document.querySelectorAll('.section-tab').forEach(tab => tab.classList.remove('active'));
-        event.target.classList.add('active');
+        if (clickedTab) {
+            clickedTab.classList.add('active');
+        } else {
+            // Find tab by section name for programmatic calls
+            const tab = document.querySelector(`.section-tab[onclick*="${section}"]`);
+            if (tab) tab.classList.add('active');
+        }
 
         // Update sections
         document.querySelectorAll('.task-section').forEach(s => s.classList.remove('active'));
         document.getElementById(section + '-section').classList.add('active');
+
+        // Load timeline data when timeline section is shown
+        if (section === 'timeline') {
+            loadTimeline();
+        }
+
+        // Update URL hash
+        history.replaceState(null, null, '#' + section);
     }
 
     function toggleCeleryTask(taskId, button, action) {
@@ -958,5 +1072,157 @@
     document.addEventListener('keydown', function(e) {
         if (e.key === 'Escape') closeConfigModal();
     });
+
+    // =========================================================================
+    // TIMELINE FUNCTIONS
+    // =========================================================================
+
+    let timelineData = [];
+
+    function loadTimeline() {
+        const content = document.getElementById('timeline-content');
+        content.innerHTML = '<div class="loading-state">Loading timeline...</div>';
+
+        fetch('{% url "core:api_task_timeline" %}')
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    timelineData = data.logs;
+                    renderTimeline(timelineData);
+                    renderScheduleOverview(data.schedule);
+                } else {
+                    content.innerHTML = '<div class="empty-state">Error loading timeline: ' + data.error + '</div>';
+                }
+            })
+            .catch(error => {
+                content.innerHTML = '<div class="empty-state">Error: ' + error + '</div>';
+            });
+    }
+
+    function filterTimeline() {
+        const category = document.getElementById('timeline-filter').value;
+        const status = document.getElementById('timeline-status').value;
+
+        let filtered = timelineData;
+
+        if (category !== 'all') {
+            filtered = filtered.filter(log => log.task_category === category);
+        }
+
+        if (status !== 'all') {
+            if (status === 'success') {
+                filtered = filtered.filter(log => log.success === true);
+            } else if (status === 'error') {
+                filtered = filtered.filter(log => log.level === 'error' || log.level === 'critical');
+            } else if (status === 'warning') {
+                filtered = filtered.filter(log => log.level === 'warning');
+            }
+        }
+
+        renderTimeline(filtered);
+    }
+
+    function renderTimeline(logs) {
+        const content = document.getElementById('timeline-content');
+
+        if (!logs || logs.length === 0) {
+            content.innerHTML = '<div class="empty-state">No task executions found for the selected filters.</div>';
+            return;
+        }
+
+        let html = '';
+        let currentDate = '';
+
+        logs.forEach(log => {
+            const logDate = new Date(log.timestamp);
+            const dateStr = logDate.toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' });
+
+            if (dateStr !== currentDate) {
+                if (currentDate !== '') {
+                    html += '</div>';
+                }
+                currentDate = dateStr;
+                html += `<div class="timeline-date-group" style="margin-bottom: 20px;">
+                    <div style="font-weight: 600; color: #2d3748; padding: 10px 0; border-bottom: 2px solid #e2e8f0; margin-bottom: 10px;">${dateStr}</div>`;
+            }
+
+            const statusColor = log.success === true ? '#48bb78' :
+                               log.level === 'error' || log.level === 'critical' ? '#f56565' :
+                               log.level === 'warning' ? '#ed8936' : '#4299e1';
+
+            const statusIcon = log.success === true ? '✅' :
+                              log.level === 'error' || log.level === 'critical' ? '❌' :
+                              log.level === 'warning' ? '⚠️' : 'ℹ️';
+
+            const timeStr = logDate.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+            html += `
+                <div class="timeline-item" style="display: flex; padding: 12px; margin-bottom: 8px; background: #f7fafc; border-radius: 8px; border-left: 4px solid ${statusColor};">
+                    <div style="width: 80px; flex-shrink: 0; color: #718096; font-size: 12px; font-family: monospace;">${timeStr}</div>
+                    <div style="flex: 1;">
+                        <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
+                            <span>${statusIcon}</span>
+                            <span style="font-weight: 600; color: #2d3748;">${log.background_task || log.action}</span>
+                            <span style="background: ${getCategoryColor(log.task_category)}20; color: ${getCategoryColor(log.task_category)}; padding: 2px 8px; border-radius: 10px; font-size: 10px; text-transform: uppercase;">${log.task_category}</span>
+                        </div>
+                        <div style="color: #4a5568; font-size: 13px;">${log.message}</div>
+                        ${log.execution_time_ms ? `<div style="color: #a0aec0; font-size: 11px; margin-top: 4px;">Duration: ${log.execution_time_ms}ms</div>` : ''}
+                    </div>
+                </div>
+            `;
+        });
+
+        if (currentDate !== '') {
+            html += '</div>';
+        }
+
+        content.innerHTML = html;
+    }
+
+    function renderScheduleOverview(schedule) {
+        if (!schedule) return;
+
+        // Clear existing markers
+        for (let h = 7; h <= 16; h++) {
+            const hourEl = document.getElementById('hour-' + String(h).padStart(2, '0'));
+            if (hourEl) hourEl.innerHTML = '';
+        }
+
+        // Add schedule markers
+        schedule.forEach(task => {
+            if (task.hour >= 7 && task.hour <= 16) {
+                const hourEl = document.getElementById('hour-' + String(task.hour).padStart(2, '0'));
+                if (hourEl) {
+                    const statusClass = task.executed ? 'executed' : task.is_active ? 'scheduled' : 'inactive';
+                    const statusColor = task.executed ? '#48bb78' : task.is_active ? '#667eea' : '#a0aec0';
+                    hourEl.innerHTML += `
+                        <div class="schedule-marker" style="background: ${statusColor}20; color: ${statusColor}; padding: 4px 8px; border-radius: 6px; font-size: 10px; margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${task.display_name} @ ${task.hour}:${String(task.minute).padStart(2, '0')}">
+                            ${task.minute}' ${task.short_name || task.display_name.substring(0, 10)}
+                        </div>
+                    `;
+                }
+            }
+        });
+    }
+
+    function getCategoryColor(category) {
+        const colors = {
+            'strategy': '#667eea',
+            'data': '#48bb78',
+            'position': '#ed8936',
+            'risk': '#f56565',
+            'analytics': '#9f7aea',
+            'other': '#a0aec0'
+        };
+        return colors[category] || colors['other'];
+    }
+
+    // Handle URL hash on page load (e.g., #timeline from menu link)
+    (function() {
+        const hash = window.location.hash.replace('#', '');
+        if (hash === 'timeline' || hash === 'celery' || hash === 'background') {
+            showSection(hash);
+        }
+    })();
 </script>
 {% endblock %}

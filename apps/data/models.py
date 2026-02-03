@@ -99,6 +99,57 @@ class Event(TimeStampedModel):
         return f"{self.title} ({self.event_date}) - {self.importance}"
 
 
+class ContractDataManager(models.Manager):
+    """
+    Custom manager for ContractData with common query methods.
+
+    Provides reusable queries to eliminate duplication across views, tasks, and services.
+    """
+
+    def get_tradable_futures(
+        self,
+        this_month_volume: int = 1000,
+        next_month_volume: int = 800,
+        limit: int = None
+    ):
+        """
+        Get futures contracts meeting volume criteria, ordered by traded volume.
+
+        This is the primary query for futures algorithm screening.
+        Filters by:
+        - This month expiry with traded_contracts >= this_month_volume
+        - Next month expiry with traded_contracts >= next_month_volume
+
+        Args:
+            this_month_volume: Minimum traded contracts for this month expiry (default: 1000)
+            next_month_volume: Minimum traded contracts for next month expiry (default: 800)
+            limit: Maximum contracts to return (default: None = all)
+
+        Returns:
+            QuerySet of ContractData objects, ordered by traded_contracts descending
+        """
+        from datetime import date, timedelta
+        from django.db.models import Q
+
+        today = date.today()
+        this_month_end = today + timedelta(days=30)
+        next_month_start = today + timedelta(days=30)
+        next_month_end = today + timedelta(days=60)
+
+        queryset = self.filter(
+            option_type='FUTURE',
+            expiry__gte=str(today),
+            expiry__lte=str(next_month_end)
+        ).filter(
+            Q(expiry__lte=str(this_month_end), traded_contracts__gte=this_month_volume) |
+            Q(expiry__gte=str(next_month_start), expiry__lte=str(next_month_end), traded_contracts__gte=next_month_volume)
+        ).order_by('-traded_contracts')
+
+        if limit:
+            return queryset[:limit]
+        return queryset
+
+
 class ContractData(TimeStampedModel):
     """
     Futures & Options contract data from Trendlyne
@@ -150,6 +201,9 @@ class ContractData(TimeStampedModel):
     gamma = models.FloatField(null=True, blank=True)
     theta = models.FloatField(null=True, blank=True)
     rho = models.FloatField(null=True, blank=True)
+
+    # Custom manager with helper queries
+    objects = ContractDataManager()
 
     class Meta:
         db_table = 'contract_data'

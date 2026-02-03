@@ -3,13 +3,324 @@ Strike calculation logic for options strategies.
 
 Shared by kotak_strangle and kotak_broken_iron_condor strategies.
 This consolidates the duplicated calculate_strikes functions.
+
+Strike Calculation Flow (Enhanced):
+1. calculate_strangle_strikes()     → Base strikes (VIX + delta)
+2. adjust_strikes_for_sr()          → Move away from S/R levels
+3. adjust_strikes_for_premium()     → Adjust to target 3-3.5 INR
+4. check_strike_liquidity()         → Warning if OI < 100K
 """
 
 from decimal import Decimal
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# S/R PROXIMITY ADJUSTMENT
+# =============================================================================
+
+def adjust_strikes_for_sr(
+    call_strike: int,
+    put_strike: int,
+    spot_price: Decimal,
+    strike_interval: int = 50
+) -> Dict:
+    """
+    Adjust strikes if too close to Support/Resistance levels.
+
+    Uses the existing calculate_nifty_sr() and check_strike_proximity_to_sr()
+    from support_resistance_calculator.py.
+
+    Logic:
+    - If CALL within 100 pts of R1/R2 → Move UP 50 pts
+    - If PUT within 100 pts of S1/S2 → Move DOWN 50 pts
+
+    Args:
+        call_strike: Original call strike
+        put_strike: Original put strike
+        spot_price: Current spot price
+        strike_interval: Strike interval for adjustments (default: 50 for NIFTY)
+
+    Returns:
+        dict: {
+            'call_strike': int (adjusted),
+            'put_strike': int (adjusted),
+            'call_adjusted': bool,
+            'put_adjusted': bool,
+            'call_adjustment_reason': str or None,
+            'put_adjustment_reason': str or None,
+            'sr_data': dict or None (S/R levels used)
+        }
+    """
+    result = {
+        'call_strike': call_strike,
+        'put_strike': put_strike,
+        'call_adjusted': False,
+        'put_adjusted': False,
+        'call_adjustment_reason': None,
+        'put_adjustment_reason': None,
+        'sr_data': None
+    }
+
+    try:
+        from apps.strategies.services.support_resistance_calculator import (
+            calculate_nifty_sr,
+            check_strike_sr_proximity
+        )
+
+        # Get S/R levels
+        sr_data = calculate_nifty_sr(float(spot_price))
+        result['sr_data'] = sr_data
+
+        # Check proximity for both strikes
+        proximity_check = check_strike_sr_proximity(call_strike, put_strike, sr_data)
+
+        # Adjust call if needed
+        call_adj = proximity_check['call_adjustment']
+        if call_adj['should_adjust']:
+            result['call_strike'] = call_adj['adjusted_strike']
+            result['call_adjusted'] = True
+            result['call_adjustment_reason'] = call_adj['reason']
+            logger.info(f"S/R Adjustment: CALL {call_strike} → {result['call_strike']} "
+                       f"({call_adj['reason']})")
+
+        # Adjust put if needed
+        put_adj = proximity_check['put_adjustment']
+        if put_adj['should_adjust']:
+            result['put_strike'] = put_adj['adjusted_strike']
+            result['put_adjusted'] = True
+            result['put_adjustment_reason'] = put_adj['reason']
+            logger.info(f"S/R Adjustment: PUT {put_strike} → {result['put_strike']} "
+                       f"({put_adj['reason']})")
+
+        if not result['call_adjusted'] and not result['put_adjusted']:
+            logger.info("S/R Adjustment: No adjustments needed - strikes safe from S/R levels")
+
+    except Exception as e:
+        logger.warning(f"S/R adjustment failed (continuing with original strikes): {e}")
+
+    return result
+
+
+# =============================================================================
+# PREMIUM-BASED STRIKE ADJUSTMENT
+# =============================================================================
+
+def adjust_strikes_for_premium(
+    call_strike: int,
+    put_strike: int,
+    expiry_date,
+    target_premium_min: Decimal = Decimal('3.0'),
+    target_premium_max: Decimal = Decimal('3.5'),
+    premium_floor: Decimal = Decimal('1.75'),
+    strike_interval: int = 50,
+    max_iterations: int = 5
+) -> Dict:
+    """
+    Adjust strikes to achieve target premium range (3-3.5 INR for weekly expiry).
+
+    Thresholds:
+    - Premium > 7 INR: Move 100 pts OTM + IV_MISMATCH warning
+    - Premium > 5 INR: Move 50 pts OTM
+    - Premium < 2 INR: Move 50 pts closer (too cheap)
+
+    Safety: Stop adjusting if premium drops below 1.75 INR (floor)
+    Max 5 iterations to find acceptable premium.
+
+    Args:
+        call_strike: Call strike to adjust
+        put_strike: Put strike to adjust
+        expiry_date: Expiry date for premium lookup
+        target_premium_min: Lower bound of target premium (default: 3.0)
+        target_premium_max: Upper bound of target premium (default: 3.5)
+        premium_floor: Minimum acceptable premium (default: 1.75)
+        strike_interval: Strike adjustment step (default: 50)
+        max_iterations: Max adjustment attempts (default: 5)
+
+    Returns:
+        dict: {
+            'call_strike': int (adjusted),
+            'put_strike': int (adjusted),
+            'call_premium': Decimal,
+            'put_premium': Decimal,
+            'call_iterations': int,
+            'put_iterations': int,
+            'call_status': str ('OK', 'TOO_HIGH', 'TOO_LOW', 'IV_MISMATCH'),
+            'put_status': str,
+            'warnings': list
+        }
+    """
+    from apps.strategies.shared.market_data import get_option_premium_for_strike
+
+    result = {
+        'call_strike': call_strike,
+        'put_strike': put_strike,
+        'call_premium': None,
+        'put_premium': None,
+        'call_iterations': 0,
+        'put_iterations': 0,
+        'call_status': 'OK',
+        'put_status': 'OK',
+        'warnings': []
+    }
+
+    # Adjust CALL strike
+    result['call_strike'], result['call_premium'], result['call_iterations'], call_status = \
+        _adjust_single_strike_for_premium(
+            strike=call_strike,
+            option_type='CE',
+            expiry_date=expiry_date,
+            target_min=target_premium_min,
+            target_max=target_premium_max,
+            premium_floor=premium_floor,
+            strike_interval=strike_interval,
+            max_iterations=max_iterations,
+            direction='OTM'  # OTM = higher strike for call
+        )
+    result['call_status'] = call_status
+
+    # Adjust PUT strike
+    result['put_strike'], result['put_premium'], result['put_iterations'], put_status = \
+        _adjust_single_strike_for_premium(
+            strike=put_strike,
+            option_type='PE',
+            expiry_date=expiry_date,
+            target_min=target_premium_min,
+            target_max=target_premium_max,
+            premium_floor=premium_floor,
+            strike_interval=strike_interval,
+            max_iterations=max_iterations,
+            direction='OTM'  # OTM = lower strike for put
+        )
+    result['put_status'] = put_status
+
+    # Log results
+    if result['call_iterations'] > 0:
+        logger.info(f"Premium Adjustment: CALL {call_strike} → {result['call_strike']} "
+                   f"({result['call_iterations']} iterations, premium={result['call_premium']})")
+    if result['put_iterations'] > 0:
+        logger.info(f"Premium Adjustment: PUT {put_strike} → {result['put_strike']} "
+                   f"({result['put_iterations']} iterations, premium={result['put_premium']})")
+
+    # Add warnings
+    if call_status == 'IV_MISMATCH':
+        result['warnings'].append(f"CALL premium high despite OTM - possible IV mismatch")
+    if put_status == 'IV_MISMATCH':
+        result['warnings'].append(f"PUT premium high despite OTM - possible IV mismatch")
+    if call_status == 'TOO_LOW':
+        result['warnings'].append(f"CALL premium below floor ({premium_floor})")
+    if put_status == 'TOO_LOW':
+        result['warnings'].append(f"PUT premium below floor ({premium_floor})")
+
+    return result
+
+
+def _adjust_single_strike_for_premium(
+    strike: int,
+    option_type: str,
+    expiry_date,
+    target_min: Decimal,
+    target_max: Decimal,
+    premium_floor: Decimal,
+    strike_interval: int,
+    max_iterations: int,
+    direction: str
+) -> Tuple[int, Optional[Decimal], int, str]:
+    """
+    Adjust a single strike to target premium range.
+
+    Args:
+        strike: Current strike
+        option_type: 'CE' or 'PE'
+        expiry_date: Expiry date
+        target_min: Lower bound of target premium
+        target_max: Upper bound of target premium
+        premium_floor: Minimum acceptable premium
+        strike_interval: Adjustment step
+        max_iterations: Max attempts
+        direction: 'OTM' (call=higher, put=lower)
+
+    Returns:
+        Tuple: (adjusted_strike, premium, iterations, status)
+    """
+    from apps.strategies.shared.market_data import get_option_premium_for_strike
+
+    current_strike = strike
+    iterations = 0
+    status = 'OK'
+
+    for i in range(max_iterations):
+        premium = get_option_premium_for_strike(current_strike, option_type, expiry_date)
+
+        if premium is None:
+            logger.warning(f"No premium data for {current_strike}{option_type}")
+            return current_strike, None, iterations, 'NO_DATA'
+
+        # Check if in target range
+        if target_min <= premium <= target_max:
+            return current_strike, premium, iterations, 'OK'
+
+        # Premium too high
+        if premium > Decimal('7'):
+            # Move 100 pts OTM + IV_MISMATCH warning
+            if option_type == 'CE':
+                current_strike += 100
+            else:
+                current_strike -= 100
+            iterations += 1
+            status = 'IV_MISMATCH'
+            logger.debug(f"Premium {premium:.2f} > 7 INR, moving 100 pts OTM")
+
+        elif premium > Decimal('5'):
+            # Move 50 pts OTM
+            if option_type == 'CE':
+                current_strike += strike_interval
+            else:
+                current_strike -= strike_interval
+            iterations += 1
+            logger.debug(f"Premium {premium:.2f} > 5 INR, moving 50 pts OTM")
+
+        elif premium > target_max:
+            # Move 50 pts OTM
+            if option_type == 'CE':
+                current_strike += strike_interval
+            else:
+                current_strike -= strike_interval
+            iterations += 1
+
+        elif premium < Decimal('2'):
+            # Premium too low, move closer to ATM
+            # But check floor first
+            if premium < premium_floor:
+                status = 'TOO_LOW'
+                return current_strike, premium, iterations, status
+
+            if option_type == 'CE':
+                current_strike -= strike_interval
+            else:
+                current_strike += strike_interval
+            iterations += 1
+            logger.debug(f"Premium {premium:.2f} < 2 INR, moving 50 pts closer")
+
+        elif premium < target_min:
+            # Slightly below target, move closer
+            # Check if moving closer would breach floor
+            test_strike = current_strike - strike_interval if option_type == 'CE' else current_strike + strike_interval
+            test_premium = get_option_premium_for_strike(test_strike, option_type, expiry_date)
+
+            if test_premium and test_premium >= premium_floor:
+                current_strike = test_strike
+                iterations += 1
+            else:
+                # Accept current strike to avoid floor breach
+                return current_strike, premium, iterations, 'OK'
+
+    # Max iterations reached
+    final_premium = get_option_premium_for_strike(current_strike, option_type, expiry_date)
+    return current_strike, final_premium, iterations, status if status != 'OK' else 'MAX_ITERATIONS'
 
 
 def calculate_strangle_strikes(

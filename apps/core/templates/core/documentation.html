@@ -1686,6 +1686,72 @@
             </div>
 
             <div class="docs-card">
+                <h3>🔄 Futures Background Tasks & Sync</h3>
+                <p>Automated task scheduling for futures trading lifecycle:</p>
+                <p style="font-size: 0.85rem; color: #6b7280; margin-top: 8px;">
+                    📁 <code>apps/strategies/tasks.py</code> |
+                    <code>apps/positions/services/position_sync.py</code> |
+                    <code>apps/brokers/services/trade_sync.py</code>
+                </p>
+
+                <h4 style="margin-top: 16px;">Daily Task Schedule</h4>
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>Time</th>
+                            <th>Task</th>
+                            <th>Description</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr><td><strong>7:00 AM</strong></td><td>morning_data_sync</td><td>Trendlyne data, news sentiment, market snapshot</td></tr>
+                        <tr><td><strong>8:30 AM</strong></td><td>execute_futures_algorithm</td><td>Screen top 50 futures, run 12-factor analysis</td></tr>
+                        <tr><td><strong>8:55 AM</strong></td><td>setup_trading_day</td><td>Initialize trading day, check NSE holidays</td></tr>
+                        <tr><td><strong>9:45 AM</strong></td><td>screen_futures_opportunities</td><td>Top 30 screening, save to FuturesSuggestion</td></tr>
+                        <tr><td><strong>Every 10 min</strong></td><td>check_futures_averaging</td><td>Monitor positions for 1% averaging trigger</td></tr>
+                        <tr><td><strong>Every 15 sec</strong></td><td>update_position_pnl</td><td>Real-time P&L calculation</td></tr>
+                        <tr><td><strong>Every 30 sec</strong></td><td>check_exit_conditions</td><td>Stop-loss and target monitoring</td></tr>
+                        <tr><td><strong>3:25 PM</strong></td><td>close_trading_day</td><td>EOD position reconciliation</td></tr>
+                        <tr><td><strong>4:00 PM</strong></td><td>daily_pnl_report</td><td>Generate daily P&L summary</td></tr>
+                    </tbody>
+                </table>
+
+                <h4 style="margin-top: 16px;">Sync Operations</h4>
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>Operation</th>
+                            <th>Function</th>
+                            <th>Description</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr><td><strong>Position Sync</strong></td><td>sync_positions_from_brokers()</td><td>Sync open positions from Kotak/ICICI APIs</td></tr>
+                        <tr><td><strong>Trade Sync</strong></td><td>sync_trades_for_date_range()</td><td>Sync trade history with Redis lock (5 min timeout)</td></tr>
+                        <tr><td><strong>Order Sync</strong></td><td>sync_orders_from_broker()</td><td>Sync today's order book</td></tr>
+                        <tr><td><strong>Reconciliation</strong></td><td>reconcile_with_taken_trades()</td><td>Match broker trades with TakenTrade records</td></tr>
+                    </tbody>
+                </table>
+
+                <h4 style="margin-top: 16px;">Task Queues</h4>
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>Queue</th>
+                            <th>Purpose</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr><td><strong>data</strong></td><td>Market data sync, news fetch</td></tr>
+                        <tr><td><strong>strategies</strong></td><td>Algorithm execution, screening</td></tr>
+                        <tr><td><strong>monitoring</strong></td><td>Position monitoring, P&L updates</td></tr>
+                        <tr><td><strong>risk</strong></td><td>Risk limits, circuit breakers</td></tr>
+                        <tr><td><strong>reports</strong></td><td>Analytics, daily reports</td></tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="docs-card">
                 <h3>📈 Nifty Strangle Strategy - Enhanced 10-Factor Analysis (Phase 3)</h3>
                 <p>The Nifty Strangle uses an advanced 10-factor scoring system (275 points scaled to 100):</p>
 
@@ -1844,6 +1910,93 @@
             </div>
 
             <div class="docs-card">
+                <h3>🧮 Strangle Strike Calculation - Step by Step</h3>
+                <p>Complete formula for arriving at strike prices with a worked example:</p>
+                <p style="font-size: 0.85rem; color: #6b7280; margin-top: 8px;">
+                    📁 <code>apps/strategies/services/strangle_delta_algorithm.py</code> |
+                    <code>apps/strategies/shared/strike_calculator.py</code>
+                </p>
+
+                <h4 style="margin-top: 16px;">Step 1: Base Delta Selection</h4>
+                <div class="code-block">
+                    <code>
+<span class="keyword">if</span> days_to_expiry <= <span class="string">2</span>:
+    base_delta = <span class="string">0.75%</span>  <span class="comment"># Higher delta for short expiry</span>
+<span class="keyword">else</span>:
+    base_delta = <span class="string">0.50%</span>  <span class="comment"># Standard delta</span>
+                    </code>
+                </div>
+
+                <h4 style="margin-top: 16px;">Step 2: Apply All Multipliers (Multiplicative)</h4>
+                <div class="code-block">
+                    <code>
+adjusted_delta = base_delta × vix_adj × trend_adj × volatility_adj × oi_adj × pcr_adj × news_adj
+                    </code>
+                </div>
+
+                <h4 style="margin-top: 16px;">Step 3: Calculate Strike Distance</h4>
+                <div class="code-block">
+                    <code>
+strike_distance = spot_price × (adjusted_delta / 100) × days_to_expiry
+                    </code>
+                </div>
+
+                <h4 style="margin-top: 16px;">Step 4: Apply Asymmetric Bias (News + Technical)</h4>
+                <div class="code-block">
+                    <code>
+call_distance = strike_distance × call_multiplier × news_call_bias × technical_call_adj
+put_distance = strike_distance × put_multiplier × news_put_bias × technical_put_adj
+                    </code>
+                </div>
+
+                <h4 style="margin-top: 16px;">Step 5: Round to Nearest Strike</h4>
+                <div class="code-block">
+                    <code>
+call_strike = <span class="function">round</span>((spot + call_distance) / <span class="string">50</span>) × <span class="string">50</span>
+put_strike = <span class="function">round</span>((spot - put_distance) / <span class="string">50</span>) × <span class="string">50</span>
+                    </code>
+                </div>
+
+                <h4 style="margin-top: 20px; border-top: 1px solid #e5e7eb; padding-top: 16px;">Worked Example</h4>
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>Input</th>
+                            <th>Value</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr><td>Spot Price</td><td>₹24,000</td></tr>
+                        <tr><td>Days to Expiry</td><td>4 days</td></tr>
+                        <tr><td>VIX</td><td>14.5 (range 12.5-14 → 1.5x)</td></tr>
+                        <tr><td>News Sentiment</td><td>BULLISH (1.1x, call_bias=1.15, put_bias=0.95)</td></tr>
+                        <tr><td>Near Resistance</td><td>Yes (call_adj=1.08)</td></tr>
+                    </tbody>
+                </table>
+
+                <h4 style="margin-top: 16px;">Calculation</h4>
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>Step</th>
+                            <th>Calculation</th>
+                            <th>Result</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr><td><strong>1. Base Delta</strong></td><td>days (4) > 2</td><td>0.50%</td></tr>
+                        <tr><td><strong>2. Adjusted Delta</strong></td><td>0.5% × 1.5 × 1.1 = 0.825%</td><td>0.825%</td></tr>
+                        <tr><td><strong>3. Strike Distance</strong></td><td>24,000 × 0.00825 × 4</td><td>792 pts</td></tr>
+                        <tr><td><strong>4a. Call Distance</strong></td><td>792 × 1.15 × 1.08</td><td>984 pts</td></tr>
+                        <tr><td><strong>4b. Put Distance</strong></td><td>792 × 0.95</td><td>752 pts</td></tr>
+                        <tr><td><strong>5a. Call Strike</strong></td><td>round((24,000 + 984) / 50) × 50</td><td><strong>25,000</strong></td></tr>
+                        <tr><td><strong>5b. Put Strike</strong></td><td>round((24,000 - 752) / 50) × 50</td><td><strong>23,250</strong></td></tr>
+                    </tbody>
+                </table>
+                <p style="margin-top: 12px; font-size: 0.9rem;"><strong>Final:</strong> SELL 25,000 CE + SELL 23,250 PE (asymmetric due to bullish bias + resistance)</p>
+            </div>
+
+            <div class="docs-card">
                 <h3>📊 Strangle Position Sizing</h3>
                 <p>Position sizing uses a margin-based approach with conservative limits:</p>
                 <table class="docs-table">
@@ -1908,6 +2061,38 @@
             </div>
 
             <div class="docs-card">
+                <h3>🎚️ Strangle Interactive Strike Adjustment</h3>
+                <p>After generating a Strangle position, you can manually adjust the call and put strikes to fine-tune your position:</p>
+                <p style="font-size: 0.85rem; color: #6b7280; margin-top: 8px;">
+                    📁 <code>apps/trading/templates/trading/manual_triggers_refactored.html</code> (NiftyStrangle module)
+                </p>
+
+                <h4 style="margin-top: 16px;">Features</h4>
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>Feature</th>
+                            <th>Description</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr><td><strong>+/- Buttons</strong></td><td>Move call or put strike up/down by 50 points</td></tr>
+                        <tr><td><strong>Real-time Update</strong></td><td>Premiums fetched from OptionChain, P&L recalculated</td></tr>
+                        <tr><td><strong>Symmetric/Asymmetric</strong></td><td>Adjust each leg independently for directional bias</td></tr>
+                        <tr><td><strong>Execute with Adjusted</strong></td><td>Modified strikes used when placing orders</td></tr>
+                    </tbody>
+                </table>
+
+                <div class="callout warning" style="margin-top: 16px;">
+                    <span class="callout-icon">⚠️</span>
+                    <div class="callout-content">
+                        <h4>Premium Impact</h4>
+                        <p>Moving strikes closer to spot increases premium but also risk. Moving further away reduces premium but provides more safety margin. The system shows real-time premium changes to help you decide.</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="docs-card">
                 <h3>🛡️ Broken Iron Condor Strategy</h3>
                 <p>
                     The Broken Iron Condor is a <strong>3-leg strategy</strong> that adds downside protection to a regular strangle.
@@ -1956,20 +2141,51 @@
             </div>
 
             <div class="docs-card">
-                <h3>🎯 Insurance Put Calculation</h3>
-                <p>The insurance strike is calculated based on your risk appetite using a <strong>Risk Multiplier</strong>:</p>
+                <h3>🧮 Iron Condor Strike Calculation - Step by Step</h3>
+                <p>Complete logic for all 3 legs with a worked example:</p>
+                <p style="font-size: 0.85rem; color: #6b7280; margin-top: 8px;">
+                    📁 <code>apps/strategies/strategies/kotak_broken_iron_condor.py</code> |
+                    <code>apps/strategies/shared/strike_calculator.py</code>
+                </p>
 
+                <h4 style="margin-top: 16px;">Step 1: Calculate Strangle Strikes (Legs 1 & 2)</h4>
+                <p>Uses same delta-based algorithm as Strangle strategy:</p>
                 <div class="code-block">
                     <code>
-<span class="comment"># Insurance Strike Calculation</span>
-risk_budget = max_profit * risk_multiplier
-max_loss_per_share = risk_budget / quantity
-insurance_strike = put_strike - max_loss_per_share
-<span class="comment"># Round to nearest 100 (Nifty strike interval)</span>
+<span class="comment"># Same as Strangle calculation</span>
+strike_distance = spot × (adjusted_delta / 100) × days_to_expiry
+
+call_strike = <span class="function">round</span>((spot + strike_distance) / <span class="string">100</span>) × <span class="string">100</span>
+put_strike = <span class="function">round</span>((spot - strike_distance) / <span class="string">100</span>) × <span class="string">100</span>
                     </code>
                 </div>
 
-                <table class="docs-table" style="margin-top: 16px;">
+                <h4 style="margin-top: 16px;">Step 2: Get Option Premiums</h4>
+                <div class="code-block">
+                    <code>
+call_premium = <span class="function">fetch_option_premium</span>(call_strike, 'CE')
+put_premium = <span class="function">fetch_option_premium</span>(put_strike, 'PE')
+total_premium = call_premium + put_premium
+max_profit = total_premium × quantity <span class="comment"># (lot_size = 50)</span>
+                    </code>
+                </div>
+
+                <h4 style="margin-top: 16px;">Step 3: Calculate Insurance Strike (Leg 3)</h4>
+                <div class="code-block">
+                    <code>
+risk_budget = max_profit × risk_multiplier
+max_loss_per_share = risk_budget / quantity
+insurance_strike_raw = put_strike - max_loss_per_share
+insurance_strike = <span class="function">round</span>(insurance_strike_raw / <span class="string">100</span>) × <span class="string">100</span>
+
+<span class="comment"># Safety floor: must be at least 100 points below put strike</span>
+<span class="keyword">if</span> insurance_strike >= put_strike:
+    insurance_strike = put_strike - <span class="string">100</span>
+                    </code>
+                </div>
+
+                <h4 style="margin-top: 16px;">Risk Multiplier Options</h4>
+                <table class="docs-table">
                     <thead>
                         <tr>
                             <th>Risk Profile</th>
@@ -1978,21 +2194,86 @@ insurance_strike = put_strike - max_loss_per_share
                         </tr>
                     </thead>
                     <tbody>
+                        <tr><td><span class="badge badge-green">Conservative</span></td><td>1.5x</td><td>Closer insurance, lower max loss</td></tr>
+                        <tr><td><span class="badge badge-blue">Moderate</span></td><td>2.0x</td><td>Balanced (Recommended)</td></tr>
+                        <tr><td><span class="badge badge-orange">Aggressive</span></td><td>2.5x - 3.0x</td><td>Wider spread, cheaper insurance</td></tr>
+                    </tbody>
+                </table>
+
+                <h4 style="margin-top: 20px; border-top: 1px solid #e5e7eb; padding-top: 16px;">Worked Example</h4>
+                <table class="docs-table">
+                    <thead>
                         <tr>
-                            <td><span class="badge badge-green">Conservative</span></td>
-                            <td>1.5x</td>
-                            <td>Closer insurance, lower max loss, higher premium cost</td>
+                            <th>Input</th>
+                            <th>Value</th>
                         </tr>
+                    </thead>
+                    <tbody>
+                        <tr><td>Spot Price</td><td>₹24,000</td></tr>
+                        <tr><td>Days to Expiry</td><td>4 days</td></tr>
+                        <tr><td>VIX</td><td>14 (adjustment = 1.0x)</td></tr>
+                        <tr><td>Risk Multiplier</td><td>2.0x (Moderate)</td></tr>
+                        <tr><td>Lot Size</td><td>50</td></tr>
+                    </tbody>
+                </table>
+
+                <h4 style="margin-top: 16px;">Calculation</h4>
+                <table class="docs-table">
+                    <thead>
                         <tr>
-                            <td><span class="badge badge-blue">Moderate</span></td>
-                            <td>2.0x</td>
-                            <td>Balanced risk/reward (Recommended)</td>
+                            <th>Step</th>
+                            <th>Calculation</th>
+                            <th>Result</th>
                         </tr>
+                    </thead>
+                    <tbody>
+                        <tr><td><strong>Strike Distance</strong></td><td>24,000 × 0.005 × 4</td><td>480 pts</td></tr>
+                        <tr><td><strong>Call Strike (Leg 1)</strong></td><td>round((24,000 + 480) / 100) × 100</td><td><strong>24,500</strong></td></tr>
+                        <tr><td><strong>Put Strike (Leg 2)</strong></td><td>round((24,000 - 480) / 100) × 100</td><td><strong>23,500</strong></td></tr>
+                        <tr><td><strong>Call Premium</strong></td><td>Fetch from broker</td><td>₹3.50</td></tr>
+                        <tr><td><strong>Put Premium</strong></td><td>Fetch from broker</td><td>₹3.20</td></tr>
+                        <tr><td><strong>Total Premium</strong></td><td>3.50 + 3.20</td><td>₹6.70</td></tr>
+                        <tr><td><strong>Max Profit</strong></td><td>6.70 × 50</td><td>₹335</td></tr>
+                        <tr><td><strong>Risk Budget</strong></td><td>335 × 2.0</td><td>₹670</td></tr>
+                        <tr><td><strong>Max Loss/Share</strong></td><td>670 ÷ 50</td><td>₹13.40</td></tr>
+                        <tr><td><strong>Insurance Raw</strong></td><td>23,500 - 13.40</td><td>23,486.60</td></tr>
+                        <tr><td><strong>Insurance Strike (Leg 3)</strong></td><td>round(23,486.60 / 100) × 100</td><td><strong>23,500</strong> → <strong>23,400</strong> (floor)</td></tr>
+                    </tbody>
+                </table>
+
+                <h4 style="margin-top: 16px;">Final Position</h4>
+                <table class="docs-table">
+                    <thead>
                         <tr>
-                            <td><span class="badge badge-orange">Aggressive</span></td>
-                            <td>2.5x - 3.0x</td>
-                            <td>Wider spread, higher max loss, cheaper insurance</td>
+                            <th>Leg</th>
+                            <th>Action</th>
+                            <th>Strike</th>
+                            <th>Premium</th>
                         </tr>
+                    </thead>
+                    <tbody>
+                        <tr><td><strong>1</strong></td><td>SELL CE</td><td>24,500</td><td>+₹175 (3.50 × 50)</td></tr>
+                        <tr><td><strong>2</strong></td><td>SELL PE</td><td>23,500</td><td>+₹160 (3.20 × 50)</td></tr>
+                        <tr><td><strong>3</strong></td><td>BUY PE</td><td>23,400</td><td>-₹40 (0.80 × 50)</td></tr>
+                    </tbody>
+                </table>
+
+                <h4 style="margin-top: 16px;">P&L Summary</h4>
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>Metric</th>
+                            <th>Formula</th>
+                            <th>Value</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr><td><strong>Net Premium</strong></td><td>175 + 160 - 40</td><td>₹295</td></tr>
+                        <tr><td><strong>Max Profit</strong></td><td>Net Premium</td><td>₹295</td></tr>
+                        <tr><td><strong>Spread Width</strong></td><td>23,500 - 23,400</td><td>100 pts</td></tr>
+                        <tr><td><strong>Max Loss (Put Side)</strong></td><td>(100 × 50) - 295</td><td>₹4,705</td></tr>
+                        <tr><td><strong>Upper Breakeven</strong></td><td>24,500 + 5.90</td><td>24,505.90</td></tr>
+                        <tr><td><strong>Lower Breakeven</strong></td><td>23,500 - 5.90</td><td>23,494.10</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -2040,6 +2321,61 @@ insurance_strike = put_strike - max_loss_per_share
                         <p>A standard Iron Condor has 4 legs with hedges on both sides. Our version is "broken" because we only hedge the put side (downside protection), keeping the call side unhedged for higher premium collection. This is ideal when you expect range-bound markets with slightly bullish bias.</p>
                     </div>
                 </div>
+            </div>
+
+            <div class="docs-card">
+                <h3>🎚️ Interactive Strike Adjustment</h3>
+                <p>After generating an Iron Condor position, you can manually adjust any leg's strike price to fine-tune your position:</p>
+                <p style="font-size: 0.85rem; color: #6b7280; margin-top: 8px;">
+                    📁 <code>apps/trading/templates/trading/manual_triggers_refactored.html</code> (BrokenIronCondor module)
+                </p>
+
+                <h4 style="margin-top: 16px;">How It Works</h4>
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>Feature</th>
+                            <th>Description</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr><td><strong>+/- Buttons</strong></td><td>Each leg has buttons to move strike up/down by 50 points (Nifty interval)</td></tr>
+                        <tr><td><strong>Real-time Premium Fetch</strong></td><td>New premiums fetched automatically from OptionChain database</td></tr>
+                        <tr><td><strong>Live Recalculation</strong></td><td>Credits, Net Premium, Max Profit/Loss, Breakevens update instantly</td></tr>
+                        <tr><td><strong>Reset Button</strong></td><td>Returns to algorithm-calculated strikes</td></tr>
+                        <tr><td><strong>Execute with Adjusted</strong></td><td>Adjusted strikes are used when placing orders</td></tr>
+                    </tbody>
+                </table>
+
+                <h4 style="margin-top: 16px;">Adjustment Constraints</h4>
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>Leg</th>
+                            <th>Constraint</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr><td><strong>Call Strike (Leg 1)</strong></td><td>No limit - can move freely up or down</td></tr>
+                        <tr><td><strong>Put Strike (Leg 2)</strong></td><td>Insurance auto-adjusts if it would exceed put strike</td></tr>
+                        <tr><td><strong>Insurance Strike (Leg 3)</strong></td><td>Must always be below put strike (minimum 100 pts gap)</td></tr>
+                    </tbody>
+                </table>
+
+                <h4 style="margin-top: 16px;">API Endpoint Used</h4>
+                <div class="code-block">
+                    <code>
+GET /trading/api/get-option-premiums/
+    ?call_strike=24500
+    &put_strike=23500
+    &expiry=2026-02-06
+
+Response: { call_premium, put_premium, total_premium, spot_price }
+                    </code>
+                </div>
+                <p style="margin-top: 12px; font-size: 0.85rem; color: #6b7280;">
+                    📁 <code>apps/trading/api/contract_views.py</code> → <code>get_option_premiums()</code>
+                </p>
             </div>
 
             <div class="docs-card">

@@ -219,21 +219,59 @@ class KotakStrangleStrategy(BaseStrategy):
         except Exception as e:
             logger.warning(f"Failed to get DMA data: {e}")
 
-        # 9. Recent Nifty Momentum (1D and 3D change) - IMPORTANT
+        # 9. Recent Nifty Momentum (1D, 3D, 5D change) - IMPORTANT
         try:
-            from apps.strategies.filters.global_markets import get_nifty_change
+            from apps.strategies.shared.market_data import get_nifty_change, get_consecutive_red_days
             market_data['nifty_1d_change'] = get_nifty_change(days=1)
             market_data['nifty_3d_change'] = get_nifty_change(days=3)
-            logger.info(f"Nifty momentum: 1D={market_data['nifty_1d_change']:+.2f}%, 3D={market_data['nifty_3d_change']:+.2f}%")
+            market_data['nifty_5d_change'] = get_nifty_change(days=5)
+
+            if market_data['nifty_1d_change'] is not None:
+                logger.info(f"Nifty momentum: 1D={market_data['nifty_1d_change']:+.2f}%")
+            if market_data['nifty_3d_change'] is not None:
+                logger.info(f"Nifty momentum: 3D={market_data['nifty_3d_change']:+.2f}%")
+            if market_data['nifty_5d_change'] is not None:
+                logger.info(f"Nifty 5D Filter: {market_data['nifty_5d_change']:+.2f}%")
         except Exception as e:
             logger.warning(f"Failed to get Nifty momentum data: {e}")
             market_data['nifty_1d_change'] = None
             market_data['nifty_3d_change'] = None
+            market_data['nifty_5d_change'] = None
+
+        # 10. Consecutive Red Days (for PUT widening)
+        try:
+            from apps.strategies.shared.market_data import get_consecutive_red_days
+            market_data['consecutive_red_days'] = get_consecutive_red_days()
+            if market_data['consecutive_red_days'] > 0:
+                logger.info(f"Consecutive red days: {market_data['consecutive_red_days']}")
+        except Exception as e:
+            logger.warning(f"Failed to get consecutive red days: {e}")
+            market_data['consecutive_red_days'] = 0
+
+        # 11. Is Friday (for strike tightening)
+        from datetime import date as date_module
+        market_data['is_friday'] = date_module.today().weekday() == 4  # 4 = Friday
+        if market_data['is_friday']:
+            logger.info("Friday detected - will apply tighter strikes")
 
         return market_data
 
     def calculate_entry_parameters(self, market_data: Dict) -> Dict:
-        """Calculate strikes and premiums for strangle."""
+        """
+        Calculate strikes and premiums for strangle with enhanced adjustments.
+
+        Strike Calculation Flow:
+        1. calculate_strangle_strikes() → Base strikes (VIX + delta adjustments)
+        2. adjust_strikes_for_sr()      → Move away from S/R levels
+        3. adjust_strikes_for_premium() → Adjust to target 3-3.5 INR
+        4. check_strike_liquidity()     → Warning if OI < 100K
+        """
+        from apps.strategies.shared.strike_calculator import (
+            adjust_strikes_for_sr,
+            adjust_strikes_for_premium
+        )
+        from apps.strategies.shared.market_data import check_strike_liquidity
+
         spot_price = market_data.get('spot_price') or get_nifty_price()
         vix = market_data.get('vix') or get_vix()
 
@@ -242,20 +280,116 @@ class KotakStrangleStrategy(BaseStrategy):
         if hasattr(self, '_enhanced_analysis_result') and self._enhanced_analysis_result:
             delta_adjustments = self._enhanced_analysis_result.get('delta_adjustments')
 
-        # Calculate strikes using shared utility with enhanced adjustments
+        # Step 1: Calculate base strikes using VIX + delta adjustments
+        logger.info("=" * 60)
+        logger.info("STEP 1: Base Strike Calculation (VIX + Delta)")
         strikes = calculate_strangle_strikes(
             spot_price=spot_price,
             days_to_expiry=market_data['days_to_expiry'],
             vix=vix,
-            delta_adjustments=delta_adjustments  # Pass enhanced adjustments
+            delta_adjustments=delta_adjustments
         )
 
-        # Get option premiums
+        call_strike = strikes['call_strike']
+        put_strike = strikes['put_strike']
+
+        # Track all adjustments for audit trail
+        adjustment_log = {
+            'step1_base': {'call': call_strike, 'put': put_strike},
+            'step2_sr': None,
+            'step3_premium': None,
+            'step4_liquidity': None
+        }
+
+        # Step 2: Adjust for S/R proximity
+        logger.info("=" * 60)
+        logger.info("STEP 2: S/R Proximity Adjustment")
+        try:
+            sr_result = adjust_strikes_for_sr(
+                call_strike=call_strike,
+                put_strike=put_strike,
+                spot_price=spot_price
+            )
+            call_strike = sr_result['call_strike']
+            put_strike = sr_result['put_strike']
+            adjustment_log['step2_sr'] = {
+                'call_adjusted': sr_result['call_adjusted'],
+                'put_adjusted': sr_result['put_adjusted'],
+                'call': call_strike,
+                'put': put_strike,
+                'call_reason': sr_result.get('call_adjustment_reason'),
+                'put_reason': sr_result.get('put_adjustment_reason')
+            }
+        except Exception as e:
+            logger.warning(f"S/R adjustment skipped: {e}")
+            adjustment_log['step2_sr'] = {'error': str(e)}
+
+        # Step 3: Adjust for premium target (3-3.5 INR)
+        logger.info("=" * 60)
+        logger.info("STEP 3: Premium-Based Adjustment (target: 3-3.5 INR)")
+        try:
+            premium_result = adjust_strikes_for_premium(
+                call_strike=call_strike,
+                put_strike=put_strike,
+                expiry_date=market_data['expiry']
+            )
+            call_strike = premium_result['call_strike']
+            put_strike = premium_result['put_strike']
+            adjustment_log['step3_premium'] = {
+                'call': call_strike,
+                'put': put_strike,
+                'call_premium': float(premium_result['call_premium']) if premium_result['call_premium'] else None,
+                'put_premium': float(premium_result['put_premium']) if premium_result['put_premium'] else None,
+                'call_iterations': premium_result['call_iterations'],
+                'put_iterations': premium_result['put_iterations'],
+                'call_status': premium_result['call_status'],
+                'put_status': premium_result['put_status'],
+                'warnings': premium_result['warnings']
+            }
+
+            # Log warnings
+            for warning in premium_result['warnings']:
+                logger.warning(f"Premium adjustment warning: {warning}")
+
+        except Exception as e:
+            logger.warning(f"Premium adjustment skipped: {e}")
+            adjustment_log['step3_premium'] = {'error': str(e)}
+
+        # Step 4: Check liquidity (warning only, don't block)
+        logger.info("=" * 60)
+        logger.info("STEP 4: Liquidity Check (OI >= 100,000)")
+        try:
+            call_liquidity = check_strike_liquidity(call_strike, 'CE', market_data['expiry'])
+            put_liquidity = check_strike_liquidity(put_strike, 'PE', market_data['expiry'])
+            adjustment_log['step4_liquidity'] = {
+                'call': call_liquidity,
+                'put': put_liquidity
+            }
+
+            if call_liquidity.get('warning'):
+                logger.warning(call_liquidity['warning'])
+            if put_liquidity.get('warning'):
+                logger.warning(put_liquidity['warning'])
+
+        except Exception as e:
+            logger.warning(f"Liquidity check skipped: {e}")
+            adjustment_log['step4_liquidity'] = {'error': str(e)}
+
+        # Update strikes dict with final values
+        strikes['call_strike'] = call_strike
+        strikes['put_strike'] = put_strike
+
+        # Get final option premiums
         call_premium, put_premium = get_option_premiums(
-            strikes['call_strike'],
-            strikes['put_strike'],
+            call_strike,
+            put_strike,
             market_data['expiry']
         )
+
+        logger.info("=" * 60)
+        logger.info(f"FINAL STRIKES: Call={call_strike}, Put={put_strike}")
+        logger.info(f"FINAL PREMIUMS: Call={call_premium}, Put={put_premium}")
+        logger.info("=" * 60)
 
         result = {
             'spot_price': spot_price,
@@ -265,7 +399,8 @@ class KotakStrangleStrategy(BaseStrategy):
             'put_premium': put_premium,
             'total_premium': call_premium + put_premium,
             'expiry': market_data['expiry'],
-            'days_to_expiry': market_data['days_to_expiry']
+            'days_to_expiry': market_data['days_to_expiry'],
+            'adjustment_log': adjustment_log  # Full audit trail
         }
 
         # Include enhanced analysis in result if available
@@ -377,8 +512,14 @@ class KotakStrangleStrategy(BaseStrategy):
                 'entry_bias': ea.get('entry_bias'),
                 'component_scores': ea.get('scores', {}),
                 'delta_adjustments': ea.get('delta_adjustments'),
+                'details': ea.get('details', {}),  # Include filter details
+                'hard_reject': ea.get('hard_reject', False),
+                'reject_reason': ea.get('reject_reason'),
                 'score_breakdown': self._format_score_breakdown(ea.get('scores', {})),
             }
+
+        # Get adjustment log from entry_params
+        adjustment_log = entry_params.get('adjustment_log', {})
 
         reasoning = {
             'title': 'Kotak Strangle Strategy (Enhanced Analysis)',
@@ -439,6 +580,10 @@ class KotakStrangleStrategy(BaseStrategy):
         # Add enhanced analysis if available
         if enhanced_analysis_section:
             reasoning['enhanced_analysis'] = enhanced_analysis_section
+
+        # Add adjustment log for audit trail
+        if adjustment_log:
+            reasoning['adjustment_log'] = adjustment_log
 
         return reasoning
 

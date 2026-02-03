@@ -1238,3 +1238,221 @@ def check_futures_averaging():
     except Exception as e:
         logger.error(f"Error in averaging check: {e}", exc_info=True)
         return {'success': False, 'message': str(e)}
+
+
+# =============================================================================
+# FUTURES ALGORITHM SCHEDULED TASK
+# =============================================================================
+
+@shared_task(name='apps.strategies.tasks.execute_futures_algorithm', bind=True)
+def execute_futures_algorithm(self, this_month_volume=1000, next_month_volume=800, min_score=65):
+    """
+    Execute Futures Algorithm - Scheduled Daily @ 8:30 AM
+
+    This task runs the enhanced 12-component futures analysis on all
+    liquid futures contracts and identifies trading opportunities.
+
+    Workflow:
+    1. Check if trading day is valid (not holiday, market is open)
+    2. Get active ICICI account for futures trading
+    3. Screen futures contracts using volume filters
+    4. Run enhanced analysis (12-component scoring + hard reject filters)
+    5. Identify qualified candidates (score >= min_score)
+    6. Send Telegram notification with results
+    7. Optionally auto-execute top candidates (if enabled)
+
+    Args:
+        this_month_volume: Min volume for current month contracts (default: 1000)
+        next_month_volume: Min volume for next month contracts (default: 800)
+        min_score: Minimum composite score to qualify (default: 65)
+
+    Returns:
+        dict: {
+            'success': bool,
+            'candidates_found': int,
+            'qualified': int,
+            'executed': int,
+            'results': list
+        }
+    """
+    task_logger = TaskLogger(
+        task_name='execute_futures_algorithm',
+        task_category='strategy',
+        task_id=self.request.id
+    )
+
+    task_logger.start("Starting Futures Algorithm execution", context={
+        'this_month_volume': this_month_volume,
+        'next_month_volume': next_month_volume,
+        'min_score': min_score
+    })
+
+    try:
+        from apps.data.models import ContractData
+        from apps.trading.futures_analyzer import enhanced_futures_analysis
+        from apps.core.models import NseFlag
+
+        # ===== STEP 1: Check trading day validity =====
+        task_logger.step('check_trading_day', "Checking if trading is allowed today")
+
+        today = date.today()
+
+        # Check NSE holiday flag
+        nse_flag = NseFlag.objects.filter(date=today).first()
+        if nse_flag and nse_flag.is_holiday:
+            task_logger.info('skipped', "Today is a market holiday", context={'date': str(today)})
+            return {'success': True, 'skipped': True, 'reason': 'Market holiday'}
+
+        # Check day of week (skip weekends)
+        if today.weekday() >= 5:  # Saturday=5, Sunday=6
+            task_logger.info('skipped', "Weekend - markets closed", context={'day': today.strftime('%A')})
+            return {'success': True, 'skipped': True, 'reason': 'Weekend'}
+
+        # ===== STEP 2: Get ICICI account =====
+        task_logger.step('get_account', "Getting active ICICI futures account")
+
+        icici_account = BrokerAccount.objects.filter(
+            broker='ICICI',
+            is_active=True
+        ).first()
+
+        if not icici_account:
+            task_logger.warning('no_account', "No active ICICI account found")
+            send_telegram_notification(
+                "⚠️ FUTURES ALGORITHM\n\nNo active ICICI account found. Please configure account.",
+                notification_type='WARNING'
+            )
+            return {'success': False, 'error': 'No active ICICI account'}
+
+        task_logger.info('account_found', f"Using account: {icici_account.account_name}")
+
+        # ===== STEP 3: Get filtered contracts =====
+        task_logger.step('get_contracts', "Screening top 50 futures contracts by volume")
+
+        # Use model manager for standardized query (limit=50 for background task)
+        futures_contracts = ContractData.objects.get_tradable_futures(
+            this_month_volume=this_month_volume,
+            next_month_volume=next_month_volume,
+            limit=50  # Top 50 by volume for background task
+        )
+
+        contract_count = futures_contracts.count()
+        task_logger.info('contracts_found', f"Found {contract_count} contracts matching volume criteria", context={
+            'this_month_volume': this_month_volume,
+            'next_month_volume': next_month_volume
+        })
+
+        if contract_count == 0:
+            task_logger.warning('no_contracts', "No contracts match volume criteria")
+            return {'success': True, 'candidates_found': 0, 'qualified': 0}
+
+        # ===== STEP 4: Run enhanced analysis on each contract =====
+        task_logger.step('analyze', f"Running enhanced analysis on {contract_count} contracts")
+
+        results = []
+        qualified_candidates = []
+
+        for contract in futures_contracts:  # Already limited to 50 by manager
+            try:
+                analysis_result = enhanced_futures_analysis(
+                    stock_symbol=contract.symbol,
+                    expiry_date=contract.expiry,
+                    contract=contract
+                )
+
+                composite_score = analysis_result.get('composite_score', 0)
+                verdict = analysis_result.get('verdict', 'FAIL')
+                direction = analysis_result.get('direction', 'NEUTRAL')
+                hard_reject = analysis_result.get('hard_reject', False)
+
+                result = {
+                    'symbol': contract.symbol,
+                    'expiry': contract.expiry,
+                    'score': composite_score,
+                    'verdict': verdict,
+                    'direction': direction,
+                    'hard_reject': hard_reject,
+                    'reject_reason': analysis_result.get('reject_reason'),
+                    'recommendation': analysis_result.get('recommendation', 'N/A')
+                }
+                results.append(result)
+
+                # Check if qualified
+                if verdict == 'PASS' and composite_score >= min_score and not hard_reject:
+                    qualified_candidates.append(result)
+
+            except Exception as e:
+                logger.error(f"Error analyzing {contract.symbol}: {e}")
+                results.append({
+                    'symbol': contract.symbol,
+                    'expiry': contract.expiry,
+                    'error': str(e)
+                })
+
+        task_logger.info('analysis_complete', f"Analyzed {len(results)} contracts, {len(qualified_candidates)} qualified", context={
+            'total_analyzed': len(results),
+            'qualified': len(qualified_candidates),
+            'min_score': min_score
+        })
+
+        # ===== STEP 5: Send notification with results =====
+        task_logger.step('notify', "Sending Telegram notification")
+
+        if qualified_candidates:
+            # Sort by score descending
+            qualified_candidates.sort(key=lambda x: x['score'], reverse=True)
+
+            message_lines = [
+                "🎯 FUTURES ALGORITHM RESULTS\n",
+                f"📅 {today.strftime('%d %b %Y')}",
+                f"📊 Analyzed: {len(results)} | Qualified: {len(qualified_candidates)}\n",
+                "TOP CANDIDATES:"
+            ]
+
+            for i, candidate in enumerate(qualified_candidates[:5], 1):
+                message_lines.append(
+                    f"\n{i}. {candidate['symbol']} ({candidate['direction']})"
+                    f"\n   Score: {candidate['score']}/100 | {candidate['recommendation']}"
+                )
+
+            if len(qualified_candidates) > 5:
+                message_lines.append(f"\n\n... and {len(qualified_candidates) - 5} more")
+
+            message_lines.append("\n\n✅ Ready for manual verification")
+
+            send_telegram_notification(
+                '\n'.join(message_lines),
+                notification_type='SUCCESS'
+            )
+        else:
+            send_telegram_notification(
+                f"📊 FUTURES ALGORITHM\n\n"
+                f"📅 {today.strftime('%d %b %Y')}\n"
+                f"Analyzed: {len(results)} contracts\n\n"
+                f"❌ No qualified candidates (score >= {min_score})",
+                notification_type='INFO'
+            )
+
+        # ===== STEP 6: Success =====
+        task_logger.success("Futures Algorithm completed successfully", context={
+            'total_analyzed': len(results),
+            'qualified': len(qualified_candidates),
+            'top_candidate': qualified_candidates[0]['symbol'] if qualified_candidates else None
+        })
+
+        return {
+            'success': True,
+            'candidates_found': len(results),
+            'qualified': len(qualified_candidates),
+            'executed': 0,  # Manual execution only for now
+            'results': results[:10],  # Return top 10 for logging
+            'qualified_candidates': qualified_candidates[:5]  # Top 5 qualified
+        }
+
+    except Exception as e:
+        task_logger.failure("Futures Algorithm failed", error=e)
+        send_telegram_notification(
+            f"❌ FUTURES ALGORITHM FAILED\n\n{str(e)}",
+            notification_type='ERROR'
+        )
+        return {'success': False, 'error': str(e)}

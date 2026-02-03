@@ -73,7 +73,6 @@ def trigger_futures_algorithm(request):
     import json
     from apps.trading.futures_analyzer import enhanced_futures_analysis
     from apps.data.models import ContractData
-    from django.db.models import Q
     from datetime import datetime, timedelta
 
     try:
@@ -85,20 +84,11 @@ def trigger_futures_algorithm(request):
 
         logger.info(f"Manual trigger: Futures algorithm with volume filters (this_month≥{this_month_volume}, next_month≥{next_month_volume})")
 
-        # Get filtered contracts based on volume criteria
-        today = datetime.now().date()
-        this_month_end = today + timedelta(days=30)
-        next_month_start = today + timedelta(days=30)
-        next_month_end = today + timedelta(days=60)
-
-        futures_contracts = ContractData.objects.filter(
-            option_type='FUTURE',
-            expiry__gte=str(today),
-            expiry__lte=str(next_month_end)
-        ).filter(
-            Q(expiry__lte=str(this_month_end), traded_contracts__gte=this_month_volume) |
-            Q(expiry__gte=str(next_month_start), expiry__lte=str(next_month_end), traded_contracts__gte=next_month_volume)
-        ).order_by('-traded_contracts')  # Order by volume descending
+        # Use model manager for standardized query (no limit for manual trigger)
+        futures_contracts = ContractData.objects.get_tradable_futures(
+            this_month_volume=this_month_volume,
+            next_month_volume=next_month_volume
+        )
 
         contract_count = futures_contracts.count()
 

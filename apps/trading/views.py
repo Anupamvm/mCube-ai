@@ -412,8 +412,101 @@ def manual_triggers_refactored(request):
     1. Run Futures Algorithm - Screen and suggest futures opportunities
     2. Nifty Options Strangle - Generate Kotak strangle position
     3. Verify Future Trade - Verify a specific futures contract
+
+    Now pre-loads the latest futures algorithm results so they display immediately on page load.
     """
-    return render(request, 'trading/manual_triggers_refactored.html')
+    import json
+    from datetime import datetime, timedelta
+    from decimal import Decimal
+
+    # Fetch the latest futures suggestions (created within last 24 hours, SUGGESTED status)
+    cutoff_time = timezone.now() - timedelta(hours=24)
+    latest_suggestions = TradeSuggestion.objects.filter(
+        user=request.user,
+        strategy='icici_futures',
+        status='SUGGESTED',
+        created_at__gte=cutoff_time
+    ).order_by('-created_at')
+
+    # Group by batch (suggestions created within 5 minutes of each other belong to same run)
+    preloaded_results = None
+    if latest_suggestions.exists():
+        # Get the most recent suggestion's timestamp
+        most_recent = latest_suggestions.first()
+        batch_start = most_recent.created_at - timedelta(minutes=5)
+
+        # Get all suggestions from this batch
+        batch_suggestions = latest_suggestions.filter(created_at__gte=batch_start)
+
+        # Convert to the format expected by displayResults
+        all_contracts = []
+        for suggestion in batch_suggestions:
+            reasoning = suggestion.algorithm_reasoning or {}
+            position_details = suggestion.position_details or {}
+
+            # Reconstruct contract data from stored reasoning
+            contract_data = {
+                'symbol': suggestion.instrument,
+                'expiry': suggestion.expiry_date.strftime('%d-%b-%Y') if suggestion.expiry_date else '',
+                'expiry_date': suggestion.expiry_date.strftime('%Y-%m-%d') if suggestion.expiry_date else '',
+                'composite_score': reasoning.get('composite_score', 0),
+                'direction': suggestion.direction,
+                'verdict': 'PASS',  # These are all passed suggestions
+                'technical_verdict': 'PASS',
+                'historical_passed': True,
+                'success': True,
+                'spot_price': float(suggestion.spot_price or 0),
+                'futures_price': reasoning.get('metrics', {}).get('futures_price', 0),
+                'basis': reasoning.get('metrics', {}).get('basis', 0),
+                'basis_pct': reasoning.get('metrics', {}).get('basis_pct', 0),
+                'volume': reasoning.get('metrics', {}).get('volume', 0),
+                'lot_size': position_details.get('lot_size', 0),
+                'explanation': reasoning.get('explanation', []),
+                'execution_log': reasoning.get('execution_log', []),
+                'metrics': reasoning.get('metrics', {}),
+                'scores': reasoning.get('scores', {}),
+                'sr_data': reasoning.get('sr_data'),
+                'breach_risks': reasoning.get('breach_risks'),
+                'historical_verification': reasoning.get('historical_verification'),
+                # Position sizing data for display
+                'suggestion_id': suggestion.id,
+                'recommended_lots': suggestion.recommended_lots,
+                'margin_required': float(suggestion.margin_required or 0),
+                'margin_per_lot': float(suggestion.margin_per_lot or 0),
+                'max_profit': float(suggestion.max_profit or 0),
+                'max_loss': float(suggestion.max_loss or 0),
+            }
+            all_contracts.append(contract_data)
+
+        # Sort by composite score descending
+        all_contracts.sort(key=lambda x: x['composite_score'], reverse=True)
+
+        preloaded_results = {
+            'success': True,
+            'all_contracts': all_contracts,
+            'total_analyzed': len(all_contracts),
+            'total_passed': len(all_contracts),
+            'total_hist_fail': 0,
+            'total_failed': 0,
+            'total_errors': 0,
+            'historical_validation_enabled': True,
+            'preloaded': True,
+            'batch_time': most_recent.created_at.strftime('%Y-%m-%d %H:%M:%S'),
+        }
+
+    # Helper function to serialize for JSON
+    def json_serial(obj):
+        if isinstance(obj, (datetime,)):
+            return obj.isoformat()
+        if isinstance(obj, Decimal):
+            return float(obj)
+        raise TypeError(f"Type {type(obj)} not serializable")
+
+    context = {
+        'preloaded_results': json.dumps(preloaded_results, default=json_serial) if preloaded_results else 'null',
+    }
+
+    return render(request, 'trading/manual_triggers_refactored.html', context)
 
 
 def manual_triggers(request):
@@ -610,8 +703,7 @@ def trigger_futures_algorithm(request):
     from apps.trading.futures_analyzer import enhanced_futures_analysis, prepare_data_for_analysis
     from apps.data.models import ContractData
     from apps.brokers.utils.security_master import update_security_master
-    from django.db.models import Q
-    from datetime import datetime, timedelta
+    from datetime import datetime
 
     try:
         # Parse volume thresholds from request
@@ -632,20 +724,11 @@ def trigger_futures_algorithm(request):
         elif sm_result.get('error'):
             logger.warning(f"SecurityMaster update failed: {sm_result.get('error')} - continuing with existing file")
 
-        # Get filtered contracts based on volume criteria
-        today = datetime.now().date()
-        this_month_end = today + timedelta(days=30)
-        next_month_start = today + timedelta(days=30)
-        next_month_end = today + timedelta(days=60)
-
-        futures_contracts = ContractData.objects.filter(
-            option_type='FUTURE',
-            expiry__gte=str(today),
-            expiry__lte=str(next_month_end)
-        ).filter(
-            Q(expiry__lte=str(this_month_end), traded_contracts__gte=this_month_volume) |
-            Q(expiry__gte=str(next_month_start), expiry__lte=str(next_month_end), traded_contracts__gte=next_month_volume)
-        ).order_by('-traded_contracts')  # Order by volume descending
+        # Use model manager for standardized query (no limit for manual trigger)
+        futures_contracts = ContractData.objects.get_tradable_futures(
+            this_month_volume=this_month_volume,
+            next_month_volume=next_month_volume
+        )
 
         contract_count = futures_contracts.count()
 

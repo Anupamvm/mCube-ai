@@ -64,6 +64,12 @@ class EnhancedStrangleAnalyzer:
     MIN_EVENT_DAYS = 2                # Days buffer for major events
     MAX_NIFTY_1D_CHANGE = 1.5         # Max previous day change % (hard reject)
     MAX_NIFTY_3D_CHANGE = 2.5         # Max 3-day change % (hard reject)
+    MAX_NIFTY_5D_CHANGE = 3.0         # Max 5-day change % (SKIP WEEK if exceeded)
+
+    # Trader constraint thresholds
+    CONSECUTIVE_RED_DAYS_THRESHOLD = 3  # 3+ red days → widen PUT
+    PCR_EXTREME_BULLISH = 0.6           # PCR < 0.6 → widen CALL
+    PCR_EXTREME_BEARISH = 1.4           # PCR > 1.4 → widen PUT
 
     # Scoring weights (total 275 pts)
     WEIGHTS = {
@@ -314,6 +320,22 @@ class EnhancedStrangleAnalyzer:
             logger.info(f"[PASS] Nifty 3D Filter: {nifty_3d_change:+.2f}% (max: ±{self.MAX_NIFTY_3D_CHANGE}%)")
         else:
             logger.info("[SKIP] Nifty 3D Filter: No data available")
+
+        # 8. Nifty 5D Change - WEEKLY SKIP FILTER (IMPORTANT - if market moved 3%+ in 5 days, skip this week)
+        nifty_5d_change = self._market_data.get('nifty_5d_change')
+
+        if nifty_5d_change is not None:
+            abs_5d = abs(float(nifty_5d_change))
+            if abs_5d > self.MAX_NIFTY_5D_CHANGE:
+                self.details['nifty_5d_reject'] = f"Nifty 5D change {nifty_5d_change:+.2f}% > {self.MAX_NIFTY_5D_CHANGE}%"
+                raise HardRejectError(
+                    f"SKIP THIS WEEK: Market moved {nifty_5d_change:+.2f}% in 5 trading days "
+                    f"(max: ±{self.MAX_NIFTY_5D_CHANGE}%)"
+                )
+
+            logger.info(f"[PASS] Nifty 5D Filter: {nifty_5d_change:+.2f}% (max: ±{self.MAX_NIFTY_5D_CHANGE}%)")
+        else:
+            logger.info("[SKIP] Nifty 5D Filter: No data available")
 
         logger.info("")
         logger.info("All hard reject filters PASSED")
@@ -1145,6 +1167,12 @@ class EnhancedStrangleAnalyzer:
         """
         Calculate delta adjustments for strike selection.
 
+        Enhanced with additional trader constraints:
+        - 3+ consecutive red days → Widen PUT 15%
+        - PCR < 0.6 (extreme bullish) → Widen CALL 10%
+        - PCR > 1.4 (extreme bearish) → Widen PUT 10%
+        - Friday entry → Tighten BOTH 10% (less time premium)
+
         Returns:
             Dict with call_multiplier, put_multiplier, reason
         """
@@ -1185,11 +1213,57 @@ class EnhancedStrangleAnalyzer:
             put_multiplier *= Decimal('1.05')
             reasons.append(f"Gap down {gap_pct:.2f}% - widen put")
 
+        # =================================================================
+        # ADDITIONAL TRADER CONSTRAINTS (Enhanced)
+        # =================================================================
+
+        # 1. Consecutive Red Days - 3+ red days → Widen PUT 15%
+        consecutive_red_days = self._market_data.get('consecutive_red_days', 0)
+        if consecutive_red_days >= self.CONSECUTIVE_RED_DAYS_THRESHOLD:
+            put_multiplier *= Decimal('1.15')
+            reasons.append(f"{consecutive_red_days} consecutive red days - widen PUT 15%")
+            logger.info(f"Consecutive red days ({consecutive_red_days}) triggered PUT widening")
+
+        # 2. PCR Extreme Conditions
+        if self._option_chain_data:
+            pcr_oi = self._option_chain_data.get('pcr_oi')
+
+            if pcr_oi is not None:
+                if pcr_oi < self.PCR_EXTREME_BULLISH:
+                    # Extreme bullish sentiment (too many call buyers) → market might reverse down
+                    # But for strangle, we widen CALL to protect against rally
+                    call_multiplier *= Decimal('1.10')
+                    reasons.append(f"PCR {pcr_oi:.2f} < {self.PCR_EXTREME_BULLISH} (extreme bullish) - widen CALL 10%")
+                    logger.info(f"Extreme bullish PCR ({pcr_oi:.2f}) triggered CALL widening")
+
+                elif pcr_oi > self.PCR_EXTREME_BEARISH:
+                    # Extreme bearish sentiment (too many put buyers) → market might reverse up
+                    # But for strangle, we widen PUT to protect against selloff
+                    put_multiplier *= Decimal('1.10')
+                    reasons.append(f"PCR {pcr_oi:.2f} > {self.PCR_EXTREME_BEARISH} (extreme bearish) - widen PUT 10%")
+                    logger.info(f"Extreme bearish PCR ({pcr_oi:.2f}) triggered PUT widening")
+
+        # 3. Friday Entry Logic - Tighten BOTH 10% (less time for theta decay)
+        is_friday = self._market_data.get('is_friday', False)
+        if is_friday:
+            # On Friday, there's less time to expiry, so we can afford tighter strikes
+            # as there's less time for adverse moves
+            call_multiplier *= Decimal('0.90')
+            put_multiplier *= Decimal('0.90')
+            reasons.append("Friday entry - tighten BOTH 10% (less time premium)")
+            logger.info("Friday entry triggered strike tightening (10% both sides)")
+
         return {
             'call_multiplier': float(call_multiplier),
             'put_multiplier': float(put_multiplier),
             'is_asymmetric': call_multiplier != put_multiplier,
-            'adjustment_reasons': reasons
+            'adjustment_reasons': reasons,
+            # Include constraint details for audit
+            'constraint_details': {
+                'consecutive_red_days': consecutive_red_days,
+                'pcr_oi': self._option_chain_data.get('pcr_oi') if self._option_chain_data else None,
+                'is_friday': is_friday
+            }
         }
 
     def get_summary(self) -> str:

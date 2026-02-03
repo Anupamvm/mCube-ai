@@ -372,6 +372,37 @@
         min-width: 70px;
     }
 
+    .btn-run-now {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        border: none;
+        font-weight: 600;
+        transition: all 0.2s ease;
+    }
+
+    .btn-run-now:hover {
+        background: linear-gradient(135deg, #5a67d8 0%, #6b46c1 100%);
+        transform: translateY(-1px);
+        box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+    }
+
+    .btn-run-now:disabled {
+        background: #a0aec0;
+        cursor: not-allowed;
+        transform: none;
+        box-shadow: none;
+    }
+
+    .btn-run-now.running {
+        background: linear-gradient(135deg, #48bb78 0%, #38a169 100%);
+        animation: pulse-btn 1.5s infinite;
+    }
+
+    @keyframes pulse-btn {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.7; }
+    }
+
     .status-badge {
         min-width: 70px;
         text-align: center;
@@ -939,6 +970,332 @@
         background: #667eea;
         border-radius: 2px;
     }
+
+    /* ========================================
+       24-HOUR TIMELINE STYLES
+       ======================================== */
+    .timeline-section {
+        background: white;
+        border-radius: 12px;
+        padding: 25px;
+        margin-bottom: 30px;
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+    }
+
+    .timeline-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 20px;
+    }
+
+    .timeline-header h2 {
+        margin: 0;
+        color: #2d3748;
+        font-size: 20px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+
+    .timeline-legend {
+        display: flex;
+        gap: 15px;
+        flex-wrap: wrap;
+    }
+
+    .legend-item {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 12px;
+        color: #4a5568;
+    }
+
+    .legend-dot {
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+    }
+
+    .timeline-container {
+        position: relative;
+        background: linear-gradient(to right, #1a202c 0%, #2d3748 20%, #4a5568 50%, #2d3748 80%, #1a202c 100%);
+        border-radius: 12px;
+        padding: 20px;
+        overflow-x: auto;
+    }
+
+    .timeline-hours {
+        display: flex;
+        position: relative;
+        min-width: 1200px;
+        height: 250px;
+    }
+
+    .hour-column {
+        flex: 1;
+        min-width: 50px;
+        position: relative;
+        border-left: 1px solid rgba(255,255,255,0.1);
+    }
+
+    .hour-column:first-child {
+        border-left: none;
+    }
+
+    .hour-label {
+        position: absolute;
+        bottom: -25px;
+        left: 50%;
+        transform: translateX(-50%);
+        font-size: 11px;
+        color: rgba(255,255,255,0.6);
+        font-weight: 500;
+    }
+
+    .hour-column.trading-hours {
+        background: rgba(72, 187, 120, 0.1);
+    }
+
+    .hour-column.pre-market {
+        background: rgba(237, 137, 54, 0.1);
+    }
+
+    .hour-column.post-market {
+        background: rgba(102, 126, 234, 0.1);
+    }
+
+    .task-marker {
+        position: absolute;
+        cursor: pointer;
+        transition: all 0.2s ease;
+        z-index: 10;
+    }
+
+    .task-marker:hover {
+        z-index: 1000;
+        transform: scale(1.3);
+    }
+
+    .task-dot {
+        width: 16px;
+        height: 16px;
+        border-radius: 50%;
+        border: 2px solid white;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+        position: relative;
+    }
+
+    .task-dot.active {
+        animation: pulse-dot 2s infinite;
+    }
+
+    @keyframes pulse-dot {
+        0%, 100% { box-shadow: 0 2px 8px rgba(0,0,0,0.3); }
+        50% { box-shadow: 0 2px 16px rgba(255,255,255,0.5); }
+    }
+
+    .task-tooltip {
+        position: fixed;
+        background: white;
+        border-radius: 10px;
+        padding: 14px 16px;
+        width: 300px;
+        box-shadow: 0 8px 30px rgba(0,0,0,0.35);
+        opacity: 0;
+        visibility: hidden;
+        transition: opacity 0.2s ease, visibility 0.2s ease;
+        z-index: 10000;
+        pointer-events: none;
+        text-align: left;
+    }
+
+    .task-tooltip.visible {
+        opacity: 1;
+        visibility: visible;
+    }
+
+    .tooltip-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 10px;
+        margin-bottom: 8px;
+    }
+
+    .tooltip-title {
+        font-weight: 700;
+        color: #1a202c;
+        font-size: 14px;
+        line-height: 1.3;
+    }
+
+    .tooltip-category {
+        font-size: 10px;
+        font-weight: 600;
+        padding: 3px 8px;
+        border-radius: 10px;
+        text-transform: uppercase;
+        white-space: nowrap;
+    }
+
+    .tooltip-desc {
+        font-size: 12px;
+        color: #4a5568;
+        margin-bottom: 10px;
+        line-height: 1.4;
+    }
+
+    .tooltip-schedule {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 8px 0;
+        border-top: 1px solid #e2e8f0;
+        border-bottom: 1px solid #e2e8f0;
+        margin-bottom: 8px;
+    }
+
+    .schedule-time {
+        font-size: 14px;
+        font-weight: 600;
+        color: #2d3748;
+    }
+
+    .tooltip-status {
+        font-size: 11px;
+        padding: 3px 10px;
+        border-radius: 10px;
+        font-weight: 600;
+    }
+
+    .tooltip-status.active {
+        background: #c6f6d5;
+        color: #22543d;
+    }
+
+    .tooltip-status.inactive {
+        background: #fed7d7;
+        color: #742a2a;
+    }
+
+    .tooltip-next {
+        font-size: 12px;
+        color: #2b6cb0;
+        background: #ebf8ff;
+        padding: 6px 10px;
+        border-radius: 6px;
+        margin-bottom: 8px;
+    }
+
+    .tooltip-next strong {
+        color: #2c5282;
+    }
+
+    .tooltip-last-exec {
+        font-size: 11px;
+        padding: 8px 10px;
+        border-radius: 6px;
+        background: #f7fafc;
+    }
+
+    .tooltip-last-exec.success {
+        background: #f0fff4;
+        border-left: 3px solid #38a169;
+    }
+
+    .tooltip-last-exec.failed {
+        background: #fff5f5;
+        border-left: 3px solid #e53e3e;
+    }
+
+    .tooltip-last-exec.none {
+        color: #a0aec0;
+        font-style: italic;
+    }
+
+    .tooltip-last-exec .exec-header {
+        font-weight: 500;
+        color: #2d3748;
+        margin-bottom: 4px;
+    }
+
+    .tooltip-last-exec .exec-message {
+        color: #718096;
+        font-size: 10px;
+        line-height: 1.3;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .timeline-now-line {
+        position: absolute;
+        top: 0;
+        bottom: 25px;
+        width: 2px;
+        background: #f56565;
+        z-index: 15;
+    }
+
+    .timeline-now-line::before {
+        content: 'NOW';
+        position: absolute;
+        top: -20px;
+        left: 50%;
+        transform: translateX(-50%);
+        font-size: 10px;
+        color: #f56565;
+        font-weight: 700;
+        background: rgba(26,32,44,0.9);
+        padding: 2px 6px;
+        border-radius: 4px;
+    }
+
+    .timeline-phases {
+        display: flex;
+        margin-top: 35px;
+        border-radius: 8px;
+        overflow: hidden;
+    }
+
+    .phase-block {
+        padding: 8px 16px;
+        font-size: 11px;
+        font-weight: 600;
+        text-align: center;
+        color: white;
+    }
+
+    .phase-pre { background: #dd6b20; flex: 2; }
+    .phase-market { background: #38a169; flex: 6; }
+    .phase-post { background: #667eea; flex: 2; }
+    .phase-closed { background: #4a5568; flex: 14; }
+
+    .timeline-summary {
+        display: flex;
+        gap: 20px;
+        margin-top: 20px;
+        padding-top: 20px;
+        border-top: 1px solid #e2e8f0;
+    }
+
+    .summary-stat {
+        text-align: center;
+    }
+
+    .summary-stat .count {
+        font-size: 28px;
+        font-weight: 700;
+        color: #2d3748;
+    }
+
+    .summary-stat .label {
+        font-size: 12px;
+        color: #718096;
+        margin-top: 2px;
+    }
 </style>
 {% endblock %}
 
@@ -1026,7 +1383,67 @@
         </div>
     </div>
 
-    <!-- Dynamic Tasks (Trading Schedule) -->
+    <!-- 24-Hour Task Timeline -->
+    <div class="timeline-section">
+        <div class="timeline-header">
+            <h2>🕐 24-Hour Task Timeline</h2>
+            <div class="timeline-legend">
+                <div class="legend-item">
+                    <div class="legend-dot" style="background: #3182ce;"></div>
+                    <span>Market Data</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-dot" style="background: #805ad5;"></div>
+                    <span>Strategy</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-dot" style="background: #dd6b20;"></div>
+                    <span>Monitoring</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-dot" style="background: #e53e3e;"></div>
+                    <span>Risk</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-dot" style="background: #38a169;"></div>
+                    <span>Reports</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="timeline-container">
+            <div class="timeline-hours" id="timeline-hours">
+                <!-- Hour columns generated via JavaScript -->
+            </div>
+            <div class="timeline-now-line" id="now-line" style="display: none;"></div>
+        </div>
+
+        <div class="timeline-phases">
+            <div class="phase-block phase-closed" style="flex: 7;">Night (00:00-07:00)</div>
+            <div class="phase-block phase-pre">Pre-Market (07:00-09:15)</div>
+            <div class="phase-block phase-market">Trading Hours (09:15-15:30)</div>
+            <div class="phase-block phase-post">Post-Market (15:30-17:00)</div>
+            <div class="phase-block phase-closed" style="flex: 7;">Night (17:00-24:00)</div>
+        </div>
+
+        <div class="timeline-summary">
+            <div class="summary-stat">
+                <div class="count" id="active-task-count">{{ enabled_count }}</div>
+                <div class="label">Active Tasks</div>
+            </div>
+            <div class="summary-stat">
+                <div class="count" id="total-task-count">{{ total_count }}</div>
+                <div class="label">Total Scheduled</div>
+            </div>
+            <div class="summary-stat">
+                <div class="count" id="next-task-time">--:--</div>
+                <div class="label">Next Task</div>
+            </div>
+        </div>
+    </div>
+
+    {% if dynamic_tasks %}
+    <!-- Dynamic Tasks (Trading Schedule) - Only shown if configured -->
     <div class="task-section">
         <div class="section-header">
             <h2>Trading Schedule Tasks</h2>
@@ -1063,12 +1480,9 @@
                 {% endif %}
             </div>
         </div>
-        {% empty %}
-        <p style="color: #718096; text-align: center; padding: 20px;">
-            No trading schedule tasks configured. Use Django Admin to create schedule configurations.
-        </p>
         {% endfor %}
     </div>
+    {% endif %}
 
     <!-- Categorized System Tasks -->
     {% for category in task_categories %}
@@ -1119,11 +1533,17 @@
             <div class="task-actions">
                 {% if task.is_enabled %}
                 <span class="badge badge-success status-badge">Active</span>
+                {% else %}
+                <span class="badge badge-warning status-badge">Inactive</span>
+                {% endif %}
+                <button class="btn btn-sm btn-run-now" onclick="runTaskNow('{{ task.key }}', this)" title="Run this task immediately">
+                    ▶ Run Now
+                </button>
+                {% if task.is_enabled %}
                 <button class="btn btn-sm btn-danger" onclick="toggleStaticTask('{{ task.key }}', '{{ task.task }}', this, 'stop')">
                     Deactivate
                 </button>
                 {% else %}
-                <span class="badge badge-warning status-badge">Inactive</span>
                 <button class="btn btn-sm btn-success" onclick="toggleStaticTask('{{ task.key }}', '{{ task.task }}', this, 'start')">
                     Activate
                 </button>
@@ -1132,7 +1552,7 @@
                     Logs
                 </button>
                 <button class="btn btn-sm btn-primary" onclick="showTaskConfig('{{ task.key }}', '{{ task.display_name|default:task.key }}')" title="Configure">
-                    Configure
+                    ⚙
                 </button>
             </div>
         </div>
@@ -1369,6 +1789,103 @@
             button.disabled = false;
             button.textContent = action === 'start' ? 'Activate' : 'Deactivate';
         });
+    }
+
+    // =========================================================================
+    // Run Task Now Function
+    // =========================================================================
+
+    function runTaskNow(taskKey, button) {
+        const originalText = button.textContent;
+        button.disabled = true;
+        button.textContent = '⏳ Running...';
+        button.classList.add('running');
+
+        fetch('{% url "core:run_task_now" %}', {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': '{{ csrf_token }}',
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ task_key: taskKey })
+        })
+        .then(response => response.json())
+        .then(data => {
+            button.classList.remove('running');
+
+            if (data.success) {
+                button.textContent = '✓ Queued!';
+                button.style.background = '#48bb78';
+
+                // Show success toast
+                showRunToast(taskKey, data, false);
+
+                // Reset button after delay
+                setTimeout(() => {
+                    button.disabled = false;
+                    button.textContent = originalText;
+                    button.style.background = '';
+                }, 3000);
+            } else {
+                button.textContent = '✗ Failed';
+                button.style.background = '#e53e3e';
+                showRunToast(taskKey, data, true);
+
+                setTimeout(() => {
+                    button.disabled = false;
+                    button.textContent = originalText;
+                    button.style.background = '';
+                }, 3000);
+            }
+        })
+        .catch(error => {
+            button.classList.remove('running');
+            button.textContent = '✗ Error';
+            button.style.background = '#e53e3e';
+            showRunToast(taskKey, { error: error.toString() }, true);
+
+            setTimeout(() => {
+                button.disabled = false;
+                button.textContent = originalText;
+                button.style.background = '';
+            }, 3000);
+        });
+    }
+
+    function showRunToast(taskKey, data, isError) {
+        const toast = document.getElementById('statusToast');
+        const header = document.getElementById('toastHeader');
+        const title = document.getElementById('toastTitle');
+        const body = document.getElementById('toastBody');
+
+        if (isError) {
+            header.className = 'status-toast-header error';
+            title.textContent = 'Task Failed';
+            body.innerHTML = `
+                <div class="status-item">
+                    <span class="status-icon">❌</span>
+                    <span class="status-label">${data.error || 'Unknown error'}</span>
+                </div>
+            `;
+        } else {
+            header.className = 'status-toast-header success';
+            title.textContent = 'Task Queued';
+            body.innerHTML = `
+                <div class="status-item">
+                    <span class="status-icon">✅</span>
+                    <span class="status-label">${data.message}</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-icon">🆔</span>
+                    <span class="status-label">Task ID: <code>${data.task_id}</code></span>
+                </div>
+            `;
+        }
+
+        toast.classList.add('show');
+        setTimeout(() => {
+            toast.classList.remove('show');
+        }, 5000);
     }
 
     // =========================================================================
@@ -2116,5 +2633,306 @@
             showStatusToast(currentConfigTaskKey, {error: error.toString()}, true);
         });
     }
+
+    // =========================================================================
+    // 24-HOUR TIMELINE VISUALIZATION
+    // =========================================================================
+
+    // Create global tooltip element
+    let globalTooltip = null;
+
+    function createGlobalTooltip() {
+        if (globalTooltip) return;
+        globalTooltip = document.createElement('div');
+        globalTooltip.className = 'task-tooltip';
+        globalTooltip.id = 'global-task-tooltip';
+        document.body.appendChild(globalTooltip);
+    }
+
+    function showTooltip(marker, event) {
+        if (!globalTooltip) createGlobalTooltip();
+
+        const content = marker.dataset.tooltipContent;
+        if (!content) return;
+
+        globalTooltip.innerHTML = content;
+        globalTooltip.classList.add('visible');
+
+        // Position tooltip above the marker
+        const rect = marker.getBoundingClientRect();
+        const tooltipRect = globalTooltip.getBoundingClientRect();
+
+        let left = rect.left + (rect.width / 2) - (tooltipRect.width / 2);
+        let top = rect.top - tooltipRect.height - 15;
+
+        // Keep tooltip within viewport
+        if (left < 10) left = 10;
+        if (left + tooltipRect.width > window.innerWidth - 10) {
+            left = window.innerWidth - tooltipRect.width - 10;
+        }
+        if (top < 10) {
+            // Show below marker if not enough space above
+            top = rect.bottom + 15;
+        }
+
+        globalTooltip.style.left = `${left}px`;
+        globalTooltip.style.top = `${top}px`;
+    }
+
+    function hideTooltip() {
+        if (globalTooltip) {
+            globalTooltip.classList.remove('visible');
+        }
+    }
+
+    const CATEGORY_COLORS = {
+        'data': '#3182ce',
+        'strategies': '#805ad5',
+        'monitoring': '#dd6b20',
+        'risk': '#e53e3e',
+        'reports': '#38a169'
+    };
+
+    // Task schedule data from server
+    const taskSchedule = [
+        {% for category in task_categories %}
+        {% for task in category.tasks %}
+        {
+            key: '{{ task.key }}',
+            name: '{{ task.display_name|escapejs }}',
+            description: '{{ task.description|escapejs }}',
+            schedule: '{{ task.schedule|escapejs }}',
+            scheduleHour: {{ task.schedule_hour|default:"null" }},
+            scheduleMinute: {{ task.schedule_minute|default:"0" }},
+            category: '{{ category.key }}',
+            categoryName: '{{ category.name }}',
+            color: '{{ category.color }}',
+            isActive: {{ task.is_enabled|yesno:"true,false" }},
+            scheduleType: '{{ task.schedule_type }}',
+            lastExecution: {% if task.last_execution %}{
+                timestamp: '{{ task.last_execution.timestamp }}',
+                timestampDisplay: '{{ task.last_execution.timestamp_display }}',
+                success: {{ task.last_execution.success|yesno:"true,false" }},
+                level: '{{ task.last_execution.level }}',
+                message: '{{ task.last_execution.message|escapejs }}',
+                durationMs: {{ task.last_execution.duration_ms|default:"null" }}
+            }{% else %}null{% endif %}
+        },
+        {% endfor %}
+        {% endfor %}
+    ];
+
+    function parseScheduleTime(schedule, scheduleType) {
+        // Parse time from schedule string
+        // Formats: "08:30", "crontab(hour=8, minute=30)", "Every 10s", "09:00-15:30 (every 5m)"
+
+        if (scheduleType === 'interval') {
+            return null; // Interval tasks run continuously, no specific time
+        }
+
+        // Try HH:MM format
+        const timeMatch = schedule.match(/^(\d{1,2}):(\d{2})/);
+        if (timeMatch) {
+            return { hour: parseInt(timeMatch[1]), minute: parseInt(timeMatch[2]) };
+        }
+
+        // Try crontab format
+        const crontabMatch = schedule.match(/hour=(\d+).*minute=(\d+)/);
+        if (crontabMatch) {
+            return { hour: parseInt(crontabMatch[1]), minute: parseInt(crontabMatch[2]) };
+        }
+
+        // Try recurring format
+        const recurringMatch = schedule.match(/^(\d{1,2}):(\d{2})-/);
+        if (recurringMatch) {
+            return { hour: parseInt(recurringMatch[1]), minute: parseInt(recurringMatch[2]), recurring: true };
+        }
+
+        return null;
+    }
+
+    function initTimeline() {
+        const container = document.getElementById('timeline-hours');
+        if (!container) return;
+
+        // Create global tooltip
+        createGlobalTooltip();
+
+        // Generate hour columns
+        for (let h = 0; h < 24; h++) {
+            const hourStr = String(h).padStart(2, '0');
+            const div = document.createElement('div');
+            div.className = 'hour-column';
+            div.dataset.hour = hourStr;
+
+            // Add phase class
+            if (h >= 7 && h < 9) {
+                div.classList.add('pre-market');
+            } else if (h >= 9 && h < 16) {
+                div.classList.add('trading-hours');
+            } else if (h >= 16 && h < 18) {
+                div.classList.add('post-market');
+            }
+
+            div.innerHTML = `<div class="hour-label">${hourStr}:00</div>`;
+            container.appendChild(div);
+        }
+
+        const hourColumns = container.querySelectorAll('.hour-column');
+        let nextTaskTime = null;
+        const now = new Date();
+        const currentMinutes = now.getHours() * 60 + now.getMinutes();
+
+        // Group tasks by hour for stacking
+        const tasksByHour = {};
+
+        taskSchedule.forEach(task => {
+            const time = parseScheduleTime(task.schedule, task.scheduleType);
+            if (!time) return;
+
+            const hourKey = time.hour;
+            if (!tasksByHour[hourKey]) {
+                tasksByHour[hourKey] = [];
+            }
+            tasksByHour[hourKey].push({ ...task, time });
+        });
+
+        // Add task markers to timeline
+        Object.keys(tasksByHour).forEach(hourKey => {
+            const hour = parseInt(hourKey);
+            const hourColumn = hourColumns[hour];
+            if (!hourColumn) return;
+
+            const tasks = tasksByHour[hourKey];
+            const verticalSpacing = 160 / (tasks.length + 1);
+
+            tasks.forEach((task, index) => {
+                const marker = document.createElement('div');
+                marker.className = 'task-marker';
+
+                // Position based on minute and stack index - spread horizontally within hour
+                const minuteOffset = (task.time.minute / 60) * 80 + 10; // 10-90% range
+                const topPosition = 20 + (index * 35); // Stack vertically with 35px spacing
+
+                marker.style.left = `${minuteOffset}%`;
+                marker.style.top = `${topPosition}px`;
+
+                const dot = document.createElement('div');
+                dot.className = `task-dot ${task.isActive ? 'active' : ''}`;
+                dot.style.background = task.isActive ? task.color : '#a0aec0';
+
+                // Calculate next execution time
+                const taskHour = task.time.hour;
+                const taskMinute = task.time.minute;
+                const taskTime = `${String(taskHour).padStart(2, '0')}:${String(taskMinute).padStart(2, '0')}`;
+
+                let nextExecDisplay = '';
+                if (task.isActive) {
+                    const todayTask = new Date();
+                    todayTask.setHours(taskHour, taskMinute, 0, 0);
+                    if (todayTask > now) {
+                        const diffMs = todayTask - now;
+                        const diffMins = Math.round(diffMs / 60000);
+                        if (diffMins < 60) {
+                            nextExecDisplay = `<div class="tooltip-next">⏱ Runs in <strong>${diffMins} min</strong></div>`;
+                        } else {
+                            const hours = Math.floor(diffMins / 60);
+                            const mins = diffMins % 60;
+                            nextExecDisplay = `<div class="tooltip-next">⏱ Runs in <strong>${hours}h ${mins}m</strong></div>`;
+                        }
+                    } else {
+                        nextExecDisplay = `<div class="tooltip-next">⏱ Next run <strong>tomorrow ${taskTime}</strong></div>`;
+                    }
+                }
+
+                // Last execution info
+                let lastExecDisplay = '';
+                if (task.lastExecution) {
+                    const statusIcon = task.lastExecution.success ? '✅' : '❌';
+                    const statusClass = task.lastExecution.success ? 'success' : 'failed';
+                    const duration = task.lastExecution.durationMs
+                        ? ` (${task.lastExecution.durationMs}ms)`
+                        : '';
+                    lastExecDisplay = `
+                        <div class="tooltip-last-exec ${statusClass}">
+                            <div class="exec-header">${statusIcon} Last run: ${task.lastExecution.timestampDisplay}${duration}</div>
+                            ${task.lastExecution.message ? `<div class="exec-message">${task.lastExecution.message}</div>` : ''}
+                        </div>
+                    `;
+                } else {
+                    lastExecDisplay = `<div class="tooltip-last-exec none">No execution history</div>`;
+                }
+
+                const tooltipContent = `
+                    <div class="tooltip-header">
+                        <div class="tooltip-title">${task.name}</div>
+                        <div class="tooltip-category" style="background: ${task.color}20; color: ${task.color};">${task.categoryName || task.category}</div>
+                    </div>
+                    ${task.description ? `<div class="tooltip-desc">${task.description}</div>` : ''}
+                    <div class="tooltip-schedule">
+                        <span class="schedule-time">🕐 ${taskTime}</span>
+                        <span class="tooltip-status ${task.isActive ? 'active' : 'inactive'}">
+                            ${task.isActive ? '● Active' : '○ Inactive'}
+                        </span>
+                    </div>
+                    ${nextExecDisplay}
+                    ${lastExecDisplay}
+                `;
+
+                // Store tooltip content as data attribute
+                marker.dataset.tooltipContent = tooltipContent;
+
+                // Add hover event listeners
+                marker.addEventListener('mouseenter', function(e) {
+                    showTooltip(this, e);
+                });
+                marker.addEventListener('mouseleave', hideTooltip);
+
+                marker.appendChild(dot);
+                hourColumn.appendChild(marker);
+
+                // Track next task
+                const taskMinutes = task.time.hour * 60 + task.time.minute;
+                if (task.isActive && taskMinutes > currentMinutes) {
+                    if (!nextTaskTime || taskMinutes < nextTaskTime.minutes) {
+                        nextTaskTime = {
+                            minutes: taskMinutes,
+                            display: `${String(task.time.hour).padStart(2, '0')}:${String(task.time.minute).padStart(2, '0')}`
+                        };
+                    }
+                }
+            });
+        });
+
+        // Update next task display
+        const nextTaskEl = document.getElementById('next-task-time');
+        if (nextTaskEl && nextTaskTime) {
+            nextTaskEl.textContent = nextTaskTime.display;
+        }
+
+        // Show current time indicator
+        updateNowLine();
+        setInterval(updateNowLine, 60000); // Update every minute
+    }
+
+    function updateNowLine() {
+        const now = new Date();
+        const hour = now.getHours();
+        const minute = now.getMinutes();
+
+        const container = document.getElementById('timeline-hours');
+        const nowLine = document.getElementById('now-line');
+        if (!container || !nowLine) return;
+
+        // Calculate position
+        const hourWidth = container.offsetWidth / 24;
+        const position = (hour * hourWidth) + (minute / 60 * hourWidth);
+
+        nowLine.style.left = `${position}px`;
+        nowLine.style.display = 'block';
+    }
+
+    // Initialize timeline when page loads
+    document.addEventListener('DOMContentLoaded', initTimeline);
 </script>
 {% endblock %}

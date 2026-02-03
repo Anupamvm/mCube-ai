@@ -93,33 +93,63 @@ def get_us_market_changes() -> Dict[str, Decimal]:
 
 def get_nifty_change(days: int = 1) -> Decimal:
     """
-    Get Nifty percentage change over the last N days
+    Get Nifty percentage change over the last N trading days
+
+    Uses actual trading days from HistoricalPrice (Mon-Fri, excluding holidays).
 
     Args:
-        days: Number of days to look back (1, 3, etc.)
+        days: Number of trading days to look back (1, 3, 5, etc.)
 
     Returns:
         Decimal: Percentage change
-
-    TODO: Fetch from HistoricalPrice model or broker API
     """
+    try:
+        from apps.brokers.models import HistoricalPrice
 
-    # Placeholder implementation
-    # TODO: Replace with actual Nifty historical data query
+        logger.debug(f"Fetching Nifty change for last {days} trading day(s)...")
 
-    logger.debug(f"Fetching Nifty change for last {days} day(s)...")
+        # Get last N+1 records (need N+1 to calculate N-day change)
+        records = HistoricalPrice.objects.filter(
+            stock_code='NIFTY',
+            product_type='cash',
+            interval='1day'
+        ).order_by('-datetime')[:days + 1]
 
-    # Mock data for now
-    if days == 1:
-        nifty_change = Decimal('0.60')  # +0.60% yesterday
-    elif days == 3:
-        nifty_change = Decimal('1.20')  # +1.20% over 3 days
-    else:
-        nifty_change = Decimal('0.0')
+        records = list(records)
 
-    logger.debug(f"Nifty {days}D Change: {nifty_change:+.2f}%")
+        if len(records) < 2:
+            logger.warning(f"Insufficient historical data for {days}D Nifty change, using fallback")
+            # Fallback to mock data
+            if days == 1:
+                return Decimal('0.60')
+            elif days == 3:
+                return Decimal('1.20')
+            else:
+                return Decimal('0.0')
 
-    return nifty_change
+        # Most recent close and N-days-ago close
+        latest_close = Decimal(str(records[0].close))
+        older_close = Decimal(str(records[min(days, len(records) - 1)].close))
+
+        if older_close == 0:
+            return Decimal('0.0')
+
+        nifty_change = ((latest_close - older_close) / older_close) * Decimal('100')
+        nifty_change = nifty_change.quantize(Decimal('0.01'))
+
+        logger.debug(f"Nifty {days}D Change: {nifty_change:+.2f}% ({older_close:.2f} -> {latest_close:.2f})")
+
+        return nifty_change
+
+    except Exception as e:
+        logger.error(f"Error getting Nifty {days}D change: {e}")
+        # Fallback to mock data on error
+        if days == 1:
+            return Decimal('0.60')
+        elif days == 3:
+            return Decimal('1.20')
+        else:
+            return Decimal('0.0')
 
 
 def check_global_market_stability() -> Dict:

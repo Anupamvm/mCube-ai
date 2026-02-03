@@ -152,6 +152,286 @@
         </div>
     </div>
 
+    <!-- Enhanced Analysis Summary (NEW) -->
+    {% if reasoning.enhanced_analysis %}
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="card border-primary">
+                    <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
+                        <h6 class="mb-0"><i class="fas fa-brain"></i> Enhanced Strangle Analysis</h6>
+                        {% if reasoning.enhanced_analysis.composite_score %}
+                            <span class="badge bg-light text-dark fs-6">
+                                Score: {{ reasoning.enhanced_analysis.composite_score }}/100
+                            </span>
+                        {% endif %}
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <!-- Analysis Status -->
+                            <div class="col-md-3 mb-3">
+                                <div class="text-center p-3 rounded {% if reasoning.enhanced_analysis.hard_reject %}bg-danger text-white{% else %}bg-success text-white{% endif %}">
+                                    {% if reasoning.enhanced_analysis.hard_reject %}
+                                        <i class="fas fa-times-circle fa-2x mb-2"></i>
+                                        <h6 class="mb-1">REJECTED</h6>
+                                        <small>{{ reasoning.enhanced_analysis.reject_reason|default:"Hard filter failed" }}</small>
+                                    {% else %}
+                                        <i class="fas fa-check-circle fa-2x mb-2"></i>
+                                        <h6 class="mb-1">{{ reasoning.enhanced_analysis.recommendation|default:"QUALIFIED" }}</h6>
+                                        <small>Entry Bias: {{ reasoning.enhanced_analysis.entry_bias|default:"SYMMETRIC" }}</small>
+                                    {% endif %}
+                                </div>
+                            </div>
+
+                            <!-- Key Filters Status -->
+                            <div class="col-md-9">
+                                <h6 class="border-bottom pb-2 mb-3">Filter Status</h6>
+                                <div class="row">
+                                    <!-- 5D Filter -->
+                                    <div class="col-md-4 mb-2">
+                                        <div class="d-flex align-items-center">
+                                            {% if reasoning.enhanced_analysis.details.nifty_5d_reject %}
+                                                <i class="fas fa-times-circle text-danger me-2"></i>
+                                                <span class="text-danger">5D Filter: REJECT</span>
+                                            {% else %}
+                                                <i class="fas fa-check-circle text-success me-2"></i>
+                                                <span class="text-success">5D Filter: PASS</span>
+                                            {% endif %}
+                                        </div>
+                                        {% if reasoning.enhanced_analysis.details.recent_nifty_momentum.nifty_5d_change %}
+                                            <small class="text-muted ms-4">
+                                                ({{ reasoning.enhanced_analysis.details.recent_nifty_momentum.nifty_5d_change|floatformat:2 }}%)
+                                            </small>
+                                        {% endif %}
+                                    </div>
+
+                                    <!-- VIX Filter -->
+                                    <div class="col-md-4 mb-2">
+                                        <div class="d-flex align-items-center">
+                                            {% if reasoning.enhanced_analysis.details.vix_reject %}
+                                                <i class="fas fa-times-circle text-danger me-2"></i>
+                                                <span class="text-danger">VIX: {{ reasoning.enhanced_analysis.details.vix_regime.vix|floatformat:1 }}</span>
+                                            {% else %}
+                                                <i class="fas fa-check-circle text-success me-2"></i>
+                                                <span class="text-success">VIX: {{ reasoning.enhanced_analysis.details.vix_regime.vix|floatformat:1|default:"-" }}</span>
+                                            {% endif %}
+                                        </div>
+                                    </div>
+
+                                    <!-- PCR Status -->
+                                    <div class="col-md-4 mb-2">
+                                        <div class="d-flex align-items-center">
+                                            <i class="fas fa-chart-pie text-info me-2"></i>
+                                            <span>PCR: {{ reasoning.enhanced_analysis.details.pcr_analysis.pcr_oi|floatformat:2|default:"-" }}</span>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Trader Constraints -->
+                                {% if reasoning.enhanced_analysis.delta_adjustments.constraint_details %}
+                                    <h6 class="border-bottom pb-2 mb-3 mt-3">Trader Constraints Applied</h6>
+                                    <div class="row">
+                                        <div class="col-md-4 mb-2">
+                                            <small class="text-muted">Consecutive Red Days:</small>
+                                            <span class="badge {% if reasoning.enhanced_analysis.delta_adjustments.constraint_details.consecutive_red_days >= 3 %}bg-warning text-dark{% else %}bg-secondary{% endif %}">
+                                                {{ reasoning.enhanced_analysis.delta_adjustments.constraint_details.consecutive_red_days|default:0 }}
+                                            </span>
+                                            {% if reasoning.enhanced_analysis.delta_adjustments.constraint_details.consecutive_red_days >= 3 %}
+                                                <small class="text-warning">(PUT +15%)</small>
+                                            {% endif %}
+                                        </div>
+                                        <div class="col-md-4 mb-2">
+                                            <small class="text-muted">Friday Entry:</small>
+                                            {% if reasoning.enhanced_analysis.delta_adjustments.constraint_details.is_friday %}
+                                                <span class="badge bg-info">Yes (Tighter 10%)</span>
+                                            {% else %}
+                                                <span class="badge bg-secondary">No</span>
+                                            {% endif %}
+                                        </div>
+                                        <div class="col-md-4 mb-2">
+                                            <small class="text-muted">PCR Extreme:</small>
+                                            {% if reasoning.enhanced_analysis.delta_adjustments.constraint_details.pcr_oi < 0.6 %}
+                                                <span class="badge bg-danger">Bullish (CALL +10%)</span>
+                                            {% elif reasoning.enhanced_analysis.delta_adjustments.constraint_details.pcr_oi > 1.4 %}
+                                                <span class="badge bg-success">Bearish (PUT +10%)</span>
+                                            {% else %}
+                                                <span class="badge bg-secondary">Normal</span>
+                                            {% endif %}
+                                        </div>
+                                    </div>
+                                {% endif %}
+
+                                <!-- Delta Adjustments -->
+                                {% if reasoning.enhanced_analysis.delta_adjustments.adjustment_reasons %}
+                                    <h6 class="border-bottom pb-2 mb-3 mt-3">Strike Adjustments</h6>
+                                    <ul class="list-unstyled mb-0">
+                                        {% for reason in reasoning.enhanced_analysis.delta_adjustments.adjustment_reasons %}
+                                            <li class="mb-1">
+                                                <i class="fas fa-arrow-right text-primary me-2"></i>
+                                                {{ reason }}
+                                            </li>
+                                        {% endfor %}
+                                    </ul>
+                                    <div class="mt-2">
+                                        <span class="badge bg-danger me-2">
+                                            CALL: {{ reasoning.enhanced_analysis.delta_adjustments.call_multiplier|floatformat:2 }}x
+                                        </span>
+                                        <span class="badge bg-success">
+                                            PUT: {{ reasoning.enhanced_analysis.delta_adjustments.put_multiplier|floatformat:2 }}x
+                                        </span>
+                                    </div>
+                                {% endif %}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    {% endif %}
+
+    <!-- Strike Adjustment Log (NEW) -->
+    {% if reasoning.adjustment_log %}
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header bg-light cursor-pointer" data-bs-toggle="collapse" data-bs-target="#adjustmentLogCollapse">
+                        <h6 class="mb-0">
+                            <i class="fas fa-chevron-down"></i> Strike Adjustment Audit Trail
+                        </h6>
+                    </div>
+                    <div class="collapse" id="adjustmentLogCollapse">
+                        <div class="card-body">
+                            <div class="row">
+                                <!-- Step 1: Base Strikes -->
+                                <div class="col-md-3 mb-3">
+                                    <div class="card h-100 border-secondary">
+                                        <div class="card-header bg-secondary text-white py-2">
+                                            <small class="fw-bold">Step 1: Base Strikes</small>
+                                        </div>
+                                        <div class="card-body py-2">
+                                            {% if reasoning.adjustment_log.step1_base %}
+                                                <p class="mb-1"><small>CALL: <strong>{{ reasoning.adjustment_log.step1_base.call }}</strong></small></p>
+                                                <p class="mb-0"><small>PUT: <strong>{{ reasoning.adjustment_log.step1_base.put }}</strong></small></p>
+                                            {% else %}
+                                                <small class="text-muted">No data</small>
+                                            {% endif %}
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Step 2: S/R Adjustment -->
+                                <div class="col-md-3 mb-3">
+                                    <div class="card h-100 {% if reasoning.adjustment_log.step2_sr.call_adjusted or reasoning.adjustment_log.step2_sr.put_adjusted %}border-warning{% else %}border-success{% endif %}">
+                                        <div class="card-header {% if reasoning.adjustment_log.step2_sr.call_adjusted or reasoning.adjustment_log.step2_sr.put_adjusted %}bg-warning text-dark{% else %}bg-success text-white{% endif %} py-2">
+                                            <small class="fw-bold">Step 2: S/R Adjustment</small>
+                                        </div>
+                                        <div class="card-body py-2">
+                                            {% if reasoning.adjustment_log.step2_sr.error %}
+                                                <small class="text-danger">{{ reasoning.adjustment_log.step2_sr.error }}</small>
+                                            {% elif reasoning.adjustment_log.step2_sr %}
+                                                <p class="mb-1"><small>CALL: <strong>{{ reasoning.adjustment_log.step2_sr.call }}</strong>
+                                                    {% if reasoning.adjustment_log.step2_sr.call_adjusted %}
+                                                        <span class="badge bg-warning text-dark">Adjusted</span>
+                                                    {% endif %}
+                                                </small></p>
+                                                <p class="mb-0"><small>PUT: <strong>{{ reasoning.adjustment_log.step2_sr.put }}</strong>
+                                                    {% if reasoning.adjustment_log.step2_sr.put_adjusted %}
+                                                        <span class="badge bg-warning text-dark">Adjusted</span>
+                                                    {% endif %}
+                                                </small></p>
+                                            {% else %}
+                                                <small class="text-muted">Skipped</small>
+                                            {% endif %}
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Step 3: Premium Adjustment -->
+                                <div class="col-md-3 mb-3">
+                                    <div class="card h-100 {% if reasoning.adjustment_log.step3_premium.call_iterations > 0 or reasoning.adjustment_log.step3_premium.put_iterations > 0 %}border-info{% else %}border-success{% endif %}">
+                                        <div class="card-header {% if reasoning.adjustment_log.step3_premium.call_iterations > 0 or reasoning.adjustment_log.step3_premium.put_iterations > 0 %}bg-info text-white{% else %}bg-success text-white{% endif %} py-2">
+                                            <small class="fw-bold">Step 3: Premium Target</small>
+                                        </div>
+                                        <div class="card-body py-2">
+                                            {% if reasoning.adjustment_log.step3_premium.error %}
+                                                <small class="text-danger">{{ reasoning.adjustment_log.step3_premium.error }}</small>
+                                            {% elif reasoning.adjustment_log.step3_premium %}
+                                                <p class="mb-1"><small>CALL: <strong>{{ reasoning.adjustment_log.step3_premium.call }}</strong>
+                                                    {% if reasoning.adjustment_log.step3_premium.call_premium %}
+                                                        (Rs.{{ reasoning.adjustment_log.step3_premium.call_premium|floatformat:2 }})
+                                                    {% endif %}
+                                                </small></p>
+                                                <p class="mb-0"><small>PUT: <strong>{{ reasoning.adjustment_log.step3_premium.put }}</strong>
+                                                    {% if reasoning.adjustment_log.step3_premium.put_premium %}
+                                                        (Rs.{{ reasoning.adjustment_log.step3_premium.put_premium|floatformat:2 }})
+                                                    {% endif %}
+                                                </small></p>
+                                            {% else %}
+                                                <small class="text-muted">Skipped</small>
+                                            {% endif %}
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Step 4: Liquidity Check -->
+                                <div class="col-md-3 mb-3">
+                                    <div class="card h-100 {% if reasoning.adjustment_log.step4_liquidity.call.warning or reasoning.adjustment_log.step4_liquidity.put.warning %}border-warning{% else %}border-success{% endif %}">
+                                        <div class="card-header {% if reasoning.adjustment_log.step4_liquidity.call.warning or reasoning.adjustment_log.step4_liquidity.put.warning %}bg-warning text-dark{% else %}bg-success text-white{% endif %} py-2">
+                                            <small class="fw-bold">Step 4: Liquidity</small>
+                                        </div>
+                                        <div class="card-body py-2">
+                                            {% if reasoning.adjustment_log.step4_liquidity.error %}
+                                                <small class="text-danger">{{ reasoning.adjustment_log.step4_liquidity.error }}</small>
+                                            {% elif reasoning.adjustment_log.step4_liquidity %}
+                                                <p class="mb-1"><small>CALL OI:
+                                                    {% if reasoning.adjustment_log.step4_liquidity.call.current_oi %}
+                                                        {{ reasoning.adjustment_log.step4_liquidity.call.current_oi|floatformat:0 }}
+                                                    {% else %}
+                                                        N/A
+                                                    {% endif %}
+                                                    {% if reasoning.adjustment_log.step4_liquidity.call.is_liquid %}
+                                                        <i class="fas fa-check text-success"></i>
+                                                    {% else %}
+                                                        <i class="fas fa-exclamation-triangle text-warning"></i>
+                                                    {% endif %}
+                                                </small></p>
+                                                <p class="mb-0"><small>PUT OI:
+                                                    {% if reasoning.adjustment_log.step4_liquidity.put.current_oi %}
+                                                        {{ reasoning.adjustment_log.step4_liquidity.put.current_oi|floatformat:0 }}
+                                                    {% else %}
+                                                        N/A
+                                                    {% endif %}
+                                                    {% if reasoning.adjustment_log.step4_liquidity.put.is_liquid %}
+                                                        <i class="fas fa-check text-success"></i>
+                                                    {% else %}
+                                                        <i class="fas fa-exclamation-triangle text-warning"></i>
+                                                    {% endif %}
+                                                </small></p>
+                                            {% else %}
+                                                <small class="text-muted">Skipped</small>
+                                            {% endif %}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Warnings -->
+                            {% if reasoning.adjustment_log.step3_premium.warnings %}
+                                <div class="alert alert-warning mt-3 mb-0">
+                                    <h6 class="alert-heading"><i class="fas fa-exclamation-triangle"></i> Warnings</h6>
+                                    <ul class="mb-0">
+                                        {% for warning in reasoning.adjustment_log.step3_premium.warnings %}
+                                            <li>{{ warning }}</li>
+                                        {% endfor %}
+                                    </ul>
+                                </div>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    {% endif %}
+
     <!-- Risk & Reward Analysis -->
     {% if position_details.max_profit or position_details.support_level %}
         <div class="row mb-4">

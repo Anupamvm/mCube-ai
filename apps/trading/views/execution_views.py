@@ -950,6 +950,7 @@ def execute_iron_condor_orders(request):
         data = json.loads(request.body.decode('utf-8'))
         suggestion_id = data.get('suggestion_id')
         total_lots = int(data.get('total_lots', 0))
+        adjusted_strikes = data.get('adjusted_strikes')  # User-modified strikes
 
         if not suggestion_id or total_lots <= 0:
             return JsonResponse({
@@ -988,12 +989,18 @@ def execute_iron_condor_orders(request):
         expiry_date = suggestion.expiry_date
         expiry_str = expiry_date.strftime('%d%b').upper()
 
-        call_strike = int(suggestion.call_strike)
-        put_strike = int(suggestion.put_strike)
-
-        # Get insurance strike from position_details
-        position_details = suggestion.position_details or {}
-        insurance_strike = int(position_details.get('insurance_strike', put_strike - 500))
+        # Use adjusted strikes if provided, otherwise use original suggestion
+        if adjusted_strikes:
+            call_strike = int(adjusted_strikes.get('call_strike'))
+            put_strike = int(adjusted_strikes.get('put_strike'))
+            insurance_strike = int(adjusted_strikes.get('insurance_strike'))
+            logger.info(f"Using adjusted strikes: Call={call_strike}, Put={put_strike}, Insurance={insurance_strike}")
+        else:
+            call_strike = int(suggestion.call_strike)
+            put_strike = int(suggestion.put_strike)
+            # Get insurance strike from position_details
+            position_details = suggestion.position_details or {}
+            insurance_strike = int(position_details.get('insurance_strike', put_strike - 500))
 
         # Breeze symbols
         breeze_call = f"NIFTY{expiry_str}{call_strike}CE"

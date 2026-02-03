@@ -77,6 +77,14 @@ def get_static_schedule():
     # STRATEGY EXECUTION TASKS - DAILY TRADING WORKFLOW
     # =========================================================================
 
+    # Pre-market futures screening (8:30 AM)
+    'execute-futures-algorithm': {
+        'task': 'apps.strategies.tasks.execute_futures_algorithm',
+        'schedule': crontab(hour=8, minute=30, day_of_week='1-5'),  # 8:30 AM Mon-Fri
+        'options': {'queue': 'strategies'},
+        'kwargs': {'this_month_volume': 1000, 'next_month_volume': 800, 'min_score': 65},
+    },
+
     'setup-trading-day': {
         'task': 'apps.strategies.tasks.setup_trading_day',
         'schedule': crontab(hour=8, minute=55, day_of_week='1-5'),  # 8:55 AM Mon-Fri

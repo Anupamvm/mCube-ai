@@ -50,9 +50,13 @@ urlpatterns = [
     path('celery/reload/', views.reload_celery_schedule, name='reload_celery_schedule'),
     path('celery/config/', views.get_task_config, name='get_task_config'),
     path('celery/config/save/', views.save_task_config, name='save_task_config'),
+    path('celery/run-now/', views.run_task_now, name='run_task_now'),
 
     # Django Background Tasks Control
     path('bg-tasks/toggle/<int:task_id>/', views.toggle_bg_task, name='toggle_bg_task'),
     path('bg-tasks/control-all/', views.control_all_bg_tasks, name='control_all_bg_tasks'),
     path('bg-tasks/delete/<int:task_id>/', views.delete_bg_task, name='delete_bg_task'),
+
+    # Task Timeline API
+    path('api/task-timeline/', views.api_task_timeline, name='api_task_timeline'),
 ]

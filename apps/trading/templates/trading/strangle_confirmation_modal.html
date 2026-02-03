@@ -22,6 +22,26 @@
             <p class="mb-0">Selling both Call and Put options to collect premium</p>
           </div>
 
+          <!-- Enhanced Analysis Summary (if available) -->
+          <div id="enhanced-analysis-summary" class="alert alert-info mb-3" style="display: none;">
+            <div class="d-flex justify-content-between align-items-center mb-2">
+              <h6 class="font-weight-bold mb-0"><i class="fas fa-brain"></i> Enhanced Analysis</h6>
+              <span id="analysis-score-badge" class="badge badge-success">Score: -/100</span>
+            </div>
+            <div class="row small">
+              <div class="col-6">
+                <span id="analysis-recommendation">-</span>
+              </div>
+              <div class="col-6">
+                <span id="analysis-entry-bias">Entry Bias: -</span>
+              </div>
+            </div>
+            <div id="analysis-adjustments" class="mt-2 small" style="display: none;">
+              <strong>Adjustments:</strong>
+              <ul id="adjustment-list" class="mb-0 pl-3"></ul>
+            </div>
+          </div>
+
           <!-- Strike Details -->
           <div class="row mb-4">
             <div class="col-md-6">
@@ -367,6 +387,41 @@ function showStrangleConfirmModal(suggestionData) {
         console.error('[MODAL]   ❌ Error populating fields:', fieldErr);
         alert('[ERROR] Failed to populate modal fields: ' + fieldErr.message);
         throw fieldErr;
+    }
+
+    // Populate enhanced analysis section if available
+    if (suggestionData.enhanced_analysis) {
+        const ea = suggestionData.enhanced_analysis;
+        const summaryDiv = document.getElementById('enhanced-analysis-summary');
+        summaryDiv.style.display = 'block';
+
+        // Update score badge
+        const scoreBadge = document.getElementById('analysis-score-badge');
+        scoreBadge.textContent = `Score: ${ea.composite_score || '-'}/100`;
+        if (ea.composite_score >= 70) {
+            scoreBadge.className = 'badge badge-success';
+        } else if (ea.composite_score >= 50) {
+            scoreBadge.className = 'badge badge-warning';
+        } else {
+            scoreBadge.className = 'badge badge-danger';
+        }
+
+        // Update recommendation and bias
+        document.getElementById('analysis-recommendation').textContent = `Recommendation: ${ea.recommendation || '-'}`;
+        document.getElementById('analysis-entry-bias').textContent = `Entry Bias: ${ea.entry_bias || 'SYMMETRIC'}`;
+
+        // Show adjustments if any
+        if (ea.delta_adjustments && ea.delta_adjustments.adjustment_reasons && ea.delta_adjustments.adjustment_reasons.length > 0) {
+            const adjustmentsDiv = document.getElementById('analysis-adjustments');
+            adjustmentsDiv.style.display = 'block';
+            const adjustmentList = document.getElementById('adjustment-list');
+            adjustmentList.innerHTML = '';
+            ea.delta_adjustments.adjustment_reasons.forEach(reason => {
+                const li = document.createElement('li');
+                li.textContent = reason;
+                adjustmentList.appendChild(li);
+            });
+        }
     }
 
     // Populate table fields

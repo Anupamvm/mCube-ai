@@ -60,6 +60,49 @@ class GNewsClient:
         """Build cache key for news query"""
         return f"gnews:{query}:{max_results}"
 
+    def _sanitize_query(self, query: str) -> str:
+        """
+        Sanitize query string to avoid GNews API syntax errors.
+
+        Removes or replaces special characters that can cause query syntax errors:
+        - & (AND operator in GNews)
+        - | (OR operator)
+        - Unbalanced quotes
+        - Other problematic characters
+
+        Args:
+            query: Raw query string
+
+        Returns:
+            Sanitized query string safe for GNews API
+        """
+        if not query:
+            return query
+
+        # Replace common problematic patterns
+        sanitized = query
+
+        # Replace & with space (e.g., "S&P 500" -> "S P 500")
+        sanitized = sanitized.replace('&', ' ')
+
+        # Replace | with OR (explicit operator)
+        sanitized = sanitized.replace('|', ' OR ')
+
+        # Remove unbalanced quotes
+        quote_count = sanitized.count('"')
+        if quote_count % 2 != 0:
+            sanitized = sanitized.replace('"', '')
+
+        # Remove other problematic characters
+        for char in ['[', ']', '{', '}', '\\', '^', '~']:
+            sanitized = sanitized.replace(char, ' ')
+
+        # Collapse multiple spaces
+        while '  ' in sanitized:
+            sanitized = sanitized.replace('  ', ' ')
+
+        return sanitized.strip()
+
     def fetch_news(
         self,
         query: str,
@@ -113,7 +156,18 @@ class GNewsClient:
                 'totalArticles': 0
             }
 
-        # Check cache first
+        # Sanitize query to avoid syntax errors
+        sanitized_query = self._sanitize_query(query)
+        if not sanitized_query:
+            logger.warning(f"[GNews] Empty query after sanitization: '{query}'")
+            return {
+                'success': False,
+                'error': 'Invalid query',
+                'articles': [],
+                'totalArticles': 0
+            }
+
+        # Check cache first (use original query for cache key consistency)
         cache_key = self._build_cache_key(query, max_results)
         if use_cache:
             cached_result = cache.get(cache_key)
@@ -122,16 +176,16 @@ class GNewsClient:
                 return cached_result
 
         try:
-            # Build API request
+            # Build API request with sanitized query
             params = {
-                'q': query,
+                'q': sanitized_query,
                 'lang': lang,
                 'country': country,
                 'max': max_results,
                 'apikey': self.api_key
             }
 
-            logger.info(f"[GNews] Fetching news for query: {query} (max: {max_results})")
+            logger.info(f"[GNews] Fetching news for query: {sanitized_query} (max: {max_results})")
 
             response = requests.get(
                 f"{self.BASE_URL}/search",
@@ -164,6 +218,16 @@ class GNewsClient:
                     'totalArticles': 0
                 }
 
+            elif response.status_code == 400:
+                # Query syntax error - non-critical, log as warning and continue
+                logger.warning(f"[GNews] Query syntax error for '{sanitized_query}': {response.text[:200]}")
+                return {
+                    'success': False,
+                    'error': 'Query syntax error',
+                    'articles': [],
+                    'totalArticles': 0
+                }
+
             elif response.status_code == 403:
                 # Invalid API key
                 logger.error(f"[GNews] Invalid API key")
@@ -175,8 +239,9 @@ class GNewsClient:
                 }
 
             else:
-                # Other error
-                logger.error(f"[GNews] API error {response.status_code}: {response.text}")
+                # Other error - log as warning for non-critical status codes
+                log_level = logger.error if response.status_code >= 500 else logger.warning
+                log_level(f"[GNews] API error {response.status_code} for '{sanitized_query}': {response.text[:200]}")
                 return {
                     'success': False,
                     'error': f'API error: {response.status_code}',
@@ -185,7 +250,7 @@ class GNewsClient:
                 }
 
         except requests.exceptions.Timeout:
-            logger.error(f"[GNews] Request timeout for query: {query}")
+            logger.warning(f"[GNews] Request timeout for query: {sanitized_query}")
             return {
                 'success': False,
                 'error': 'Request timeout',
@@ -193,8 +258,17 @@ class GNewsClient:
                 'totalArticles': 0
             }
 
+        except requests.exceptions.RequestException as e:
+            logger.warning(f"[GNews] Request error for '{sanitized_query}': {e}")
+            return {
+                'success': False,
+                'error': f'Request error: {str(e)}',
+                'articles': [],
+                'totalArticles': 0
+            }
+
         except Exception as e:
-            logger.error(f"[GNews] Error fetching news: {e}", exc_info=True)
+            logger.warning(f"[GNews] Unexpected error for '{sanitized_query}': {e}")
             return {
                 'success': False,
                 'error': str(e),
@@ -387,7 +461,7 @@ class GNewsClient:
         keywords = [
             # Global markets - overnight performance
             "US stock market Dow Jones",
-            "Nasdaq S&P 500 overnight",
+            "Nasdaq SP500 stock market",
             "Asian markets Nikkei Hang Seng",
             # US Fed and economic data
             "Federal Reserve interest rate",
@@ -408,6 +482,8 @@ class GNewsClient:
 
         all_articles = []
         seen_urls = set()
+        failed_keywords = []
+        successful_keywords = []
 
         logger.info(f"[GNews] Fetching market news with {len(keywords)} keyword groups")
 
@@ -420,6 +496,7 @@ class GNewsClient:
                 )
 
                 if result.get('success') and result.get('articles'):
+                    successful_keywords.append(keyword)
                     for article in result['articles']:
                         # Deduplicate by URL
                         url = article.get('url', '')
@@ -429,18 +506,28 @@ class GNewsClient:
                             all_articles.append(article)
 
                     logger.debug(f"[GNews] Keyword '{keyword}': {len(result['articles'])} articles")
+                elif not result.get('success'):
+                    failed_keywords.append(keyword)
+                    logger.debug(f"[GNews] Keyword '{keyword}' failed: {result.get('error', 'unknown')}")
 
             except Exception as e:
+                failed_keywords.append(keyword)
                 logger.warning(f"[GNews] Error fetching '{keyword}': {e}")
                 continue
 
-        logger.info(f"[GNews] Total unique market articles fetched: {len(all_articles)}")
+        # Log summary
+        if failed_keywords:
+            logger.info(f"[GNews] {len(failed_keywords)}/{len(keywords)} keywords failed (non-critical)")
+
+        logger.info(f"[GNews] Total unique market articles fetched: {len(all_articles)} from {len(successful_keywords)} keywords")
 
         return {
-            'success': True,
+            'success': True,  # Always return success - partial results are acceptable
             'articles': all_articles,
             'totalArticles': len(all_articles),
-            'keywords_used': keywords
+            'keywords_used': keywords,
+            'successful_keywords': len(successful_keywords),
+            'failed_keywords': len(failed_keywords)
         }
 
 

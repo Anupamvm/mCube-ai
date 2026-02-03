@@ -2818,6 +2818,130 @@ const NiftyStrangle = {
 const BrokenIronCondor = {
     data: null,
     currentRiskMultiplier: 2.0,
+    adjustedStrikes: {
+        call_strike: null,
+        put_strike: null,
+        insurance_strike: null
+    },
+    strikeStep: 50,  // Nifty strike interval
+
+    async adjustStrike(leg, direction) {
+        if (!this.data) return;
+
+        const ic = this.data.iron_condor;
+        const insurance = ic.insurance;
+        const step = direction === 'up' ? this.strikeStep : -this.strikeStep;
+
+        // Initialize adjusted strikes if null
+        if (this.adjustedStrikes.call_strike === null) {
+            this.adjustedStrikes.call_strike = ic.call_strike;
+            this.adjustedStrikes.put_strike = ic.put_strike;
+            this.adjustedStrikes.insurance_strike = insurance.insurance_strike;
+        }
+
+        // Apply adjustment
+        if (leg === 'call') {
+            this.adjustedStrikes.call_strike += step;
+        } else if (leg === 'put') {
+            this.adjustedStrikes.put_strike += step;
+            // Ensure insurance strike stays below put strike
+            if (this.adjustedStrikes.insurance_strike >= this.adjustedStrikes.put_strike) {
+                this.adjustedStrikes.insurance_strike = this.adjustedStrikes.put_strike - 100;
+            }
+        } else if (leg === 'insurance') {
+            const newInsurance = this.adjustedStrikes.insurance_strike + step;
+            // Insurance must stay below put strike
+            if (newInsurance < this.adjustedStrikes.put_strike) {
+                this.adjustedStrikes.insurance_strike = newInsurance;
+            } else {
+                return; // Don't allow insurance >= put
+            }
+        }
+
+        // Fetch new premiums
+        await this.fetchAndUpdatePremiums();
+    },
+
+    async fetchAndUpdatePremiums() {
+        const ic = this.data.iron_condor;
+        const expiry = ic.expiry_date;
+
+        try {
+            // Fetch call and put premiums
+            const premiumResponse = await fetch(
+                `/trading/api/get-option-premiums/?call_strike=${this.adjustedStrikes.call_strike}&put_strike=${this.adjustedStrikes.put_strike}&expiry=${expiry}`
+            );
+            const premiumData = await premiumResponse.json();
+
+            // Fetch insurance premium separately
+            const insuranceResponse = await fetch(
+                `/trading/api/get-option-premiums/?call_strike=${this.adjustedStrikes.put_strike}&put_strike=${this.adjustedStrikes.insurance_strike}&expiry=${expiry}`
+            );
+            const insuranceData = await insuranceResponse.json();
+
+            if (premiumData.success && insuranceData.success) {
+                const newCallPremium = premiumData.call_premium;
+                const newPutPremium = premiumData.put_premium;
+                const newInsurancePremium = insuranceData.put_premium;
+                const quantity = ic.quantity;
+
+                // Calculate new values
+                const totalCredit = (newCallPremium + newPutPremium) * quantity;
+                const insuranceCost = newInsurancePremium * quantity;
+                const netPremium = newCallPremium + newPutPremium - newInsurancePremium;
+                const netCredit = netPremium * quantity;
+                const spreadWidth = this.adjustedStrikes.put_strike - this.adjustedStrikes.insurance_strike;
+                const maxLoss = (spreadWidth * quantity) - netCredit;
+
+                // Update displays
+                this.updateStrikeDisplays(newCallPremium, newPutPremium, newInsurancePremium, quantity, totalCredit, insuranceCost, netCredit, netPremium, maxLoss);
+            } else {
+                console.error('Failed to fetch premiums:', premiumData.error || insuranceData.error);
+            }
+        } catch (err) {
+            console.error('Error fetching premiums:', err);
+        }
+    },
+
+    updateStrikeDisplays(callPremium, putPremium, insurancePremium, quantity, totalCredit, insuranceCost, netCredit, netPremium, maxLoss) {
+        // Update leg displays
+        document.getElementById('icCallStrike').textContent = `${this.adjustedStrikes.call_strike} CE`;
+        document.getElementById('icCallPremium').textContent = `Premium: ₹${callPremium.toFixed(2)}`;
+        document.getElementById('icCallCredit').textContent = `Credit: +₹${this.formatIndian(callPremium * quantity)}`;
+
+        document.getElementById('icPutStrike').textContent = `${this.adjustedStrikes.put_strike} PE`;
+        document.getElementById('icPutPremium').textContent = `Premium: ₹${putPremium.toFixed(2)}`;
+        document.getElementById('icPutCredit').textContent = `Credit: +₹${this.formatIndian(putPremium * quantity)}`;
+
+        document.getElementById('insuranceStrikeDisplay').textContent = `${this.adjustedStrikes.insurance_strike} PE`;
+        document.getElementById('insurancePremiumDisplay').textContent = `Premium: ₹${insurancePremium.toFixed(2)}`;
+        document.getElementById('icInsuranceDebit').textContent = `Debit: -₹${this.formatIndian(insuranceCost)}`;
+
+        // Update summary
+        document.getElementById('icTotalCredit').textContent = `₹${this.formatIndian(totalCredit)}`;
+        document.getElementById('icInsuranceCost').textContent = `-₹${this.formatIndian(insuranceCost)}`;
+        document.getElementById('icNetCredit').textContent = `₹${this.formatIndian(netCredit)}`;
+
+        // Update max profit/loss
+        document.getElementById('maxProfitDisplay').innerHTML = `₹${this.formatIndian(netCredit)}`;
+        document.getElementById('maxLossDisplay').innerHTML = `₹${this.formatIndian(maxLoss)}`;
+
+        // Update breakevens
+        const upperBE = this.adjustedStrikes.call_strike + netPremium;
+        const lowerBE = this.adjustedStrikes.put_strike - netPremium;
+        document.getElementById('icUpperBE').textContent = `₹${upperBE.toFixed(0)}`;
+        document.getElementById('icLowerBE').textContent = `₹${lowerBE.toFixed(0)}`;
+        document.getElementById('icProfitZone').textContent = `${this.adjustedStrikes.put_strike} - ${this.adjustedStrikes.call_strike}`;
+    },
+
+    resetStrikes() {
+        if (!this.data) return;
+        const ic = this.data.iron_condor;
+        this.adjustedStrikes.call_strike = ic.call_strike;
+        this.adjustedStrikes.put_strike = ic.put_strike;
+        this.adjustedStrikes.insurance_strike = ic.insurance.insurance_strike;
+        this.fetchAndUpdatePremiums();
+    },
 
     updateRiskDisplay(value) {
         this.currentRiskMultiplier = parseFloat(value);
@@ -2858,6 +2982,11 @@ const BrokenIronCondor = {
 
             if (data.success) {
                 this.data = data;
+                // Reset adjusted strikes to match new data
+                const ic = data.iron_condor;
+                this.adjustedStrikes.call_strike = ic.call_strike;
+                this.adjustedStrikes.put_strike = ic.put_strike;
+                this.adjustedStrikes.insurance_strike = ic.insurance.insurance_strike;
                 this.displayResults(data);
             } else {
                 error.textContent = data.error || 'Failed to generate position';
@@ -2932,41 +3061,66 @@ const BrokenIronCondor = {
             </div>
         `;
 
-        // Build Position Legs content for accordion
+        // Build Position Legs content for accordion with strike adjustment buttons
+        const strikeButtonStyle = `
+            width: 28px; height: 28px; border: none; border-radius: 50%;
+            background: rgba(255,255,255,0.3); color: white; font-size: 1.1rem;
+            cursor: pointer; display: inline-flex; align-items: center; justify-content: center;
+            transition: background 0.2s; font-weight: bold;
+        `;
+
         const positionLegsContent = `
             <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 20px; border-radius: 12px; color: white;">
+                <div style="display: flex; justify-content: flex-end; margin-bottom: 10px;">
+                    <button onclick="BrokenIronCondor.resetStrikes()"
+                            style="background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.4); color: white; padding: 5px 12px; border-radius: 6px; font-size: 0.75rem; cursor: pointer;">
+                        ↺ Reset Strikes
+                    </button>
+                </div>
                 <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px;">
                     <div style="background: rgba(255,255,255,0.15); padding: 15px; border-radius: 8px;">
                         <div style="font-size: 0.7rem; opacity: 0.8; text-transform: uppercase; letter-spacing: 0.5px;">LEG 1 - SELL</div>
-                        <div style="font-size: 1.75rem; font-weight: 700; margin: 8px 0;">${ic.call_strike} CE</div>
-                        <div style="font-size: 0.9rem; opacity: 0.9;">Premium: ₹${ic.call_premium.toFixed(2)}</div>
-                        <div style="font-size: 0.75rem; opacity: 0.7; margin-top: 4px;">Credit: +₹${this.formatIndian(ic.call_premium * ic.quantity)}</div>
+                        <div style="display: flex; align-items: center; justify-content: center; gap: 8px; margin: 8px 0;">
+                            <button onclick="BrokenIronCondor.adjustStrike('call', 'down')" style="${strikeButtonStyle}" title="Move strike down">−</button>
+                            <span id="icCallStrike" style="font-size: 1.75rem; font-weight: 700;">${ic.call_strike} CE</span>
+                            <button onclick="BrokenIronCondor.adjustStrike('call', 'up')" style="${strikeButtonStyle}" title="Move strike up">+</button>
+                        </div>
+                        <div id="icCallPremium" style="font-size: 0.9rem; opacity: 0.9;">Premium: ₹${ic.call_premium.toFixed(2)}</div>
+                        <div id="icCallCredit" style="font-size: 0.75rem; opacity: 0.7; margin-top: 4px;">Credit: +₹${this.formatIndian(ic.call_premium * ic.quantity)}</div>
                     </div>
                     <div style="background: rgba(255,255,255,0.15); padding: 15px; border-radius: 8px;">
                         <div style="font-size: 0.7rem; opacity: 0.8; text-transform: uppercase; letter-spacing: 0.5px;">LEG 2 - SELL</div>
-                        <div style="font-size: 1.75rem; font-weight: 700; margin: 8px 0;">${ic.put_strike} PE</div>
-                        <div style="font-size: 0.9rem; opacity: 0.9;">Premium: ₹${ic.put_premium.toFixed(2)}</div>
-                        <div style="font-size: 0.75rem; opacity: 0.7; margin-top: 4px;">Credit: +₹${this.formatIndian(ic.put_premium * ic.quantity)}</div>
+                        <div style="display: flex; align-items: center; justify-content: center; gap: 8px; margin: 8px 0;">
+                            <button onclick="BrokenIronCondor.adjustStrike('put', 'down')" style="${strikeButtonStyle}" title="Move strike down">−</button>
+                            <span id="icPutStrike" style="font-size: 1.75rem; font-weight: 700;">${ic.put_strike} PE</span>
+                            <button onclick="BrokenIronCondor.adjustStrike('put', 'up')" style="${strikeButtonStyle}" title="Move strike up">+</button>
+                        </div>
+                        <div id="icPutPremium" style="font-size: 0.9rem; opacity: 0.9;">Premium: ₹${ic.put_premium.toFixed(2)}</div>
+                        <div id="icPutCredit" style="font-size: 0.75rem; opacity: 0.7; margin-top: 4px;">Credit: +₹${this.formatIndian(ic.put_premium * ic.quantity)}</div>
                     </div>
                     <div style="background: rgba(16, 185, 129, 0.4); padding: 15px; border-radius: 8px; border: 2px solid rgba(255,255,255,0.5);">
                         <div style="font-size: 0.7rem; opacity: 0.9; text-transform: uppercase; letter-spacing: 0.5px;">LEG 3 - BUY (Insurance)</div>
-                        <div style="font-size: 1.75rem; font-weight: 700; margin: 8px 0;" id="insuranceStrikeDisplay">${insurance.insurance_strike} PE</div>
-                        <div style="font-size: 0.9rem; opacity: 0.9;" id="insurancePremiumDisplay">Premium: ₹${insurance.insurance_premium.toFixed(2)}</div>
-                        <div style="font-size: 0.75rem; opacity: 0.7; margin-top: 4px;">Debit: -₹${this.formatIndian(insurance.insurance_premium * ic.quantity)}</div>
+                        <div style="display: flex; align-items: center; justify-content: center; gap: 8px; margin: 8px 0;">
+                            <button onclick="BrokenIronCondor.adjustStrike('insurance', 'down')" style="${strikeButtonStyle}" title="Move strike down">−</button>
+                            <span id="insuranceStrikeDisplay" style="font-size: 1.75rem; font-weight: 700;">${insurance.insurance_strike} PE</span>
+                            <button onclick="BrokenIronCondor.adjustStrike('insurance', 'up')" style="${strikeButtonStyle}" title="Move strike up">+</button>
+                        </div>
+                        <div id="insurancePremiumDisplay" style="font-size: 0.9rem; opacity: 0.9;">Premium: ₹${insurance.insurance_premium.toFixed(2)}</div>
+                        <div id="icInsuranceDebit" style="font-size: 0.75rem; opacity: 0.7; margin-top: 4px;">Debit: -₹${this.formatIndian(insurance.insurance_premium * ic.quantity)}</div>
                     </div>
                 </div>
                 <div style="margin-top: 15px; padding: 12px; background: rgba(255,255,255,0.1); border-radius: 8px; display: flex; justify-content: space-around; text-align: center;">
                     <div>
                         <div style="font-size: 0.7rem; opacity: 0.7;">Total Credit</div>
-                        <div style="font-size: 1.1rem; font-weight: 600;">₹${this.formatIndian((ic.call_premium + ic.put_premium) * ic.quantity)}</div>
+                        <div id="icTotalCredit" style="font-size: 1.1rem; font-weight: 600;">₹${this.formatIndian((ic.call_premium + ic.put_premium) * ic.quantity)}</div>
                     </div>
                     <div style="border-left: 1px solid rgba(255,255,255,0.3); padding-left: 20px;">
                         <div style="font-size: 0.7rem; opacity: 0.7;">Insurance Cost</div>
-                        <div style="font-size: 1.1rem; font-weight: 600;">-₹${this.formatIndian(insurance.insurance_premium * ic.quantity)}</div>
+                        <div id="icInsuranceCost" style="font-size: 1.1rem; font-weight: 600;">-₹${this.formatIndian(insurance.insurance_premium * ic.quantity)}</div>
                     </div>
                     <div style="border-left: 1px solid rgba(255,255,255,0.3); padding-left: 20px;">
                         <div style="font-size: 0.7rem; opacity: 0.7;">Net Credit</div>
-                        <div style="font-size: 1.1rem; font-weight: 700; color: #a7f3d0;">₹${this.formatIndian(ic.net_premium * ic.quantity)}</div>
+                        <div id="icNetCredit" style="font-size: 1.1rem; font-weight: 700; color: #a7f3d0;">₹${this.formatIndian(ic.net_premium * ic.quantity)}</div>
                     </div>
                 </div>
             </div>
@@ -3004,15 +3158,15 @@ const BrokenIronCondor = {
                 <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; text-align: center;">
                     <div>
                         <div style="font-size: 0.75rem; color: #6b7280;">Upper Breakeven</div>
-                        <div style="font-size: 1.1rem; font-weight: 600; color: #1f2937;">₹${(ic.call_strike + ic.net_premium).toFixed(0)}</div>
+                        <div id="icUpperBE" style="font-size: 1.1rem; font-weight: 600; color: #1f2937;">₹${(ic.call_strike + ic.net_premium).toFixed(0)}</div>
                     </div>
                     <div>
                         <div style="font-size: 0.75rem; color: #6b7280;">Profit Zone</div>
-                        <div style="font-size: 1.1rem; font-weight: 600; color: #10b981;">${ic.put_strike} - ${ic.call_strike}</div>
+                        <div id="icProfitZone" style="font-size: 1.1rem; font-weight: 600; color: #10b981;">${ic.put_strike} - ${ic.call_strike}</div>
                     </div>
                     <div>
                         <div style="font-size: 0.75rem; color: #6b7280;">Lower Breakeven</div>
-                        <div style="font-size: 1.1rem; font-weight: 600; color: #1f2937;">₹${(ic.put_strike - ic.net_premium).toFixed(0)}</div>
+                        <div id="icLowerBE" style="font-size: 1.1rem; font-weight: 600; color: #1f2937;">₹${(ic.put_strike - ic.net_premium).toFixed(0)}</div>
                     </div>
                 </div>
             </div>
@@ -3392,6 +3546,12 @@ const BrokenIronCondor = {
         const ic = this.data.iron_condor;
         const lots = parseInt(document.getElementById('icLotsInput')?.value || ic.lots);
 
+        // Check if strikes have been adjusted
+        const strikesAdjusted = this.adjustedStrikes.call_strike !== null &&
+            (this.adjustedStrikes.call_strike !== ic.call_strike ||
+             this.adjustedStrikes.put_strike !== ic.put_strike ||
+             this.adjustedStrikes.insurance_strike !== ic.insurance.insurance_strike);
+
         // Show progress UI
         const results = document.getElementById('ironCondorResults');
         results.innerHTML = this.getProgressHTML(lots);
@@ -3400,16 +3560,28 @@ const BrokenIronCondor = {
         this.startProgressPolling(ic.suggestion_id);
 
         try {
+            // Build request body - include adjusted strikes if modified
+            const requestBody = {
+                suggestion_id: ic.suggestion_id,
+                total_lots: lots
+            };
+
+            if (strikesAdjusted) {
+                requestBody.adjusted_strikes = {
+                    call_strike: this.adjustedStrikes.call_strike,
+                    put_strike: this.adjustedStrikes.put_strike,
+                    insurance_strike: this.adjustedStrikes.insurance_strike
+                };
+                console.log('[IronCondor] Using adjusted strikes:', requestBody.adjusted_strikes);
+            }
+
             const response = await fetch('{% url "trading:execute_iron_condor" %}', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                     'X-CSRFToken': ApiClient.csrftoken
                 },
-                body: JSON.stringify({
-                    suggestion_id: ic.suggestion_id,
-                    total_lots: lots
-                })
+                body: JSON.stringify(requestBody)
             });
 
             const result = await response.json();
@@ -6409,6 +6581,83 @@ const TradeVerification = {
 function hideResults() {
     document.getElementById('resultsPanel').style.display = 'none';
 }
+
+// Preloaded results from server (latest algorithm run)
+const PRELOADED_FUTURES_RESULTS = {{ preloaded_results|safe }};
+
+// Display preloaded results with "Previous Results" header
+function displayPreloadedResults(results) {
+    const resultsDiv = document.getElementById('futuresResults');
+    resultsDiv.style.display = 'block';
+
+    const allContracts = results.all_contracts || [];
+    const totalPassed = results.total_passed || allContracts.length;
+    const batchTime = results.batch_time || 'Unknown';
+
+    // Build HTML with "Previous Results" header
+    let html = '<div style="margin-top: 20px;">';
+
+    // Previous Results Banner (different styling to distinguish from fresh results)
+    html += `
+        <div style="background: linear-gradient(135deg, #fefce8 0%, #fef9c3 100%); border-radius: 12px; padding: 20px; margin-bottom: 25px; border: 2px solid #eab308; position: relative;">
+            <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 15px;">
+                <div>
+                    <h2 style="color: #854d0e; margin: 0 0 8px 0; display: flex; align-items: center; gap: 10px;">
+                        <span style="font-size: 1.5rem;">📋</span>
+                        Previous Analysis Results
+                    </h2>
+                    <div style="color: #a16207; font-size: 0.875rem;">
+                        <span style="font-weight: 600;">${totalPassed} shortlisted contracts</span> from last run
+                        <span style="margin-left: 10px; padding: 2px 8px; background: #fef3c7; border-radius: 4px;">
+                            🕐 ${batchTime}
+                        </span>
+                    </div>
+                </div>
+                <button onclick="FuturesAlgorithm.run()"
+                        style="background: #3b82f6; color: white; border: none; padding: 10px 20px; border-radius: 8px; cursor: pointer; font-weight: 600; display: flex; align-items: center; gap: 8px;">
+                    🔄 Run Fresh Analysis
+                </button>
+            </div>
+        </div>
+    `;
+
+    // Display contracts using the same card builder from FuturesAlgorithm
+    if (allContracts.length > 0) {
+        allContracts.forEach((contract, index) => {
+            html += FuturesAlgorithm.buildContractCard(contract, index, true);
+        });
+    } else {
+        html += `
+            <div style="text-align: center; padding: 40px; background: #f9fafb; border-radius: 12px;">
+                <div style="font-size: 3rem; margin-bottom: 15px;">📭</div>
+                <div style="color: #6b7280; font-size: 1.125rem;">No previous results available</div>
+            </div>
+        `;
+    }
+
+    html += '</div>';
+    resultsDiv.innerHTML = html;
+
+    // Store contracts for reference
+    FuturesAlgorithm.analyzedContracts = allContracts;
+}
+
+// Initialize preloaded results on page load
+document.addEventListener('DOMContentLoaded', function() {
+    // Check if we have preloaded futures results
+    if (PRELOADED_FUTURES_RESULTS && PRELOADED_FUTURES_RESULTS.success && PRELOADED_FUTURES_RESULTS.all_contracts && PRELOADED_FUTURES_RESULTS.all_contracts.length > 0) {
+        console.log('[Futures] Found preloaded results from', PRELOADED_FUTURES_RESULTS.batch_time);
+        console.log('[Futures] Preloaded contracts:', PRELOADED_FUTURES_RESULTS.all_contracts.length);
+
+        // Small delay to ensure all modules are loaded
+        setTimeout(function() {
+            // Display the preloaded results with special header
+            displayPreloadedResults(PRELOADED_FUTURES_RESULTS);
+        }, 100);
+    } else {
+        console.log('[Futures] No preloaded results available');
+    }
+});
 </script>
 
 <!-- Main Application -->

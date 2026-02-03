@@ -3768,16 +3768,55 @@ def celery_task_control(request):
         else:
             schedule_str = str(config.get('schedule', 'Unknown'))
 
+        # Get last execution info from BkLog
+        from apps.core.models import BkLog
+        last_execution = BkLog.objects.filter(
+            background_task__icontains=key.replace('-', '_')
+        ).order_by('-timestamp').first()
+
+        last_exec_info = None
+        if last_execution:
+            last_exec_info = {
+                'timestamp': last_execution.timestamp.isoformat(),
+                'timestamp_display': last_execution.timestamp.strftime('%d %b %H:%M'),
+                'success': last_execution.success if hasattr(last_execution, 'success') else (last_execution.level not in ['error', 'critical']),
+                'level': last_execution.level,
+                'message': last_execution.message[:100] if last_execution.message else '',
+                'duration_ms': last_execution.execution_time_ms,
+            }
+
+        # Parse schedule hour and minute for timeline positioning
+        schedule_hour = None
+        schedule_minute = None
+        schedule = config.get('schedule')
+        if hasattr(schedule, 'hour') and hasattr(schedule, 'minute'):
+            try:
+                # Handle crontab hour/minute
+                if hasattr(schedule.hour, '__iter__') and not isinstance(schedule.hour, str):
+                    schedule_hour = min(schedule.hour) if schedule.hour else None
+                else:
+                    schedule_hour = int(schedule.hour) if str(schedule.hour).isdigit() else None
+
+                if hasattr(schedule.minute, '__iter__') and not isinstance(schedule.minute, str):
+                    schedule_minute = min(schedule.minute) if schedule.minute else 0
+                else:
+                    schedule_minute = int(schedule.minute) if str(schedule.minute).isdigit() else 0
+            except (ValueError, TypeError):
+                pass
+
         task_info = {
             'key': key,
             'task': config.get('task', 'Unknown'),
             'schedule': schedule_str,
+            'schedule_hour': schedule_hour,
+            'schedule_minute': schedule_minute,
             'queue': queue,
             'is_enabled': task_state.is_enabled if task_state else False,
             'display_name': task_state.display_name if task_state and task_state.display_name else default_config.get('display_name', key.replace('-', ' ').title()),
             'description': task_state.description if task_state and task_state.description else default_config.get('description', ''),
             'use_custom_schedule': task_state.use_custom_schedule if task_state else False,
             'schedule_type': task_state.schedule_type if task_state else default_config.get('schedule_type', 'crontab'),
+            'last_execution': last_exec_info,
         }
 
         categorized_tasks[category].append(task_info)
@@ -4069,6 +4108,15 @@ TASK_DEFAULT_CONFIG = {
         'default_hour': 9,
         'default_minute': 45,
         'default_days': [0, 1, 2, 3, 4],
+    },
+    'execute-futures-algorithm': {
+        'display_name': 'Futures Algorithm',
+        'description': 'Runs enhanced 12-component futures analysis on top 50 contracts by volume. Sends Telegram alerts for qualified candidates (score >= 65).',
+        'schedule_type': 'crontab',
+        'category': 'strategies',
+        'default_hour': 8,
+        'default_minute': 30,
+        'default_days': [0, 1, 2, 3, 4],  # Mon-Fri
     },
     'check-futures-averaging': {
         'display_name': 'Futures Averaging Check',
@@ -4423,6 +4471,69 @@ def save_task_config(request):
 
     except Exception as e:
         logger.error(f"Error saving task config for {task_key}: {e}", exc_info=True)
+        return JsonResponse({'success': False, 'error': str(e)}, status=500)
+
+
+@login_required
+@user_passes_test(is_admin_user)
+@require_POST
+def run_task_now(request):
+    """
+    Manually trigger a Celery task to run immediately (once).
+
+    POST params:
+        task_key: The task key from beat_schedule (e.g., 'execute-futures-algorithm')
+
+    Returns JSON with task_id if successful.
+    """
+    import json
+    from mcube_ai.celery import get_static_schedule
+
+    try:
+        body = json.loads(request.body)
+        task_key = body.get('task_key', '')
+
+        if not task_key:
+            return JsonResponse({'success': False, 'error': 'task_key required'}, status=400)
+
+        # Get task path from static schedule
+        static_schedule = get_static_schedule()
+        task_config = static_schedule.get(task_key)
+
+        if not task_config:
+            return JsonResponse({'success': False, 'error': f'Task "{task_key}" not found in schedule'}, status=404)
+
+        task_path = task_config.get('task')
+        if not task_path:
+            return JsonResponse({'success': False, 'error': f'Task path not defined for "{task_key}"'}, status=400)
+
+        # Import and run the task via Celery
+        from celery import current_app
+
+        # Get task kwargs if defined
+        task_kwargs = task_config.get('kwargs', {})
+
+        # Send task to Celery
+        logger.info(f"Manually triggering task: {task_key} ({task_path}) by {request.user.username}")
+
+        # Use send_task to trigger by name
+        result = current_app.send_task(task_path, kwargs=task_kwargs)
+
+        logger.info(f"Task {task_key} queued with ID: {result.id}")
+
+        return JsonResponse({
+            'success': True,
+            'task_key': task_key,
+            'task_path': task_path,
+            'task_id': result.id,
+            'message': f'Task "{task_key}" has been queued for execution',
+            'status': 'PENDING'
+        })
+
+    except json.JSONDecodeError:
+        return JsonResponse({'success': False, 'error': 'Invalid JSON'}, status=400)
+    except Exception as e:
+        logger.error(f"Error triggering task: {e}", exc_info=True)
         return JsonResponse({'success': False, 'error': str(e)}, status=500)
 
 
@@ -5263,3 +5374,113 @@ def control_all_bg_tasks(request):
     except Exception as e:
         logger.error(f"Error controlling Celery tasks: {e}")
         return JsonResponse({'success': False, 'error': str(e)}, status=500)
+
+
+@login_required
+@user_passes_test(is_admin_user)
+def api_task_timeline(request):
+    """
+    API endpoint for task execution timeline.
+
+    Returns:
+        - Recent task execution logs from BkLog (last 24 hours)
+        - Today's scheduled tasks with execution status
+    """
+    from apps.core.models import BkLog, CeleryTaskState
+    from mcube_ai.celery import get_static_schedule
+    from datetime import timedelta
+    from django.utils import timezone
+
+    try:
+        # Get logs from last 24 hours
+        cutoff = timezone.now() - timedelta(hours=24)
+
+        logs = BkLog.objects.filter(
+            timestamp__gte=cutoff
+        ).order_by('-timestamp')[:200]  # Limit to 200 most recent
+
+        log_data = []
+        for log in logs:
+            log_data.append({
+                'timestamp': log.timestamp.isoformat(),
+                'level': log.level,
+                'action': log.action,
+                'message': log.message,
+                'background_task': log.background_task,
+                'task_category': log.task_category,
+                'task_id': log.task_id,
+                'success': log.success,
+                'execution_time_ms': log.execution_time_ms,
+            })
+
+        # Get today's schedule
+        static_schedule = get_static_schedule()
+        enabled_tasks = set(
+            CeleryTaskState.objects.filter(is_enabled=True).values_list('task_key', flat=True)
+        )
+
+        # Get today's executed tasks
+        today_start = timezone.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        executed_tasks = set(
+            BkLog.objects.filter(
+                timestamp__gte=today_start,
+                success=True
+            ).values_list('background_task', flat=True).distinct()
+        )
+
+        schedule_data = []
+        for key, config in static_schedule.items():
+            task_path = config.get('task', '')
+            schedule = config.get('schedule')
+
+            # Extract hour/minute from crontab schedule
+            hour = None
+            minute = None
+            if hasattr(schedule, 'hour') and hasattr(schedule, 'minute'):
+                try:
+                    # Handle crontab hour/minute (could be sets or values)
+                    if hasattr(schedule.hour, '__iter__') and not isinstance(schedule.hour, str):
+                        hour = min(schedule.hour) if schedule.hour else None
+                    else:
+                        hour = int(schedule.hour) if str(schedule.hour).isdigit() else None
+
+                    if hasattr(schedule.minute, '__iter__') and not isinstance(schedule.minute, str):
+                        minute = min(schedule.minute) if schedule.minute else 0
+                    else:
+                        minute = int(schedule.minute) if str(schedule.minute).isdigit() else 0
+                except (ValueError, TypeError):
+                    pass
+
+            if hour is not None:
+                # Get display name from CeleryTaskState if available
+                task_state = CeleryTaskState.objects.filter(task_key=key).first()
+                display_name = task_state.display_name if task_state else key.replace('-', ' ').title()
+
+                schedule_data.append({
+                    'key': key,
+                    'task': task_path,
+                    'display_name': display_name,
+                    'short_name': display_name[:15] if len(display_name) > 15 else display_name,
+                    'hour': hour,
+                    'minute': minute,
+                    'is_active': key in enabled_tasks,
+                    'executed': task_path in executed_tasks or key in executed_tasks,
+                })
+
+        # Sort by time
+        schedule_data.sort(key=lambda x: (x['hour'], x['minute']))
+
+        return JsonResponse({
+            'success': True,
+            'logs': log_data,
+            'schedule': schedule_data,
+            'total_logs': len(log_data),
+            'total_scheduled': len(schedule_data),
+        })
+
+    except Exception as e:
+        logger.error(f"Error fetching task timeline: {e}", exc_info=True)
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=500)
