@@ -1415,10 +1415,12 @@ def api_upload_csv(request):
             }, status=400)
 
         # Process each file - no filename restrictions, duplicates handled at data level
+        # Incremental upload: only new records are created, only changed records are updated
         results = []
         total_created = 0
         total_updated = 0
         total_skipped = 0
+        total_unchanged = 0
         all_errors = []
 
         for csv_file in csv_files:
@@ -1435,6 +1437,7 @@ def api_upload_csv(request):
                 'records_created': result.get('records_created', 0),
                 'records_updated': result.get('records_updated', 0),
                 'records_skipped': result.get('records_skipped', 0),
+                'records_unchanged': result.get('records_unchanged', 0),
                 'errors': result.get('errors', []),
             })
 
@@ -1442,6 +1445,7 @@ def api_upload_csv(request):
                 total_created += result.get('records_created', 0)
                 total_updated += result.get('records_updated', 0)
                 total_skipped += result.get('records_skipped', 0)
+                total_unchanged += result.get('records_unchanged', 0)
 
             if result.get('errors'):
                 all_errors.extend([f"{csv_file.name}: {err}" for err in result['errors'][:5]])
@@ -1458,6 +1462,7 @@ def api_upload_csv(request):
             'records_created': total_created,
             'records_updated': total_updated,
             'records_skipped': total_skipped,
+            'records_unchanged': total_unchanged,
             'errors': all_errors,
             'results': results,
         })

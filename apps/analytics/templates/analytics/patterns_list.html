@@ -508,6 +508,12 @@
                 <option value="MUTUAL_FUND">Mutual Funds</option>
                 <option value="ETF">ETF Only</option>
             </select>
+            <label style="margin-left: 1rem;">Broker:</label>
+            <select id="overviewBrokerFilter" onchange="loadSectionData('overview')">
+                <option value="ALL">All Brokers</option>
+                <option value="KOTAK">Kotak Neo</option>
+                <option value="ICICI">ICICI Breeze</option>
+            </select>
             <label style="margin-left: 1rem;">Year:</label>
             <select id="overviewFyFilter" onchange="loadSectionData('overview')">
                 <option value="ALL">All Years</option>
@@ -1430,7 +1436,9 @@ async function loadSectionData(section) {
     const assetSelect = document.getElementById(`${section}AssetFilter`);
     const asset = assetSelect ? assetSelect.value : 'ALL';
 
-    const broker = getCurrentBroker();
+    // Get section-specific broker filter if available, otherwise use global
+    const brokerSelect = document.getElementById(`${section}BrokerFilter`);
+    const broker = brokerSelect ? brokerSelect.value : getCurrentBroker();
     const sectionEl = document.getElementById(`${section}Section`);
     const loadingEl = sectionEl.querySelector('.section-loading');
     const contentEl = sectionEl.querySelector('.section-content');

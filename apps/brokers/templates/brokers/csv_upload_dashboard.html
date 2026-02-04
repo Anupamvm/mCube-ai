@@ -522,6 +522,7 @@
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
         </svg>
         <div>
+            <p><strong>Incremental Upload:</strong> Re-uploading the same file will only add new records and update changed records. Unchanged records are skipped. Latest report data takes priority.</p>
             <p><strong>Kotak F&O Gain/Loss:</strong> Download from Kotak Securities &gt; Reports &gt; Gain/Loss Report. Contains derivatives P&L with charges breakdown.</p>
             <p><strong>Breeze FNO Portfolio:</strong> Download from ICICI Direct &gt; Portfolio &gt; F&O Portfolio. Contains realized and unrealized P&L per contract.</p>
         </div>
@@ -628,14 +629,18 @@
             <div class="result-summary">
                 <div class="result-item">
                     <div class="result-value success" id="result-created">0</div>
-                    <div class="result-label">Created</div>
+                    <div class="result-label">New</div>
                 </div>
                 <div class="result-item">
                     <div class="result-value warning" id="result-updated">0</div>
                     <div class="result-label">Updated</div>
                 </div>
                 <div class="result-item">
-                    <div class="result-value info" id="result-skipped">0</div>
+                    <div class="result-value info" id="result-unchanged">0</div>
+                    <div class="result-label">Unchanged</div>
+                </div>
+                <div class="result-item">
+                    <div class="result-value" style="color: var(--gray);" id="result-skipped">0</div>
                     <div class="result-label">Skipped</div>
                 </div>
             </div>
@@ -878,16 +883,26 @@ function showResult(data, isSuccess) {
 
     document.getElementById('result-created').textContent = data.records_created || 0;
     document.getElementById('result-updated').textContent = data.records_updated || 0;
+    document.getElementById('result-unchanged').textContent = data.records_unchanged || 0;
     document.getElementById('result-skipped').textContent = data.records_skipped || 0;
 
     let details = data.message || '';
+
+    // Show incremental upload summary
+    const created = data.records_created || 0;
+    const updated = data.records_updated || 0;
+    const unchanged = data.records_unchanged || 0;
+    if (created + updated + unchanged > 0) {
+        details += `\n\nIncremental upload: ${created} new, ${updated} updated, ${unchanged} unchanged`;
+    }
 
     // Show per-file results if multiple files
     if (data.results && data.results.length > 0) {
         details += '\n\nPer-file results:';
         data.results.forEach(r => {
             const status = r.success ? 'OK' : 'FAILED';
-            details += `\n  ${r.filename}: ${status} (${r.records_created} created)`;
+            const fileUnchanged = r.records_unchanged || 0;
+            details += `\n  ${r.filename}: ${status} (${r.records_created} new, ${r.records_updated} updated, ${fileUnchanged} unchanged)`;
         });
     }
 

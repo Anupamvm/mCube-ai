@@ -419,12 +419,13 @@ def manual_triggers_refactored(request):
     from datetime import datetime, timedelta
     from decimal import Decimal
 
-    # Fetch the latest futures suggestions (created within last 24 hours, SUGGESTED status)
-    cutoff_time = timezone.now() - timedelta(hours=24)
+    # Fetch the latest futures suggestions (created within last 7 days)
+    # Include both SUGGESTED and TAKEN status (both were shortlisted by algorithm)
+    cutoff_time = timezone.now() - timedelta(days=7)
     latest_suggestions = TradeSuggestion.objects.filter(
         user=request.user,
         strategy='icici_futures',
-        status='SUGGESTED',
+        status__in=['SUGGESTED', 'TAKEN', 'ACTIVE'],
         created_at__gte=cutoff_time
     ).order_by('-created_at')
 

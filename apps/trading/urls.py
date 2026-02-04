@@ -5,6 +5,7 @@ Trading URLs
 from django.urls import path
 from . import views, api_views
 from .api import trade_tracking_views as tracking_api
+from .api import chart_views
 
 app_name = 'trading'
 
@@ -53,6 +54,10 @@ urlpatterns = [
 
     # Option Chain Data
     path('api/get-option-premiums/', api_views.get_option_premiums, name='api_get_option_premiums'),
+
+    # Chart Data API
+    path('api/chart-data/<int:suggestion_id>/', chart_views.get_chart_data, name='api_chart_data'),
+    path('api/chart-data/contract/', chart_views.get_contract_chart_data, name='api_contract_chart_data'),
 
     # Active Positions Management
     path('api/get-positions/', api_views.get_active_positions, name='api_get_positions'),

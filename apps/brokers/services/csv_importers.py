@@ -11,7 +11,7 @@ import io
 import logging
 import re
 import uuid
-from datetime import datetime
+from datetime import datetime, date
 from decimal import Decimal, InvalidOperation
 from typing import Dict, List, Optional, Tuple
 
@@ -65,6 +65,34 @@ def parse_decimal(value: str, default: Decimal = Decimal('0.00')) -> Decimal:
         return default
 
 
+def determine_fy_from_date(d: date) -> str:
+    """
+    Determine Financial Year from a date.
+
+    Indian FY runs April 1 to March 31.
+    - If date is April or later, FY is current_year-next_year
+    - If date is Jan-Mar, FY is previous_year-current_year
+
+    Args:
+        d: A date object
+
+    Returns:
+        FY string like '2024-25'
+    """
+    if not d:
+        return ''
+
+    year = d.year
+    month = d.month
+
+    if month >= 4:
+        # April or later - we're in FY starting this year
+        return f"{year}-{str(year + 1)[-2:]}"
+    else:
+        # Jan-Mar - we're in FY that started last year
+        return f"{year - 1}-{str(year)[-2:]}"
+
+
 def parse_int(value: str, default: int = 0) -> int:
     """Parse an integer value from string."""
     if not value or value.strip() == '' or value.strip() == '-' or value.strip().upper() == 'NA':
@@ -106,6 +134,12 @@ class KotakFNOImporter:
     Contract formats (Derivatives):
       - Futures: "BANKNIFTY 25NOV25 XX 0" (SYMBOL DDMMMYY XX 0)
       - Options: "NIFTY 02DEC25 CE 26850" (SYMBOL DDMMMYY CE/PE STRIKE)
+
+    Incremental Upload:
+      - Only creates new records (not previously imported)
+      - Only updates records where values have changed
+      - Skips unchanged records to avoid unnecessary writes
+      - Latest report takes priority when updating
     """
 
     # Section markers in the CSV
@@ -133,12 +167,19 @@ class KotakFNOImporter:
         'OPTSTK': 'OPTSTK',
     }
 
+    # Fields to compare for detecting changes (excluding raw_data and import_batch_id)
+    COMPARE_FIELDS = [
+        'quantity', 'buy_amount', 'sell_amount', 'gross_pnl', 'net_pnl',
+        'gst', 'brokerage', 'stt', 'misc_charges', 'total_charges'
+    ]
+
     def __init__(self):
         self.batch_id = None
         self.errors = []
         self.records_created = 0
         self.records_updated = 0
         self.records_skipped = 0
+        self.records_unchanged = 0  # New: track records with no changes
         self.section_counts = {}  # Track records per section
         self.fy = None  # Financial year extracted from filename
 
@@ -147,14 +188,15 @@ class KotakFNOImporter:
         Extract Financial Year from Kotak filename.
 
         Filename format: Gain_Loss_A0YPQ_20240401_20250331.csv
+                    or:  Gain_Loss_A0YPQ_20240401_20250331 (1).csv (with download counter)
         The dates represent the FY period (YYYYMMDD_YYYYMMDD).
 
         Returns:
             FY string like '2024-25' or empty string if cannot parse
         """
         try:
-            # Extract date portion using regex
-            match = re.search(r'_(\d{8})_(\d{8})\.', filename)
+            # Extract date portion using regex - handle optional space and (N) before .csv
+            match = re.search(r'_(\d{8})_(\d{8})(?:\s*\(\d+\))?\.', filename)
             if match:
                 start_date_str = match.group(1)
                 # Parse start date (YYYYMMDD format)
@@ -291,6 +333,7 @@ class KotakFNOImporter:
         self.records_created = 0
         self.records_updated = 0
         self.records_skipped = 0
+        self.records_unchanged = 0
         self.section_counts = {
             'equity': 0,
             'mutual_funds': 0,
@@ -400,7 +443,7 @@ class KotakFNOImporter:
             import_log.save()
 
             total_records = self.records_created + self.records_updated
-            logger.info(f"Import complete: {total_records} records ({self.records_created} created, {self.records_updated} updated)")
+            logger.info(f"Import complete: {total_records} records ({self.records_created} created, {self.records_updated} updated, {self.records_unchanged} unchanged)")
             logger.info(f"Section breakdown: {self.section_counts}")
 
             return {
@@ -409,6 +452,7 @@ class KotakFNOImporter:
                 'records_created': self.records_created,
                 'records_updated': self.records_updated,
                 'records_skipped': self.records_skipped,
+                'records_unchanged': self.records_unchanged,
                 'errors': self.errors,
                 'section_counts': self.section_counts,
             }
@@ -428,7 +472,12 @@ class KotakFNOImporter:
 
     def _process_kotak_row(self, row: List[str], row_num: int = 0):
         """
-        Process a single row from Kotak CSV.
+        Process a single row from Kotak CSV with incremental upload support.
+
+        Incremental behavior:
+        - Creates new records if they don't exist
+        - Updates only if values have changed (latest report takes priority)
+        - Skips unchanged records to avoid unnecessary database writes
 
         Column mapping (0-indexed):
         0: Script Name
@@ -483,41 +532,84 @@ class KotakFNOImporter:
             'long_term_pnl': str(long_term_pnl),
         }
 
-        # Create or update record - use broker + trading_symbol + fy as unique key
-        # This allows the same contract to have different P&L entries for each FY
-        obj, created = BrokerContractPnL.objects.update_or_create(
-            broker='KOTAK',
-            trading_symbol=script_name,
-            fy=self.fy,  # Include FY in unique key
-            defaults={
-                'import_batch_id': self.batch_id,  # Track latest import batch
-                'fy': self.fy,  # Financial year from filename
-                'symbol': contract['symbol'],
-                'segment': contract['segment'],
-                'security_type': contract['security_type'],
-                'expiry_date': contract['expiry_date'],
-                'strike_price': contract['strike_price'],
-                'option_type': contract['option_type'],
-                'quantity': quantity,
-                'buy_amount': buy_amount,
-                'sell_amount': sell_amount,
-                'gross_pnl': gross_pnl,
-                'net_pnl': net_pnl,
-                'gst': gst,
-                'brokerage': brokerage,
-                'stt': stt,
-                'misc_charges': misc_charges,
-                'total_charges': total_charges,
-                'raw_data': raw_data,
-            }
-        )
-
-        if created:
-            self.records_created += 1
+        # Determine FY for this record
+        # Use filename FY to match Kotak Neo UI exactly
+        # Kotak Neo reports all records in a file under the file's FY period,
+        # regardless of expiry date (e.g., TITAN 24APR25 is included in FY 2024-25 file totals)
+        if self.fy:
+            record_fy = self.fy
+            logger.debug(f"Using filename FY {record_fy} for {script_name}")
+        elif contract['expiry_date']:
+            # Fallback: infer from expiry_date if filename FY not available
+            record_fy = determine_fy_from_date(contract['expiry_date'])
+            logger.debug(f"Inferred FY {record_fy} from expiry_date {contract['expiry_date']} for {script_name}")
         else:
-            self.records_updated += 1
+            # Last resort: use current date FY
+            record_fy = determine_fy_from_date(datetime.now().date())
+            logger.debug(f"Using current date FY {record_fy} for {script_name}")
 
-        logger.debug(f"{'Created' if created else 'Updated'} record for {script_name} ({contract['segment']}): Net P&L = {net_pnl}")
+        # New values from the CSV (latest report)
+        new_values = {
+            'import_batch_id': self.batch_id,
+            'symbol': contract['symbol'],
+            'segment': contract['segment'],
+            'security_type': contract['security_type'],
+            'expiry_date': contract['expiry_date'],
+            'strike_price': contract['strike_price'],
+            'option_type': contract['option_type'],
+            'quantity': quantity,
+            'buy_amount': buy_amount,
+            'sell_amount': sell_amount,
+            'gross_pnl': gross_pnl,
+            'net_pnl': net_pnl,
+            'gst': gst,
+            'brokerage': brokerage,
+            'stt': stt,
+            'misc_charges': misc_charges,
+            'total_charges': total_charges,
+            'raw_data': raw_data,
+        }
+
+        # Check if record already exists
+        try:
+            existing = BrokerContractPnL.objects.get(
+                broker='KOTAK',
+                trading_symbol=script_name,
+                fy=record_fy
+            )
+
+            # Compare key fields to detect if anything has changed
+            has_changes = False
+            for field in self.COMPARE_FIELDS:
+                old_value = getattr(existing, field)
+                new_value = new_values.get(field)
+                if old_value != new_value:
+                    has_changes = True
+                    logger.debug(f"Change detected in {script_name}.{field}: {old_value} -> {new_value}")
+                    break
+
+            if has_changes:
+                # Update with new values (latest report takes priority)
+                for key, value in new_values.items():
+                    setattr(existing, key, value)
+                existing.save()
+                self.records_updated += 1
+                logger.debug(f"Updated record for {script_name} ({contract['segment']}): Net P&L = {net_pnl}")
+            else:
+                # No changes detected, skip this record
+                self.records_unchanged += 1
+                logger.debug(f"Unchanged record for {script_name} ({contract['segment']}): Net P&L = {net_pnl}")
+
+        except BrokerContractPnL.DoesNotExist:
+            # Create new record
+            BrokerContractPnL.objects.create(
+                broker='KOTAK',
+                trading_symbol=script_name,
+                fy=record_fy,
+                **new_values
+            )
+            self.records_created += 1
+            logger.debug(f"Created record for {script_name} ({contract['segment']}): Net P&L = {net_pnl}, FY = {record_fy}")
 
 
 class BreezeFNOImporter:
@@ -531,7 +623,19 @@ class BreezeFNOImporter:
 
     Contract format: "FUT-HDFBAN-24-Feb-2026" or "OPT-NIFTY-24-Apr-2025-CE-22500"
     Contains: Realized P&L, Unrealized P&L per contract
+
+    Incremental Upload:
+      - Only creates new records (not previously imported)
+      - Only updates records where values have changed
+      - Skips unchanged records to avoid unnecessary writes
+      - Latest report takes priority when updating
     """
+
+    # Fields to compare for detecting changes (excluding raw_data and import_batch_id)
+    COMPARE_FIELDS = [
+        'quantity', 'buy_amount', 'gross_pnl', 'net_pnl',
+        'realized_pnl', 'unrealized_pnl'
+    ]
 
     def __init__(self):
         self.batch_id = None
@@ -539,6 +643,7 @@ class BreezeFNOImporter:
         self.records_created = 0
         self.records_updated = 0
         self.records_skipped = 0
+        self.records_unchanged = 0  # Track records with no changes
         self.fy = None  # Financial year
 
     def _determine_fy_from_current_date(self) -> str:
@@ -652,6 +757,7 @@ class BreezeFNOImporter:
         self.records_created = 0
         self.records_updated = 0
         self.records_skipped = 0
+        self.records_unchanged = 0
 
         # Get filename
         if hasattr(file_obj, 'name'):
@@ -733,12 +839,15 @@ class BreezeFNOImporter:
             import_log.status = 'SUCCESS' if not self.errors else 'PARTIAL'
             import_log.save()
 
+            logger.info(f"Import complete: {self.records_created} created, {self.records_updated} updated, {self.records_unchanged} unchanged")
+
             return {
                 'success': True,
                 'batch_id': self.batch_id,
                 'records_created': self.records_created,
                 'records_updated': self.records_updated,
                 'records_skipped': self.records_skipped,
+                'records_unchanged': self.records_unchanged,
                 'errors': self.errors,
             }
 
@@ -757,7 +866,12 @@ class BreezeFNOImporter:
 
     def _process_breeze_row(self, row: List[str]):
         """
-        Process a single row from Breeze CSV.
+        Process a single row from Breeze CSV with incremental upload support.
+
+        Incremental behavior:
+        - Creates new records if they don't exist
+        - Updates only if values have changed (latest report takes priority)
+        - Skips unchanged records to avoid unnecessary database writes
 
         Column mapping (0-indexed):
         0: Contract
@@ -784,38 +898,80 @@ class BreezeFNOImporter:
         gross_pnl = realized_pnl + unrealized_pnl
         net_pnl = gross_pnl  # Breeze doesn't show charges in this CSV
 
-        # Create or update record - use broker + trading_symbol + fy as unique key
-        # This allows the same contract to have different P&L entries for each FY
-        obj, created = BrokerContractPnL.objects.update_or_create(
-            broker='ICICI',
-            trading_symbol=contract_str,
-            fy=self.fy,  # Include FY in unique key
-            defaults={
-                'import_batch_id': self.batch_id,  # Track latest import batch
-                'fy': self.fy,  # Financial year
-                'symbol': contract['symbol'],
-                'segment': contract['segment'],
-                'security_type': contract['security_type'],
-                'expiry_date': contract['expiry_date'],
-                'strike_price': contract['strike_price'],
-                'option_type': contract['option_type'],
-                'quantity': open_qty,
-                'buy_amount': open_value,
-                'sell_amount': Decimal('0.00'),
-                'gross_pnl': gross_pnl,
-                'net_pnl': net_pnl,
-                'realized_pnl': realized_pnl,
-                'unrealized_pnl': unrealized_pnl,
-                'raw_data': {'row': row},
-            }
-        )
-
-        if created:
-            self.records_created += 1
+        # Determine FY for this record
+        # For F&O, ALWAYS use expiry_date to determine FY (when the P&L is realized)
+        # This ensures contracts are assigned to the correct FY based on settlement date
+        if contract['expiry_date']:
+            record_fy = determine_fy_from_date(contract['expiry_date'])
+            logger.debug(f"F&O record: using expiry_date {contract['expiry_date']} -> FY {record_fy} for {contract_str}")
+        elif self.fy:
+            # Fallback to current date FY
+            record_fy = self.fy
+            logger.debug(f"Using current date FY {record_fy} for {contract_str}")
         else:
-            self.records_updated += 1
+            # Last resort: use current date FY
+            record_fy = determine_fy_from_date(datetime.now().date())
+            logger.debug(f"Using current date FY {record_fy} for {contract_str}")
 
-        logger.debug(f"{'Created' if created else 'Updated'} record for {contract_str}: Realized={realized_pnl}, Unrealized={unrealized_pnl}")
+        # New values from the CSV (latest report)
+        new_values = {
+            'import_batch_id': self.batch_id,
+            'symbol': contract['symbol'],
+            'segment': contract['segment'],
+            'security_type': contract['security_type'],
+            'expiry_date': contract['expiry_date'],
+            'strike_price': contract['strike_price'],
+            'option_type': contract['option_type'],
+            'quantity': open_qty,
+            'buy_amount': open_value,
+            'sell_amount': Decimal('0.00'),
+            'gross_pnl': gross_pnl,
+            'net_pnl': net_pnl,
+            'realized_pnl': realized_pnl,
+            'unrealized_pnl': unrealized_pnl,
+            'raw_data': {'row': row},
+        }
+
+        # Check if record already exists
+        try:
+            existing = BrokerContractPnL.objects.get(
+                broker='ICICI',
+                trading_symbol=contract_str,
+                fy=record_fy
+            )
+
+            # Compare key fields to detect if anything has changed
+            has_changes = False
+            for field in self.COMPARE_FIELDS:
+                old_value = getattr(existing, field)
+                new_value = new_values.get(field)
+                if old_value != new_value:
+                    has_changes = True
+                    logger.debug(f"Change detected in {contract_str}.{field}: {old_value} -> {new_value}")
+                    break
+
+            if has_changes:
+                # Update with new values (latest report takes priority)
+                for key, value in new_values.items():
+                    setattr(existing, key, value)
+                existing.save()
+                self.records_updated += 1
+                logger.debug(f"Updated record for {contract_str}: Realized={realized_pnl}, Unrealized={unrealized_pnl}")
+            else:
+                # No changes detected, skip this record
+                self.records_unchanged += 1
+                logger.debug(f"Unchanged record for {contract_str}: Realized={realized_pnl}, Unrealized={unrealized_pnl}")
+
+        except BrokerContractPnL.DoesNotExist:
+            # Create new record
+            BrokerContractPnL.objects.create(
+                broker='ICICI',
+                trading_symbol=contract_str,
+                fy=record_fy,
+                **new_values
+            )
+            self.records_created += 1
+            logger.debug(f"Created record for {contract_str}: Realized={realized_pnl}, Unrealized={unrealized_pnl}, FY = {record_fy}")
 
 
 def delete_import_batch(batch_id: str) -> Dict:

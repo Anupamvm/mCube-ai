@@ -127,9 +127,42 @@ class TechnicalAnalyzer:
         return {'source': 'Not Available'}
 
     def _calculate_support_resistance_from_history(self) -> Dict:
-        """Calculate S/R from recent historical data using pivot points"""
+        """
+        Calculate S/R using CONSERVATIVE approach from consolidated calculator.
+
+        Combines Pivot Points and OI-based S/R, selecting the most conservative
+        (closest to price) levels for both support and resistance.
+        """
         try:
-            # Get last 5 days of data for pivot calculation
+            # Try consolidated conservative S/R first (combines Pivot + OI)
+            from apps.strategies.services.consolidated_sr_calculator import (
+                ConsolidatedSRCalculator
+            )
+
+            if self.current_price:
+                calculator = ConsolidatedSRCalculator(self.symbol)
+                consolidated = calculator.get_conservative_sr(self.current_price)
+
+                if consolidated.get('conservative_support', {}).get('s1'):
+                    return {
+                        'source': f"Conservative S/R (Pivot + OI) - methods: {', '.join(consolidated.get('methods_used', []))}",
+                        'pivot': consolidated.get('all_methods', {}).get('pivot_based', {}).get('pivot'),
+                        'r1': consolidated['conservative_resistance']['r1'],
+                        'r2': consolidated['conservative_resistance']['r2'],
+                        'r3': consolidated['conservative_resistance']['r3'],
+                        's1': consolidated['conservative_support']['s1'],
+                        's2': consolidated['conservative_support']['s2'],
+                        's3': consolidated['conservative_support']['s3'],
+                        'r1_source': consolidated['conservative_resistance']['r1_source'],
+                        's1_source': consolidated['conservative_support']['s1_source'],
+                        'calculation_date': consolidated.get('calculation_time', ''),
+                        'is_conservative': True
+                    }
+        except Exception as e:
+            logger.warning(f"Consolidated S/R calculation failed, falling back to pivot only: {e}")
+
+        # Fallback to pivot-only calculation
+        try:
             from datetime import date
             start_date = date.today() - timedelta(days=10)
 
@@ -153,7 +186,7 @@ class TechnicalAnalyzer:
                 s3 = low - 2 * (high - pivot)
 
                 return {
-                    'source': 'Calculated from Recent Historical Data',
+                    'source': 'Pivot Points (Historical Data Only)',
                     'pivot': pivot,
                     'r1': r1,
                     'r2': r2,
@@ -161,7 +194,8 @@ class TechnicalAnalyzer:
                     's1': s1,
                     's2': s2,
                     's3': s3,
-                    'calculation_date': recent.datetime.date().isoformat()
+                    'calculation_date': recent.datetime.date().isoformat(),
+                    'is_conservative': False
                 }
         except Exception as e:
             logger.warning(f"Could not calculate S/R from history: {e}")
@@ -175,84 +209,12 @@ class TechnicalAnalyzer:
             's1': None,
             's2': None,
             's3': None,
+            'is_conservative': False
         }
 
-    def _calculate_support_resistance(self, tl_data: Optional[TLStockData]) -> Dict:
-        """
-        Calculate support and resistance levels
-
-        Uses Trendlyne data if available, otherwise calculates pivot points
-        from recent price action
-        """
-        if tl_data and tl_data.pivot_point:
-            # Use Trendlyne S/R data
-            return {
-                'source': 'Trendlyne',
-                'pivot': float(tl_data.pivot_point) if tl_data.pivot_point else None,
-                'r1': float(tl_data.first_resistance_r1) if tl_data.first_resistance_r1 else None,
-                'r2': float(tl_data.second_resistance_r2) if tl_data.second_resistance_r2 else None,
-                'r3': float(tl_data.third_resistance_r3) if tl_data.third_resistance_r3 else None,
-                's1': float(tl_data.first_support_s1) if tl_data.first_support_s1 else None,
-                's2': float(tl_data.second_support_s2) if tl_data.second_support_s2 else None,
-                's3': float(tl_data.third_support_s3) if tl_data.third_support_s3 else None,
-            }
-
-        # Calculate pivot points from recent historical data
-        try:
-            from django.db.models import Max, Min
-            from datetime import date
-
-            # Get yesterday's data for pivot calculation
-            yesterday = date.today() - timedelta(days=1)
-            recent = HistoricalPrice.objects.filter(
-                stock_code=self.symbol,
-                datetime__date=yesterday
-            ).first()
-
-            if not recent:
-                # Get most recent available data
-                recent = HistoricalPrice.objects.filter(
-                    stock_code=self.symbol
-                ).order_by('-datetime').first()
-
-            if recent:
-                high = float(recent.high)
-                low = float(recent.low)
-                close = float(recent.close)
-
-                # Standard pivot point calculation
-                pivot = (high + low + close) / 3
-                r1 = 2 * pivot - low
-                r2 = pivot + (high - low)
-                r3 = high + 2 * (pivot - low)
-                s1 = 2 * pivot - high
-                s2 = pivot - (high - low)
-                s3 = low - 2 * (high - pivot)
-
-                return {
-                    'source': 'Calculated from Historical Data',
-                    'pivot': pivot,
-                    'r1': r1,
-                    'r2': r2,
-                    'r3': r3,
-                    's1': s1,
-                    's2': s2,
-                    's3': s3,
-                    'calculation_date': recent.datetime.date().isoformat()
-                }
-        except Exception as e:
-            logger.warning(f"Could not calculate pivot points: {e}")
-
-        return {
-            'source': 'Not Available',
-            'pivot': None,
-            'r1': None,
-            'r2': None,
-            'r3': None,
-            's1': None,
-            's2': None,
-            's3': None,
-        }
+    # NOTE: _calculate_support_resistance() method REMOVED
+    # All S/R calculations now use _calculate_support_resistance_from_history()
+    # which leverages the centralized ConsolidatedSRCalculator combining Pivot + OI data
 
     def _calculate_moving_averages(self, tl_data: Optional[TLStockData]) -> Dict:
         """

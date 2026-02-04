@@ -422,51 +422,26 @@ class AveragingAnalyzer:
     ) -> Dict[str, Any]:
         """
         CRITICAL CHECK 2: Price should be closer to support (for LONG) or resistance (for SHORT).
+
+        Uses CONSERVATIVE S/R from consolidated calculator which combines:
+        - Pivot Points (from historical price data)
+        - OI-Based S/R (from options open interest)
+
+        Conservative approach selects the tightest (closest to price) levels.
         """
         try:
             logger.info(f"Starting support proximity check for {symbol} at price ₹{current_price}")
 
-            # Get S/R levels from TLStockData (Trendlyne data)
-            from apps.data.models import TLStockData
+            # Use centralized consolidated S/R calculator
+            from apps.strategies.services.consolidated_sr_calculator import (
+                ConsolidatedSRCalculator
+            )
 
-            logger.info(f"Looking up TLStockData for symbol: '{symbol}'")
-            stock_data = TLStockData.objects.filter(nsecode=symbol).first()
+            calculator = ConsolidatedSRCalculator(symbol)
+            sr_data = calculator.get_conservative_sr(current_price)
 
-            if not stock_data:
-                logger.warning(f"No TLStockData found for symbol '{symbol}'")
-                # Try to find similar symbols for debugging
-                similar = TLStockData.objects.filter(nsecode__icontains=symbol[:4]).values_list('nsecode', flat=True)[:5]
-                logger.warning(f"Similar symbols in database: {list(similar)}")
-                return {
-                    'passed': False,
-                    'message': '❌ No stock data found for support/resistance analysis',
-                    'support_levels': [],
-                    'resistance_levels': []
-                }
-
-            # Extract S/R levels from Trendlyne data
-            support_levels = []
-            resistance_levels = []
-
-            if stock_data.first_support_s1:
-                support_levels.append(float(stock_data.first_support_s1))
-            if stock_data.second_support_s2:
-                support_levels.append(float(stock_data.second_support_s2))
-            if stock_data.third_support_s3:
-                support_levels.append(float(stock_data.third_support_s3))
-
-            if stock_data.first_resistance_r1:
-                resistance_levels.append(float(stock_data.first_resistance_r1))
-            if stock_data.second_resistance_r2:
-                resistance_levels.append(float(stock_data.second_resistance_r2))
-            if stock_data.third_resistance_r3:
-                resistance_levels.append(float(stock_data.third_resistance_r3))
-
-            pivot_point = float(stock_data.pivot_point) if stock_data.pivot_point else None
-
-            logger.info(f"S/R from Trendlyne: supports={support_levels}, resistances={resistance_levels}, pivot={pivot_point}")
-
-            if not support_levels and not resistance_levels:
+            if not sr_data.get('conservative_support', {}).get('s1'):
+                logger.warning(f"No conservative S/R data available for {symbol}")
                 return {
                     'passed': False,
                     'message': '❌ No support/resistance levels available',
@@ -474,12 +449,29 @@ class AveragingAnalyzer:
                     'resistance_levels': []
                 }
 
+            # Extract conservative S/R levels
+            cons_support = sr_data['conservative_support']
+            cons_resistance = sr_data['conservative_resistance']
+
+            # Build lists for backward compatibility
+            support_levels = [cons_support[k] for k in ['s1', 's2', 's3'] if cons_support.get(k)]
+            resistance_levels = [cons_resistance[k] for k in ['r1', 'r2', 'r3'] if cons_resistance.get(k)]
+
+            # Get pivot from all_methods if available
+            pivot_point = None
+            if sr_data.get('all_methods', {}).get('pivot_based', {}).get('pivot'):
+                pivot_point = sr_data['all_methods']['pivot_based']['pivot']
+
+            # Get nearest levels (conservative S1 and R1 are already the closest)
+            nearest_support = cons_support.get('s1')
+            nearest_resistance = cons_resistance.get('r1')
+            s1_source = cons_support.get('s1_source', 'unknown')
+            r1_source = cons_resistance.get('r1_source', 'unknown')
+
+            logger.info(f"Conservative S/R: S1={nearest_support} ({s1_source}), R1={nearest_resistance} ({r1_source})")
+
             if direction == 'LONG':
                 # For LONG positions, we want to be near support
-                # Find nearest support and resistance
-                nearest_support = min(support_levels, key=lambda x: abs(x - current_price)) if support_levels else None
-                nearest_resistance = min(resistance_levels, key=lambda x: abs(x - current_price)) if resistance_levels else None
-
                 if nearest_support is None:
                     return {
                         'passed': False,
@@ -499,39 +491,12 @@ class AveragingAnalyzer:
                 passed = distance_to_support < distance_to_resistance
 
                 if passed:
-                    message = f"✅ Near support ₹{nearest_support:.2f} ({support_distance_pct:.2f}% away), resistance ₹{nearest_resistance:.2f} ({resistance_distance_pct:.2f}% away)"
+                    message = f"✅ Near support ₹{nearest_support:.2f} ({support_distance_pct:.2f}% away, from {s1_source})"
                 else:
-                    if nearest_resistance:
-                        message = f"❌ Closer to resistance ₹{nearest_resistance:.2f} ({resistance_distance_pct:.2f}% away) than support ₹{nearest_support:.2f} ({support_distance_pct:.2f}% away)"
-                    else:
-                        message = f"❌ No resistance levels found to compare with support ₹{nearest_support:.2f} ({support_distance_pct:.2f}% away)"
-
-                return {
-                    'passed': passed,
-                    'message': message,
-                    'current_price': current_price,
-                    'pivot_point': pivot_point,
-                    'nearest_support': nearest_support,
-                    'nearest_resistance': nearest_resistance,
-                    'distance_to_support': distance_to_support,
-                    'distance_to_resistance': distance_to_resistance,
-                    'support_distance_pct': support_distance_pct,
-                    'resistance_distance_pct': resistance_distance_pct,
-                    'support_levels': support_levels,
-                    'resistance_levels': resistance_levels,
-                    'r1': resistance_levels[0] if len(resistance_levels) > 0 else None,
-                    'r2': resistance_levels[1] if len(resistance_levels) > 1 else None,
-                    'r3': resistance_levels[2] if len(resistance_levels) > 2 else None,
-                    's1': support_levels[0] if len(support_levels) > 0 else None,
-                    's2': support_levels[1] if len(support_levels) > 1 else None,
-                    's3': support_levels[2] if len(support_levels) > 2 else None
-                }
+                    message = f"❌ Closer to resistance ₹{nearest_resistance:.2f} ({resistance_distance_pct:.2f}% away) than support"
 
             else:  # SHORT
                 # For SHORT positions, we want to be near resistance
-                nearest_support = min(support_levels, key=lambda x: abs(x - current_price)) if support_levels else None
-                nearest_resistance = min(resistance_levels, key=lambda x: abs(x - current_price)) if resistance_levels else None
-
                 if nearest_resistance is None:
                     return {
                         'passed': False,
@@ -551,33 +516,34 @@ class AveragingAnalyzer:
                 passed = distance_to_resistance < distance_to_support
 
                 if passed:
-                    message = f"✅ Near resistance ₹{nearest_resistance:.2f} ({resistance_distance_pct:.2f}% away), support ₹{nearest_support:.2f} ({support_distance_pct:.2f}% away)"
+                    message = f"✅ Near resistance ₹{nearest_resistance:.2f} ({resistance_distance_pct:.2f}% away, from {r1_source})"
                 else:
-                    if nearest_support:
-                        message = f"❌ Closer to support ₹{nearest_support:.2f} ({support_distance_pct:.2f}% away) than resistance ₹{nearest_resistance:.2f} ({resistance_distance_pct:.2f}% away)"
-                    else:
-                        message = f"❌ No support levels found to compare with resistance ₹{nearest_resistance:.2f} ({resistance_distance_pct:.2f}% away)"
+                    message = f"❌ Closer to support ₹{nearest_support:.2f} ({support_distance_pct:.2f}% away) than resistance"
 
-                return {
-                    'passed': passed,
-                    'message': message,
-                    'current_price': current_price,
-                    'pivot_point': pivot_point,
-                    'nearest_support': nearest_support,
-                    'nearest_resistance': nearest_resistance,
-                    'distance_to_support': distance_to_support,
-                    'distance_to_resistance': distance_to_resistance,
-                    'support_distance_pct': support_distance_pct,
-                    'resistance_distance_pct': resistance_distance_pct,
-                    'support_levels': support_levels,
-                    'resistance_levels': resistance_levels,
-                    'r1': resistance_levels[0] if len(resistance_levels) > 0 else None,
-                    'r2': resistance_levels[1] if len(resistance_levels) > 1 else None,
-                    'r3': resistance_levels[2] if len(resistance_levels) > 2 else None,
-                    's1': support_levels[0] if len(support_levels) > 0 else None,
-                    's2': support_levels[1] if len(support_levels) > 1 else None,
-                    's3': support_levels[2] if len(support_levels) > 2 else None
-                }
+            return {
+                'passed': passed,
+                'message': message,
+                'current_price': current_price,
+                'pivot_point': pivot_point,
+                'nearest_support': nearest_support,
+                'nearest_resistance': nearest_resistance,
+                'distance_to_support': distance_to_support,
+                'distance_to_resistance': distance_to_resistance,
+                'support_distance_pct': support_distance_pct,
+                'resistance_distance_pct': resistance_distance_pct,
+                'support_levels': support_levels,
+                'resistance_levels': resistance_levels,
+                'r1': cons_resistance.get('r1'),
+                'r2': cons_resistance.get('r2'),
+                'r3': cons_resistance.get('r3'),
+                's1': cons_support.get('s1'),
+                's2': cons_support.get('s2'),
+                's3': cons_support.get('s3'),
+                'sr_method': 'Conservative (Pivot + OI)',
+                's1_source': s1_source,
+                'r1_source': r1_source,
+                'methods_used': sr_data.get('methods_used', [])
+            }
 
         except Exception as e:
             logger.error(f"Error checking support proximity: {e}", exc_info=True)

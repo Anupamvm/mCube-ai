@@ -2038,7 +2038,7 @@ def api_suggestions_time_patterns(request):
 @login_required
 @require_http_methods(["GET"])
 def api_patterns_yearly_comparison(request):
-    """API endpoint for yearly income comparison chart."""
+    """API endpoint for yearly income comparison chart - F&O (Derivatives) only."""
     from apps.analytics.services.trading_patterns import TradingPatternsAnalyzer, get_available_fys
     from apps.brokers.models import BrokerContractPnL
     from django.db.models import Sum, Count
@@ -2054,7 +2054,8 @@ def api_patterns_yearly_comparison(request):
         yearly_data = []
         for fy_info in available_fys:
             fy = fy_info['value']
-            analyzer = TradingPatternsAnalyzer(broker=broker, fy=fy)
+            # Filter for F&O (Derivatives) only - excludes Equity, MF, ETF
+            analyzer = TradingPatternsAnalyzer(broker=broker, fy=fy, segment='FNO')
             overview = analyzer.get_overview_stats()
 
             total_pnl = overview.get('total_pnl', 0)

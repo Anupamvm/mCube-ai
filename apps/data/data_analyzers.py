@@ -526,12 +526,68 @@ class TechnicalIndicatorAnalyzer:
         }
 
     @staticmethod
-    def get_support_resistance(symbol: str) -> Dict:
-        """Get support and resistance levels"""
-        stock = TLStockData.objects.filter(nsecode=symbol).first()
-        if not stock:
-            return {"error": "Stock not found"}
+    def get_support_resistance(symbol: str, use_conservative: bool = True) -> Dict:
+        """
+        Get support and resistance levels using CONSERVATIVE consolidated approach.
 
+        Uses the centralized ConsolidatedSRCalculator which combines:
+        1. Pivot Points (from historical price data)
+        2. OI-Based S/R (from options open interest)
+
+        Args:
+            symbol: Stock symbol
+            use_conservative: Use conservative (closest) S/R levels (default: True)
+
+        Returns:
+            dict: Support and resistance levels with source information
+        """
+        # Get current price from TLStockData
+        stock = TLStockData.objects.filter(nsecode=symbol).first()
+        if not stock or not stock.current_price:
+            return {"error": "Stock not found or no price data"}
+
+        current_price = float(stock.current_price)
+
+        if use_conservative:
+            try:
+                from apps.strategies.services.consolidated_sr_calculator import (
+                    ConsolidatedSRCalculator
+                )
+
+                calculator = ConsolidatedSRCalculator(symbol)
+                sr_data = calculator.get_conservative_sr(current_price)
+
+                if sr_data.get('conservative_support', {}).get('s1'):
+                    cons_support = sr_data['conservative_support']
+                    cons_resistance = sr_data['conservative_resistance']
+
+                    return {
+                        'current_price': current_price,
+                        'pivot_point': sr_data.get('all_methods', {}).get('pivot_based', {}).get('pivot'),
+                        'resistance': {
+                            'r1': cons_resistance.get('r1'),
+                            'r2': cons_resistance.get('r2'),
+                            'r3': cons_resistance.get('r3')
+                        },
+                        'support': {
+                            's1': cons_support.get('s1'),
+                            's2': cons_support.get('s2'),
+                            's3': cons_support.get('s3')
+                        },
+                        'nearest_resistance': cons_resistance.get('r1'),
+                        'nearest_support': cons_support.get('s1'),
+                        'r1_distance_pct': sr_data.get('distance_to_r1_pct'),
+                        's1_distance_pct': sr_data.get('distance_to_s1_pct'),
+                        'sr_method': 'Conservative (Pivot + OI)',
+                        'r1_source': cons_resistance.get('r1_source'),
+                        's1_source': cons_support.get('s1_source'),
+                        'methods_used': sr_data.get('methods_used', [])
+                    }
+            except Exception as e:
+                # Fall through to Trendlyne data
+                pass
+
+        # Fallback to Trendlyne data only
         return {
             'current_price': stock.current_price,
             'pivot_point': stock.pivot_point,
@@ -548,7 +604,8 @@ class TechnicalIndicatorAnalyzer:
             'nearest_resistance': stock.first_resistance_r1,
             'nearest_support': stock.first_support_s1,
             'r1_distance_pct': stock.first_resistance_r1_to_price_diff_pct,
-            's1_distance_pct': stock.first_support_s1_to_price_diff_pct
+            's1_distance_pct': stock.first_support_s1_to_price_diff_pct,
+            'sr_method': 'Trendlyne Only (fallback)'
         }
 
 

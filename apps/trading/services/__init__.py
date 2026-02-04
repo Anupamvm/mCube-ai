@@ -86,3 +86,19 @@ try:
     ])
 except ImportError:
     pass
+
+try:
+    from .chart_data_service import (
+        ChartDataService,
+        ContractChartDataService,
+        get_chart_data_for_suggestion,
+        get_chart_data_for_contract
+    )
+    __all__.extend([
+        'ChartDataService',
+        'ContractChartDataService',
+        'get_chart_data_for_suggestion',
+        'get_chart_data_for_contract'
+    ])
+except ImportError:
+    pass

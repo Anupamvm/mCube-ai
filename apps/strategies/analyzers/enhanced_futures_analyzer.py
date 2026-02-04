@@ -1536,6 +1536,8 @@ class EnhancedFuturesAnalyzer:
         Score Research Reports (max 15 pts)
         - Report Sentiment: 10 pts
         - Risk/Catalysts: 5 pts
+
+        Also generates 5-point summaries for the latest 3 reports.
         """
         score = 0
         details = {}
@@ -1552,8 +1554,10 @@ class EnhancedFuturesAnalyzer:
             ).order_by('-report_date')[:10]
 
             if reports.exists():
+                reports_list = list(reports)
+
                 # Average sentiment from LLM analysis
-                sentiments = [r.sentiment_score for r in reports if r.sentiment_score is not None]
+                sentiments = [r.sentiment_score for r in reports_list if r.sentiment_score is not None]
                 if sentiments:
                     avg_sentiment = sum(sentiments) / len(sentiments)
 
@@ -1580,8 +1584,8 @@ class EnhancedFuturesAnalyzer:
                     details['sentiment'] = {'avg': avg_sentiment, 'count': len(sentiments), 'score': sentiment_score}
 
                 # Risk/Catalysts (5 pts)
-                has_catalysts = any(r.catalysts for r in reports if r.catalysts)
-                has_risks = any(r.risk_factors for r in reports if r.risk_factors)
+                has_catalysts = any(r.catalysts for r in reports_list if r.catalysts)
+                has_risks = any(r.risk_factors for r in reports_list if r.risk_factors)
 
                 if self.direction == 'LONG':
                     if has_catalysts and not has_risks:
@@ -1600,19 +1604,52 @@ class EnhancedFuturesAnalyzer:
 
                 score += rc_score
                 details['risk_catalysts'] = {'has_catalysts': has_catalysts, 'has_risks': has_risks, 'score': rc_score}
+
+                # Generate 5-point summaries for latest 3 reports (shared with Verify Trade)
+                details['report_summaries'] = self._get_report_summaries(reports_list[:3])
             else:
                 score = 7  # Default neutral
                 details['reason'] = 'No recent reports'
+                details['report_summaries'] = []
 
         except Exception as e:
             logger.warning(f"Research reports scoring error: {e}")
             score = 7
             details['error'] = str(e)
+            details['report_summaries'] = []
 
         self.details['research_reports'] = details
         logger.info(f"  Research Reports: {score}/15")
 
         return min(score, 15)
+
+    def _get_report_summaries(self, reports: list, max_reports: int = 3) -> list:
+        """
+        Get 5-point summaries for analyst reports.
+
+        Uses the shared get_quick_summaries_for_reports function from
+        analyst_report_analyzer to avoid code duplication with Verify Trade.
+
+        Args:
+            reports: List of AnalystReport model instances
+            max_reports: Maximum reports to summarize (default: 3)
+
+        Returns:
+            List of dicts with report info and 5-point summaries
+        """
+        try:
+            from apps.llm.services.analyst_report_analyzer import get_quick_summaries_for_reports
+
+            summaries = get_quick_summaries_for_reports(
+                reports=reports,
+                symbol=self.symbol,
+                max_reports=max_reports
+            )
+            logger.info(f"  Generated {len([s for s in summaries if s.get('success')])} report summaries")
+            return summaries
+        except Exception as e:
+            logger.warning(f"Could not generate report summaries: {e}")
+            return []
 
     def _score_investor_calls(self) -> int:
         """

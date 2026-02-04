@@ -515,12 +515,19 @@ class ValuationDeepDive:
         }
 
 
-def calculate_support_resistance(symbol: str) -> Dict:
+def calculate_support_resistance(symbol: str, current_price: float = None) -> Dict:
     """
-    Calculate support and resistance levels using pivot points and historical data
+    Calculate support and resistance levels using CONSERVATIVE consolidated approach.
+
+    Uses the centralized ConsolidatedSRCalculator which combines:
+    1. Pivot Points (from historical price data)
+    2. OI-Based S/R (from options open interest)
+
+    Conservative selection ensures tighter, safer trading ranges.
 
     Args:
         symbol: Stock code/symbol
+        current_price: Current price (optional, will be fetched if not provided)
 
     Returns:
         dict: Support and resistance levels
@@ -528,103 +535,81 @@ def calculate_support_resistance(symbol: str) -> Dict:
                 'success': bool,
                 'support_levels': List[float],
                 'resistance_levels': List[float],
-                'pivot_point': float
+                'pivot_point': float,
+                'sr_method': str,
+                'sr_sources': dict
             }
     """
     try:
-        from apps.brokers.models import HistoricalPrice
+        from apps.strategies.services.consolidated_sr_calculator import (
+            ConsolidatedSRCalculator
+        )
 
-        # Get last 30 days of historical data
-        end_date = datetime.now()
-        start_date = end_date - timedelta(days=30)
+        # Get current price if not provided
+        if not current_price:
+            from apps.brokers.models import HistoricalPrice
+            latest = HistoricalPrice.objects.filter(
+                stock_code=symbol,
+                product_type='cash'
+            ).order_by('-datetime').first()
 
-        # Fetch historical prices
-        prices = HistoricalPrice.objects.filter(
-            stock_code=symbol,
-            product_type='cash',
-            datetime__gte=start_date,
-            datetime__lte=end_date
-        ).order_by('-datetime')[:30]
+            if latest:
+                current_price = float(latest.close)
+            else:
+                logger.warning(f"No price data found for {symbol}")
+                return {
+                    'success': False,
+                    'message': f'No price data available for {symbol}',
+                    'support_levels': [],
+                    'resistance_levels': []
+                }
 
-        if not prices.exists():
-            logger.warning(f"No historical price data found for {symbol}")
+        # Use consolidated conservative S/R calculator
+        calculator = ConsolidatedSRCalculator(symbol)
+        sr_data = calculator.get_conservative_sr(current_price)
+
+        if not sr_data.get('conservative_support', {}).get('s1'):
+            logger.warning(f"Consolidated S/R not available for {symbol}")
             return {
                 'success': False,
-                'message': f'No historical data available for {symbol}',
+                'message': 'Support/Resistance data not available',
                 'support_levels': [],
                 'resistance_levels': []
             }
 
-        # Get high, low, close from most recent data
-        latest = prices.first()
-        high = float(latest.high or 0)
-        low = float(latest.low or 0)
-        close = float(latest.close or 0)
+        # Extract conservative S/R levels
+        cons_support = sr_data['conservative_support']
+        cons_resistance = sr_data['conservative_resistance']
 
-        if high == 0 or low == 0 or close == 0:
-            return {
-                'success': False,
-                'message': 'Invalid price data',
-                'support_levels': [],
-                'resistance_levels': []
-            }
+        # Build support levels list (highest to lowest - closest first)
+        support_levels = []
+        for key in ['s1', 's2', 's3']:
+            if cons_support.get(key):
+                support_levels.append(cons_support[key])
 
-        # Calculate pivot point (standard method)
-        pivot = (high + low + close) / 3
+        # Build resistance levels list (lowest to highest - closest first)
+        resistance_levels = []
+        for key in ['r1', 'r2', 'r3']:
+            if cons_resistance.get(key):
+                resistance_levels.append(cons_resistance[key])
 
-        # Calculate support and resistance levels
-        # R1 = 2*PP - Low
-        # R2 = PP + (High - Low)
-        # R3 = High + 2*(PP - Low)
-        # S1 = 2*PP - High
-        # S2 = PP - (High - Low)
-        # S3 = Low - 2*(High - PP)
-
-        r1 = 2 * pivot - low
-        r2 = pivot + (high - low)
-        r3 = high + 2 * (pivot - low)
-
-        s1 = 2 * pivot - high
-        s2 = pivot - (high - low)
-        s3 = low - 2 * (high - pivot)
-
-        # Also identify swing highs and lows from last 30 days
-        swing_highs = []
-        swing_lows = []
-
-        price_list = list(prices)
-        for i in range(1, len(price_list) - 1):
-            current_high = float(price_list[i].high or 0)
-            current_low = float(price_list[i].low or 0)
-            prev_high = float(price_list[i-1].high or 0)
-            next_high = float(price_list[i+1].high or 0)
-            prev_low = float(price_list[i-1].low or 0)
-            next_low = float(price_list[i+1].low or 0)
-
-            # Swing high: higher than both neighbors
-            if current_high > prev_high and current_high > next_high:
-                swing_highs.append(current_high)
-
-            # Swing low: lower than both neighbors
-            if current_low < prev_low and current_low < next_low:
-                swing_lows.append(current_low)
-
-        # Combine and deduplicate resistance levels
-        resistance_levels = sorted(list(set([r1, r2, r3] + swing_highs)))
-        # Keep only levels above current price
-        resistance_levels = [r for r in resistance_levels if r > close][:5]
-
-        # Combine and deduplicate support levels
-        support_levels = sorted(list(set([s1, s2, s3] + swing_lows)), reverse=True)
-        # Keep only levels below current price
-        support_levels = [s for s in support_levels if s < close][:5]
+        # Get pivot from all_methods if available
+        pivot = None
+        if sr_data.get('all_methods', {}).get('pivot_based', {}).get('pivot'):
+            pivot = sr_data['all_methods']['pivot_based']['pivot']
 
         return {
             'success': True,
-            'support_levels': [round(s, 2) for s in support_levels],
-            'resistance_levels': [round(r, 2) for r in resistance_levels],
-            'pivot_point': round(pivot, 2),
-            'current_price': round(close, 2)
+            'support_levels': [round(s, 2) for s in support_levels if s],
+            'resistance_levels': [round(r, 2) for r in resistance_levels if r],
+            'pivot_point': round(pivot, 2) if pivot else None,
+            'current_price': round(current_price, 2),
+            'sr_method': 'Conservative (Pivot + OI)',
+            'sr_sources': {
+                's1_source': cons_support.get('s1_source'),
+                'r1_source': cons_resistance.get('r1_source')
+            },
+            'methods_used': sr_data.get('methods_used', [])
         }
 
     except Exception as e:

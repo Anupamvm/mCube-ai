@@ -6,6 +6,7 @@
 {% block extra_css %}
 <!-- Custom CSS for Trading Triggers -->
 <link rel="stylesheet" href="{% static 'css/trading/triggers.css' %}?v=2">
+<link rel="stylesheet" href="{% static 'css/trading/chart.css' %}">
 <style>
     /* Override body margin since we have navbar */
     body {
@@ -175,7 +176,12 @@
                 <div class="error-message" id="futuresError" style="display: none;"></div>
             </div>
 
-            <!-- Results Panel - List of contracts -->
+            <!-- Previous Results Section (always visible) -->
+            <div id="previousResultsSection" style="margin-top: 20px;">
+                <!-- Will be populated by preloaded results or show empty state -->
+            </div>
+
+            <!-- Results Panel - List of contracts (for fresh analysis) -->
             <div id="futuresResults" style="display: none;">
                 <!-- Results will be dynamically populated -->
             </div>
@@ -447,6 +453,37 @@
     }
 </style>
 
+<!-- Recommendation History Modal -->
+<div id="recommendationHistoryModal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.8); z-index: 10001; overflow-y: auto;" onclick="if(event.target.id === 'recommendationHistoryModal') RecommendationHistory.close();">
+    <div style="min-height: 100vh; padding: 20px; display: flex; align-items: flex-start; justify-content: center;">
+        <div style="width: 100%; max-width: 900px; margin-top: 40px; background: white; border-radius: 16px; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);" onclick="event.stopPropagation();">
+            <!-- Header -->
+            <div style="background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%); padding: 24px 30px; border-radius: 16px 16px 0 0; display: flex; justify-content: space-between; align-items: center;">
+                <div>
+                    <h2 id="historyModalTitle" style="margin: 0; color: white; font-size: 1.5rem; font-weight: 700;">📊 Recommendation History</h2>
+                    <p id="historyModalSubtitle" style="margin: 5px 0 0 0; color: rgba(255,255,255,0.8); font-size: 0.9rem;">SYMBOL - Last 30 days</p>
+                </div>
+                <button onclick="RecommendationHistory.close()" style="background: rgba(255,255,255,0.2); border: none; color: white; width: 40px; height: 40px; border-radius: 50%; font-size: 1.5rem; cursor: pointer; transition: background 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.3)'" onmouseout="this.style.background='rgba(255,255,255,0.2)'">&times;</button>
+            </div>
+
+            <!-- Summary Stats -->
+            <div id="historyModalStats" style="background: #f8fafc; padding: 20px 30px; border-bottom: 1px solid #e2e8f0; display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px;">
+                <!-- Will be populated dynamically -->
+            </div>
+
+            <!-- History List -->
+            <div id="historyModalContent" style="padding: 20px 30px; max-height: 500px; overflow-y: auto;">
+                <!-- Will be populated dynamically -->
+            </div>
+
+            <!-- Footer -->
+            <div style="padding: 20px 30px; border-top: 1px solid #e2e8f0; background: #f8fafc; border-radius: 0 0 16px 16px; display: flex; justify-content: flex-end;">
+                <button onclick="RecommendationHistory.close()" style="background: #6b7280; color: white; border: none; padding: 12px 24px; border-radius: 8px; cursor: pointer; font-weight: 600;">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- Full-Screen Modal for Futures Contract Details -->
 <div id="futuresDetailModal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7); z-index: 9999; overflow-y: auto;" onclick="if(event.target.id === 'futuresDetailModal') FuturesAlgorithm.closeDetailModal();">
     <div style="min-height: 100vh; padding: 20px;">
@@ -479,6 +516,11 @@
 <!-- Component Modules -->
 <script src="{% static 'js/trading/components/position-sizing.js' %}"></script>
 <script src="{% static 'js/trading/components/ui-builders.js' %}?v=4"></script>
+
+<!-- Chart Libraries (must load before inline scripts that use InteractiveChart) -->
+<script src="https://unpkg.com/lightweight-charts@4.1.0/dist/lightweight-charts.standalone.production.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="{% static 'js/trading/components/interactive-chart.js' %}?v=6"></script>
 
 <!-- Feature Modules (to be created) -->
 <script>
@@ -1095,6 +1137,111 @@ const FuturesAlgorithm = {
         document.body.style.overflow = ''; // Restore scrolling
     },
 
+    /**
+     * Show detail modal for a contract object.
+     * Fetches fresh verification data from the verify_future_trade API.
+     * Used by "View Full Analysis" button on historical/preloaded cards.
+     *
+     * @param {Object} contract - Contract object with symbol and expiry_date
+     */
+    async showDetailModal(contract) {
+        if (!contract) {
+            console.error('[Futures] showDetailModal called with null/undefined contract');
+            UIBuilders.showNotification({
+                type: 'error',
+                message: 'Contract not found. Please refresh and try again.',
+                icon: '❌',
+                timeout: 5000
+            });
+            return;
+        }
+
+        console.log('[Futures] showDetailModal called for contract:', contract);
+
+        // Show loading overlay
+        UIBuilders.showLoadingOverlay({
+            title: 'Loading Full Analysis',
+            message: `Fetching latest verification data for ${contract.symbol}...`
+        });
+
+        try {
+            // Build contract string: "SYMBOL|EXPIRY" format
+            const contractString = `${contract.symbol}|${contract.expiry_date}`;
+
+            console.log('[Futures] Fetching fresh verification for:', contractString);
+
+            // Call verify endpoint to get FULL data with latest position sizing
+            const formData = new FormData();
+            formData.append('contract', contractString);
+
+            const response = await fetch(ApiClient.endpoints.verify, {
+                method: 'POST',
+                headers: {
+                    'X-CSRFToken': ApiClient.csrftoken
+                },
+                body: formData
+            });
+
+            const data = await response.json();
+
+            console.log('[Futures] Fresh verification data received:', data);
+
+            // Check for auth error
+            if ((data.auth_required === true || data.authenticated === false)) {
+                UIBuilders.hideLoadingOverlay();
+                ApiClient.handleAuthError(data, 'verify');
+                return;
+            }
+
+            if (data.success) {
+                console.log('[Futures] ✅ Verification data received successfully');
+                UIBuilders.hideLoadingOverlay();
+
+                // Store the contract for TradeVerification
+                TradeVerification.currentContract = data;
+
+                // Use the REAL verifyResults div to generate content
+                const verifyResultsDiv = document.getElementById('verifyResults');
+
+                // Save its current state
+                const originalDisplay = verifyResultsDiv.style.display;
+                const originalHTML = verifyResultsDiv.innerHTML;
+
+                // Call displayResults - it will populate the real verifyResults div
+                TradeVerification.displayResults(data);
+
+                // Copy the generated HTML
+                const html = verifyResultsDiv.innerHTML;
+                console.log('[Futures] Generated verification HTML length:', html.length);
+
+                // Restore the original state of verifyResults div
+                verifyResultsDiv.innerHTML = originalHTML;
+                verifyResultsDiv.style.display = originalDisplay;
+
+                // Show the modal with the content
+                const modalContent = document.getElementById('futuresDetailModalContent');
+                modalContent.innerHTML = html;
+
+                const modal = document.getElementById('futuresDetailModal');
+                modal.style.display = 'block';
+                document.body.style.overflow = 'hidden'; // Prevent background scrolling
+
+                console.log('[Futures] ✅ Modal opened with fresh verification data');
+            } else {
+                throw new Error(data.error || 'Failed to load verification data');
+            }
+        } catch (error) {
+            console.error('[Futures] Error loading verification:', error);
+            UIBuilders.hideLoadingOverlay();
+            UIBuilders.showNotification({
+                type: 'error',
+                message: `Failed to load full analysis\n\n${error.message}`,
+                icon: '❌',
+                timeout: false
+            });
+        }
+    },
+
     async fetchFreshData() {
         const btn = document.getElementById('btnFetchTrendlyneFutures');
 
@@ -1301,6 +1448,36 @@ const NiftyStrangle = {
                 console.warn('[Strangle] No position sizing data available');
             }
 
+            // Interactive Price Chart Section
+            const chartId = 'strangle-chart-' + Date.now();
+            html += `
+                <div style="background: white; border-radius: 8px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); overflow: hidden;">
+                    ${InteractiveChart.getChartHTML(chartId, 'strangle', false)}
+                </div>
+            `;
+
+            // Calculate breakevens
+            const totalPremiumVal = (strangle.call_premium || 0) + (strangle.put_premium || 0);
+            const breakevenUpper = strangle.call_strike ? strangle.call_strike + totalPremiumVal : null;
+            const breakevenLower = strangle.put_strike ? strangle.put_strike - totalPremiumVal : null;
+
+            // Store chart init params for after render
+            this._pendingChart = {
+                id: chartId,
+                contractData: {
+                    symbol: 'NIFTY',
+                    current_price: strangle.spot_price,
+                    chart_type: 'strangle',
+                    trade_markers: {
+                        entry_price: strangle.spot_price,
+                        call_strike: strangle.call_strike,
+                        put_strike: strangle.put_strike,
+                        breakeven_upper: breakevenUpper,
+                        breakeven_lower: breakevenLower
+                    }
+                }
+            };
+
             // Build accordion container
             html += '<div class="accordion-container">';
             accordionSections.forEach((section, index) => {
@@ -1317,6 +1494,20 @@ const NiftyStrangle = {
             html += '</div>';
 
             resultsDiv.innerHTML = html;
+
+            // Initialize chart after DOM is ready
+            if (this._pendingChart) {
+                setTimeout(() => {
+                    const chart = new InteractiveChart(this._pendingChart.id, {
+                        contractData: this._pendingChart.contractData,
+                        height: 400,
+                        compact: false
+                    });
+                    chart.init();
+                    this._chartInstance = chart;
+                    this._pendingChart = null;
+                }, 100);
+            }
 
             // Setup event listeners for edit functionality
             this.setupEditListeners();
@@ -3263,6 +3454,28 @@ const BrokenIronCondor = {
             </div>
         `;
 
+        // Interactive Price Chart Section for Iron Condor
+        const chartId = 'iron-condor-chart-' + Date.now();
+        const chartHtml = InteractiveChart.getChartHTML(chartId, 'iron_condor', false);
+
+        // Store chart init params for after render
+        this._pendingChart = {
+            id: chartId,
+            contractData: {
+                symbol: 'NIFTY',
+                current_price: ic.current_price,
+                chart_type: 'iron_condor',
+                trade_markers: {
+                    entry_price: ic.current_price,
+                    sold_call: ic.call_strike,
+                    sold_put: ic.put_strike,
+                    bought_put: insurance.insurance_strike,
+                    breakeven_upper: ic.call_strike + ic.net_premium,
+                    breakeven_lower: ic.put_strike - ic.net_premium
+                }
+            }
+        };
+
         // Build accordion sections using UIBuilders
         const sectionsHtml = `
             <div class="accordion-container" style="margin-top: 15px;">
@@ -3330,6 +3543,11 @@ const BrokenIronCondor = {
                     </div>
                 </div>
 
+                <!-- Interactive Price Chart -->
+                <div style="margin-bottom: 20px;">
+                    ${chartHtml}
+                </div>
+
                 ${sectionsHtml}
 
                 <!-- Action Buttons -->
@@ -3353,6 +3571,20 @@ const BrokenIronCondor = {
 
         results.style.display = 'block';
         results.scrollIntoView({ behavior: 'smooth' });
+
+        // Initialize chart after DOM is ready
+        if (this._pendingChart) {
+            setTimeout(() => {
+                const chart = new InteractiveChart(this._pendingChart.id, {
+                    contractData: this._pendingChart.contractData,
+                    height: 400,
+                    compact: false
+                });
+                chart.init();
+                this._chartInstance = chart;
+                this._pendingChart = null;
+            }, 100);
+        }
     },
 
     selectInsuranceOption(riskMultiplier) {
@@ -4188,6 +4420,50 @@ const TradeVerification = {
             </div>
         `;
 
+        // Interactive Price Chart Section
+        const chartId = 'verify-chart-' + Date.now();
+        try {
+            if (typeof InteractiveChart !== 'undefined') {
+                html += `
+                    <div style="background: white; border-radius: 8px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); overflow: hidden;">
+                        ${InteractiveChart.getChartHTML(chartId, 'futures', false)}
+                    </div>
+                `;
+
+                // Store chart init params for after render
+                this._pendingChart = {
+                    id: chartId,
+                    contractData: {
+                        symbol: data.symbol,
+                        current_price: analysis.spot_price || analysis.contract_price,
+                        chart_type: 'futures',
+                        trade_markers: {
+                            entry_price: analysis.contract_price || analysis.entry_price,
+                            stop_loss: analysis.stop_loss,
+                            target: analysis.target,
+                            direction: analysis.direction
+                        }
+                    }
+                };
+            } else {
+                console.warn('[Verify] InteractiveChart not available, skipping chart');
+                html += `
+                    <div style="background: #fef3c7; border-radius: 8px; padding: 20px; margin-bottom: 20px; text-align: center;">
+                        <div style="font-size: 1.5rem; margin-bottom: 5px;">⚠️</div>
+                        <div style="color: #92400e; font-size: 0.875rem;">Chart unavailable - please refresh the page</div>
+                    </div>
+                `;
+            }
+        } catch (chartError) {
+            console.error('[Verify] Error creating chart:', chartError);
+            html += `
+                <div style="background: #fef3c7; border-radius: 8px; padding: 20px; margin-bottom: 20px; text-align: center;">
+                    <div style="font-size: 1.5rem; margin-bottom: 5px;">⚠️</div>
+                    <div style="color: #92400e; font-size: 0.875rem;">Chart error - ${chartError.message}</div>
+                </div>
+            `;
+        }
+
         // Build accordion sections with step numbers
         html += '<div class="accordion-container">';
         let stepNumber = 1;
@@ -4367,6 +4643,20 @@ const TradeVerification = {
 
         html += '</div>';
         resultsDiv.innerHTML = html;
+
+        // Initialize chart after DOM is ready
+        if (this._pendingChart) {
+            setTimeout(() => {
+                const chart = new InteractiveChart(this._pendingChart.id, {
+                    contractData: this._pendingChart.contractData,
+                    height: 400,
+                    compact: false
+                });
+                chart.init();
+                this._chartInstance = chart;
+                this._pendingChart = null;
+            }, 100);
+        }
 
         // After rendering, fetch news if contract passed
         if (data.passed && data.symbol) {
@@ -4794,6 +5084,70 @@ const TradeVerification = {
                     </div>
                 </div>
             `;
+        }
+
+        // AI-generated 5-point summaries for latest 3 reports
+        const quickSummaries = verification.report_quick_summaries || [];
+        if (quickSummaries && quickSummaries.length > 0) {
+            html += `
+                <div style="background: linear-gradient(135deg, #fdf4ff 0%, #fae8ff 100%); border-radius: 10px; padding: 15px; margin-top: 15px; border: 2px solid #e879f9;">
+                    <h4 style="color: #a21caf; margin: 0 0 12px 0; font-size: 0.95rem; font-weight: 700; display: flex; align-items: center; gap: 8px;">
+                        🤖 AI Summary of Latest Reports
+                        <span style="font-size: 0.7rem; font-weight: 500; background: #e879f9; color: white; padding: 2px 8px; border-radius: 10px;">LLM</span>
+                    </h4>
+            `;
+
+            quickSummaries.forEach((summary, index) => {
+                const sentimentColor = summary.sentiment === 'BULLISH' ? '#10b981' : summary.sentiment === 'BEARISH' ? '#ef4444' : '#f59e0b';
+                const sentimentBg = summary.sentiment === 'BULLISH' ? '#ecfdf5' : summary.sentiment === 'BEARISH' ? '#fef2f2' : '#fffbeb';
+                const sentimentIcon = summary.sentiment === 'BULLISH' ? '📈' : summary.sentiment === 'BEARISH' ? '📉' : '➡️';
+
+                html += `
+                    <div style="background: white; border-radius: 8px; padding: 14px; margin-bottom: ${index < quickSummaries.length - 1 ? '12px' : '0'}; border-left: 3px solid ${sentimentColor}; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
+                        <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px;">
+                            <div>
+                                <div style="font-weight: 700; color: #1f2937; font-size: 0.9rem;">${summary.author || 'Unknown Analyst'}</div>
+                                <div style="font-size: 0.75rem; color: #6b7280; margin-top: 2px;">
+                                    ${summary.report_date || 'Recent'} ${summary.target_price ? `| Target: ₹${summary.target_price.toLocaleString('en-IN')}` : ''}
+                                </div>
+                            </div>
+                            <div style="display: flex; align-items: center; gap: 6px;">
+                                <span style="background: ${sentimentBg}; color: ${sentimentColor}; padding: 3px 8px; border-radius: 4px; font-size: 0.7rem; font-weight: 700;">
+                                    ${sentimentIcon} ${summary.sentiment || 'NEUTRAL'}
+                                </span>
+                                <span style="background: #f3f4f6; color: #374151; padding: 3px 8px; border-radius: 4px; font-size: 0.7rem; font-weight: 600;">
+                                    ${summary.recommendation || 'UNKNOWN'}
+                                </span>
+                            </div>
+                        </div>
+                `;
+
+                if (summary.success && summary.summary_points && summary.summary_points.length > 0) {
+                    html += `
+                        <div style="background: #faf5ff; border-radius: 6px; padding: 10px;">
+                            <ul style="margin: 0; padding-left: 18px; color: #374151; font-size: 0.8rem; line-height: 1.6;">
+                                ${summary.summary_points.map(point => `<li style="margin-bottom: 3px;">${point}</li>`).join('')}
+                            </ul>
+                        </div>
+                    `;
+                } else if (summary.error) {
+                    html += `
+                        <div style="background: #fef3c7; border-radius: 6px; padding: 10px; font-size: 0.8rem; color: #92400e;">
+                            ⚠️ Summary unavailable: ${summary.error}
+                        </div>
+                    `;
+                } else {
+                    html += `
+                        <div style="background: #f3f4f6; border-radius: 6px; padding: 10px; font-size: 0.8rem; color: #6b7280;">
+                            📄 No PDF content available for AI analysis
+                        </div>
+                    `;
+                }
+
+                html += '</div>';
+            });
+
+            html += '</div>';
         }
 
         return html;
@@ -6585,78 +6939,330 @@ function hideResults() {
 // Preloaded results from server (latest algorithm run)
 const PRELOADED_FUTURES_RESULTS = {{ preloaded_results|safe }};
 
-// Display preloaded results with "Previous Results" header
+// Recommendation history for last 30 days (symbol -> array of recommendations)
+const RECOMMENDATION_HISTORY = {{ recommendation_history|safe }};
+
+// Recommendation History Module - Shows historical calls for a symbol
+const RecommendationHistory = {
+    currentSymbol: null,
+
+    show(symbol) {
+        this.currentSymbol = symbol;
+        const history = RECOMMENDATION_HISTORY[symbol] || [];
+
+        if (history.length === 0) {
+            UIBuilders.showNotification({
+                type: 'info',
+                message: `No recommendation history found for ${symbol}`,
+                icon: 'ℹ️',
+                timeout: 3000
+            });
+            return;
+        }
+
+        // Calculate stats
+        const totalRecs = history.length;
+        const longRecs = history.filter(h => h.direction === 'LONG').length;
+        const shortRecs = history.filter(h => h.direction === 'SHORT').length;
+        const avgScore = (history.reduce((sum, h) => sum + (h.score || 0), 0) / totalRecs).toFixed(1);
+
+        // Update modal header
+        document.getElementById('historyModalTitle').textContent = `📊 ${symbol} - Recommendation History`;
+        document.getElementById('historyModalSubtitle').textContent = `${totalRecs} recommendations in last 30 days`;
+
+        // Update stats
+        document.getElementById('historyModalStats').innerHTML = `
+            <div style="text-align: center; padding: 15px; background: white; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+                <div style="font-size: 1.75rem; font-weight: 700; color: #3b82f6;">${totalRecs}</div>
+                <div style="font-size: 0.8rem; color: #6b7280;">Total Calls</div>
+            </div>
+            <div style="text-align: center; padding: 15px; background: white; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+                <div style="font-size: 1.75rem; font-weight: 700; color: #10b981;">${longRecs}</div>
+                <div style="font-size: 0.8rem; color: #6b7280;">Long Calls</div>
+            </div>
+            <div style="text-align: center; padding: 15px; background: white; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+                <div style="font-size: 1.75rem; font-weight: 700; color: #ef4444;">${shortRecs}</div>
+                <div style="font-size: 0.8rem; color: #6b7280;">Short Calls</div>
+            </div>
+            <div style="text-align: center; padding: 15px; background: white; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+                <div style="font-size: 1.75rem; font-weight: 700; color: #8b5cf6;">${avgScore}</div>
+                <div style="font-size: 0.8rem; color: #6b7280;">Avg Score</div>
+            </div>
+        `;
+
+        // Build history list
+        let listHtml = '';
+        history.forEach((rec, index) => {
+            const directionColor = rec.direction === 'LONG' ? '#10b981' : '#ef4444';
+            const directionIcon = rec.direction === 'LONG' ? '📈' : '📉';
+            const statusBadge = this.getStatusBadge(rec.status);
+
+            // Calculate hypothetical P&L (placeholder - would need current price from API)
+            const entryPrice = rec.entry_price || rec.futures_price || 0;
+
+            listHtml += `
+                <div style="background: white; border: 1px solid #e5e7eb; border-radius: 12px; padding: 20px; margin-bottom: 15px; transition: box-shadow 0.2s;" onmouseover="this.style.boxShadow='0 4px 12px rgba(0,0,0,0.1)'" onmouseout="this.style.boxShadow='none'">
+                    <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 15px;">
+                        <div style="display: flex; align-items: center; gap: 12px;">
+                            <span style="font-size: 1.5rem;">${directionIcon}</span>
+                            <div>
+                                <div style="font-weight: 700; color: #1f2937; font-size: 1.1rem;">
+                                    ${rec.direction}
+                                    <span style="color: ${directionColor}; font-weight: 600; margin-left: 5px;">Score: ${rec.score || 0}</span>
+                                </div>
+                                <div style="color: #6b7280; font-size: 0.85rem;">
+                                    📅 ${rec.date} ${rec.expiry_date ? `• Expiry: ${rec.expiry_date}` : ''}
+                                </div>
+                            </div>
+                        </div>
+                        ${statusBadge}
+                    </div>
+
+                    <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; padding-top: 15px; border-top: 1px solid #f3f4f6;">
+                        <div>
+                            <div style="font-size: 0.75rem; color: #9ca3af; text-transform: uppercase; margin-bottom: 4px;">Entry Price</div>
+                            <div style="font-weight: 600; color: #1f2937;">₹${entryPrice.toLocaleString('en-IN', {maximumFractionDigits: 2})}</div>
+                        </div>
+                        <div>
+                            <div style="font-size: 0.75rem; color: #9ca3af; text-transform: uppercase; margin-bottom: 4px;">Lot Size</div>
+                            <div style="font-weight: 600; color: #1f2937;">${rec.lot_size || 'N/A'}</div>
+                        </div>
+                        <div>
+                            <div style="font-size: 0.75rem; color: #9ca3af; text-transform: uppercase; margin-bottom: 4px;">Recommended Lots</div>
+                            <div style="font-weight: 600; color: #1f2937;">${rec.recommended_lots || 'N/A'}</div>
+                        </div>
+                    </div>
+
+                    ${this.getHypotheticalPnL(rec)}
+                </div>
+            `;
+        });
+
+        document.getElementById('historyModalContent').innerHTML = listHtml;
+
+        // Show modal
+        document.getElementById('recommendationHistoryModal').style.display = 'block';
+        document.body.style.overflow = 'hidden';
+    },
+
+    getStatusBadge(status) {
+        const badges = {
+            'SUGGESTED': { bg: '#dbeafe', color: '#1d4ed8', text: 'Suggested' },
+            'TAKEN': { bg: '#fef3c7', color: '#92400e', text: 'Taken' },
+            'ACTIVE': { bg: '#fed7aa', color: '#c2410c', text: 'Active' },
+            'CLOSED': { bg: '#e5e7eb', color: '#374151', text: 'Closed' },
+            'SUCCESSFUL': { bg: '#d1fae5', color: '#065f46', text: '✓ Successful' },
+            'LOSS': { bg: '#fee2e2', color: '#991b1b', text: '✗ Loss' },
+        };
+        const badge = badges[status] || { bg: '#f3f4f6', color: '#6b7280', text: status || 'Unknown' };
+        return `<span style="background: ${badge.bg}; color: ${badge.color}; padding: 6px 12px; border-radius: 20px; font-size: 0.8rem; font-weight: 600;">${badge.text}</span>`;
+    },
+
+    getHypotheticalPnL(rec) {
+        // If trade was taken and has outcome, show actual P&L
+        if (rec.status === 'SUCCESSFUL' || rec.status === 'LOSS') {
+            const pnlColor = rec.status === 'SUCCESSFUL' ? '#10b981' : '#ef4444';
+            return `
+                <div style="margin-top: 15px; padding: 12px; background: ${rec.status === 'SUCCESSFUL' ? '#ecfdf5' : '#fef2f2'}; border-radius: 8px;">
+                    <div style="font-size: 0.8rem; color: ${pnlColor}; font-weight: 600;">
+                        ${rec.status === 'SUCCESSFUL' ? '✅ Trade was successful' : '❌ Trade resulted in loss'}
+                    </div>
+                </div>
+            `;
+        }
+
+        // For suggested trades that weren't taken, show note
+        if (rec.status === 'SUGGESTED') {
+            return `
+                <div style="margin-top: 15px; padding: 12px; background: #f8fafc; border-radius: 8px; border: 1px dashed #cbd5e1;">
+                    <div style="font-size: 0.8rem; color: #64748b;">
+                        💡 <em>Trade was not taken. Check current price to evaluate missed opportunity.</em>
+                    </div>
+                </div>
+            `;
+        }
+
+        return '';
+    },
+
+    close() {
+        document.getElementById('recommendationHistoryModal').style.display = 'none';
+        document.body.style.overflow = '';
+    }
+};
+
+// Build recommendation count badge HTML
+function buildRecommendationBadge(symbol, count) {
+    if (!count || count <= 1) return '';
+
+    // Color intensity based on count
+    let bgColor, textColor;
+    if (count >= 5) {
+        bgColor = '#fef2f2'; textColor = '#dc2626'; // Red for hot picks
+    } else if (count >= 3) {
+        bgColor = '#fefce8'; textColor = '#ca8a04'; // Yellow for warm picks
+    } else {
+        bgColor = '#f0fdf4'; textColor = '#16a34a'; // Green for regular
+    }
+
+    return `
+        <span onclick="event.stopPropagation(); RecommendationHistory.show('${symbol}')"
+              style="background: ${bgColor}; color: ${textColor}; padding: 4px 10px; border-radius: 12px; font-size: 0.75rem; font-weight: 700; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; border: 1px solid ${textColor}20; transition: transform 0.1s;"
+              onmouseover="this.style.transform='scale(1.05)'"
+              onmouseout="this.style.transform='scale(1)'"
+              title="Click to see recommendation history">
+            🔥 ${count}x in 30d
+        </span>
+    `;
+}
+
+// Display preloaded results in the dedicated previous results section
 function displayPreloadedResults(results) {
-    const resultsDiv = document.getElementById('futuresResults');
-    resultsDiv.style.display = 'block';
+    const sectionDiv = document.getElementById('previousResultsSection');
+
+    if (!results || !results.success || !results.all_contracts || results.all_contracts.length === 0) {
+        // Show empty state
+        sectionDiv.innerHTML = `
+            <div style="background: #f9fafb; border-radius: 12px; padding: 20px; border: 1px dashed #d1d5db;">
+                <div style="display: flex; align-items: center; gap: 15px;">
+                    <span style="font-size: 2rem;">📋</span>
+                    <div>
+                        <h3 style="margin: 0 0 5px 0; color: #6b7280; font-weight: 600;">Previous Shortlisted Suggestions</h3>
+                        <p style="margin: 0; color: #9ca3af; font-size: 0.875rem;">
+                            No previous analysis results found. Click "Find Top 3 Opportunities" above to run the algorithm.
+                        </p>
+                    </div>
+                </div>
+            </div>
+        `;
+        return;
+    }
 
     const allContracts = results.all_contracts || [];
     const totalPassed = results.total_passed || allContracts.length;
     const batchTime = results.batch_time || 'Unknown';
 
     // Build HTML with "Previous Results" header
-    let html = '<div style="margin-top: 20px;">';
+    let html = '';
 
-    // Previous Results Banner (different styling to distinguish from fresh results)
+    // Previous Results Banner (yellow/amber styling to distinguish from fresh results)
     html += `
-        <div style="background: linear-gradient(135deg, #fefce8 0%, #fef9c3 100%); border-radius: 12px; padding: 20px; margin-bottom: 25px; border: 2px solid #eab308; position: relative;">
+        <div style="background: linear-gradient(135deg, #fefce8 0%, #fef9c3 100%); border-radius: 12px; padding: 20px; margin-bottom: 20px; border: 2px solid #eab308;">
             <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 15px;">
                 <div>
-                    <h2 style="color: #854d0e; margin: 0 0 8px 0; display: flex; align-items: center; gap: 10px;">
+                    <h2 style="color: #854d0e; margin: 0 0 8px 0; display: flex; align-items: center; gap: 10px; font-size: 1.25rem;">
                         <span style="font-size: 1.5rem;">📋</span>
-                        Previous Analysis Results
+                        Previous Shortlisted Suggestions
                     </h2>
                     <div style="color: #a16207; font-size: 0.875rem;">
-                        <span style="font-weight: 600;">${totalPassed} shortlisted contracts</span> from last run
+                        <span style="font-weight: 600;">${totalPassed} contracts passed</span> algorithm screening
                         <span style="margin-left: 10px; padding: 2px 8px; background: #fef3c7; border-radius: 4px;">
                             🕐 ${batchTime}
                         </span>
                     </div>
                 </div>
                 <button onclick="FuturesAlgorithm.run()"
-                        style="background: #3b82f6; color: white; border: none; padding: 10px 20px; border-radius: 8px; cursor: pointer; font-weight: 600; display: flex; align-items: center; gap: 8px;">
+                        style="background: #3b82f6; color: white; border: none; padding: 10px 20px; border-radius: 8px; cursor: pointer; font-weight: 600; display: flex; align-items: center; gap: 8px; font-size: 0.875rem;">
                     🔄 Run Fresh Analysis
                 </button>
             </div>
         </div>
     `;
 
-    // Display contracts using the same card builder from FuturesAlgorithm
-    if (allContracts.length > 0) {
-        allContracts.forEach((contract, index) => {
-            html += FuturesAlgorithm.buildContractCard(contract, index, true);
-        });
-    } else {
-        html += `
-            <div style="text-align: center; padding: 40px; background: #f9fafb; border-radius: 12px;">
-                <div style="font-size: 3rem; margin-bottom: 15px;">📭</div>
-                <div style="color: #6b7280; font-size: 1.125rem;">No previous results available</div>
-            </div>
-        `;
-    }
+    // Display contracts using custom card with recommendation badge
+    allContracts.forEach((contract, index) => {
+        const recCount = contract.recommendation_count || (RECOMMENDATION_HISTORY[contract.symbol] || []).length;
+        const recBadge = buildRecommendationBadge(contract.symbol, recCount);
 
-    html += '</div>';
-    resultsDiv.innerHTML = html;
+        // Build card with recommendation badge injected
+        html += buildPreloadedContractCard(contract, `prev-${index}`, recBadge);
+    });
+
+    sectionDiv.innerHTML = html;
 
     // Store contracts for reference
     FuturesAlgorithm.analyzedContracts = allContracts;
 }
 
+// Build a contract card specifically for preloaded results (with recommendation badge)
+function buildPreloadedContractCard(contract, index, recBadge) {
+    const verdictStyles = {
+        'PASS': { color: '#10b981', bg: '#d1fae5', icon: '✅', border: '#10b981' },
+    };
+    const style = verdictStyles['PASS'];
+    const directionColor = contract.direction === 'LONG' ? '#10b981' : '#ef4444';
+    const directionIcon = contract.direction === 'LONG' ? '📈' : '📉';
+
+    return `
+        <div style="background: white; border: 2px solid ${style.border}; border-radius: 12px; margin-bottom: 15px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.05);">
+            <!-- Card Header -->
+            <div style="background: ${style.bg}; padding: 16px 20px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+                <div style="display: flex; align-items: center; gap: 15px;">
+                    <span style="font-size: 1.5rem;">${style.icon}</span>
+                    <div>
+                        <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+                            <span style="font-size: 1.25rem; font-weight: 700; color: #1f2937;">${contract.symbol}</span>
+                            <span style="background: ${directionColor}; color: white; padding: 3px 10px; border-radius: 12px; font-size: 0.75rem; font-weight: 600;">
+                                ${directionIcon} ${contract.direction}
+                            </span>
+                            ${recBadge}
+                        </div>
+                        <div style="color: #6b7280; font-size: 0.85rem; margin-top: 4px;">
+                            Expiry: ${contract.expiry} • Score: <strong style="color: ${style.color};">${contract.composite_score}/100</strong>
+                        </div>
+                    </div>
+                </div>
+                <div style="text-align: right;">
+                    <div style="font-size: 1.1rem; font-weight: 700; color: #1f2937;">₹${(contract.spot_price || 0).toLocaleString('en-IN', {maximumFractionDigits: 2})}</div>
+                    <div style="font-size: 0.8rem; color: #6b7280;">Spot Price</div>
+                </div>
+            </div>
+
+            <!-- Card Body - Quick Stats -->
+            <div style="padding: 16px 20px; display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 15px; border-top: 1px solid #e5e7eb;">
+                <div>
+                    <div style="font-size: 0.7rem; color: #9ca3af; text-transform: uppercase;">Lots</div>
+                    <div style="font-weight: 600; color: #1f2937;">${contract.recommended_lots || 'N/A'}</div>
+                </div>
+                <div>
+                    <div style="font-size: 0.7rem; color: #9ca3af; text-transform: uppercase;">Margin Req.</div>
+                    <div style="font-weight: 600; color: #1f2937;">₹${((contract.margin_required || 0) / 100000).toFixed(1)}L</div>
+                </div>
+                <div>
+                    <div style="font-size: 0.7rem; color: #9ca3af; text-transform: uppercase;">Max Profit</div>
+                    <div style="font-weight: 600; color: #10b981;">₹${((contract.max_profit || 0) / 1000).toFixed(1)}K</div>
+                </div>
+                <div>
+                    <div style="font-size: 0.7rem; color: #9ca3af; text-transform: uppercase;">Max Loss</div>
+                    <div style="font-weight: 600; color: #ef4444;">₹${((contract.max_loss || 0) / 1000).toFixed(1)}K</div>
+                </div>
+            </div>
+
+            <!-- View Details Button -->
+            <div style="padding: 12px 20px; background: #f9fafb; border-top: 1px solid #e5e7eb;">
+                <button onclick="FuturesAlgorithm.showDetailModal(FuturesAlgorithm.analyzedContracts.find(c => c.symbol === '${contract.symbol}'))"
+                        style="width: 100%; background: #3b82f6; color: white; border: none; padding: 10px; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 0.875rem;">
+                    View Full Analysis
+                </button>
+            </div>
+        </div>
+    `;
+}
+
 // Initialize preloaded results on page load
 document.addEventListener('DOMContentLoaded', function() {
-    // Check if we have preloaded futures results
-    if (PRELOADED_FUTURES_RESULTS && PRELOADED_FUTURES_RESULTS.success && PRELOADED_FUTURES_RESULTS.all_contracts && PRELOADED_FUTURES_RESULTS.all_contracts.length > 0) {
-        console.log('[Futures] Found preloaded results from', PRELOADED_FUTURES_RESULTS.batch_time);
-        console.log('[Futures] Preloaded contracts:', PRELOADED_FUTURES_RESULTS.all_contracts.length);
+    console.log('[Futures] Checking for preloaded results...');
+    console.log('[Futures] PRELOADED_FUTURES_RESULTS:', PRELOADED_FUTURES_RESULTS);
 
-        // Small delay to ensure all modules are loaded
-        setTimeout(function() {
-            // Display the preloaded results with special header
-            displayPreloadedResults(PRELOADED_FUTURES_RESULTS);
-        }, 100);
-    } else {
-        console.log('[Futures] No preloaded results available');
-    }
+    // Small delay to ensure all modules (especially FuturesAlgorithm) are loaded
+    setTimeout(function() {
+        // Always call displayPreloadedResults - it will show empty state if no results
+        displayPreloadedResults(PRELOADED_FUTURES_RESULTS);
+
+        if (PRELOADED_FUTURES_RESULTS && PRELOADED_FUTURES_RESULTS.all_contracts) {
+            console.log('[Futures] Loaded', PRELOADED_FUTURES_RESULTS.all_contracts.length, 'previous results from', PRELOADED_FUTURES_RESULTS.batch_time);
+        }
+    }, 150);
 });
 </script>
 

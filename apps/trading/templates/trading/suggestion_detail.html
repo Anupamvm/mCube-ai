@@ -3,6 +3,10 @@
 
 {% block title %}Trade Suggestion #{{ suggestion.id }} - mCube AI{% endblock %}
 
+{% block extra_css %}
+<link rel="stylesheet" href="{% static 'css/trading/chart.css' %}">
+{% endblock %}
+
 {% block content %}
 <div class="container-fluid py-4">
     <!-- Header -->
@@ -147,6 +151,110 @@
                     {% else %}
                         <p class="text-muted">No position details available</p>
                     {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Interactive Price Chart Section -->
+    <div class="row mb-4 chart-section">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header bg-light d-flex justify-content-between align-items-center" data-bs-toggle="collapse" data-bs-target="#chartCollapse">
+                    <h6 class="mb-0">
+                        <i class="fas fa-chevron-down collapse-icon me-2"></i>
+                        <i class="fas fa-chart-line me-2"></i> Price Chart & Technical Analysis
+                    </h6>
+                    <div class="d-flex align-items-center gap-3" onclick="event.stopPropagation();">
+                        <div id="vix-badge"></div>
+                        <div class="chart-controls d-flex gap-2">
+                            <select id="chart-duration-select" class="form-select form-select-sm" style="width: auto;">
+                                <option value="1">1D</option>
+                                <option value="5">5D</option>
+                                <option value="30">1M</option>
+                                <option value="90" selected>3M</option>
+                                <option value="180">6M</option>
+                                <option value="365">1Y</option>
+                                <option value="1825">5Y</option>
+                            </select>
+                            <select id="chart-type-select" class="form-select form-select-sm" style="width: auto;">
+                                <option value="line">Line</option>
+                                <option value="candlestick">Candlestick</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+                <div class="collapse show" id="chartCollapse">
+                    <div class="card-body p-0">
+                        <!-- Main Price Chart -->
+                        <div id="interactive-chart" style="height: 450px;"></div>
+
+                        <!-- Chart Legend -->
+                        <div class="chart-legend">
+                            <div class="chart-legend-item">
+                                <input type="checkbox" class="dma-toggle" data-dma="dma_20" id="dma20-toggle" checked>
+                                <label for="dma20-toggle" class="mb-0">
+                                    <span class="legend-color dma-20"></span> 20 DMA
+                                </label>
+                            </div>
+                            <div class="chart-legend-item">
+                                <input type="checkbox" class="dma-toggle" data-dma="dma_50" id="dma50-toggle" checked>
+                                <label for="dma50-toggle" class="mb-0">
+                                    <span class="legend-color dma-50"></span> 50 DMA
+                                </label>
+                            </div>
+                            <div class="chart-legend-item">
+                                <input type="checkbox" class="dma-toggle" data-dma="dma_100" id="dma100-toggle">
+                                <label for="dma100-toggle" class="mb-0">
+                                    <span class="legend-color dma-100"></span> 100 DMA
+                                </label>
+                            </div>
+                            <div class="chart-legend-item">
+                                <input type="checkbox" class="dma-toggle" data-dma="dma_200" id="dma200-toggle" checked>
+                                <label for="dma200-toggle" class="mb-0">
+                                    <span class="legend-color dma-200"></span> 200 DMA
+                                </label>
+                            </div>
+                            <div class="chart-legend-item">
+                                <span class="legend-color support"></span> Support
+                            </div>
+                            <div class="chart-legend-item">
+                                <span class="legend-color resistance"></span> Resistance
+                            </div>
+                        </div>
+
+                        <!-- Trade Markers Legend (conditional) -->
+                        {% if suggestion.suggestion_type == 'OPTIONS' %}
+                        <div class="marker-legend mx-3 mb-2">
+                            <span class="text-muted me-2">Trade Markers:</span>
+                            <div class="marker-legend-item call-strike">
+                                <span class="line-indicator"></span> CALL Strike
+                            </div>
+                            <div class="marker-legend-item put-strike">
+                                <span class="line-indicator"></span> PUT Strike
+                            </div>
+                            <div class="marker-legend-item breakeven">
+                                <span class="line-indicator"></span> Breakeven
+                            </div>
+                        </div>
+                        {% else %}
+                        <div class="marker-legend mx-3 mb-2">
+                            <span class="text-muted me-2">Trade Markers:</span>
+                            <div class="marker-legend-item entry">
+                                <span class="line-indicator"></span> Entry
+                            </div>
+                            <div class="marker-legend-item stoploss">
+                                <span class="line-indicator"></span> Stop Loss
+                            </div>
+                            <div class="marker-legend-item target">
+                                <span class="line-indicator"></span> Target
+                            </div>
+                        </div>
+                        {% endif %}
+
+                        <!-- OI Distribution Chart -->
+                        <div id="oi-chart" style="height: 180px;"></div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -830,5 +938,61 @@
 
         return obj.toString();
     }
+</script>
+
+<!-- Chart Libraries -->
+<script src="https://unpkg.com/lightweight-charts@4.1.0/dist/lightweight-charts.standalone.production.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="{% static 'js/trading/components/interactive-chart.js' %}"></script>
+<script>
+    // Initialize interactive chart when DOM is ready
+    document.addEventListener('DOMContentLoaded', function() {
+        const chart = new InteractiveChart('interactive-chart', {
+            suggestionId: {{ suggestion.id }},
+            height: 450,
+            oiContainerId: 'oi-chart',
+            vixBadgeId: 'vix-badge'
+        });
+        chart.init();
+
+        // Handle duration selector
+        const durationSelect = document.getElementById('chart-duration-select');
+        if (durationSelect) {
+            durationSelect.addEventListener('change', function(e) {
+                const days = parseInt(e.target.value);
+                chart.changeDuration(days);
+            });
+        }
+
+        // Handle chart type selector
+        const chartTypeSelect = document.getElementById('chart-type-select');
+        if (chartTypeSelect) {
+            chartTypeSelect.addEventListener('change', function(e) {
+                chart.toggleChartType(e.target.value);
+            });
+        }
+
+        // Handle DMA toggle checkboxes
+        const dmaCheckboxes = document.querySelectorAll('.dma-toggle');
+        dmaCheckboxes.forEach(checkbox => {
+            checkbox.addEventListener('change', function(e) {
+                const dmaKey = e.target.dataset.dma;
+                chart.toggleDMA(dmaKey, e.target.checked);
+            });
+        });
+
+        // Handle collapse toggle icon
+        const chartCollapse = document.getElementById('chartCollapse');
+        const collapseIcon = document.querySelector('.chart-section .collapse-icon');
+
+        if (chartCollapse && collapseIcon) {
+            chartCollapse.addEventListener('hidden.bs.collapse', function() {
+                collapseIcon.style.transform = 'rotate(-90deg)';
+            });
+            chartCollapse.addEventListener('shown.bs.collapse', function() {
+                collapseIcon.style.transform = 'rotate(0deg)';
+            });
+        }
+    });
 </script>
 {% endblock %}

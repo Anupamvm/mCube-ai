@@ -19,30 +19,37 @@ logger = logging.getLogger(__name__)
 
 
 # =============================================================================
-# S/R PROXIMITY ADJUSTMENT
+# S/R PROXIMITY ADJUSTMENT (Using Conservative Consolidated S/R)
 # =============================================================================
 
 def adjust_strikes_for_sr(
     call_strike: int,
     put_strike: int,
     spot_price: Decimal,
-    strike_interval: int = 50
+    strike_interval: int = 50,
+    use_conservative: bool = True
 ) -> Dict:
     """
     Adjust strikes if too close to Support/Resistance levels.
 
-    Uses the existing calculate_nifty_sr() and check_strike_proximity_to_sr()
-    from support_resistance_calculator.py.
+    Uses CONSERVATIVE S/R from consolidated calculator which combines:
+    1. Pivot Points (from historical price data)
+    2. OI-Based S/R (from options open interest)
+
+    Conservative approach:
+    - For Support: Uses the HIGHER (closer to price) value from all methods
+    - For Resistance: Uses the LOWER (closer to price) value from all methods
 
     Logic:
-    - If CALL within 100 pts of R1/R2 → Move UP 50 pts
-    - If PUT within 100 pts of S1/S2 → Move DOWN 50 pts
+    - If CALL within 100 pts of conservative R1/R2 → Move UP 50 pts
+    - If PUT within 100 pts of conservative S1/S2 → Move DOWN 50 pts
 
     Args:
         call_strike: Original call strike
         put_strike: Original put strike
         spot_price: Current spot price
         strike_interval: Strike interval for adjustments (default: 50 for NIFTY)
+        use_conservative: Use conservative (closest) S/R levels (default: True)
 
     Returns:
         dict: {
@@ -52,7 +59,8 @@ def adjust_strikes_for_sr(
             'put_adjusted': bool,
             'call_adjustment_reason': str or None,
             'put_adjustment_reason': str or None,
-            'sr_data': dict or None (S/R levels used)
+            'sr_data': dict or None (S/R levels used),
+            'sr_method': str (which method was used)
         }
     """
     result = {
@@ -62,42 +70,105 @@ def adjust_strikes_for_sr(
         'put_adjusted': False,
         'call_adjustment_reason': None,
         'put_adjustment_reason': None,
-        'sr_data': None
+        'sr_data': None,
+        'sr_method': None
     }
 
+    proximity_threshold = 100  # Points proximity threshold
+
     try:
-        from apps.strategies.services.support_resistance_calculator import (
-            calculate_nifty_sr,
-            check_strike_sr_proximity
-        )
+        if use_conservative:
+            # Use consolidated conservative S/R (combines Pivot + OI)
+            from apps.strategies.services.consolidated_sr_calculator import (
+                get_conservative_sr,
+                check_strike_vs_conservative_sr
+            )
 
-        # Get S/R levels
-        sr_data = calculate_nifty_sr(float(spot_price))
-        result['sr_data'] = sr_data
+            sr_data = get_conservative_sr('NIFTY', float(spot_price))
+            result['sr_data'] = sr_data
+            result['sr_method'] = 'Conservative (Pivot + OI)'
 
-        # Check proximity for both strikes
-        proximity_check = check_strike_sr_proximity(call_strike, put_strike, sr_data)
+            if not sr_data.get('conservative_support', {}).get('s1'):
+                logger.warning("Conservative S/R data not available, skipping adjustment")
+                return result
 
-        # Adjust call if needed
-        call_adj = proximity_check['call_adjustment']
-        if call_adj['should_adjust']:
-            result['call_strike'] = call_adj['adjusted_strike']
-            result['call_adjusted'] = True
-            result['call_adjustment_reason'] = call_adj['reason']
-            logger.info(f"S/R Adjustment: CALL {call_strike} → {result['call_strike']} "
-                       f"({call_adj['reason']})")
+            # Get conservative S/R levels
+            s1 = sr_data['conservative_support']['s1']
+            s2 = sr_data['conservative_support']['s2']
+            r1 = sr_data['conservative_resistance']['r1']
+            r2 = sr_data['conservative_resistance']['r2']
 
-        # Adjust put if needed
-        put_adj = proximity_check['put_adjustment']
-        if put_adj['should_adjust']:
-            result['put_strike'] = put_adj['adjusted_strike']
-            result['put_adjusted'] = True
-            result['put_adjustment_reason'] = put_adj['reason']
-            logger.info(f"S/R Adjustment: PUT {put_strike} → {result['put_strike']} "
-                       f"({put_adj['reason']})")
+            # Check CALL strike against conservative resistance
+            if r1 and abs(call_strike - r1) <= proximity_threshold:
+                result['call_strike'] = call_strike + strike_interval
+                result['call_adjusted'] = True
+                result['call_adjustment_reason'] = (
+                    f"CALL {call_strike} too close to conservative R1 ({r1:.0f}, "
+                    f"source: {sr_data['conservative_resistance']['r1_source']})"
+                )
+                logger.info(f"S/R Adjustment: CALL {call_strike} → {result['call_strike']} "
+                           f"({result['call_adjustment_reason']})")
+            elif r2 and abs(call_strike - r2) <= proximity_threshold:
+                result['call_strike'] = call_strike + strike_interval
+                result['call_adjusted'] = True
+                result['call_adjustment_reason'] = (
+                    f"CALL {call_strike} too close to conservative R2 ({r2:.0f}, "
+                    f"source: {sr_data['conservative_resistance']['r2_source']})"
+                )
+                logger.info(f"S/R Adjustment: CALL {call_strike} → {result['call_strike']} "
+                           f"({result['call_adjustment_reason']})")
+
+            # Check PUT strike against conservative support
+            if s1 and abs(put_strike - s1) <= proximity_threshold:
+                result['put_strike'] = put_strike - strike_interval
+                result['put_adjusted'] = True
+                result['put_adjustment_reason'] = (
+                    f"PUT {put_strike} too close to conservative S1 ({s1:.0f}, "
+                    f"source: {sr_data['conservative_support']['s1_source']})"
+                )
+                logger.info(f"S/R Adjustment: PUT {put_strike} → {result['put_strike']} "
+                           f"({result['put_adjustment_reason']})")
+            elif s2 and abs(put_strike - s2) <= proximity_threshold:
+                result['put_strike'] = put_strike - strike_interval
+                result['put_adjusted'] = True
+                result['put_adjustment_reason'] = (
+                    f"PUT {put_strike} too close to conservative S2 ({s2:.0f}, "
+                    f"source: {sr_data['conservative_support']['s2_source']})"
+                )
+                logger.info(f"S/R Adjustment: PUT {put_strike} → {result['put_strike']} "
+                           f"({result['put_adjustment_reason']})")
+
+        else:
+            # Fallback to original pivot-only method
+            from apps.strategies.services.support_resistance_calculator import (
+                calculate_nifty_sr,
+                check_strike_sr_proximity
+            )
+
+            sr_data = calculate_nifty_sr(float(spot_price))
+            result['sr_data'] = sr_data
+            result['sr_method'] = 'Pivot Points Only'
+
+            proximity_check = check_strike_sr_proximity(call_strike, put_strike, sr_data)
+
+            call_adj = proximity_check['call_adjustment']
+            if call_adj['should_adjust']:
+                result['call_strike'] = call_adj['adjusted_strike']
+                result['call_adjusted'] = True
+                result['call_adjustment_reason'] = call_adj['reason']
+                logger.info(f"S/R Adjustment: CALL {call_strike} → {result['call_strike']} "
+                           f"({call_adj['reason']})")
+
+            put_adj = proximity_check['put_adjustment']
+            if put_adj['should_adjust']:
+                result['put_strike'] = put_adj['adjusted_strike']
+                result['put_adjusted'] = True
+                result['put_adjustment_reason'] = put_adj['reason']
+                logger.info(f"S/R Adjustment: PUT {put_strike} → {result['put_strike']} "
+                           f"({put_adj['reason']})")
 
         if not result['call_adjusted'] and not result['put_adjusted']:
-            logger.info("S/R Adjustment: No adjustments needed - strikes safe from S/R levels")
+            logger.info(f"S/R Adjustment: No adjustments needed - strikes safe from {result['sr_method']} levels")
 
     except Exception as e:
         logger.warning(f"S/R adjustment failed (continuing with original strikes): {e}")

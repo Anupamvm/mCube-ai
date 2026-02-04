@@ -78,17 +78,9 @@ class TradingPatternsAnalyzer:
         qs = BrokerContractPnL.objects.all()
         if self.broker:
             qs = qs.filter(broker=self.broker)
-        # Filter by FY: match either the 'fy' field OR expiry_date within FY range
+        # Filter by FY: use only the 'fy' field (matches broker's FY assignment)
         if self.fy and self.fy != 'ALL':
-            if self._fy_start and self._fy_end:
-                # Match trades where fy field matches OR expiry_date falls within FY range
-                qs = qs.filter(
-                    Q(fy=self.fy) |
-                    Q(expiry_date__gte=self._fy_start, expiry_date__lte=self._fy_end)
-                )
-            else:
-                # Fallback to just fy field if date range not parsed
-                qs = qs.filter(fy=self.fy)
+            qs = qs.filter(fy=self.fy)
         # Filter by segment/asset type
         if self.segment and self.segment != 'ALL':
             if self.segment == 'FNO':
@@ -959,8 +951,10 @@ def get_available_fys() -> List[Dict[str, str]]:
     """
     Get list of available financial years from the data.
 
-    Checks both BrokerContractPnL (CSV imports) and BrokerTradeHistory (API syncs)
-    to get all available fiscal years.
+    Checks:
+    1. BrokerContractPnL 'fy' field (CSV imports with FY in filename)
+    2. BrokerContractPnL 'expiry_date' field (infer FY from expiry dates)
+    3. BrokerTradeHistory 'trade_date' field (API syncs)
 
     Returns:
         List of dicts with 'value' (e.g., '2024-25') and 'label' (e.g., 'FY 2024-25')
@@ -970,7 +964,7 @@ def get_available_fys() -> List[Dict[str, str]]:
 
     seen = set()
 
-    # Get distinct FY values from BrokerContractPnL 'fy' field (CSV imports)
+    # 1. Get distinct FY values from BrokerContractPnL 'fy' field (CSV imports)
     fy_values = BrokerContractPnL.objects.exclude(
         fy=''
     ).values('fy').distinct().values_list('fy', flat=True)
@@ -979,8 +973,26 @@ def get_available_fys() -> List[Dict[str, str]]:
         if fy_value:
             seen.add(fy_value)
 
-    # Get distinct year/month combinations from BrokerTradeHistory (API syncs)
-    # This is more efficient than fetching all trade dates
+    # 2. Infer FY from BrokerContractPnL expiry_date for records with empty/missing FY
+    # This ensures records uploaded without proper filename are still included
+    expiry_year_months = BrokerContractPnL.objects.filter(
+        expiry_date__isnull=False
+    ).annotate(
+        year=ExtractYear('expiry_date'),
+        month=ExtractMonth('expiry_date')
+    ).values('year', 'month').distinct()
+
+    for ym in expiry_year_months:
+        year, month = ym['year'], ym['month']
+        if year and month:
+            # FY runs April 1 to March 31
+            if month >= 4:  # April onwards
+                fy_value = f"{year}-{str(year + 1)[-2:]}"
+            else:  # Jan-Mar
+                fy_value = f"{year - 1}-{str(year)[-2:]}"
+            seen.add(fy_value)
+
+    # 3. Get distinct year/month combinations from BrokerTradeHistory (API syncs)
     year_months = BrokerTradeHistory.objects.annotate(
         year=ExtractYear('trade_date'),
         month=ExtractMonth('trade_date')

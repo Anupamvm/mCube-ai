@@ -74,6 +74,12 @@ from apps.trading.api.historical_data_views import (
     verify_historical_data,
 )
 
+# Chart Data
+from apps.trading.api.chart_views import (
+    get_chart_data,
+    get_contract_chart_data,
+)
+
 
 # Export all views for easy importing
 __all__ = [
@@ -112,4 +118,7 @@ __all__ = [
     'prepare_historical_data',
     'get_related_instruments',
     'verify_historical_data',
+    # Chart Data
+    'get_chart_data',
+    'get_contract_chart_data',
 ]

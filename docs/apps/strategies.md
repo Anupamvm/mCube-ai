@@ -28,6 +28,10 @@ The strategies app contains the trading algorithms - the brain of mCube. This is
 | `services/historical_analysis.py` | Historical data analysis |
 | `services/technical_analysis.py` | Technical indicators |
 | `services/greeks_calculator.py` | Black-Scholes Greeks |
+| `services/consolidated_sr_calculator.py` | **Conservative S/R (Pivot + OI)** |
+| `services/oi_support_resistance.py` | OI-based S/R calculation |
+| `services/support_resistance_calculator.py` | Pivot-based S/R calculation |
+| `shared/strike_calculator.py` | Strike adjustment for S/R proximity |
 | `filters/global_markets.py` | Global market stability filter |
 | `filters/event_calendar.py` | Economic events filter |
 | `tasks.py` | Scheduled strategy tasks |
@@ -282,6 +286,92 @@ If position goes against you:
 2. Calculate new weighted average
 3. Tighten stop-loss to 0.5% from new average
 4. Increment averaging_count
+```
+
+---
+
+## Support and Resistance System
+
+All strategies use a **Consolidated Conservative S/R** system that combines multiple calculation methods.
+
+### Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│               ConsolidatedSRCalculator                          │
+│         (apps/strategies/services/consolidated_sr_calculator.py) │
+├─────────────────────────────────────────────────────────────────┤
+│                           │                                     │
+│          ┌────────────────┴────────────────┐                    │
+│          ▼                                 ▼                    │
+│  ┌───────────────────┐         ┌───────────────────────┐        │
+│  │  Pivot Points     │         │  OI-Based S/R         │        │
+│  │  (Historical)     │         │  (Options OI)         │        │
+│  └───────────────────┘         └───────────────────────┘        │
+│                           │                                     │
+│          └────────────────┴────────────────┘                    │
+│                           ▼                                     │
+│              CONSERVATIVE SELECTION                             │
+│   Support: HIGHER value (closer to price)                       │
+│   Resistance: LOWER value (closer to price)                     │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Methods
+
+**1. Pivot Points** (`support_resistance_calculator.py`)
+- Uses 5-day historical high/low/close average
+- Standard pivot point formula
+- Source: `HistoricalPrice` table (Breeze API)
+
+**2. OI-Based S/R** (`oi_support_resistance.py`)
+- Highest PUT OI strike = Support (PUT writers defend this)
+- Highest CALL OI strike = Resistance (CALL writers defend this)
+- Source: `ContractData` table (F&O OI data)
+
+### Usage
+
+```python
+from apps.strategies.services.consolidated_sr_calculator import (
+    get_conservative_sr,
+    ConsolidatedSRCalculator
+)
+
+# Quick access
+sr = get_conservative_sr('NIFTY', current_price=25746)
+print(f"S1: {sr['conservative_support']['s1']} (from {sr['conservative_support']['s1_source']})")
+print(f"R1: {sr['conservative_resistance']['r1']} (from {sr['conservative_resistance']['r1_source']})")
+
+# Full analysis
+calculator = ConsolidatedSRCalculator('NIFTY')
+full_sr = calculator.calculate_all_sr_methods(current_price=25746)
+# Returns S/R from all methods before conservative selection
+```
+
+### Where S/R is Used
+
+| Algorithm | Usage | File |
+|-----------|-------|------|
+| **Strangle** | Adjust strikes away from S/R | `shared/strike_calculator.py` |
+| **Futures** | Entry point validation | `technical_analysis.py` |
+| **Averaging** | Check if averaging is safe | `averaging_analyzer.py` |
+| **Level 2 Analysis** | Deep-dive S/R analysis | `level2_analyzers.py` |
+
+### Strike Adjustment Logic
+
+When placing option strikes:
+- If **CALL** strike is within 100 pts of R1/R2 → Move UP 50 pts
+- If **PUT** strike is within 100 pts of S1/S2 → Move DOWN 50 pts
+
+```python
+from apps.strategies.shared.strike_calculator import adjust_strikes_for_sr
+
+result = adjust_strikes_for_sr(
+    call_strike=25800,
+    put_strike=25700,
+    spot_price=25746
+)
+# If put_strike is at OI-based S1 (25700), it gets adjusted to 25650
 ```
 
 ---

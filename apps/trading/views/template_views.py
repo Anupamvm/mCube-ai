@@ -20,6 +20,7 @@ from apps.core.models import CredentialStore
 logger = logging.getLogger(__name__)
 
 
+@login_required
 def manual_triggers_refactored(request):
     """
     Refactored Manual Trade Triggers Page with clean tabbed interface.
@@ -32,10 +33,16 @@ def manual_triggers_refactored(request):
     Template: trading/manual_triggers_refactored.html
     Features: Tab-based navigation, modal dialogs, broker authentication
 
+    Now pre-loads the latest futures algorithm results so they display immediately on page load.
+
     Returns:
-        HttpResponse: Rendered template with data freshness info
+        HttpResponse: Rendered template with data freshness info and preloaded results
     """
+    import json
+    from decimal import Decimal
+    from django.utils import timezone
     from apps.data.models import TLStockData
+    from apps.trading.models import TradeSuggestion
 
     # Get data freshness info
     data_freshness = {
@@ -91,8 +98,131 @@ def manual_triggers_refactored(request):
     except Exception as e:
         logger.warning(f"Error getting data freshness: {e}")
 
+    # ===== PRELOAD LATEST FUTURES SUGGESTIONS =====
+    # Fetch the latest futures suggestions (created within last 7 days for current view)
+    # AND 30 days history for aggregation
+    preloaded_results = None
+    recommendation_history = {}  # symbol -> list of historical recommendations
+
+    try:
+        # Get 30 days of history for aggregation
+        history_cutoff = timezone.now() - timedelta(days=30)
+        all_history = TradeSuggestion.objects.filter(
+            user=request.user,
+            strategy='icici_futures',
+            status__in=['SUGGESTED', 'TAKEN', 'ACTIVE', 'CLOSED', 'SUCCESSFUL', 'LOSS'],
+            created_at__gte=history_cutoff
+        ).order_by('-created_at')
+
+        # Build recommendation history by symbol
+        for suggestion in all_history:
+            symbol = suggestion.instrument
+            if symbol not in recommendation_history:
+                recommendation_history[symbol] = []
+
+            reasoning = suggestion.algorithm_reasoning or {}
+            metrics = reasoning.get('metrics', {})
+
+            recommendation_history[symbol].append({
+                'id': suggestion.id,
+                'date': suggestion.created_at.strftime('%Y-%m-%d %H:%M'),
+                'direction': suggestion.direction,
+                'score': reasoning.get('composite_score', 0),
+                'entry_price': float(suggestion.spot_price or 0),
+                'futures_price': metrics.get('futures_price', 0),
+                'status': suggestion.status,
+                'lot_size': suggestion.position_details.get('lot_size', 0) if suggestion.position_details else 0,
+                'recommended_lots': suggestion.recommended_lots or 0,
+                'expiry_date': suggestion.expiry_date.strftime('%Y-%m-%d') if suggestion.expiry_date else '',
+            })
+
+        # Get latest batch for current view (within last 7 days)
+        cutoff_time = timezone.now() - timedelta(days=7)
+        latest_suggestions = all_history.filter(created_at__gte=cutoff_time)
+
+        if latest_suggestions.exists():
+            # Get the most recent suggestion's timestamp
+            most_recent = latest_suggestions.first()
+            batch_start = most_recent.created_at - timedelta(minutes=5)
+
+            # Get all suggestions from this batch
+            batch_suggestions = latest_suggestions.filter(created_at__gte=batch_start)
+
+            # Convert to the format expected by displayResults
+            all_contracts = []
+            for suggestion in batch_suggestions:
+                reasoning = suggestion.algorithm_reasoning or {}
+                position_details = suggestion.position_details or {}
+                symbol = suggestion.instrument
+
+                # Get recommendation count for this symbol
+                rec_count = len(recommendation_history.get(symbol, []))
+
+                contract_data = {
+                    'symbol': symbol,
+                    'expiry': suggestion.expiry_date.strftime('%d-%b-%Y') if suggestion.expiry_date else '',
+                    'expiry_date': suggestion.expiry_date.strftime('%Y-%m-%d') if suggestion.expiry_date else '',
+                    'composite_score': reasoning.get('composite_score', 0),
+                    'direction': suggestion.direction,
+                    'verdict': 'PASS',
+                    'technical_verdict': 'PASS',
+                    'historical_passed': True,
+                    'success': True,
+                    'spot_price': float(suggestion.spot_price or 0),
+                    'futures_price': reasoning.get('metrics', {}).get('futures_price', 0),
+                    'basis': reasoning.get('metrics', {}).get('basis', 0),
+                    'basis_pct': reasoning.get('metrics', {}).get('basis_pct', 0),
+                    'volume': reasoning.get('metrics', {}).get('volume', 0),
+                    'lot_size': position_details.get('lot_size', 0),
+                    'explanation': reasoning.get('explanation', []),
+                    'execution_log': reasoning.get('execution_log', []),
+                    'metrics': reasoning.get('metrics', {}),
+                    'scores': reasoning.get('scores', {}),
+                    'sr_data': reasoning.get('sr_data'),
+                    'breach_risks': reasoning.get('breach_risks'),
+                    'historical_verification': reasoning.get('historical_verification'),
+                    'suggestion_id': suggestion.id,
+                    'recommended_lots': suggestion.recommended_lots,
+                    'margin_required': float(suggestion.margin_required or 0),
+                    'margin_per_lot': float(suggestion.margin_per_lot or 0),
+                    'max_profit': float(suggestion.max_profit or 0),
+                    'max_loss': float(suggestion.max_loss or 0),
+                    # New: recommendation count
+                    'recommendation_count': rec_count,
+                }
+                all_contracts.append(contract_data)
+
+            # Sort by composite score descending
+            all_contracts.sort(key=lambda x: x['composite_score'], reverse=True)
+
+            preloaded_results = {
+                'success': True,
+                'all_contracts': all_contracts,
+                'total_analyzed': len(all_contracts),
+                'total_passed': len(all_contracts),
+                'total_hist_fail': 0,
+                'total_failed': 0,
+                'total_errors': 0,
+                'historical_validation_enabled': True,
+                'preloaded': True,
+                'batch_time': most_recent.created_at.strftime('%Y-%m-%d %H:%M:%S'),
+            }
+
+    except Exception as e:
+        logger.warning(f"Error loading preloaded futures results: {e}")
+
+    # Helper function to serialize for JSON
+    def json_serial(obj):
+        if isinstance(obj, datetime):
+            return obj.isoformat()
+        if isinstance(obj, Decimal):
+            return float(obj)
+        raise TypeError(f"Type {type(obj)} not serializable")
+
     context = {
         'data_freshness': data_freshness,
+        'preloaded_results': json.dumps(preloaded_results, default=json_serial) if preloaded_results else 'null',
+        'recommendation_history': json.dumps(recommendation_history, default=json_serial) if recommendation_history else '{}',
     }
 
     return render(request, 'trading/manual_triggers_refactored.html', context)

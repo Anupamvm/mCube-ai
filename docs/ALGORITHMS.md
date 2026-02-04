@@ -574,6 +574,70 @@ FUTURES_CONFIG = {
 
 ## 4. Common Concepts
 
+### Support and Resistance Calculation (CRITICAL)
+
+All algorithms use a **Consolidated Conservative S/R** approach that combines multiple methods and selects the most conservative (closest to price) levels.
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                  CONSOLIDATED S/R CALCULATOR                        │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                     │
+│  Method 1: PIVOT POINTS (Historical Price Data)                     │
+│  ─────────────────────────────────────────────                      │
+│  Pivot = (High + Low + Close) / 3                                   │
+│  R1 = (2 × Pivot) - Low                                             │
+│  R2 = Pivot + (High - Low)                                          │
+│  S1 = (2 × Pivot) - High                                            │
+│  S2 = Pivot - (High - Low)                                          │
+│                                                                     │
+│  Method 2: OI-BASED S/R (Options Open Interest)                     │
+│  ─────────────────────────────────────────────                      │
+│  Highest PUT OI Strike = Support (PUT writers defend this level)    │
+│  Highest CALL OI Strike = Resistance (CALL writers defend this)     │
+│                                                                     │
+│  CONSERVATIVE SELECTION:                                            │
+│  ─────────────────────────                                          │
+│  For SUPPORT:    Select HIGHER value (closer to current price)      │
+│  For RESISTANCE: Select LOWER value (closer to current price)       │
+│                                                                     │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+**Example at NIFTY 25,746:**
+
+| Level | Pivot-Based | OI-Based | Conservative Selection |
+|-------|-------------|----------|------------------------|
+| S1    | 25,143      | 25,700   | **25,700** (from OI) - Higher = Closer |
+| R1    | 25,419      | 26,000   | **25,419** (from Pivot) - Lower = Closer |
+
+**Why Conservative?**
+- Tighter trading range = Less room for adverse moves
+- Market participants (OI) + Technical levels (Pivot) both considered
+- Safer for strike selection and position averaging decisions
+
+**Files:**
+- `apps/strategies/services/consolidated_sr_calculator.py` - Main hub
+- `apps/strategies/services/oi_support_resistance.py` - OI-based calculation
+- `apps/strategies/services/support_resistance_calculator.py` - Pivot-based calculation
+
+**Usage in Algorithms:**
+```python
+from apps.strategies.services.consolidated_sr_calculator import get_conservative_sr
+
+# Get conservative S/R for any symbol
+sr = get_conservative_sr('NIFTY', current_price=25746)
+
+# Returns:
+# {
+#     'conservative_support': {'s1': 25700, 's1_source': 'oi', ...},
+#     'conservative_resistance': {'r1': 25419, 'r1_source': 'pivot', ...},
+#     'methods_used': ['pivot_points', 'oi_based']
+# }
+```
+
+---
+
 ### ONE POSITION PER ACCOUNT Rule
 
 ```

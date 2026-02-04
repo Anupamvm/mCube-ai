@@ -266,10 +266,29 @@ result = analyze_futures('RELIANCE', '2026-01-30')
 #     'step_5_sector': {...},       # Sector strength
 #     'step_6_volume': {...},       # Volume patterns
 #     'step_7_technical': {...},    # RSI, MACD, etc.
-#     'step_8_sr': {...},           # Support/resistance
+#     'step_8_sr': {...},           # Support/resistance (CONSERVATIVE)
 #     'step_9_verdict': {...},      # Final verdict
 # }
 ```
+
+### Step 8: Support/Resistance (Conservative Approach)
+
+Step 8 uses the **Consolidated Conservative S/R Calculator** which combines:
+- **Pivot Points** from historical price data
+- **OI-Based S/R** from highest PUT/CALL open interest strikes
+
+```python
+# Step 8 internally calls:
+from apps.strategies.services.consolidated_sr_calculator import get_conservative_sr
+
+sr_data = get_conservative_sr(symbol, current_price)
+
+# Conservative selection:
+# - Support: Uses HIGHER value (closer to price) from all methods
+# - Resistance: Uses LOWER value (closer to price) from all methods
+```
+
+This ensures tighter, safer trading ranges when making entry/exit decisions.
 
 ---
 
