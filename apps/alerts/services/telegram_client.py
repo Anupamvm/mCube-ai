@@ -96,8 +96,9 @@ class TelegramClient:
             response = requests.post(url, json=payload, timeout=10)
 
             if response.status_code == 200:
+                msg_id = response.json().get('result', {}).get('message_id', '')
                 logger.info(f"Telegram message sent successfully to {target_chat_id}")
-                return True, "Message sent successfully"
+                return True, str(msg_id)
             else:
                 error_msg = f"Telegram API error: {response.status_code} - {response.text}"
                 logger.error(error_msg)
@@ -110,6 +111,53 @@ class TelegramClient:
 
         except Exception as e:
             error_msg = f"Error sending Telegram message: {str(e)}"
+            logger.error(error_msg, exc_info=True)
+            return False, error_msg
+
+    def edit_message(
+        self,
+        message_id: int,
+        text: str,
+        chat_id: Optional[str] = None,
+        parse_mode: str = 'HTML'
+    ) -> Tuple[bool, str]:
+        """
+        Edit an existing Telegram message.
+
+        Args:
+            message_id: The message ID to edit
+            text: New message text
+            chat_id: Chat ID (uses default if not provided)
+            parse_mode: Message formatting (HTML, Markdown, or None)
+
+        Returns:
+            Tuple[bool, str]: (success, response/error message)
+        """
+        if not self.enabled:
+            return False, "Telegram client not configured"
+
+        target_chat_id = chat_id or self.default_chat_id
+        if not target_chat_id:
+            return False, "No chat_id configured"
+
+        url = f"{self.base_url}/editMessageText"
+        payload = {
+            'chat_id': target_chat_id,
+            'message_id': int(message_id),
+            'text': text,
+            'parse_mode': parse_mode,
+        }
+
+        try:
+            response = requests.post(url, json=payload, timeout=10)
+            if response.status_code == 200:
+                return True, "Message edited"
+            else:
+                error_msg = f"Telegram edit error: {response.status_code} - {response.text}"
+                logger.error(error_msg)
+                return False, error_msg
+        except Exception as e:
+            error_msg = f"Error editing Telegram message: {str(e)}"
             logger.error(error_msg, exc_info=True)
             return False, error_msg
 
@@ -356,7 +404,8 @@ def get_telegram_client() -> TelegramClient:
 def send_telegram_notification(
     message: str,
     priority: str = 'INFO',
-    chat_id: Optional[str] = None
+    chat_id: Optional[str] = None,
+    notification_type: Optional[str] = None
 ) -> Tuple[bool, str]:
     """
     Convenience function to send a Telegram notification
@@ -365,10 +414,14 @@ def send_telegram_notification(
         message: Message text
         priority: Message priority level
         chat_id: Target chat ID (optional)
+        notification_type: Alias for priority (takes precedence if provided)
 
     Returns:
         Tuple[bool, str]: (success, response)
     """
+    if notification_type is not None:
+        priority = notification_type
+
     client = get_telegram_client()
 
     if not client.is_enabled():

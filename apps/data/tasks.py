@@ -12,8 +12,9 @@ from .importers import TrendlyneDataImporter, ContractStockDataImporter
 from .broker_integration import ScheduledDataUpdater, MarketDataUpdater
 from .signals import SignalGenerator
 
-# Import TaskLogger
+# Import TaskLogger and task guard
 from apps.core.utils.task_logger import TaskLogger
+from apps.core.utils.decorators import task_enabled_guard
 
 
 @shared_task(name='fetch_trendlyne_data', bind=True)
@@ -127,6 +128,7 @@ def import_trendlyne_data(self):
 
 
 @shared_task(name='update_live_market_data', bind=True)
+@task_enabled_guard('update-live-market-data')
 def update_live_market_data(self):
     """
     Update live market data from broker API (Every 5 minutes during market hours)
@@ -166,6 +168,7 @@ def update_live_market_data(self):
 
 
 @shared_task(name='update_pre_market_data', bind=True)
+@task_enabled_guard('update-pre-market-data')
 def update_pre_market_data(self):
     """
     Update data before market opens (8:30 AM)
@@ -196,6 +199,7 @@ def update_pre_market_data(self):
 
 
 @shared_task(name='update_post_market_data', bind=True)
+@task_enabled_guard('update-post-market-data')
 def update_post_market_data(self):
     """
     Update data after market closes (3:30 PM)
@@ -665,6 +669,7 @@ def process_analyst_report_pdfs(self, limit: int = 50):
 
 
 @shared_task(name='morning_data_sync', bind=True)
+@task_enabled_guard('morning-data-sync')
 def morning_data_sync(self):
     """
     Complete morning data sync (Daily - 7:00 AM)

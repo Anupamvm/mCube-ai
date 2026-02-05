@@ -9,6 +9,7 @@ This eliminates 40+ duplicate exception handling blocks in views.py
 """
 
 import functools
+import html as html_mod
 import time
 import logging
 from typing import Callable, Any, Dict, Optional
@@ -344,7 +345,212 @@ def cache_result(timeout: int = 300):
     return decorator
 
 
-def task_enabled_guard(task_key: str):
+# High-frequency interval tasks that should NOT send Telegram notifications
+_SILENT_TASK_KEYS = frozenset({
+    'monitor-all-positions',
+    'update-position-pnl',
+    'check-exit-conditions',
+    'check-risk-limits-all-accounts',
+    'monitor-circuit-breakers',
+})
+
+# Categories that get Telegram lifecycle notifications (started / success / failed)
+_NOTIFIED_CATEGORIES = frozenset({'data', 'strategies', 'transactions', 'monitoring', 'risk', 'reports'})
+
+# Category display labels for Telegram messages
+_CATEGORY_LABELS = {
+    'data': 'Market Data',
+    'strategies': 'Strategy',
+    'transactions': 'Transactions',
+    'monitoring': 'Monitoring',
+    'risk': 'Risk',
+    'reports': 'Reports',
+}
+
+
+def _get_task_display_name(task_key):
+    """Return the human-readable display name for a task key."""
+    from apps.core.task_config import TASK_DEFAULT_CONFIG
+    config = TASK_DEFAULT_CONFIG.get(task_key, {})
+    return config.get('display_name', task_key.replace('-', ' ').title())
+
+
+def _get_task_category(task_key):
+    """Return the category string for a task key, or '' if unknown."""
+    from apps.core.task_config import TASK_DEFAULT_CONFIG
+    config = TASK_DEFAULT_CONFIG.get(task_key, {})
+    return config.get('category', '')
+
+
+def _notify_task_started(task_key):
+    """Send a compact Telegram message when a task starts.
+
+    Returns the message_id so _notify_task_completion can edit the same message.
+    Skips silent/high-frequency tasks and categories not in _NOTIFIED_CATEGORIES.
+    """
+    try:
+        if task_key in _SILENT_TASK_KEYS:
+            return None
+        category = _get_task_category(task_key)
+        if category not in _NOTIFIED_CATEGORIES:
+            return None
+
+        from apps.alerts.services.telegram_client import get_telegram_client
+
+        client = get_telegram_client()
+        if not client.is_enabled():
+            return None
+
+        display_name = html_mod.escape(_get_task_display_name(task_key))
+        cat_label = _CATEGORY_LABELS.get(category, category.title())
+        msg = f"🔄 <b>{display_name}</b>  ·  {cat_label}"
+
+        ok, msg_id = client.send_message(msg)
+        if ok:
+            return msg_id
+        logger.warning(f"Telegram start notification failed for {task_key}: {msg_id}")
+        return None
+    except Exception:
+        logger.warning(f"Failed to send start notification for {task_key}", exc_info=True)
+        return None
+
+
+def _format_result_details(result):
+    """Build expandable detail lines from a task result dict."""
+    lines = []
+    if not isinstance(result, dict):
+        return lines
+    for k, v in result.items():
+        if k in ('status', 'success'):
+            continue
+        label = k.replace('_', ' ').title()
+        if isinstance(v, dict):
+            parts = [f"{sk}={sv}" for sk, sv in v.items()]
+            lines.append(f"{label}: {', '.join(parts)}")
+        elif isinstance(v, list):
+            lines.append(f"{label}: {len(v)} items")
+        elif isinstance(v, (str, int, float)):
+            lines.append(f"{label}: {v}")
+    return lines
+
+
+def _fetch_bklog_steps(celery_task_id):
+    """Query BkLog for step-by-step entries for a task execution.
+
+    Returns (steps_list, warnings_count, errors_count).
+    """
+    if not celery_task_id:
+        return [], 0, 0
+    try:
+        from apps.core.models import BkLog
+        from django.utils import timezone
+
+        entries = BkLog.objects.filter(task_id=celery_task_id).order_by('timestamp')
+        steps = []
+        warnings = errors = 0
+        for e in entries:
+            local_ts = timezone.localtime(e.timestamp)
+            steps.append({
+                'time': local_ts.strftime('%H:%M:%S'),
+                'action': e.action,
+                'message': e.message[:200],
+                'level': e.level,
+            })
+            if e.level == 'warning':
+                warnings += 1
+            if e.level in ('error', 'critical'):
+                errors += 1
+        return steps, warnings, errors
+    except Exception:
+        return [], 0, 0
+
+
+def _notify_task_completion(task_key, elapsed_seconds, result=None, error=None,
+                            message_id=None, celery_task_id=''):
+    """Edit the started message (or send a new one) with expandable completion details.
+
+    Uses Telegram's <blockquote expandable> so the chat stays compact — the user
+    sees just the task name and taps to expand timing / results / errors.
+
+    When celery_task_id is provided, queries BkLog for step-by-step execution
+    details to include in the expandable section.
+    """
+    try:
+        if task_key in _SILENT_TASK_KEYS:
+            return
+        if _get_task_category(task_key) not in _NOTIFIED_CATEGORIES:
+            return
+
+        from apps.alerts.services.telegram_client import get_telegram_client
+
+        client = get_telegram_client()
+        if not client.is_enabled():
+            return
+
+        display_name = _get_task_display_name(task_key)
+
+        # Fetch BkLog step details
+        steps, warn_count, err_count = _fetch_bklog_steps(celery_task_id)
+
+        esc = html_mod.escape  # escape <, >, & in dynamic content
+
+        if error is not None:
+            error_str = esc(str(error)[:500])
+            header = f"❌ <b>{esc(display_name)}</b>"
+            # Summary line
+            summary_parts = [f"⏱ {elapsed_seconds:.1f}s"]
+            if steps:
+                summary_parts.append(f"{len(steps)} steps")
+            if warn_count:
+                summary_parts.append(f"⚠️ {warn_count}")
+            if err_count:
+                summary_parts.append(f"❌ {err_count}")
+            summary = ' · '.join(summary_parts)
+
+            detail_lines = [summary]
+            if steps:
+                detail_lines.append('─────────')
+                for s in steps:
+                    detail_lines.append(f"{s['time']} {esc(s['action'])} · {esc(s['message'])}")
+            detail_lines.append(f"\nError: {error_str}")
+            details = '\n'.join(detail_lines)
+        else:
+            header = f"✅ <b>{esc(display_name)}</b>"
+            summary_parts = [f"⏱ {elapsed_seconds:.1f}s"]
+            if steps:
+                summary_parts.append(f"{len(steps)} steps")
+            if warn_count:
+                summary_parts.append(f"⚠️ {warn_count}")
+            summary = ' · '.join(summary_parts)
+
+            detail_lines = [summary]
+            if steps:
+                detail_lines.append('─────────')
+                for s in steps:
+                    detail_lines.append(f"{s['time']} {esc(s['action'])} · {esc(s['message'])}")
+            else:
+                # Fallback to result dict for tasks without TaskLogger
+                detail_lines.extend(_format_result_details(result))
+            details = '\n'.join(detail_lines)
+
+        msg = f"{header}\n<blockquote expandable>{details}</blockquote>"
+
+        # Try editing the original "started" message first
+        if message_id:
+            ok, detail = client.edit_message(int(message_id), msg)
+            if ok:
+                return
+            logger.warning(f"Could not edit message {message_id} for {task_key}: {detail}")
+
+        # Fallback: send as a new message
+        ok, detail = client.send_message(msg)
+        if not ok:
+            logger.warning(f"Telegram completion notification failed for {task_key}: {detail}")
+    except Exception:
+        logger.warning(f"Failed to send completion notification for {task_key}", exc_info=True)
+
+
+def task_enabled_guard(task_key):
     """
     Decorator to check if a Celery task is enabled before executing.
 
@@ -353,35 +559,69 @@ def task_enabled_guard(task_key: str):
     a log message is recorded.
 
     Args:
-        task_key: The task key from beat_schedule (e.g., 'fetch-trendlyne-data-daily')
+        task_key: The task key from beat_schedule (e.g., 'fetch-trendlyne-data-daily'),
+                  or a list of keys if the same function is used by multiple schedule entries.
+                  If a list is provided, the task runs if ANY key is enabled.
 
     Usage:
         @shared_task(name='fetch_trendlyne_data', bind=True)
-        @task_enabled_guard('fetch-trendlyne-data-daily')
-        def fetch_trendlyne_data(self):
+        @task_enabled_guard('morning-data-sync')
+        def morning_data_sync(self):
             # Task logic - only runs if task is enabled
+            pass
+
+        # For tasks with multiple schedule entries:
+        @shared_task(name='apps.strategies.tasks.batch_options_averaging', bind=True)
+        @task_enabled_guard(['batch-options-averaging', 'batch-options-averaging-10am'])
+        def batch_options_averaging(self):
             pass
 
     Returns:
         - If enabled: Executes the task normally
         - If disabled: Returns {'status': 'skipped', 'reason': 'Task disabled'}
     """
+    task_keys = task_key if isinstance(task_key, (list, tuple)) else [task_key]
+    primary_key = task_keys[0]
+
     def decorator(task_func: Callable) -> Callable:
         @functools.wraps(task_func)
         def wrapper(*args, **kwargs):
-            from apps.core.models import CeleryTaskState
+            # Allow manual "Run Now" to bypass the guard
+            bypass = kwargs.pop('_bypass_guard', False)
 
-            # Check if task is enabled
-            if not CeleryTaskState.is_task_enabled(task_key):
-                logger.info(f"Task '{task_key}' is disabled. Skipping execution.")
-                return {
-                    'status': 'skipped',
-                    'reason': 'Task disabled',
-                    'task_key': task_key
-                }
+            if not bypass:
+                from apps.core.models import CeleryTaskState
 
-            # Task is enabled, execute normally
-            return task_func(*args, **kwargs)
+                # Check if ANY of the task keys is enabled
+                enabled = any(CeleryTaskState.is_task_enabled(k) for k in task_keys)
+                if not enabled:
+                    keys_str = ', '.join(task_keys)
+                    logger.info(f"Task '{keys_str}' is disabled. Skipping execution.")
+                    return {
+                        'status': 'skipped',
+                        'reason': 'Task disabled',
+                        'task_key': primary_key
+                    }
+
+            # Extract Celery task_id for BkLog correlation (bound tasks)
+            celery_task_id = ''
+            if args and hasattr(args[0], 'request'):
+                celery_task_id = getattr(args[0].request, 'id', '') or ''
+
+            # Execute the task with timing
+            start = time.time()
+            msg_id = _notify_task_started(primary_key)
+            try:
+                result = task_func(*args, **kwargs)
+                elapsed = time.time() - start
+                _notify_task_completion(primary_key, elapsed, result=result,
+                                       message_id=msg_id, celery_task_id=celery_task_id)
+                return result
+            except Exception as exc:
+                elapsed = time.time() - start
+                _notify_task_completion(primary_key, elapsed, error=str(exc),
+                                       message_id=msg_id, celery_task_id=celery_task_id)
+                raise
 
         return wrapper
     return decorator

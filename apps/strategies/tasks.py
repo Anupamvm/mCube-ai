@@ -35,6 +35,7 @@ from apps.positions.services.averaging_manager import (
 from apps.positions.services.exit_manager import should_exit_position
 from apps.alerts.services.telegram_client import send_telegram_notification
 from apps.core.utils.task_logger import TaskLogger
+from apps.core.utils.decorators import task_enabled_guard
 
 logger = logging.getLogger(__name__)
 
@@ -263,6 +264,7 @@ def monitor_all_strangle_deltas(delta_threshold=300):
 # =============================================================================
 
 @shared_task(name='apps.strategies.tasks.setup_trading_day', bind=True)
+@task_enabled_guard('setup-trading-day')
 def setup_trading_day(self):
     """
     Setup Trading Day (8:55 AM Daily)
@@ -413,6 +415,7 @@ def setup_trading_day(self):
 
 
 @shared_task(name='apps.strategies.tasks.start_trading_day', bind=True)
+@task_enabled_guard('start-trading-day')
 def start_trading_day(self):
     """
     Start Trading Day (9:15 AM Daily)
@@ -603,6 +606,7 @@ def start_trading_day(self):
 
 
 @shared_task(name='apps.strategies.tasks.evaluate_options_strategy', bind=True)
+@task_enabled_guard('evaluate-options-strategy')
 def evaluate_options_strategy(self):
     """
     Evaluate Options Strategy (9:30 AM Daily)
@@ -707,6 +711,7 @@ def evaluate_options_strategy(self):
 
 
 @shared_task(name='apps.strategies.tasks.start_options_trade', bind=True)
+@task_enabled_guard('start-options-trade')
 def start_options_trade(self):
     """
     Start Options Trade (9:40 AM Daily)
@@ -790,6 +795,7 @@ def start_options_trade(self):
 
 
 @shared_task(name='apps.strategies.tasks.batch_options_averaging', bind=True)
+@task_enabled_guard(['batch-options-averaging', 'batch-options-averaging-10am'])
 def batch_options_averaging(self):
     """
     Batch Options Averaging (9:40 AM - 10:15 AM, every 5 minutes)
@@ -871,6 +877,7 @@ def batch_options_averaging(self):
 
 
 @shared_task(name='apps.strategies.tasks.screen_futures_opportunities')
+@task_enabled_guard('screen-futures-opportunities')
 def screen_futures_opportunities_task():
     """
     Screen Futures Opportunities (9:45 AM Daily)
@@ -977,6 +984,7 @@ def screen_futures_opportunities_task():
 
 
 @shared_task(name='apps.strategies.tasks.close_trading_day', bind=True)
+@task_enabled_guard('close-trading-day')
 def close_trading_day(self):
     """
     Close Trading Day (3:25 PM Daily)
@@ -1158,6 +1166,7 @@ def close_trading_day(self):
 # =============================================================================
 
 @shared_task(name='apps.strategies.tasks.check_futures_averaging')
+@task_enabled_guard('check-futures-averaging')
 def check_futures_averaging():
     """
     Check if active futures positions need averaging
@@ -1245,6 +1254,7 @@ def check_futures_averaging():
 # =============================================================================
 
 @shared_task(name='apps.strategies.tasks.execute_futures_algorithm', bind=True)
+@task_enabled_guard('execute-futures-algorithm')
 def execute_futures_algorithm(self, this_month_volume=1000, next_month_volume=800, min_score=65):
     """
     Execute Futures Algorithm - Scheduled Daily @ 8:30 AM
@@ -1297,9 +1307,8 @@ def execute_futures_algorithm(self, this_month_volume=1000, next_month_volume=80
 
         today = date.today()
 
-        # Check NSE holiday flag
-        nse_flag = NseFlag.objects.filter(date=today).first()
-        if nse_flag and nse_flag.is_holiday:
+        # Check NSE holiday flag (key-value store)
+        if NseFlag.get_bool('is_holiday', default=False):
             task_logger.info('skipped', "Today is a market holiday", context={'date': str(today)})
             return {'success': True, 'skipped': True, 'reason': 'Market holiday'}
 

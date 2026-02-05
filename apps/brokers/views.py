@@ -206,7 +206,7 @@ def kotakneo_data(request):
     Fetch and display Kotak Neo limits and positions (Traders can view).
     """
     try:
-        limit_rec, pos_list = fetch_and_save_kotakneo_data()
+        limit_rec, pos_list, _ = fetch_and_save_kotakneo_data()
         has_positions = is_open_position()
 
         context = {
@@ -326,7 +326,10 @@ def breeze_update_credentials(request):
                 from apps.brokers.services.breeze_auto_login import auto_login_breeze
 
                 # Run the auto-login process (skip validation since we know token is expired)
-                success, message = auto_login_breeze(headless=False, timeout=300, skip_validation=True)
+                success, message = auto_login_breeze(
+                    headless=False, timeout=300, skip_validation=True,
+                    task_name="credential update login"
+                )
 
                 if success:
                     messages.success(request, f"Auto-login successful! {message}")
@@ -376,7 +379,10 @@ def breeze_auto_login(request):
         from apps.brokers.services.breeze_auto_login import auto_login_breeze
 
         # Run the auto-login process
-        success, message = auto_login_breeze(headless=False, timeout=300)
+        success, message = auto_login_breeze(
+            headless=False, timeout=300,
+            task_name="web UI login"
+        )
 
         if success:
             messages.success(request, message)

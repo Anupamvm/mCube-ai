@@ -507,8 +507,14 @@ class GNewsClient:
 
                     logger.debug(f"[GNews] Keyword '{keyword}': {len(result['articles'])} articles")
                 elif not result.get('success'):
+                    error_msg = result.get('error', 'unknown')
                     failed_keywords.append(keyword)
-                    logger.debug(f"[GNews] Keyword '{keyword}' failed: {result.get('error', 'unknown')}")
+                    logger.debug(f"[GNews] Keyword '{keyword}' failed: {error_msg}")
+
+                    # Stop immediately on auth/key errors — no point retrying other keywords
+                    if error_msg in ('Invalid API key', 'Rate limit exceeded. Please try again later.'):
+                        logger.warning(f"[GNews] {error_msg} — skipping remaining keywords")
+                        break
 
             except Exception as e:
                 failed_keywords.append(keyword)

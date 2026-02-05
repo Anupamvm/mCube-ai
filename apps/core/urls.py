@@ -59,4 +59,5 @@ urlpatterns = [
 
     # Task Timeline API
     path('api/task-timeline/', views.api_task_timeline, name='api_task_timeline'),
+    path('api/recent-executions/', views.api_recent_executions, name='api_recent_executions'),
 ]

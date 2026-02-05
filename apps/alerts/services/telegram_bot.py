@@ -26,7 +26,9 @@ from telegram.ext import (
     Application,
     CommandHandler,
     CallbackQueryHandler,
+    MessageHandler,
     ContextTypes,
+    filters,
 )
 from django.conf import settings
 from asgiref.sync import sync_to_async
@@ -242,6 +244,73 @@ class TelegramBotHandler:
             await self._show_kotak_positions(query)
         elif data == "refresh_all":
             await self._show_all_positions(query)
+
+    # =========================================================================
+    # OTP MESSAGE HANDLER (for Breeze auto-login)
+    # =========================================================================
+
+    async def otp_message_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """
+        Handle plain text messages - check if there's a pending OTP request.
+
+        When the Breeze auto-login process needs an OTP, it sets a NseFlag
+        to 'pending'. This handler watches for digit-only messages and
+        fulfills the request via NseFlag cross-process communication.
+        """
+        if not self.is_authorized(update):
+            return
+
+        text = (update.message.text or '').strip()
+
+        # Check if there's a pending OTP request
+        status = await self._get_otp_request_status()
+        if status != 'pending':
+            # No pending OTP request - ignore plain text messages
+            return
+
+        # Validate OTP format: 4-6 digits
+        import re
+        if not re.match(r'^\d{4,6}$', text):
+            task_name = await self._get_otp_task_name()
+            await update.message.reply_text(
+                f"Invalid OTP format. Please send 4-6 digits.\n"
+                f"(Waiting for OTP for: {task_name})"
+            )
+            return
+
+        # Store OTP and mark as fulfilled
+        await self._fulfill_otp_request(text)
+
+        task_name = await self._get_otp_task_name()
+        await update.message.reply_text(
+            f"OTP received. Entering into Breeze login...\n"
+            f"(Task: {task_name})"
+        )
+
+    @sync_to_async(thread_sensitive=False)
+    def _get_otp_request_status(self) -> str:
+        """Check if there's a pending Breeze OTP request via NseFlag."""
+        from django.db import close_old_connections
+        close_old_connections()
+        from apps.core.models import NseFlag
+        return NseFlag.get('breeze_otp_request', '')
+
+    @sync_to_async(thread_sensitive=False)
+    def _fulfill_otp_request(self, otp: str):
+        """Store the OTP value and mark the request as fulfilled."""
+        from django.db import close_old_connections
+        close_old_connections()
+        from apps.core.models import NseFlag
+        NseFlag.set('breeze_otp_value', otp, 'OTP from Telegram')
+        NseFlag.set('breeze_otp_request', 'fulfilled', 'OTP fulfilled via Telegram')
+
+    @sync_to_async(thread_sensitive=False)
+    def _get_otp_task_name(self) -> str:
+        """Get the task name associated with the current OTP request."""
+        from django.db import close_old_connections
+        close_old_connections()
+        from apps.core.models import NseFlag
+        return NseFlag.get('breeze_otp_task', 'Breeze login')
 
     # =========================================================================
     # ICICI BREEZE POSITION HANDLERS
@@ -1046,7 +1115,7 @@ class TelegramBotHandler:
                 return [{'error': 'Kotak account not active or not found'}]
 
             logger.info("Fetching Kotak Neo positions...")
-            _, positions = fetch_and_save_kotakneo_data()
+            _, positions, _ = fetch_and_save_kotakneo_data()
             logger.info(f"Fetched {len(positions)} raw positions from Kotak")
 
             # Convert to dict format and filter non-zero positions
@@ -1549,6 +1618,12 @@ class TelegramBotHandler:
 
         # Add callback query handler for buttons
         application.add_handler(CallbackQueryHandler(self.button_callback))
+
+        # Add message handler for OTP replies (plain text, non-command)
+        application.add_handler(MessageHandler(
+            filters.TEXT & ~filters.COMMAND,
+            self.otp_message_handler
+        ))
 
         logger.info("Telegram bot started successfully")
         logger.info("Bot is polling for updates...")

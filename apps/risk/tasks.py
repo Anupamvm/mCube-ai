@@ -21,11 +21,13 @@ from apps.risk.services.risk_manager import (
     get_risk_status
 )
 from apps.alerts.services.telegram_client import send_telegram_notification
+from apps.core.utils.decorators import task_enabled_guard
 
 logger = logging.getLogger(__name__)
 
 
 @shared_task(name='apps.risk.tasks.check_risk_limits_all_accounts')
+@task_enabled_guard('check-risk-limits-all-accounts')
 def check_risk_limits_all_accounts():
     """
     Check risk limits for all active accounts
@@ -165,6 +167,7 @@ def check_risk_limits_all_accounts():
 
 
 @shared_task(name='apps.risk.tasks.monitor_circuit_breakers')
+@task_enabled_guard('monitor-circuit-breakers')
 def monitor_circuit_breakers():
     """
     Monitor active circuit breakers

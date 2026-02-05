@@ -239,6 +239,89 @@ def get_all_tasks_for_display():
     return all_tasks
 
 
+def _build_custom_schedule(task_state):
+    """
+    Build a Celery schedule object from CeleryTaskState custom configuration.
+
+    Args:
+        task_state: CeleryTaskState instance with use_custom_schedule=True
+
+    Returns:
+        A crontab, float (interval seconds), or the original schedule if custom is not applicable.
+    """
+    days = task_state.days_of_week
+    if days:
+        # Convert [0,1,2,3,4] (Mon=0) to celery crontab format (Mon=1, Sun=0)
+        celery_days = ','.join(str(d + 1) if d < 6 else '0' for d in sorted(days))
+    else:
+        celery_days = '1-5'  # Default to weekdays
+
+    if task_state.schedule_type == 'crontab':
+        return crontab(
+            hour=task_state.schedule_hour,
+            minute=task_state.schedule_minute,
+            day_of_week=celery_days,
+        )
+    elif task_state.schedule_type == 'interval':
+        return float(task_state.interval_seconds)
+    elif task_state.schedule_type == 'recurring':
+        # Build crontab(s) that run every N minutes within a precise time window.
+        # A single crontab uses cartesian product of hours x minutes, so when
+        # the start/end minutes differ across hours (e.g. 9:40-10:15) we must
+        # return multiple crontabs—one per hour with its own minute set.
+        from collections import defaultdict
+
+        start_h = task_state.recurring_start_hour
+        start_m = getattr(task_state, 'recurring_start_minute', 0) or 0
+        end_h = task_state.recurring_end_hour
+        end_m = getattr(task_state, 'recurring_end_minute', 59) or 59
+        interval = max(1, task_state.recurring_interval_minutes)
+
+        # Compute all exact fire times as (hour, minute) pairs
+        fire_times = []
+        current_total = start_h * 60 + start_m
+        end_total = end_h * 60 + end_m
+
+        while current_total <= end_total:
+            h = current_total // 60
+            m = current_total % 60
+            fire_times.append((h, m))
+            current_total += interval
+
+        if not fire_times:
+            fire_times = [(start_h, start_m)]
+
+        # Group fire times by hour
+        hour_minutes = defaultdict(list)
+        for h, m in fire_times:
+            hour_minutes[h].append(m)
+
+        # Check if all hours share the same minute set (single crontab is fine)
+        minute_sets = [tuple(sorted(mins)) for mins in hour_minutes.values()]
+        if len(set(minute_sets)) == 1:
+            hours = sorted(hour_minutes.keys())
+            minutes = sorted(hour_minutes[hours[0]])
+            return crontab(
+                hour=','.join(str(h) for h in hours),
+                minute=','.join(str(m) for m in minutes),
+                day_of_week=celery_days,
+            )
+        else:
+            # Different hours need different minute sets — return a dict
+            # keyed by suffix so load_beat_schedule can create multiple entries
+            result = {}
+            for h in sorted(hour_minutes.keys()):
+                mins = sorted(hour_minutes[h])
+                result[f'-{h}h'] = crontab(
+                    hour=str(h),
+                    minute=','.join(str(m) for m in mins),
+                    day_of_week=celery_days,
+                )
+            return result
+
+    return None
+
+
 def load_beat_schedule():
     """
     Load beat schedule dynamically from database.
@@ -246,6 +329,10 @@ def load_beat_schedule():
     Combines static tasks (data tasks) with dynamic strategy tasks.
     Only includes tasks that are explicitly enabled in CeleryTaskState.
     Tasks are disabled by default - users must enable them via UI.
+
+    When a task has use_custom_schedule=True in CeleryTaskState, the custom
+    schedule configuration (hour, minute, interval, days) overrides the
+    static defaults from get_static_schedule().
 
     This is used by Celery Beat to determine which tasks to run.
     """
@@ -255,25 +342,58 @@ def load_beat_schedule():
     # Note: Tasks are disabled by default. Only enabled tasks will run.
     try:
         from apps.core.models import CeleryTaskState
-        enabled_keys = CeleryTaskState.get_enabled_task_keys()
 
         # Initialize any missing tasks in the database (as disabled)
         CeleryTaskState.initialize_static_tasks(all_tasks, force=False)
 
+        enabled_keys = CeleryTaskState.get_enabled_task_keys()
+
+        # Build a lookup of all task states for custom schedule application
+        task_states = {s.task_key: s for s in CeleryTaskState.objects.all()}
+
         # Filter schedule to only include enabled tasks
+        # and apply custom schedules where configured
         filtered_schedule = {}
         for key, config in all_tasks.items():
-            # Skip dynamic tasks (those managed by TradingScheduleConfig)
-            if any(d in key.lower() for d in ['premarket', 'market_open', 'trade_start', 'trade_monitor', 'trade_stop', 'day_close', 'analyze_day']):
+            # Check if this is a dynamic task (managed by TradingScheduleConfig)
+            is_dynamic = any(d in key.lower() for d in [
+                'premarket', 'market_open', 'trade_start',
+                'trade_monitor', 'trade_stop', 'day_close', 'analyze_day'
+            ])
+
+            if is_dynamic:
                 # Dynamic tasks are controlled by TradingScheduleConfig.is_enabled
+                # which is already checked in get_dynamic_beat_schedule()
                 filtered_schedule[key] = config
             elif key in enabled_keys:
+                # Static task is enabled - check for custom schedule
+                task_state = task_states.get(key)
+                if task_state and task_state.use_custom_schedule:
+                    custom_schedule = _build_custom_schedule(task_state)
+                    if isinstance(custom_schedule, dict):
+                        # Recurring window spanning hours with different minute sets
+                        # — create multiple schedule entries (e.g. key-9h, key-10h)
+                        for suffix, sched in custom_schedule.items():
+                            entry_config = config.copy()
+                            entry_config['schedule'] = sched
+                            filtered_schedule[f"{key}{suffix}"] = entry_config
+                        continue
+                    elif custom_schedule is not None:
+                        config = config.copy()
+                        config['schedule'] = custom_schedule
                 filtered_schedule[key] = config
             # If not in enabled_keys, task is disabled and excluded from schedule
 
         import logging
         logger = logging.getLogger(__name__)
-        logger.info(f"Loaded beat schedule: {len(filtered_schedule)} tasks enabled out of {len(all_tasks)} total")
+        custom_count = sum(
+            1 for k in filtered_schedule
+            if task_states.get(k) and task_states[k].use_custom_schedule
+        )
+        logger.info(
+            f"Loaded beat schedule: {len(filtered_schedule)} tasks enabled "
+            f"out of {len(all_tasks)} total ({custom_count} with custom schedules)"
+        )
 
         return filtered_schedule
 
@@ -283,14 +403,34 @@ def load_beat_schedule():
         return all_tasks
 
 
-# Load beat schedule
-# Wrap in try-except to handle module load before Django is fully initialized
-try:
-    app.conf.beat_schedule = load_beat_schedule()
-except Exception as e:
-    import logging
-    logging.getLogger(__name__).warning(f"Could not load beat schedule at startup: {e}. Using static schedule.")
-    app.conf.beat_schedule = get_static_schedule()
+# Set initial beat schedule to static defaults.
+# The DBReloadScheduler below will reload from DB once Django is ready.
+app.conf.beat_schedule = get_static_schedule()
+
+
+# Custom scheduler that reloads schedule from DB after Django is ready
+from celery.beat import PersistentScheduler
+
+class DBReloadScheduler(PersistentScheduler):
+    """PersistentScheduler that reloads schedule from DB on setup."""
+
+    def setup_schedule(self):
+        import logging
+        _logger = logging.getLogger(__name__)
+        try:
+            import django
+            django.setup()
+            schedule = load_beat_schedule()
+            app.conf.beat_schedule = schedule
+            _logger.info(f"Beat schedule reloaded from DB: {len(schedule)} tasks")
+        except Exception as exc:
+            _logger.warning(f"Could not reload beat schedule from DB: {exc}")
+        super().setup_schedule()
+
+
+# Register DBReloadScheduler as the default beat scheduler
+# so it works regardless of how celery beat is started
+app.conf.beat_scheduler = 'mcube_ai.celery:DBReloadScheduler'
 
 
 # Task routing - distribute tasks across queues for better performance

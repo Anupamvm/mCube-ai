@@ -173,7 +173,7 @@ def fetch_live_positions():
     # Fetch Kotak Neo positions
     if kotak_active:
         try:
-            limit_record, pos_objs = fetch_and_save_kotakneo_data()
+            limit_record, pos_objs, _ = fetch_and_save_kotakneo_data()
             kotak_positions = pos_objs
 
             # Sync to Position model

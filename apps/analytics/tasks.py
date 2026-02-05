@@ -28,6 +28,7 @@ from apps.analytics.services.learning_engine import LearningEngine
 from apps.positions.models import Position
 from apps.accounts.models import BrokerAccount
 from apps.alerts.services.telegram_client import send_telegram_notification
+from apps.core.utils.decorators import task_enabled_guard
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +38,7 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 
 @shared_task(name='apps.analytics.tasks.generate_daily_pnl_report')
+@task_enabled_guard('generate-daily-pnl-report')
 def generate_daily_pnl_report():
     """
     Generate daily P&L report for all accounts
@@ -382,6 +384,7 @@ def stop_continuous_learning(session_id):
 # =============================================================================
 
 @shared_task(name='apps.analytics.tasks.sync_benchmark_data')
+@task_enabled_guard('sync-benchmark-data')
 def sync_benchmark_data():
     """
     Sync benchmark data (Nifty/BankNifty) from Breeze historical API.
@@ -423,6 +426,7 @@ def sync_benchmark_data():
 
 
 @shared_task(name='apps.analytics.tasks.daily_data_aggregation')
+@task_enabled_guard('daily-data-aggregation')
 def daily_data_aggregation():
     """
     Daily data aggregation - sync trades and update DailyPnL.
@@ -493,6 +497,7 @@ def daily_data_aggregation():
 
 
 @shared_task(name='apps.analytics.tasks.update_equity_curves')
+@task_enabled_guard('update-equity-curves')
 def update_equity_curves():
     """
     Update DailyEquityCurve for all accounts.

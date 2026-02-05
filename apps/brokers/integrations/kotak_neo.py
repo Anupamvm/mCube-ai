@@ -129,7 +129,7 @@ def fetch_and_save_kotakneo_data():
     Fetch limits and positions from Kotak Neo API and save to database.
 
     Returns:
-        tuple: (limit_record, pos_objs) - BrokerLimit and list of BrokerPosition objects
+        tuple: (limit_record, pos_objs, raw_limits) - BrokerLimit, list of BrokerPosition, and raw limits API dict
 
     Raises:
         Exception: If API call or database save fails
@@ -332,7 +332,7 @@ def fetch_and_save_kotakneo_data():
             continue
 
     logger.info(f"Saved {len(pos_objs)} Kotak Neo positions")
-    return limit_record, pos_objs
+    return limit_record, pos_objs, lim
 
 
 def auto_login_kotak_neo():

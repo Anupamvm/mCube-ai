@@ -1296,6 +1296,254 @@
         color: #718096;
         margin-top: 2px;
     }
+
+    /* ========================================
+       RECENT EXECUTIONS STYLES
+       ======================================== */
+    .recent-executions {
+        background: white;
+        border-radius: 12px;
+        padding: 25px;
+        margin-bottom: 30px;
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+    }
+
+    .recent-executions-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        cursor: pointer;
+        user-select: none;
+    }
+
+    .recent-executions-header:hover {
+        opacity: 0.8;
+    }
+
+    .recent-executions-header .section-chevron {
+        font-size: 14px;
+        color: #a0aec0;
+        transition: transform 0.2s;
+        margin-left: 8px;
+    }
+
+    .recent-executions.expanded .recent-executions-header .section-chevron {
+        transform: rotate(90deg);
+    }
+
+    .recent-executions.expanded .recent-executions-header {
+        margin-bottom: 20px;
+    }
+
+    #recent-executions-list {
+        display: none;
+    }
+
+    .recent-executions.expanded #recent-executions-list {
+        display: block;
+    }
+
+    .recent-executions-header h2 {
+        margin: 0;
+        color: #2d3748;
+        font-size: 20px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+
+    .recent-executions-header .exec-count {
+        font-size: 13px;
+        color: #718096;
+        font-weight: normal;
+    }
+
+    .execution-card {
+        border: 1px solid #e2e8f0;
+        border-left: 4px solid #a0aec0;
+        border-radius: 8px;
+        margin-bottom: 10px;
+        overflow: hidden;
+        transition: box-shadow 0.2s;
+    }
+
+    .execution-card:hover {
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+    }
+
+    .execution-card.status-success { border-left-color: #48bb78; }
+    .execution-card.status-failed { border-left-color: #f56565; }
+    .execution-card.status-running { border-left-color: #ed8936; }
+
+    .execution-header {
+        display: flex;
+        align-items: center;
+        padding: 12px 16px;
+        cursor: pointer;
+        gap: 12px;
+        user-select: none;
+    }
+
+    .execution-header:hover {
+        background: #f7fafc;
+    }
+
+    .exec-status-icon {
+        font-size: 18px;
+        flex-shrink: 0;
+        width: 24px;
+        text-align: center;
+    }
+
+    .exec-name {
+        font-weight: 600;
+        color: #2d3748;
+        font-size: 14px;
+        flex: 1;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .exec-time {
+        font-size: 12px;
+        color: #718096;
+        flex-shrink: 0;
+        white-space: nowrap;
+    }
+
+    .exec-duration {
+        font-size: 12px;
+        color: #a0aec0;
+        flex-shrink: 0;
+        white-space: nowrap;
+    }
+
+    .exec-badge {
+        padding: 2px 10px;
+        border-radius: 12px;
+        font-size: 11px;
+        font-weight: 600;
+        flex-shrink: 0;
+        text-transform: uppercase;
+    }
+
+    .exec-badge.success { background: #c6f6d5; color: #22543d; }
+    .exec-badge.failed { background: #fed7d7; color: #9b2c2c; }
+    .exec-badge.running { background: #fefcbf; color: #975a16; }
+
+    .exec-chevron {
+        font-size: 12px;
+        color: #a0aec0;
+        transition: transform 0.2s;
+        flex-shrink: 0;
+    }
+
+    .execution-card.expanded .exec-chevron {
+        transform: rotate(90deg);
+    }
+
+    .execution-details {
+        display: none;
+        padding: 0 16px 16px;
+        border-top: 1px solid #e2e8f0;
+    }
+
+    .execution-card.expanded .execution-details {
+        display: block;
+    }
+
+    .exec-metrics {
+        display: flex;
+        gap: 20px;
+        padding: 10px 0;
+        margin-bottom: 10px;
+        font-size: 12px;
+        color: #718096;
+    }
+
+    .exec-metrics span {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+    }
+
+    .execution-steps {
+        max-height: 300px;
+        overflow-y: auto;
+    }
+
+    .execution-step {
+        display: flex;
+        gap: 10px;
+        padding: 6px 0;
+        font-size: 12px;
+        border-bottom: 1px solid #f7fafc;
+        align-items: flex-start;
+    }
+
+    .execution-step:last-child {
+        border-bottom: none;
+    }
+
+    .step-time {
+        color: #a0aec0;
+        flex-shrink: 0;
+        font-family: monospace;
+        font-size: 11px;
+        min-width: 55px;
+    }
+
+    .step-action {
+        font-weight: 600;
+        color: #4a5568;
+        flex-shrink: 0;
+        min-width: 80px;
+        font-size: 11px;
+        text-transform: uppercase;
+    }
+
+    .step-action.level-warning { color: #d69e2e; }
+    .step-action.level-error, .step-action.level-critical { color: #e53e3e; }
+
+    .step-message {
+        color: #4a5568;
+        word-break: break-word;
+        flex: 1;
+    }
+
+    .exec-error-box {
+        background: #fff5f5;
+        border: 1px solid #fed7d7;
+        border-radius: 6px;
+        padding: 10px 12px;
+        margin-top: 10px;
+        font-size: 11px;
+        font-family: monospace;
+        white-space: pre-wrap;
+        word-break: break-word;
+        color: #9b2c2c;
+        max-height: 200px;
+        overflow-y: auto;
+    }
+
+    .exec-context-data {
+        background: #f7fafc;
+        border-radius: 6px;
+        padding: 8px 12px;
+        margin-top: 4px;
+        font-size: 11px;
+        color: #718096;
+        font-family: monospace;
+    }
+
+    .exec-empty {
+        text-align: center;
+        padding: 30px;
+        color: #a0aec0;
+        font-size: 14px;
+    }
 </style>
 {% endblock %}
 
@@ -1439,6 +1687,16 @@
                 <div class="count" id="next-task-time">--:--</div>
                 <div class="label">Next Task</div>
             </div>
+        </div>
+    </div>
+
+    <!-- Recent Task Executions -->
+    <div class="recent-executions" id="recent-executions-section">
+        <div class="recent-executions-header" onclick="toggleRecentExecutions()">
+            <h2>Recent Task Executions <span class="exec-count" id="exec-count"></span> <span class="section-chevron">&#9654;</span></h2>
+        </div>
+        <div id="recent-executions-list">
+            <div class="exec-empty">Loading recent executions...</div>
         </div>
     </div>
 
@@ -1636,6 +1894,19 @@
                     <option value="info">Info</option>
                     <option value="warning">Warning</option>
                     <option value="error">Error</option>
+                </select>
+            </div>
+            <div class="filter-group">
+                <label>Category:</label>
+                <select id="filterCategory" onchange="applyLogFilters()">
+                    <option value="all">All</option>
+                    <option value="data">Market Data</option>
+                    <option value="strategies">Strategy Execution</option>
+                    <option value="transactions">Transactions</option>
+                    <option value="monitoring">Position Monitoring</option>
+                    <option value="risk">Risk Management</option>
+                    <option value="reports">Analytics & Reports</option>
+                    <option value="other">Other</option>
                 </select>
             </div>
             <div class="filter-group">
@@ -2026,6 +2297,7 @@
         document.getElementById('filterStatus').value = 'all';
         document.getElementById('filterSource').value = 'all';
         document.getElementById('filterLevel').value = 'all';
+        document.getElementById('filterCategory').value = 'all';
 
         // Show loading
         body.innerHTML = '<div class="logs-loading">Loading logs...</div>';
@@ -2042,7 +2314,7 @@
                 if (data.success) {
                     currentLogs = data.logs;
                     if (data.logs.length > 0) {
-                        body.innerHTML = renderLogs(data.logs);
+                        body.innerHTML = renderFlatLogs(data.logs);
                     } else {
                         body.innerHTML = `
                             <div class="logs-empty">
@@ -2072,56 +2344,194 @@
             });
     }
 
+    const CATEGORY_META = {
+        'data': { label: 'Market Data', color: '#3182ce' },
+        'strategies': { label: 'Strategy', color: '#805ad5' },
+        'transactions': { label: 'Transaction', color: '#d69e2e' },
+        'monitoring': { label: 'Monitoring', color: '#dd6b20' },
+        'risk': { label: 'Risk', color: '#e53e3e' },
+        'reports': { label: 'Analytics', color: '#38a169' },
+    };
+
+    const STATUS_META = {
+        'success': { icon: '✅', label: 'Success', bg: '#38a169' },
+        'error':   { icon: '❌', label: 'Failed',  bg: '#e53e3e' },
+        'received':{ icon: '📥', label: 'Received', bg: '#667eea' },
+        'scheduled':{ icon: '📅', label: 'Scheduled', bg: '#ed8936' },
+        'starting': { icon: '🚀', label: 'Started', bg: '#3182ce' },
+        'info':    { icon: 'ℹ️', label: '',        bg: '' },
+    };
+
+    function makeCategoryBadge(cat) {
+        if (!cat || !CATEGORY_META[cat]) return '';
+        const cm = CATEGORY_META[cat];
+        return `<span style="background:${cm.color};color:#fff;padding:2px 6px;border-radius:4px;font-size:10px;">${cm.label}</span>`;
+    }
+
+    function makeStatusBadge(status) {
+        const sm = STATUS_META[status];
+        if (!sm || !sm.bg) return '';
+        return `<span style="background:${sm.bg};color:#fff;padding:2px 6px;border-radius:4px;font-size:10px;font-weight:600;">${sm.label}</span>`;
+    }
+
     function renderLogs(logs) {
         if (!logs || logs.length === 0) {
             return '<div class="logs-empty"><p>No logs to display</p></div>';
         }
 
-        let html = '';
+        // Group logs by task_id; ungrouped entries (no task_id) go as standalone
+        const groups = [];       // ordered list of { id, displayName, category, status, logs[], firstTs, lastTs }
+        const groupMap = {};     // task_id -> group
+        const standalone = [];   // logs without task_id
 
         for (const log of logs) {
-            // Determine the CSS class based on status or level
-            let statusClass = log.status || log.level || 'info';
-            if (statusClass === 'received') statusClass = 'info';
-            if (statusClass === 'scheduled') statusClass = 'info';
-            if (statusClass === 'starting') statusClass = 'info';
-
-            // Get status icon
-            let statusIcon = '';
-            if (log.status === 'success') statusIcon = '✅';
-            else if (log.status === 'error') statusIcon = '❌';
-            else if (log.status === 'received') statusIcon = '📥';
-            else if (log.status === 'scheduled') statusIcon = '📅';
-            else if (log.status === 'starting') statusIcon = '🚀';
-            else statusIcon = 'ℹ️';
-
-            // Get source badge
-            let sourceBadge = '';
-            if (log.source) {
-                const sourceColor = log.source === 'worker' ? '#667eea' : '#ed8936';
-                sourceBadge = `<span style="background: ${sourceColor}; color: white; padding: 2px 6px; border-radius: 4px; font-size: 10px; margin-left: 8px;">${log.source.toUpperCase()}</span>`;
+            const tid = log.task_id || '';
+            if (tid) {
+                if (!groupMap[tid]) {
+                    const grp = {
+                        id: tid,
+                        displayName: log.task_display_name || '',
+                        category: log.category || '',
+                        source: log.source || '',
+                        status: log.status || 'info',
+                        firstTs: log.timestamp || '',
+                        lastTs: log.timestamp || '',
+                        logs: [],
+                    };
+                    groupMap[tid] = grp;
+                    groups.push(grp);
+                }
+                const grp = groupMap[tid];
+                grp.logs.push(log);
+                if (log.timestamp) grp.lastTs = log.timestamp;
+                if (!grp.displayName && log.task_display_name) grp.displayName = log.task_display_name;
+                if (!grp.category && log.category) grp.category = log.category;
+                // Promote status: success/error > starting > received > info
+                const rank = { error: 5, success: 4, starting: 3, received: 2, scheduled: 1, info: 0 };
+                if ((rank[log.status] || 0) > (rank[grp.status] || 0)) grp.status = log.status;
+            } else {
+                standalone.push(log);
             }
+        }
 
+        // Merge into a single timeline sorted by first timestamp (most recent first)
+        // Each item is either { type:'group', ...group } or { type:'standalone', log }
+        let timeline = [];
+        for (const g of groups) timeline.push({ type: 'group', ts: g.firstTs, data: g });
+        for (const s of standalone) timeline.push({ type: 'standalone', ts: s.timestamp || '', data: s });
+        timeline.sort((a, b) => (b.ts || '').localeCompare(a.ts || ''));
+
+        let html = '';
+        for (const item of timeline) {
+            if (item.type === 'group') {
+                html += renderTaskGroup(item.data);
+            } else {
+                html += renderStandaloneLine(item.data);
+            }
+        }
+        return html;
+    }
+
+    function renderTaskGroup(grp) {
+        const sm = STATUS_META[grp.status] || STATUS_META['info'];
+        const borderColor = sm.bg || '#4a5568';
+        const displayName = grp.displayName || 'Unknown Task';
+        const detailCount = grp.logs.length;
+
+        // Compute duration if we have first and last timestamps
+        let duration = '';
+        if (grp.firstTs && grp.lastTs && grp.firstTs !== grp.lastTs) {
+            const d1 = new Date(grp.firstTs.replace(',','.'));
+            const d2 = new Date(grp.lastTs.replace(',','.'));
+            const diffMs = d2 - d1;
+            if (diffMs > 0) {
+                const secs = Math.round(diffMs / 1000);
+                duration = secs >= 60 ? `${Math.floor(secs/60)}m ${secs%60}s` : `${secs}s`;
+            }
+        }
+
+        // Check if any sub-log has an error-level entry
+        const hasError = grp.logs.some(l => l.level === 'error');
+        const statusForCss = grp.status === 'error' || hasError ? 'error' : grp.status;
+
+        // Build inner detail lines
+        let detailHtml = '';
+        for (const log of grp.logs) {
+            const levelIcon = (STATUS_META[log.status] || STATUS_META['info']).icon;
+            detailHtml += `
+                <div class="log-group-detail-line" style="padding:4px 12px;border-bottom:1px solid rgba(255,255,255,0.05);font-size:12px;display:flex;gap:8px;align-items:flex-start;">
+                    <span style="color:#a0aec0;white-space:nowrap;min-width:140px;">${log.timestamp || ''}</span>
+                    <span>${levelIcon}</span>
+                    <span style="color:#cbd5e0;flex:1;word-break:break-word;">${escapeHtml(log.message || '')}</span>
+                </div>`;
+        }
+
+        const cat = grp.category;
+        const dataAttrs = `data-status="${grp.status}" data-source="${grp.source}" data-level="" data-category="${cat}"`;
+
+        return `
+            <div class="log-entry log-group-card" ${dataAttrs}
+                 style="border-left:3px solid ${borderColor};margin-bottom:6px;border-radius:6px;background:rgba(26,32,44,0.6);">
+                <div class="log-group-header" onclick="this.nextElementSibling.style.display = this.nextElementSibling.style.display === 'none' ? 'block' : 'none'; this.querySelector('.expand-arrow').textContent = this.nextElementSibling.style.display === 'none' ? '▶' : '▼';"
+                     style="padding:10px 14px;cursor:pointer;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                    <span class="expand-arrow" style="color:#a0aec0;font-size:10px;width:12px;">▶</span>
+                    <span style="font-weight:600;color:#e2e8f0;font-size:14px;">${sm.icon} ${escapeHtml(displayName)}</span>
+                    ${makeStatusBadge(grp.status)}
+                    ${makeCategoryBadge(cat)}
+                    ${hasError && grp.status !== 'error' ? '<span style="background:#e53e3e;color:#fff;padding:2px 6px;border-radius:4px;font-size:10px;">Has Errors</span>' : ''}
+                    <span style="color:#a0aec0;font-size:12px;margin-left:auto;">${grp.firstTs}${duration ? ` &middot; ${duration}` : ''} &middot; ${detailCount} logs</span>
+                </div>
+                <div class="log-group-details" style="display:none;border-top:1px solid rgba(255,255,255,0.1);max-height:400px;overflow-y:auto;">
+                    ${detailHtml}
+                </div>
+            </div>`;
+    }
+
+    function renderStandaloneLine(log) {
+        const sm = STATUS_META[log.status] || STATUS_META['info'];
+        let statusClass = log.status || log.level || 'info';
+        if (['received','scheduled','starting'].includes(statusClass)) statusClass = 'info';
+
+        const sourceBadge = log.source
+            ? `<span style="background:${log.source === 'worker' ? '#667eea' : '#ed8936'};color:#fff;padding:2px 6px;border-radius:4px;font-size:10px;">${log.source.toUpperCase()}</span>`
+            : '';
+
+        return `
+            <div class="log-entry log-${statusClass}" data-status="${log.status || ''}" data-source="${log.source || ''}" data-level="${log.level || ''}" data-category="${log.category || ''}">
+                <div class="log-header">
+                    <span class="log-time">${log.timestamp || ''}</span>
+                    <span class="log-level ${statusClass}">
+                        ${sm.icon} ${log.level ? log.level.toUpperCase() : ''}
+                        ${log.process ? `/ ${log.process}` : ''}
+                    </span>
+                    ${sourceBadge}${makeCategoryBadge(log.category)}${makeStatusBadge(log.status)}
+                </div>
+                <div class="log-message">${escapeHtml(log.message || '')}</div>
+            </div>`;
+    }
+
+    // Keep original flat render for individual task logs (non-"all" mode)
+    function renderFlatLogs(logs) {
+        if (!logs || logs.length === 0) {
+            return '<div class="logs-empty"><p>No logs to display</p></div>';
+        }
+        let html = '';
+        for (const log of logs) {
+            const sm = STATUS_META[log.status] || STATUS_META['info'];
+            let statusClass = log.status || log.level || 'info';
+            if (['received','scheduled','starting'].includes(statusClass)) statusClass = 'info';
             html += `
-                <div class="log-entry log-${statusClass}" data-status="${log.status || ''}" data-source="${log.source || ''}" data-level="${log.level || ''}">
+                <div class="log-entry log-${statusClass}" data-status="${log.status || ''}" data-source="${log.source || ''}" data-level="${log.level || ''}" data-category="${log.category || ''}">
                     <div class="log-header">
                         <span class="log-time">${log.timestamp || ''}</span>
                         <span class="log-level ${statusClass}">
-                            ${statusIcon} ${log.level ? log.level.toUpperCase() : ''}
+                            ${sm.icon} ${log.level ? log.level.toUpperCase() : ''}
                             ${log.process ? `/ ${log.process}` : ''}
                         </span>
-                        ${sourceBadge}
                     </div>
                     <div class="log-message">${escapeHtml(log.message || '')}</div>
-                    <div class="log-meta">
-                        ${log.execution_time ? `<span>⏱️ ${log.execution_time}</span>` : ''}
-                        ${log.execution_time_ms ? `<span>⏱️ ${log.execution_time_ms}ms</span>` : ''}
-                    </div>
-                    ${log.error_details ? `<div class="log-error-details">${escapeHtml(log.error_details)}</div>` : ''}
-                </div>
-            `;
+                </div>`;
         }
-
         return html;
     }
 
@@ -2129,6 +2539,7 @@
         const statusFilter = document.getElementById('filterStatus').value;
         const sourceFilter = document.getElementById('filterSource').value;
         const levelFilter = document.getElementById('filterLevel').value;
+        const categoryFilter = document.getElementById('filterCategory').value;
 
         const entries = document.querySelectorAll('#logsModalBody .log-entry');
         let visibleCount = 0;
@@ -2137,6 +2548,7 @@
             const status = entry.dataset.status || '';
             const source = entry.dataset.source || '';
             const level = entry.dataset.level || '';
+            const category = entry.dataset.category || '';
 
             let show = true;
 
@@ -2151,8 +2563,9 @@
                 show = false;
             }
 
-            if (sourceFilter !== 'all' && source !== sourceFilter) show = false;
-            if (levelFilter !== 'all' && level !== levelFilter) show = false;
+            if (sourceFilter !== 'all' && source && source !== sourceFilter) show = false;
+            if (levelFilter !== 'all' && level && level !== levelFilter) show = false;
+            if (categoryFilter !== 'all' && category !== categoryFilter) show = false;
 
             entry.style.display = show ? 'block' : 'none';
             if (show) visibleCount++;
@@ -2174,9 +2587,44 @@
     function reloadLogs() {
         if (currentLogMode === 'task') {
             showTaskLogs(currentTaskName, '');
-        } else {
-            showAllCeleryLogs();
+            return;
         }
+        // Refresh data only — keep current filter selections
+        const body = document.getElementById('logsModalBody');
+        const statusBar = document.getElementById('logsStatusBar');
+        const limit = document.getElementById('filterLimit').value;
+
+        body.innerHTML = '<div class="logs-loading">Refreshing logs...</div>';
+
+        fetch(`{% url "core:get_all_celery_logs" %}?limit=${limit}`)
+            .then(response => response.json())
+            .then(data => {
+                currentLogs = data.logs || [];
+                statusBar.innerHTML = `
+                    <div class="logs-status-bar">
+                        <div class="status-item">
+                            <strong>Worker:</strong>
+                            ${data.status?.worker_running ? '<span style="color: #38a169;">✅ Running</span>' : '<span style="color: #e53e3e;">❌ Not Running</span>'}
+                        </div>
+                        <div class="status-item">
+                            <strong>Beat:</strong>
+                            ${data.status?.beat_running ? '<span style="color: #38a169;">✅ Running</span>' : '<span style="color: #e53e3e;">❌ Not Running</span>'}
+                        </div>
+                        <div class="status-item">
+                            <strong>Log Entries:</strong> ${data.count || 0}
+                        </div>
+                    </div>
+                `;
+                if (data.success && data.logs.length > 0) {
+                    body.innerHTML = renderLogs(data.logs);
+                    applyLogFilters();
+                } else {
+                    body.innerHTML = '<div class="logs-empty"><p>No celery logs found.</p></div>';
+                }
+            })
+            .catch(error => {
+                body.innerHTML = `<div class="logs-empty"><p>Error refreshing logs: ${error}</p></div>`;
+            });
     }
 
     function escapeHtml(text) {
@@ -2206,6 +2654,7 @@
 
         // Reset filter to default (completed = success + failed)
         document.getElementById('filterStatus').value = 'completed';
+        document.getElementById('filterCategory').value = 'all';
 
         // Show loading
         body.innerHTML = '<div class="logs-loading">Loading celery logs...</div>';
@@ -2293,10 +2742,10 @@
         }
     });
 
-    // Auto-refresh every 2 minutes
-    setTimeout(function() {
-        location.reload();
-    }, 120000);
+    // Auto-refresh disabled — use the Refresh button instead
+    // setTimeout(function() {
+    //     location.reload();
+    // }, 120000);
 
     // =========================================================================
     // Task Configuration Modal Functions
@@ -2787,7 +3236,14 @@
         const tasksByHour = {};
 
         taskSchedule.forEach(task => {
-            const time = parseScheduleTime(task.schedule, task.scheduleType);
+            // Use direct hour/minute values from server when available,
+            // fall back to parsing schedule string
+            let time = null;
+            if (task.scheduleHour !== null && task.scheduleHour !== undefined) {
+                time = { hour: task.scheduleHour, minute: task.scheduleMinute || 0 };
+            } else {
+                time = parseScheduleTime(task.schedule, task.scheduleType);
+            }
             if (!time) return;
 
             const hourKey = time.hour;
@@ -2934,5 +3390,129 @@
 
     // Initialize timeline when page loads
     document.addEventListener('DOMContentLoaded', initTimeline);
+
+    // ========================================
+    // RECENT EXECUTIONS
+    // ========================================
+
+    function loadRecentExecutions() {
+        fetch("{% url 'core:api_recent_executions' %}")
+            .then(r => r.json())
+            .then(data => {
+                if (!data.success) return;
+                renderExecutions(data.executions);
+            })
+            .catch(err => console.error('Failed to load recent executions:', err));
+    }
+
+    function renderExecutions(executions) {
+        const container = document.getElementById('recent-executions-list');
+        const countEl = document.getElementById('exec-count');
+
+        if (!executions || executions.length === 0) {
+            container.innerHTML = '<div class="exec-empty">No task executions recorded today</div>';
+            countEl.textContent = '';
+            return;
+        }
+
+        countEl.textContent = `(${executions.length} today)`;
+
+        let html = '';
+        for (const exec of executions) {
+            const statusIcon = exec.status === 'success' ? '&#10004;'
+                : exec.status === 'failed' ? '&#10008;'
+                : '&#9881;';
+            const statusClass = exec.status;
+
+            const startDate = new Date(exec.start_time);
+            const endDate = new Date(exec.end_time);
+            const startStr = startDate.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+            const endStr = endDate.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+
+            let durationStr = '';
+            if (exec.execution_time_ms !== null && exec.execution_time_ms !== undefined) {
+                const secs = (exec.execution_time_ms / 1000).toFixed(1);
+                durationStr = `${secs}s`;
+            } else if (exec.status !== 'running') {
+                const diffMs = endDate - startDate;
+                const secs = (diffMs / 1000).toFixed(1);
+                durationStr = `~${secs}s`;
+            }
+
+            const badgeLabel = exec.status === 'success' ? 'Success'
+                : exec.status === 'failed' ? 'Failed'
+                : 'Running';
+
+            // Steps HTML
+            let stepsHtml = '';
+            for (const step of exec.steps) {
+                const stepTime = new Date(step.timestamp).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+                const levelClass = (step.level === 'warning' || step.level === 'error' || step.level === 'critical') ? ` level-${step.level}` : '';
+
+                stepsHtml += `<div class="execution-step">
+                    <span class="step-time">${stepTime}</span>
+                    <span class="step-action${levelClass}">${step.action}</span>
+                    <span class="step-message">${escapeHtml(step.message)}</span>
+                </div>`;
+
+                if (step.context_data && Object.keys(step.context_data).length > 0) {
+                    const ctxStr = Object.entries(step.context_data)
+                        .map(([k, v]) => `${k}: ${JSON.stringify(v)}`)
+                        .join(', ');
+                    stepsHtml += `<div class="exec-context-data">${escapeHtml(ctxStr)}</div>`;
+                }
+            }
+
+            let errorHtml = '';
+            if (exec.error_details) {
+                errorHtml = `<div class="exec-error-box">${escapeHtml(exec.error_details)}</div>`;
+            }
+
+            html += `<div class="execution-card status-${statusClass}" data-taskid="${exec.task_id}">
+                <div class="execution-header" onclick="toggleExecution(this)">
+                    <span class="exec-status-icon">${statusIcon}</span>
+                    <span class="exec-name" title="${escapeHtml(exec.display_name)}">${escapeHtml(exec.display_name)}</span>
+                    <span class="exec-time">${startStr} &rarr; ${endStr}</span>
+                    <span class="exec-duration">${durationStr}</span>
+                    <span class="exec-badge ${statusClass}">${badgeLabel}</span>
+                    <span class="exec-chevron">&#9654;</span>
+                </div>
+                <div class="execution-details">
+                    <div class="exec-metrics">
+                        <span>Steps: ${exec.steps.length}</span>
+                        ${exec.warnings_count > 0 ? `<span style="color:#d69e2e">Warnings: ${exec.warnings_count}</span>` : ''}
+                        ${exec.errors_count > 0 ? `<span style="color:#e53e3e">Errors: ${exec.errors_count}</span>` : ''}
+                        ${durationStr ? `<span>Duration: ${durationStr}</span>` : ''}
+                    </div>
+                    <div class="execution-steps">${stepsHtml}</div>
+                    ${errorHtml}
+                </div>
+            </div>`;
+        }
+
+        container.innerHTML = html;
+    }
+
+    function toggleRecentExecutions() {
+        document.getElementById('recent-executions-section').classList.toggle('expanded');
+    }
+
+    function toggleExecution(headerEl) {
+        const card = headerEl.closest('.execution-card');
+        card.classList.toggle('expanded');
+    }
+
+    function escapeHtml(text) {
+        if (!text) return '';
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    // Load on page ready + auto-refresh every 30s
+    document.addEventListener('DOMContentLoaded', function() {
+        loadRecentExecutions();
+        setInterval(loadRecentExecutions, 30000);
+    });
 </script>
 {% endblock %}

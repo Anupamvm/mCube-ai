@@ -273,6 +273,7 @@ class BkLog(models.Model):
     TASK_CATEGORY_CHOICES = [
         ('data', 'Market Data'),
         ('strategy', 'Strategy Execution'),
+        ('transaction', 'Transactions'),
         ('position', 'Position Monitoring'),
         ('risk', 'Risk Management'),
         ('analytics', 'Analytics & Reports'),

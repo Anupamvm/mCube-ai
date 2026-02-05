@@ -38,6 +38,12 @@ class Command(BaseCommand):
             default=300,
             help='Timeout in seconds to wait for OTP entry (default: 300 = 5 minutes)'
         )
+        parser.add_argument(
+            '--task-name',
+            type=str,
+            default='manual CLI login',
+            help='Task description shown in Telegram OTP request (default: "manual CLI login")'
+        )
 
     def handle(self, *args, **options):
         self.stdout.write(self.style.SUCCESS('\n=== Breeze Auto Login ===\n'))
@@ -45,6 +51,7 @@ class Command(BaseCommand):
         force = options['force']
         headless = options['headless']
         timeout = options['timeout']
+        task_name = options['task_name']
 
         if headless:
             self.stdout.write(self.style.WARNING(
@@ -82,7 +89,8 @@ class Command(BaseCommand):
             success, message = auto_login_breeze(
                 headless=headless,
                 timeout=timeout,
-                skip_validation=force
+                skip_validation=force,
+                task_name=task_name
             )
 
             if success:

@@ -11,9 +11,17 @@ Flow:
    a. Fill username and password
    b. Check Terms & Conditions checkbox
    c. Click Login
-   d. Wait for user to enter OTP manually
-   e. Capture redirect URL with apisession parameter
-   f. Save session token to database
+   d. Request OTP via Telegram (if available)
+   e. Wait for OTP from EITHER Telegram reply OR manual browser entry
+   f. If Telegram OTP arrives, enter it into the browser automatically
+   g. Capture redirect URL with apisession parameter
+   h. Save session token to database
+
+OTP Dual-Path:
+- Sends Telegram message requesting OTP (if bot is configured)
+- Simultaneously monitors browser for manual OTP entry
+- Whichever path delivers OTP first wins
+- Falls back to browser-only if Telegram is unavailable
 
 Requirements:
 - selenium>=4.15.2
@@ -23,12 +31,26 @@ Requirements:
 
 import logging
 import time
+import re
 from urllib.parse import urlparse, parse_qs
 from typing import Optional, Tuple
 
 from apps.brokers.utils.auth_manager import get_credentials, save_session_token, is_session_valid_breeze
 
 logger = logging.getLogger(__name__)
+
+# NseFlag keys for OTP cross-process communication
+OTP_FLAG_REQUEST = 'breeze_otp_request'
+OTP_FLAG_VALUE = 'breeze_otp_value'
+OTP_FLAG_TASK = 'breeze_otp_task'
+
+# OTP request states
+OTP_STATE_PENDING = 'pending'
+OTP_STATE_FULFILLED = 'fulfilled'
+
+# Telegram OTP polling config
+TELEGRAM_OTP_TIMEOUT = 120   # seconds to wait for Telegram OTP reply
+TELEGRAM_OTP_POLL_INTERVAL = 2  # seconds between NseFlag checks
 
 
 def validate_existing_token() -> Tuple[bool, str]:
@@ -90,9 +112,10 @@ class BreezeAutoLogin:
     Automates Breeze login process with token validation.
 
     First validates existing token - only opens browser if needed.
+    Supports OTP entry via Telegram bot OR manual browser entry (both paths open).
 
     Usage:
-        login = BreezeAutoLogin()
+        login = BreezeAutoLogin(task_name="scheduled refresh")
         success, message = login.run()
         if success:
             print(f"Login successful! {message}")
@@ -114,7 +137,8 @@ class BreezeAutoLogin:
         'otp_panel': 'dvgetotp',       # OTP entry panel
     }
 
-    def __init__(self, headless: bool = False, timeout: int = 300, skip_validation: bool = False):
+    def __init__(self, headless: bool = False, timeout: int = 300,
+                 skip_validation: bool = False, task_name: str = ""):
         """
         Initialize the auto-login service.
 
@@ -122,12 +146,15 @@ class BreezeAutoLogin:
             headless: Run browser in headless mode (not recommended for OTP entry)
             timeout: Max seconds to wait for OTP entry and redirect (default: 5 minutes)
             skip_validation: Skip token validation and force browser login
+            task_name: Description of what triggered this login (shown in Telegram)
         """
         self.headless = headless
         self.timeout = timeout
         self.skip_validation = skip_validation
+        self.task_name = task_name or "Breeze login"
         self.driver = None
         self.credentials = None
+        self._telegram_otp_sent = False
 
     def _load_credentials(self) -> bool:
         """Load Breeze credentials from database."""
@@ -255,41 +282,416 @@ class BreezeAutoLogin:
             logger.error(f"Failed to click login button: {e}")
             return False
 
-    def _wait_for_redirect(self) -> Tuple[bool, str]:
+    # =========================================================================
+    # OTP PANEL DETECTION & ENTRY
+    # =========================================================================
+
+    def _is_otp_panel_visible(self) -> bool:
+        """Check if the OTP entry panel is visible on the page."""
+        try:
+            from selenium.webdriver.common.by import By
+
+            panel = self.driver.find_element(By.ID, self.SELECTORS['otp_panel'])
+            return panel.is_displayed()
+        except Exception:
+            return False
+
+    def _detect_otp_input_field(self):
         """
-        Wait for the redirect to 127.0.0.1 with apisession parameter.
+        Find the OTP input field inside the dvgetotp panel.
+        Searches for visible text/tel/number input elements.
+
+        Returns:
+            WebElement or None
+        """
+        try:
+            from selenium.webdriver.common.by import By
+
+            panel = self.driver.find_element(By.ID, self.SELECTORS['otp_panel'])
+
+            # Try common input types used for OTP
+            for input_type in ['text', 'tel', 'number', 'password']:
+                inputs = panel.find_elements(By.CSS_SELECTOR, f'input[type="{input_type}"]')
+                for inp in inputs:
+                    if inp.is_displayed():
+                        logger.info(f"Found OTP input field: type={input_type}, id={inp.get_attribute('id')}")
+                        return inp
+
+            # Fallback: any visible input in the panel
+            all_inputs = panel.find_elements(By.TAG_NAME, 'input')
+            for inp in all_inputs:
+                if inp.is_displayed() and inp.get_attribute('type') not in ('hidden', 'checkbox', 'radio', 'submit', 'button'):
+                    logger.info(f"Found OTP input field (fallback): type={inp.get_attribute('type')}, id={inp.get_attribute('id')}")
+                    return inp
+
+            logger.warning("No OTP input field found in OTP panel")
+            return None
+
+        except Exception as e:
+            logger.warning(f"Error detecting OTP input field: {e}")
+            return None
+
+    def _enter_otp_and_submit(self, otp: str) -> bool:
+        """
+        Enter OTP into the detected field and submit.
+
+        Args:
+            otp: The OTP digits to enter
+
+        Returns:
+            True if OTP was entered successfully
+        """
+        try:
+            from selenium.webdriver.common.by import By
+            from selenium.webdriver.common.keys import Keys
+
+            otp_field = self._detect_otp_input_field()
+            if not otp_field:
+                logger.error("Cannot enter OTP - input field not found")
+                return False
+
+            # Clear and enter OTP
+            otp_field.clear()
+            otp_field.send_keys(otp)
+            logger.info(f"Entered OTP ({len(otp)} digits) into browser")
+
+            # Try to find and click the submit/verify button
+            panel = self.driver.find_element(By.ID, self.SELECTORS['otp_panel'])
+            submitted = False
+
+            # Look for submit-type buttons within the OTP panel
+            for selector in [
+                'input[type="submit"]',
+                'input[type="button"]',
+                'button[type="submit"]',
+                'button',
+                'a.btn',
+            ]:
+                buttons = panel.find_elements(By.CSS_SELECTOR, selector)
+                for btn in buttons:
+                    if btn.is_displayed():
+                        btn_text = (btn.text or btn.get_attribute('value') or '').lower()
+                        # Click buttons that look like submit/verify/continue
+                        if any(kw in btn_text for kw in ['submit', 'verify', 'continue', 'confirm', 'proceed', 'get']):
+                            btn.click()
+                            submitted = True
+                            logger.info(f"Clicked OTP submit button: '{btn_text}'")
+                            break
+                if submitted:
+                    break
+
+            # Fallback: press Enter if no button found
+            if not submitted:
+                otp_field.send_keys(Keys.RETURN)
+                logger.info("Pressed Enter to submit OTP (no button found)")
+
+            time.sleep(2)
+            return True
+
+        except Exception as e:
+            logger.error(f"Error entering OTP: {e}")
+            return False
+
+    # =========================================================================
+    # TELEGRAM OTP COMMUNICATION (via NseFlag)
+    # =========================================================================
+
+    def _cleanup_otp_flags(self):
+        """Clear all OTP-related NseFlag keys."""
+        try:
+            from apps.core.models import NseFlag
+
+            for flag_name in [OTP_FLAG_REQUEST, OTP_FLAG_VALUE, OTP_FLAG_TASK]:
+                NseFlag.set(flag_name, "", "Cleared after OTP flow")
+            logger.debug("OTP flags cleaned up")
+        except Exception as e:
+            logger.debug(f"Error cleaning up OTP flags: {e}")
+
+    def _ensure_telegram_bot_running(self) -> bool:
+        """
+        Check if the Telegram bot is running. If not, start it as a background process.
+
+        The bot must be polling to receive OTP replies from the user.
+        The TelegramClient can send messages via HTTP API without the bot polling,
+        but receiving replies requires the bot to be actively polling.
+
+        Returns:
+            True if bot is running (or was successfully started)
+        """
+        try:
+            from apps.alerts.services.telegram_bot import is_bot_running
+
+            if is_bot_running():
+                logger.info("Telegram bot is already running")
+                return True
+
+            logger.warning("Telegram bot is NOT running - attempting to start it")
+            return self._start_telegram_bot_subprocess()
+
+        except Exception as e:
+            logger.warning(f"Error checking/starting Telegram bot: {e}")
+            return False
+
+    def _start_telegram_bot_subprocess(self) -> bool:
+        """
+        Start the Telegram bot as a background subprocess.
+
+        Uses the same pattern as Celery worker subprocess spawning in the codebase.
+
+        Returns:
+            True if bot was started successfully
+        """
+        import subprocess
+        import sys
+        import os
+
+        try:
+            project_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+            python_path = sys.executable
+            log_dir = os.path.join(project_dir, 'logs')
+            os.makedirs(log_dir, exist_ok=True)
+            log_file = os.path.join(log_dir, 'telegram_bot.log')
+
+            with open(log_file, 'a') as log:
+                from datetime import datetime
+                log.write(f"\n{'='*60}\n")
+                log.write(f"Telegram bot auto-started at {datetime.now().isoformat()}\n")
+                log.write(f"Triggered by: {self.task_name}\n")
+                log.write(f"{'='*60}\n")
+
+                proc = subprocess.Popen(
+                    [python_path, 'manage.py', 'run_telegram_bot', '--force'],
+                    cwd=project_dir,
+                    stdout=log,
+                    stderr=log,
+                    start_new_session=True
+                )
+
+            logger.info(f"Telegram bot subprocess started (PID: {proc.pid})")
+
+            # Wait for bot to initialize before proceeding
+            time.sleep(5)
+
+            # Verify it started
+            from apps.alerts.services.telegram_bot import is_bot_running
+            if is_bot_running():
+                logger.info("Telegram bot confirmed running after auto-start")
+                return True
+            else:
+                logger.warning("Telegram bot process started but lock not acquired - may still be initializing")
+                # Give it a bit more time
+                time.sleep(3)
+                return is_bot_running()
+
+        except Exception as e:
+            logger.error(f"Failed to start Telegram bot subprocess: {e}")
+            return False
+
+    def _request_otp_via_telegram(self) -> bool:
+        """
+        Send a Telegram message requesting the OTP and set NseFlag for cross-process comm.
+
+        Ensures the Telegram bot is running first (starts it if needed),
+        then sends the OTP request message.
+
+        Returns:
+            True if Telegram message was sent successfully
+        """
+        try:
+            from apps.core.models import NseFlag
+            from apps.alerts.services.telegram_client import get_telegram_client
+
+            client = get_telegram_client()
+            if not client.is_enabled():
+                logger.info("Telegram not configured - OTP via browser only")
+                return False
+
+            # Ensure bot is running to receive OTP replies
+            bot_running = self._ensure_telegram_bot_running()
+            if not bot_running:
+                logger.warning("Telegram bot not running and could not be started - OTP via browser only")
+                return False
+
+            # Set NseFlag to signal that we need an OTP
+            NseFlag.set(OTP_FLAG_REQUEST, OTP_STATE_PENDING, "Breeze OTP request pending")
+            NseFlag.set(OTP_FLAG_VALUE, "", "Awaiting OTP value")
+            NseFlag.set(OTP_FLAG_TASK, self.task_name, "Task requesting OTP")
+
+            # Send Telegram message
+            message = (
+                "<b>Breeze OTP Required</b>\n\n"
+                f"mCube needs Breeze OTP for: <b>{self.task_name}</b>\n\n"
+                "Reply with the OTP digits (4-6 digits).\n"
+                "Or enter it directly in the browser window."
+            )
+            success, resp = client.send_message(message)
+
+            if success:
+                logger.info("Telegram OTP request sent successfully")
+                self._telegram_otp_sent = True
+                return True
+            else:
+                logger.warning(f"Failed to send Telegram OTP request: {resp}")
+                # Clean up flags since Telegram failed
+                self._cleanup_otp_flags()
+                return False
+
+        except Exception as e:
+            logger.warning(f"Error requesting OTP via Telegram: {e}")
+            self._cleanup_otp_flags()
+            return False
+
+    def _check_telegram_otp(self) -> Optional[str]:
+        """
+        Check if the Telegram bot has received and stored an OTP via NseFlag.
+
+        Returns:
+            The OTP string if available, None otherwise
+        """
+        try:
+            from apps.core.models import NseFlag
+
+            status = NseFlag.get(OTP_FLAG_REQUEST, "")
+            if status == OTP_STATE_FULFILLED:
+                otp = NseFlag.get(OTP_FLAG_VALUE, "")
+                if otp and re.match(r'^\d{4,6}$', otp):
+                    logger.info(f"Received OTP via Telegram: {'*' * len(otp)}")
+                    return otp
+                else:
+                    logger.warning(f"OTP flag fulfilled but value invalid: '{otp}'")
+            return None
+        except Exception:
+            return None
+
+    def _send_telegram_timeout_message(self):
+        """Notify the user on Telegram that OTP polling timed out."""
+        try:
+            from apps.alerts.services.telegram_client import get_telegram_client
+
+            client = get_telegram_client()
+            if client.is_enabled():
+                client.send_message(
+                    "Telegram OTP window expired. You can still enter the OTP in the browser.",
+                    disable_notification=True
+                )
+        except Exception:
+            pass
+
+    def _send_telegram_success_message(self):
+        """Notify the user on Telegram that OTP was received and entered."""
+        try:
+            from apps.alerts.services.telegram_client import get_telegram_client
+
+            client = get_telegram_client()
+            if client.is_enabled():
+                client.send_message(
+                    "OTP received and entered into Breeze login. Waiting for session...",
+                    disable_notification=True
+                )
+        except Exception:
+            pass
+
+    # =========================================================================
+    # REDIRECT DETECTION
+    # =========================================================================
+
+    def _check_redirect(self) -> Optional[str]:
+        """
+        Check if browser has been redirected to 127.0.0.1 with apisession.
+
+        Returns:
+            Session token string if redirect detected, None otherwise
+        """
+        try:
+            current_url = self.driver.current_url
+            parsed = urlparse(current_url)
+
+            if parsed.hostname == self.REDIRECT_HOST or parsed.hostname == 'localhost':
+                query_params = parse_qs(parsed.query)
+                if 'apisession' in query_params:
+                    session_token = query_params['apisession'][0]
+                    logger.info(f"Captured session token: {session_token[:20]}...")
+                    return session_token
+            return None
+        except Exception:
+            return None
+
+    # =========================================================================
+    # MAIN WAIT LOGIC (DUAL-PATH)
+    # =========================================================================
+
+    def _wait_for_otp_and_redirect(self) -> Tuple[bool, str]:
+        """
+        Wait for OTP entry (via Telegram or browser) and redirect.
+
+        Dual-path approach:
+        1. If OTP panel is visible, request OTP via Telegram
+        2. Poll for BOTH redirect (browser entry) and Telegram OTP simultaneously
+        3. If Telegram OTP arrives first, enter it into browser, then wait for redirect
+        4. If browser redirect happens first (manual entry), done
+        5. Falls back gracefully if Telegram is unavailable
 
         Returns:
             Tuple of (success, session_token or error_message)
         """
-        logger.info(f"Waiting for OTP entry and redirect (timeout: {self.timeout}s)...")
-        logger.info("Please enter the OTP in the browser window.")
+        logger.info(f"Waiting for OTP and redirect (timeout: {self.timeout}s)...")
+        logger.info("OTP can be entered via Telegram OR directly in the browser.")
+
+        # Check if OTP panel is visible and request via Telegram
+        telegram_active = False
+        if self._is_otp_panel_visible():
+            logger.info("OTP panel detected - requesting OTP via Telegram")
+            telegram_active = self._request_otp_via_telegram()
+            if not telegram_active:
+                logger.info("Telegram unavailable - waiting for browser OTP entry only")
+        else:
+            logger.info("OTP panel not visible yet - will check during polling")
 
         start_time = time.time()
+        telegram_otp_entered = False
+        telegram_poll_expired = False
 
         while time.time() - start_time < self.timeout:
-            try:
-                current_url = self.driver.current_url
-                parsed = urlparse(current_url)
+            elapsed = time.time() - start_time
 
-                # Check if we've been redirected to 127.0.0.1
-                if parsed.hostname == self.REDIRECT_HOST or parsed.hostname == 'localhost':
-                    query_params = parse_qs(parsed.query)
+            # === Path 1: Check for browser redirect (manual OTP or submitted Telegram OTP) ===
+            session_token = self._check_redirect()
+            if session_token:
+                self._cleanup_otp_flags()
+                return True, session_token
 
-                    if 'apisession' in query_params:
-                        session_token = query_params['apisession'][0]
-                        logger.info(f"Captured session token: {session_token[:20]}...")
-                        return True, session_token
-                    else:
-                        logger.warning(f"Redirected to {self.REDIRECT_HOST} but no apisession found")
-                        # Still might be processing, continue waiting
+            # === Path 2: Check for Telegram OTP (only if active and not yet entered) ===
+            if telegram_active and not telegram_otp_entered and not telegram_poll_expired:
+                # Check if Telegram OTP polling window has expired
+                if elapsed > TELEGRAM_OTP_TIMEOUT:
+                    telegram_poll_expired = True
+                    self._send_telegram_timeout_message()
+                    self._cleanup_otp_flags()
+                    logger.info(f"Telegram OTP window expired after {TELEGRAM_OTP_TIMEOUT}s - browser entry still open")
+                else:
+                    otp = self._check_telegram_otp()
+                    if otp:
+                        logger.info("Got OTP from Telegram - entering into browser")
+                        if self._enter_otp_and_submit(otp):
+                            telegram_otp_entered = True
+                            self._send_telegram_success_message()
+                            self._cleanup_otp_flags()
+                            # Continue polling for redirect after OTP submission
+                        else:
+                            logger.warning("Failed to enter Telegram OTP into browser - browser entry still open")
+                            self._cleanup_otp_flags()
+                            telegram_active = False
 
-                time.sleep(1)
+            # === Late Telegram request: if OTP panel appeared after initial check ===
+            if not telegram_active and not self._telegram_otp_sent and not telegram_otp_entered:
+                if self._is_otp_panel_visible():
+                    logger.info("OTP panel just appeared - requesting OTP via Telegram")
+                    telegram_active = self._request_otp_via_telegram()
 
-            except Exception as e:
-                logger.debug(f"Error checking URL: {e}")
-                time.sleep(1)
+            time.sleep(TELEGRAM_OTP_POLL_INTERVAL)
 
+        # Timeout
+        self._cleanup_otp_flags()
         return False, f"Timeout waiting for redirect after {self.timeout} seconds"
 
     def _save_token(self, session_token: str) -> bool:
@@ -306,7 +708,8 @@ class BreezeAutoLogin:
             return False
 
     def _cleanup(self):
-        """Close the browser."""
+        """Close the browser and clean up OTP flags."""
+        self._cleanup_otp_flags()
         if self.driver:
             try:
                 self.driver.quit()
@@ -351,8 +754,8 @@ class BreezeAutoLogin:
             if not self._click_login():
                 return False, "Failed to click login button"
 
-            # Wait for OTP and redirect
-            success, result = self._wait_for_redirect()
+            # Wait for OTP (Telegram + browser) and redirect
+            success, result = self._wait_for_otp_and_redirect()
 
             if not success:
                 return False, result
@@ -396,26 +799,33 @@ class BreezeAutoLogin:
         return self._run_browser_login()
 
 
-def auto_login_breeze(headless: bool = False, timeout: int = 300, skip_validation: bool = False) -> Tuple[bool, str]:
+def auto_login_breeze(headless: bool = False, timeout: int = 300,
+                      skip_validation: bool = False, task_name: str = "") -> Tuple[bool, str]:
     """
     Convenience function to run Breeze auto-login.
 
     First validates existing token - only opens browser if needed.
+    When OTP is required, requests it via Telegram AND keeps the browser
+    open for manual entry - whichever delivers first wins.
 
     Args:
         headless: Run browser in headless mode (not recommended, OTP needs user input)
         timeout: Max seconds to wait for OTP entry (default: 5 minutes)
         skip_validation: Skip token validation and force browser login
+        task_name: Description of what triggered this login (shown in Telegram)
 
     Returns:
         Tuple of (success: bool, message: str)
 
     Example:
         >>> from apps.brokers.services.breeze_auto_login import auto_login_breeze
-        >>> success, msg = auto_login_breeze()
+        >>> success, msg = auto_login_breeze(task_name="scheduled refresh")
         >>> print(msg)
         # If token valid: "Existing token is valid. Session token is valid"
         # If token expired: Opens browser, waits for OTP, then "New session token obtained and saved"
     """
-    login = BreezeAutoLogin(headless=headless, timeout=timeout, skip_validation=skip_validation)
+    login = BreezeAutoLogin(
+        headless=headless, timeout=timeout,
+        skip_validation=skip_validation, task_name=task_name
+    )
     return login.run()

@@ -136,9 +136,12 @@ class BreezeSessionManager:
 
         return breeze
 
-    def _try_auto_login(self) -> Tuple[bool, str]:
+    def _try_auto_login(self, task_name: str = "") -> Tuple[bool, str]:
         """
         Attempt automatic login using stored credentials.
+
+        Args:
+            task_name: Description of what triggered this login (shown in Telegram OTP request)
 
         Returns:
             Tuple[bool, str]: (success, message)
@@ -161,7 +164,8 @@ class BreezeSessionManager:
             success, message = auto_login_breeze(
                 headless=False,  # Show browser for OTP entry
                 timeout=300,
-                skip_validation=True  # We know session is expired
+                skip_validation=True,  # We know session is expired
+                task_name=task_name or "session auto-refresh"
             )
 
             if success:
@@ -219,7 +223,7 @@ class BreezeSessionManager:
             if auto_refresh:
                 # Check if auto-login credentials are available
                 if creds.username and creds.password:
-                    success, login_msg = self._try_auto_login()
+                    success, login_msg = self._try_auto_login(task_name="session validation refresh")
                     if success:
                         # Reload credentials after auto-login
                         creds = self.get_credentials()
@@ -250,7 +254,7 @@ class BreezeSessionManager:
             if any(kw in error_str for kw in ['session', 'expired', 'unauthorized', 'invalid', 'resource not available']):
                 if auto_refresh and creds.username and creds.password:
                     # Try auto-login
-                    success, login_msg = self._try_auto_login()
+                    success, login_msg = self._try_auto_login(task_name="session error recovery")
                     if success:
                         # Retry with new credentials
                         creds = self.get_credentials()
@@ -272,7 +276,7 @@ class BreezeSessionManager:
         Returns:
             Tuple[bool, str]: (success, message)
         """
-        return self._try_auto_login()
+        return self._try_auto_login(task_name="manual session refresh")
 
     def clear_cache(self):
         """Clear cached client."""

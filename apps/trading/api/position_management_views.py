@@ -51,10 +51,15 @@ def get_active_positions(request):
                 'error': 'Invalid broker. Must be "breeze" or "neo"'
             })
 
-        positions_data = []
+        result = None
 
         if broker == 'breeze':
-            positions_data = _fetch_breeze_positions()
+            result = _fetch_breeze_positions()
+            if 'error' in result:
+                return JsonResponse({
+                    'success': False,
+                    'error': result['error']
+                })
 
         elif broker == 'neo':
             result = _fetch_neo_positions()
@@ -63,16 +68,47 @@ def get_active_positions(request):
                     'success': False,
                     'error': result['error']
                 })
-            positions_data = result['positions']
 
+        positions_data = result.get('positions', [])
         broker_name = 'ICICI Breeze' if broker == 'breeze' else 'Kotak Neo'
 
-        return JsonResponse({
+        response = {
             'success': True,
             'broker': broker_name,
             'positions': positions_data,
-            'count': len(positions_data)
-        })
+            'count': len(positions_data),
+        }
+
+        # Include RMS-based Net P&L (from limits API) for Neo
+        # This is the account-level P&L that matches NEO UI
+        # Formula: Trader Net P&L = -(FoUnRlsMtomPrsnt + FoRlsMtomPrsnt)
+        if result.get('rms_net_pnl') is not None:
+            response['rms_net_pnl'] = result['rms_net_pnl']
+            response['rms_unrealized_mtm'] = result.get('rms_unrealized_mtm')
+            response['rms_realized_mtm'] = result.get('rms_realized_mtm')
+
+        # Include raw API debug data for both brokers
+        # Neo returns full response dicts (e.g. {'stat':'Ok','data':[...]})
+        # Breeze returns plain lists
+        try:
+            raw_pos = result.get('raw_positions_api')
+            raw_trades = result.get('raw_trade_report_api')
+            raw_limits = result.get('raw_limits_api')
+            # Round-trip through json to catch NaN/Infinity/non-standard types
+            response['raw_positions_api'] = json.loads(json.dumps(raw_pos, default=str)) if raw_pos is not None else None
+            response['raw_trade_report_api'] = json.loads(json.dumps(raw_trades, default=str)) if raw_trades is not None else None
+            response['raw_limits_api'] = json.loads(json.dumps(raw_limits, default=str)) if raw_limits is not None else None
+        except Exception as e:
+            logger.warning(f"Could not serialize raw API data: {e}")
+            response['raw_positions_api'] = None
+            response['raw_trade_report_api'] = None
+            response['raw_limits_api'] = None
+
+        logger.info(f"[{broker}] Returning {len(positions_data)} positions, "
+                     f"raw_positions type={type(result.get('raw_positions_api')).__name__}, "
+                     f"raw_trades type={type(result.get('raw_trade_report_api')).__name__}")
+
+        return JsonResponse(response)
 
     except Exception as e:
         logger.error(f"Error fetching active positions: {e}", exc_info=True)
@@ -85,11 +121,14 @@ def get_active_positions(request):
 def _fetch_breeze_positions():
     """Fetch live positions from Breeze API"""
     positions_data = []
+    raw_positions = []
     breeze = get_breeze_client()
     pos_resp = breeze.get_portfolio_positions()
 
     if pos_resp and pos_resp.get('Status') == 200:
         raw_positions = pos_resp.get('Success', [])
+        if not isinstance(raw_positions, list):
+            raw_positions = []
 
         for p in raw_positions:
             quantity = int(p.get('quantity') or 0)
@@ -150,145 +189,300 @@ def _fetch_breeze_positions():
     else:
         logger.warning(f"Breeze positions API returned non-200 status: {pos_resp}")
 
-    return positions_data
+    return {
+        'positions': positions_data,
+        'raw_positions_api': raw_positions,
+    }
 
 
 def _fetch_neo_positions():
-    """Fetch live positions from Neo API"""
+    """
+    Fetch live positions from Neo API.
+
+    Uses BOTH client.positions() AND client.trade_report() to build accurate position data.
+    - positions() gives us current open positions and instrument info
+    - trade_report() gives us actual executed trade prices for accurate avg price
+
+    SDK response formats:
+    - Success: {'stat': 'Ok', 'stCode': 200, 'data': [...]}
+    - Error:   {'Error': exception_obj} or {'Error Message': '...'}
+    - Network: None (PositionsAPI catches RequestException, prints, returns None)
+    """
     from apps.brokers.integrations.kotak_neo import get_kotak_neo_client, get_ltp_from_neo
 
     positions_data = []
 
+    def _safe_int(val, default=0):
+        try:
+            if val is None:
+                return default
+            return int(float(val)) if val != '' else default
+        except (ValueError, TypeError):
+            return default
+
+    def _safe_float(val, default=0.0):
+        try:
+            if val is None:
+                return default
+            return float(val) if val != '' else default
+        except (ValueError, TypeError):
+            return default
+
     try:
         client = get_kotak_neo_client()
+        logger.info("Neo client authenticated, calling positions API...")
 
-        logger.info("=" * 100)
-        logger.info("CALLING NEO API: client.positions()")
-        logger.info("=" * 100)
+        # ── 1. Call positions() API ──
+        # Returns: {'stat':'Ok','data':[...]} | {'Error':e} | {'Error Message':'...'} | None
+        positions_resp = client.positions()
+        logger.info(f"Neo positions() response type={type(positions_resp).__name__}, "
+                     f"keys={list(positions_resp.keys()) if isinstance(positions_resp, dict) else 'N/A'}")
 
-        resp = client.positions()
+        # Extract data array; store FULL response for debug
+        raw_positions_full = positions_resp  # Full response for debug display
+        raw_positions = []
+        if isinstance(positions_resp, dict):
+            if 'Error' in positions_resp or 'Error Message' in positions_resp:
+                err = positions_resp.get('Error') or positions_resp.get('Error Message')
+                logger.error(f"Neo positions() returned error: {err}")
+            else:
+                raw_positions = positions_resp.get('data', [])
+                if not isinstance(raw_positions, list):
+                    raw_positions = []
+        elif positions_resp is None:
+            logger.error("Neo positions() returned None (likely network error in SDK)")
+            raw_positions_full = {'_error': 'positions() returned None - SDK network error'}
+        else:
+            logger.error(f"Neo positions() unexpected type: {type(positions_resp)}")
+            raw_positions_full = {'_error': f'Unexpected response type: {type(positions_resp).__name__}'}
 
-        logger.info("=" * 100)
-        logger.info("RAW NEO API RESPONSE:")
-        logger.info(f"Response type: {type(resp)}")
-        logger.info(f"Response keys: {list(resp.keys()) if isinstance(resp, dict) else 'N/A'}")
-        logger.info("=" * 100)
+        logger.info(f"Neo positions(): {len(raw_positions)} position entries to process")
 
-        raw_positions = resp.get('data', []) if isinstance(resp, dict) else []
-        logger.info(f"Found {len(raw_positions)} positions in response")
+        # ── 2. Call trade_report() API ──
+        # Returns: {'stat':'Ok','data':[...]} | {'Error':e} | {'Error Message':'...'} | None
+        trade_resp_full = None
+        raw_trades = []
+        try:
+            trade_resp = client.trade_report()
+            trade_resp_full = trade_resp  # Full response for debug display
+            logger.info(f"Neo trade_report() response type={type(trade_resp).__name__}, "
+                         f"keys={list(trade_resp.keys()) if isinstance(trade_resp, dict) else 'N/A'}")
 
-        for p in raw_positions:
+            if isinstance(trade_resp, dict):
+                if 'Error' in trade_resp or 'Error Message' in trade_resp:
+                    err = trade_resp.get('Error') or trade_resp.get('Error Message')
+                    logger.warning(f"Neo trade_report() returned error: {err}")
+                else:
+                    raw_trades = trade_resp.get('data', [])
+                    if not isinstance(raw_trades, list):
+                        raw_trades = []
+            elif trade_resp is None:
+                logger.warning("Neo trade_report() returned None")
+                trade_resp_full = {'_error': 'trade_report() returned None'}
+        except Exception as e:
+            logger.error(f"Error calling trade_report(): {e}", exc_info=True)
+            trade_resp_full = {'_error': str(e)}
+
+        logger.info(f"Neo trade_report(): {len(raw_trades)} trades to process")
+
+        # ── 3. Aggregate trades by trading symbol ──
+        trades_by_symbol = {}
+        for t in raw_trades:
+            tsym = t.get('trdSym', '')
+            if not tsym:
+                continue
+            if tsym not in trades_by_symbol:
+                trades_by_symbol[tsym] = {'buys': [], 'sells': []}
+
+            filled_qty = _safe_int(t.get('fldQty', 0))
+            avg_prc = _safe_float(t.get('avgPrc', 0))
+            trans_type = t.get('trnsTp', '')
+
+            if trans_type == 'B':
+                trades_by_symbol[tsym]['buys'].append({
+                    'qty': filled_qty, 'price': avg_prc, 'raw': t
+                })
+            elif trans_type == 'S':
+                trades_by_symbol[tsym]['sells'].append({
+                    'qty': filled_qty, 'price': avg_prc, 'raw': t
+                })
+
+        # ── 4. Process each position ──
+        for idx, p in enumerate(raw_positions):
             symbol = p.get('trdSym', 'N/A')
-            logger.info("=" * 80)
-            logger.info(f"PROCESSING POSITION: {symbol}")
-            logger.info("=" * 80)
+            base_sym = p.get('sym', symbol)
 
-            # Get lot size
-            lot_sz = int(p.get('lotSz', 1))
+            lot_sz = _safe_int(p.get('lotSz', 1)) or 1
+            multiplier = _safe_int(p.get('multiplier', 1)) or 1
+            gen_num = _safe_int(p.get('genNum', 1)) or 1
+            gen_den = _safe_int(p.get('genDen', 1)) or 1
+            prc_num = _safe_int(p.get('prcNum', 1)) or 1
+            prc_den = _safe_int(p.get('prcDen', 1)) or 1
+            precision = _safe_int(p.get('precision', 2)) or 2
+            price_factor = multiplier * (gen_num / gen_den) * (prc_num / prc_den)
 
-            # QUANTITY CALCULATION - API returns quantities in SHARES
-            cf_buy_qty_shares = int(p.get('cfBuyQty', 0))
-            fl_buy_qty_shares = int(p.get('flBuyQty', 0))
-            cf_sell_qty_shares = int(p.get('cfSellQty', 0))
-            fl_sell_qty_shares = int(p.get('flSellQty', 0))
+            # Quantities from positions API
+            cf_buy_qty = _safe_int(p.get('cfBuyQty', 0))
+            fl_buy_qty = _safe_int(p.get('flBuyQty', 0))
+            cf_sell_qty = _safe_int(p.get('cfSellQty', 0))
+            fl_sell_qty = _safe_int(p.get('flSellQty', 0))
+            total_buy_qty = cf_buy_qty + fl_buy_qty
+            total_sell_qty = cf_sell_qty + fl_sell_qty
+            net_qty = total_buy_qty - total_sell_qty
 
-            total_buy_qty_shares = cf_buy_qty_shares + fl_buy_qty_shares
-            total_sell_qty_shares = cf_sell_qty_shares + fl_sell_qty_shares
-            net_qty_shares = total_buy_qty_shares - total_sell_qty_shares
+            net_qty_lots = net_qty // lot_sz if lot_sz > 0 else net_qty
 
-            # Convert shares to LOTS for display
-            total_buy_qty_lots = total_buy_qty_shares // lot_sz if lot_sz > 0 else total_buy_qty_shares
-            total_sell_qty_lots = total_sell_qty_shares // lot_sz if lot_sz > 0 else total_sell_qty_shares
-            net_qty_lots = total_buy_qty_lots - total_sell_qty_lots
-
-            # Skip positions with zero quantity
             if net_qty_lots == 0:
-                logger.info(f"Skipping {symbol} - zero net quantity")
                 continue
 
-            # AMOUNT FIELDS
-            buy_amt = float(p.get('cfBuyAmt', 0)) + float(p.get('buyAmt', 0))
-            sell_amt = float(p.get('cfSellAmt', 0)) + float(p.get('sellAmt', 0))
+            # Amounts from positions API
+            cf_buy_amt = _safe_float(p.get('cfBuyAmt', 0))
+            buy_amt = _safe_float(p.get('buyAmt', 0))
+            cf_sell_amt = _safe_float(p.get('cfSellAmt', 0))
+            sell_amt = _safe_float(p.get('sellAmt', 0))
+            total_buy_amt = cf_buy_amt + buy_amt
+            total_sell_amt = cf_sell_amt + sell_amt
 
-            # AVERAGE PRICE CALCULATION
-            if net_qty_lots > 0:
-                avg_price = buy_amt / total_buy_qty_shares if total_buy_qty_shares > 0 else 0
+            # ── 5. Use trade_report for ACTUAL avg price ──
+            trade_data = trades_by_symbol.get(symbol, {'buys': [], 'sells': []})
+
+            trade_buy_qty = sum(t['qty'] for t in trade_data['buys'])
+            trade_buy_value = sum(t['qty'] * t['price'] for t in trade_data['buys'])
+            trade_sell_qty = sum(t['qty'] for t in trade_data['sells'])
+            trade_sell_value = sum(t['qty'] * t['price'] for t in trade_data['sells'])
+            trade_net_qty = trade_buy_qty - trade_sell_qty
+
+            trade_avg_buy = trade_buy_value / trade_buy_qty if trade_buy_qty > 0 else 0
+            trade_avg_sell = trade_sell_value / trade_sell_qty if trade_sell_qty > 0 else 0
+
+            # Direction
+            if net_qty > 0:
                 direction = 'LONG'
-            else:
-                avg_price = sell_amt / total_sell_qty_shares if total_sell_qty_shares > 0 else 0
+            elif net_qty < 0:
                 direction = 'SHORT'
+            else:
+                direction = 'LONG'
 
-            # GET LTP
+            # Avg price: prefer trade_report data, fallback to positions API
+            if trade_buy_qty > 0 and direction == 'LONG':
+                avg_price = round(trade_avg_buy, precision)
+            elif trade_sell_qty > 0 and direction == 'SHORT':
+                avg_price = round(trade_avg_sell, precision)
+            else:
+                # Fallback: positions API formula
+                if direction == 'LONG':
+                    avg_price = round(total_buy_amt / (total_buy_qty * price_factor), precision) if total_buy_qty > 0 else 0
+                else:
+                    avg_price = round(total_sell_amt / (total_sell_qty * price_factor), precision) if total_sell_qty > 0 else 0
+
+            # Use trade_report net qty if available (more reliable for lot count)
+            display_net_qty = trade_net_qty if trade_net_qty != 0 else net_qty
+            display_lots = abs(display_net_qty) // lot_sz if lot_sz > 0 else abs(display_net_qty)
+
+            # GET LTP (Neo stkPrc is usually 0, use Breeze API)
             ltp = None
-            trading_symbol = p.get('trdSym')
-            exchange_segment = p.get('exSeg', 'nse_fo')
-
             try:
                 ltp = get_ltp_from_neo(
-                    trading_symbol=trading_symbol,
-                    exchange_segment=exchange_segment,
+                    trading_symbol=symbol,
+                    exchange_segment=p.get('exSeg', 'nse_fo'),
                     client=client
                 )
             except Exception as e:
-                logger.error(f"Error fetching LTP: {e}", exc_info=True)
+                logger.error(f"Error fetching LTP for {symbol}: {e}", exc_info=True)
 
-            # P&L CALCULATION
-            # REALIZED P&L
-            if sell_amt == 0 and buy_amt > 0:
-                realized_pnl = 0.0
-            elif buy_amt == 0 and sell_amt > 0:
-                realized_pnl = 0.0
-            else:
-                realized_pnl = sell_amt - buy_amt
-
-            # UNREALIZED P&L
+            # ── 5b. P&L calculation (simple, correct) ──
+            # Unrealized P&L = net_qty * (ltp - avg_price)
+            # Works for both LONG (positive net_qty) and SHORT (negative net_qty)
             if ltp is not None and ltp > 0:
-                if direction == 'LONG':
-                    unrealized_pnl = (ltp - avg_price) * net_qty_shares
-                else:
-                    unrealized_pnl = (avg_price - ltp) * abs(net_qty_shares)
+                unrealized_pnl = display_net_qty * (ltp - avg_price)
             else:
                 unrealized_pnl = 0.0
 
-            # TOTAL P&L
-            total_pnl = realized_pnl + unrealized_pnl
+            investment = avg_price * abs(display_net_qty)
+            pnl_pct = (unrealized_pnl / investment * 100) if investment > 0 else 0
 
-            # Get additional fields
-            product = p.get('prod', 'N/A')
-            exchange = p.get('exSeg', 'N/A')
+            logger.info(
+                f"Position {symbol}: dir={direction} lots={display_lots} "
+                f"avg={avg_price:.2f} ltp={ltp} unrealized={unrealized_pnl:,.2f} pnl%={pnl_pct:.2f}%"
+            )
 
-            # Calculate P&L percentage
-            investment = avg_price * abs(net_qty_shares)
-            pnl_pct = (total_pnl / investment * 100) if investment > 0 else 0
-
-            # Extract expiry date from Neo response
+            # Expiry date
             expiry_date = None
             expiry_dt_str = p.get('expDt', '')
             if expiry_dt_str:
                 try:
                     expiry_dt = datetime.strptime(expiry_dt_str, '%d %b, %Y')
                     expiry_date = expiry_dt.strftime('%Y-%m-%d')
-                except Exception as e:
-                    logger.warning(f"Could not parse expiry date '{expiry_dt_str}': {e}")
+                except Exception:
+                    pass
 
             positions_data.append({
-                'symbol': symbol,
-                'exchange': exchange,
-                'product': product,
+                'symbol': base_sym if base_sym and base_sym != 'N/A' else symbol,
+                'trading_symbol': symbol,
+                'exchange': p.get('exSeg', 'N/A'),
+                'product': p.get('prod', 'N/A'),
                 'direction': direction,
-                'quantity': abs(net_qty_lots),
-                'net_quantity': net_qty_lots,
-                'net_quantity_shares': net_qty_shares,
+                'quantity': display_lots,
+                'net_quantity': display_lots if direction == 'LONG' else -display_lots,
+                'net_quantity_shares': display_net_qty,
+                'lot_size': lot_sz,
                 'average_price': round(avg_price, 2),
                 'ltp': round(ltp, 2) if ltp is not None and ltp > 0 else None,
                 'unrealized_pnl': round(unrealized_pnl, 2),
-                'realized_pnl': round(realized_pnl, 2),
-                'total_pnl': round(total_pnl, 2),
+                'total_pnl': round(unrealized_pnl, 2),
                 'pnl_percentage': round(pnl_pct, 2),
                 'expiry_date': expiry_date,
             })
 
-        return {'positions': positions_data}
+        logger.info(f"Neo: processed {len(positions_data)} active positions from {len(raw_positions)} entries")
+
+        # ── 6. Fetch RMS MTM from limits API for account-level Net P&L ──
+        # Broker RMS logic (matches NEO UI):
+        #   RMS Net MTM = FoUnRlsMtomPrsnt + FoRlsMtomPrsnt
+        #   Trader Net P&L = -(RMS Net MTM)
+        rms_net_pnl = None
+        rms_unrealized_mtm = None
+        rms_realized_mtm = None
+        raw_limits_full = None
+        try:
+            limits_resp = client.limits(segment="ALL", exchange="ALL", product="ALL")
+            raw_limits_full = limits_resp
+            logger.info(f"Neo limits() response type={type(limits_resp).__name__}, "
+                         f"keys={list(limits_resp.keys()) if isinstance(limits_resp, dict) else 'N/A'}")
+
+            if isinstance(limits_resp, dict) and 'Error' not in limits_resp and 'Error Message' not in limits_resp:
+                fo_unrealized = _safe_float(limits_resp.get('FoUnRlsMtomPrsnt', 0))
+                fo_realized = _safe_float(limits_resp.get('FoRlsMtomPrsnt', 0))
+                rms_unrealized_mtm = fo_unrealized
+                rms_realized_mtm = fo_realized
+
+                # RMS Net MTM = unrealized + realized
+                rms_net_mtm = fo_unrealized + fo_realized
+                # Trader Net P&L = sign-reversed RMS MTM, rounded to nearest rupee
+                rms_net_pnl = round(-rms_net_mtm)
+
+                logger.info(
+                    f"RMS P&L: FoUnRlsMtomPrsnt={fo_unrealized:,.2f}, "
+                    f"FoRlsMtomPrsnt={fo_realized:,.2f}, "
+                    f"RMS Net MTM={rms_net_mtm:,.2f}, "
+                    f"Trader Net P&L={rms_net_pnl:,}"
+                )
+            else:
+                err = limits_resp.get('Error') or limits_resp.get('Error Message') if isinstance(limits_resp, dict) else limits_resp
+                logger.warning(f"Neo limits() returned error: {err}")
+        except Exception as e:
+            logger.error(f"Error fetching Neo limits for RMS P&L: {e}", exc_info=True)
+
+        # Return positions + RMS P&L + FULL raw API responses for debugging
+        return {
+            'positions': positions_data,
+            'rms_net_pnl': rms_net_pnl,
+            'rms_unrealized_mtm': rms_unrealized_mtm,
+            'rms_realized_mtm': rms_realized_mtm,
+            'raw_positions_api': raw_positions_full,
+            'raw_trade_report_api': trade_resp_full,
+            'raw_limits_api': raw_limits_full,
+        }
 
     except Exception as e:
         logger.error(f"Error fetching Neo positions: {e}", exc_info=True)

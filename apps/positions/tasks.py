@@ -17,11 +17,13 @@ from apps.positions.models import Position
 from apps.positions.services.position_manager import update_position_price, close_position
 from apps.positions.services.exit_manager import should_exit_position, check_exit_conditions
 from apps.alerts.services.telegram_client import send_telegram_notification
+from apps.core.utils.decorators import task_enabled_guard
 
 logger = logging.getLogger(__name__)
 
 
 @shared_task(name='apps.positions.tasks.monitor_all_positions')
+@task_enabled_guard('monitor-all-positions')
 def monitor_all_positions():
     """
     Monitor all active positions for status updates
@@ -69,6 +71,7 @@ def monitor_all_positions():
 
 
 @shared_task(name='apps.positions.tasks.update_position_pnl')
+@task_enabled_guard('update-position-pnl')
 def update_position_pnl():
     """
     Update P&L for all active positions
@@ -146,6 +149,7 @@ def update_position_pnl():
 
 
 @shared_task(name='apps.positions.tasks.check_exit_conditions')
+@task_enabled_guard('check-exit-conditions')
 def check_exit_conditions():
     """
     Check exit conditions for all active positions

@@ -1,0 +1,254 @@
+"""
+Task Default Configuration
+
+Defines display names, categories, schedule defaults, and descriptions for all
+Celery beat tasks. Extracted to its own module so both views.py and
+decorators.py can import without circular-import issues.
+"""
+
+TASK_DEFAULT_CONFIG = {
+    # =========================================================================
+    # MARKET DATA TASKS
+    # =========================================================================
+    'morning-data-sync': {
+        'display_name': 'Morning Data Sync',
+        'description': 'Full morning data synchronization including market data, news, and indices',
+        'schedule_type': 'crontab',
+        'category': 'data',
+        'default_hour': 7,
+        'default_minute': 0,
+        'default_days': [0, 1, 2, 3, 4],  # Weekdays
+    },
+    'update-pre-market-data': {
+        'display_name': 'Pre-Market Data Update',
+        'description': 'Fetches pre-market data before market opens',
+        'schedule_type': 'crontab',
+        'category': 'data',
+        'default_hour': 8,
+        'default_minute': 50,
+        'default_days': [0, 1, 2, 3, 4],
+    },
+    'update-live-market-data': {
+        'display_name': 'Live Market Data Update',
+        'description': 'Updates live market data during trading hours',
+        'schedule_type': 'recurring',
+        'category': 'data',
+        'default_hour': 9,
+        'default_minute': 15,
+        'default_recurring_start_hour': 9,
+        'default_recurring_start_minute': 15,
+        'default_recurring_end_hour': 15,
+        'default_recurring_end_minute': 30,
+        'default_recurring_interval_minutes': 5,
+        'default_days': [0, 1, 2, 3, 4],
+    },
+    'update-post-market-data': {
+        'display_name': 'Post-Market Data Update',
+        'description': 'Updates data after market close for end-of-day analysis',
+        'schedule_type': 'crontab',
+        'category': 'data',
+        'default_hour': 15,
+        'default_minute': 35,
+        'default_days': [0, 1, 2, 3, 4],
+    },
+
+    # =========================================================================
+    # STRATEGY EXECUTION TASKS
+    # =========================================================================
+    'setup-trading-day': {
+        'display_name': 'Setup Trading Day',
+        'description': 'Prepares system for trading day (loads strategies, checks accounts)',
+        'schedule_type': 'crontab',
+        'category': 'strategies',
+        'default_hour': 8,
+        'default_minute': 55,
+        'default_days': [0, 1, 2, 3, 4],
+    },
+    'start-trading-day': {
+        'display_name': 'Start Trading Day',
+        'description': 'Initiates trading at market open',
+        'schedule_type': 'crontab',
+        'category': 'strategies',
+        'default_hour': 9,
+        'default_minute': 15,
+        'default_days': [0, 1, 2, 3, 4],
+    },
+    'evaluate-options-strategy': {
+        'display_name': 'Evaluate Options Strategy',
+        'description': 'Analyzes market conditions and selects options strategies',
+        'schedule_type': 'crontab',
+        'category': 'strategies',
+        'default_hour': 9,
+        'default_minute': 30,
+        'default_days': [0, 1, 2, 3, 4],
+    },
+    'start-options-trade': {
+        'display_name': 'Start Options Trade',
+        'description': 'Executes options trades based on strategy evaluation',
+        'schedule_type': 'crontab',
+        'category': 'transactions',
+        'default_hour': 9,
+        'default_minute': 40,
+        'default_days': [0, 1, 2, 3, 4],
+    },
+    'batch-options-averaging': {
+        'display_name': 'Options Averaging (Batch)',
+        'description': 'Runs averaging logic for options positions at regular intervals',
+        'schedule_type': 'recurring',
+        'category': 'transactions',
+        'default_hour': 9,
+        'default_minute': 40,
+        'default_recurring_start_hour': 9,
+        'default_recurring_start_minute': 40,
+        'default_recurring_end_hour': 10,
+        'default_recurring_end_minute': 15,
+        'default_recurring_interval_minutes': 5,
+        'default_days': [0, 1, 2, 3, 4],
+    },
+    'batch-options-averaging-10am': {
+        'display_name': 'Options Averaging (10 AM)',
+        'description': 'Continues options averaging after 10 AM',
+        'schedule_type': 'recurring',
+        'category': 'transactions',
+        'default_hour': 10,
+        'default_minute': 0,
+        'default_recurring_start_hour': 10,
+        'default_recurring_start_minute': 0,
+        'default_recurring_end_hour': 10,
+        'default_recurring_end_minute': 15,
+        'default_recurring_interval_minutes': 5,
+        'default_days': [0, 1, 2, 3, 4],
+    },
+    'screen-futures-opportunities': {
+        'display_name': 'Futures Screening',
+        'description': 'Scans for futures trading opportunities',
+        'schedule_type': 'crontab',
+        'category': 'strategies',
+        'default_hour': 9,
+        'default_minute': 45,
+        'default_days': [0, 1, 2, 3, 4],
+    },
+    'execute-futures-algorithm': {
+        'display_name': 'Futures Algorithm',
+        'description': 'Runs enhanced 12-component futures analysis on top 50 contracts by volume. Sends Telegram alerts for qualified candidates (score >= 65).',
+        'schedule_type': 'crontab',
+        'category': 'strategies',
+        'default_hour': 8,
+        'default_minute': 30,
+        'default_days': [0, 1, 2, 3, 4],  # Mon-Fri
+    },
+    'check-futures-averaging': {
+        'display_name': 'Futures Averaging Check',
+        'description': 'Checks and executes averaging for futures positions',
+        'schedule_type': 'recurring',
+        'category': 'transactions',
+        'default_hour': 9,
+        'default_minute': 0,
+        'default_recurring_start_hour': 9,
+        'default_recurring_start_minute': 0,
+        'default_recurring_end_hour': 15,
+        'default_recurring_end_minute': 0,
+        'default_recurring_interval_minutes': 10,
+        'default_days': [0, 1, 2, 3, 4],
+    },
+    'close-trading-day': {
+        'display_name': 'Close Trading Day',
+        'description': 'Closes positions and finalizes trading day',
+        'schedule_type': 'crontab',
+        'category': 'transactions',
+        'default_hour': 15,
+        'default_minute': 25,
+        'default_days': [0, 1, 2, 3, 4],
+    },
+
+    # =========================================================================
+    # POSITION MONITORING TASKS
+    # =========================================================================
+    'monitor-all-positions': {
+        'display_name': 'Position Monitoring',
+        'description': 'Real-time monitoring of all open positions',
+        'schedule_type': 'interval',
+        'category': 'monitoring',
+        'default_interval_seconds': 10,
+        'default_days': [0, 1, 2, 3, 4],
+    },
+    'update-position-pnl': {
+        'display_name': 'P&L Update',
+        'description': 'Updates profit/loss for all positions',
+        'schedule_type': 'interval',
+        'category': 'monitoring',
+        'default_interval_seconds': 15,
+        'default_days': [0, 1, 2, 3, 4],
+    },
+    'check-exit-conditions': {
+        'display_name': 'Exit Conditions Check',
+        'description': 'Checks stop-loss, target, and other exit conditions',
+        'schedule_type': 'interval',
+        'category': 'monitoring',
+        'default_interval_seconds': 30,
+        'default_days': [0, 1, 2, 3, 4],
+    },
+
+    # =========================================================================
+    # RISK MANAGEMENT TASKS
+    # =========================================================================
+    'check-risk-limits-all-accounts': {
+        'display_name': 'Risk Limits Check',
+        'description': 'Monitors risk limits across all trading accounts',
+        'schedule_type': 'interval',
+        'category': 'risk',
+        'default_interval_seconds': 60,
+        'default_days': [0, 1, 2, 3, 4],
+    },
+    'monitor-circuit-breakers': {
+        'display_name': 'Circuit Breaker Monitor',
+        'description': 'Monitors market circuit breakers and trading halts',
+        'schedule_type': 'interval',
+        'category': 'risk',
+        'default_interval_seconds': 30,
+        'default_days': [0, 1, 2, 3, 4],
+    },
+
+    # =========================================================================
+    # REPORTING & ANALYTICS TASKS
+    # =========================================================================
+    'generate-daily-pnl-report': {
+        'display_name': 'Daily P&L Report',
+        'description': 'Generates end-of-day profit/loss report',
+        'schedule_type': 'crontab',
+        'category': 'reports',
+        'default_hour': 16,
+        'default_minute': 0,
+        'default_days': [0, 1, 2, 3, 4],
+    },
+    'sync-benchmark-data': {
+        'display_name': 'Sync Benchmark Data',
+        'description': 'Syncs benchmark indices for performance comparison',
+        'schedule_type': 'crontab',
+        'category': 'reports',
+        'default_hour': 16,
+        'default_minute': 0,
+        'default_days': [0, 1, 2, 3, 4],
+    },
+    'daily-data-aggregation': {
+        'display_name': 'Daily Data Aggregation',
+        'description': 'Aggregates daily trading data for analytics',
+        'schedule_type': 'crontab',
+        'category': 'reports',
+        'default_hour': 16,
+        'default_minute': 30,
+        'default_days': [0, 1, 2, 3, 4],
+    },
+    'update-equity-curves': {
+        'display_name': 'Update Equity Curves',
+        'description': 'Updates equity curves for portfolio tracking',
+        'schedule_type': 'crontab',
+        'category': 'reports',
+        'default_hour': 17,
+        'default_minute': 0,
+        'default_days': [0, 1, 2, 3, 4],
+    },
+}
+
+# Backwards-compatible alias
+TASK_CONFIG_FIELDS = TASK_DEFAULT_CONFIG

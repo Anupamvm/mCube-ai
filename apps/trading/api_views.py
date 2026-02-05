@@ -1719,6 +1719,9 @@ def get_active_positions(request):
             })
 
         positions_data = []
+        rms_net_pnl = None
+        rms_unrealized_mtm = None
+        rms_realized_mtm = None
 
         if broker == 'breeze':
             # Use unified Breeze integration for consistent data
@@ -1776,7 +1779,29 @@ def get_active_positions(request):
             )
 
             try:
-                _, positions = fetch_and_save_kotakneo_data()
+                _, positions, raw_limits = fetch_and_save_kotakneo_data()
+
+                # ── RMS-based Net P&L from limits API (matches NEO UI) ──
+                # Broker RMS: Trader Net P&L = -(FoUnRlsMtomPrsnt + FoRlsMtomPrsnt)
+                rms_net_pnl = None
+                rms_unrealized_mtm = None
+                rms_realized_mtm = None
+                if isinstance(raw_limits, dict):
+                    try:
+                        fo_unrealized = float(raw_limits.get('FoUnRlsMtomPrsnt', 0) or 0)
+                        fo_realized = float(raw_limits.get('FoRlsMtomPrsnt', 0) or 0)
+                        rms_unrealized_mtm = fo_unrealized
+                        rms_realized_mtm = fo_realized
+                        rms_net_mtm = fo_unrealized + fo_realized
+                        rms_net_pnl = round(-rms_net_mtm)
+                        logger.info(
+                            f"RMS P&L: FoUnRlsMtomPrsnt={fo_unrealized:,.2f}, "
+                            f"FoRlsMtomPrsnt={fo_realized:,.2f}, "
+                            f"RMS Net MTM={rms_net_mtm:,.2f}, "
+                            f"Trader Net P&L={rms_net_pnl:,}"
+                        )
+                    except (ValueError, TypeError) as e:
+                        logger.warning(f"Error parsing RMS MTM fields: {e}")
 
                 # Known lot sizes for common instruments
                 lot_sizes = {
@@ -1809,12 +1834,10 @@ def get_active_positions(request):
                     # Calculate lots for display
                     net_qty_lots = net_qty // lot_size if lot_size > 0 else net_qty
 
-                    if net_qty > 0:
-                        direction = 'LONG'
-                        unrealized_pnl = (ltp - avg_price) * net_qty
-                    else:
-                        direction = 'SHORT'
-                        unrealized_pnl = (avg_price - ltp) * abs(net_qty)
+                    # Unrealized P&L = net_qty * (ltp - avg_price)
+                    # Works for both LONG and SHORT (net_qty is negative for SHORT)
+                    unrealized_pnl = net_qty * (ltp - avg_price) if ltp > 0 else 0.0
+                    direction = 'LONG' if net_qty > 0 else 'SHORT'
 
                     investment = avg_price * abs(net_qty)
                     pnl_pct = (unrealized_pnl / investment * 100) if investment > 0 else 0
@@ -1830,10 +1853,9 @@ def get_active_positions(request):
                         'average_price': avg_price,
                         'ltp': ltp if ltp > 0 else None,
                         'unrealized_pnl': round(unrealized_pnl, 2),
-                        'realized_pnl': 0.0,
                         'total_pnl': round(unrealized_pnl, 2),
                         'pnl_percentage': round(pnl_pct, 2),
-                        'expiry_date': None,  # BrokerPosition doesn't have expiry field
+                        'expiry_date': None,
                     })
 
             except NeoAuthenticationError as e:
@@ -1872,12 +1894,20 @@ def get_active_positions(request):
 
         broker_name = 'ICICI Breeze' if broker == 'breeze' else 'Kotak Neo'
 
-        return JsonResponse({
+        response_data = {
             'success': True,
             'broker': broker_name,
             'positions': positions_data,
-            'count': len(positions_data)
-        })
+            'count': len(positions_data),
+        }
+
+        # Include RMS-based Net P&L for Neo (matches broker UI)
+        if broker == 'neo' and rms_net_pnl is not None:
+            response_data['rms_net_pnl'] = rms_net_pnl
+            response_data['rms_unrealized_mtm'] = rms_unrealized_mtm
+            response_data['rms_realized_mtm'] = rms_realized_mtm
+
+        return JsonResponse(response_data)
 
     except Exception as e:
         logger.error(f"Error fetching active positions: {e}", exc_info=True)

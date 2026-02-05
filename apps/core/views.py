@@ -3696,8 +3696,15 @@ def celery_task_control(request):
             'name': 'Strategy Execution',
             'icon': '🎯',
             'color': '#805ad5',
-            'description': 'Daily trading workflow: setup, start, options, futures, close',
-            'keywords': ['setup-trading', 'start-trading', 'options', 'futures', 'screen', 'averaging', 'strangle', 'close-trading', 'batch-options'],
+            'description': 'Daily trading workflow: setup, start, evaluate, screen, execute',
+            'keywords': ['setup-trading', 'start-trading', 'evaluate-options', 'screen', 'execute-futures', 'strangle'],
+        },
+        'transactions': {
+            'name': 'Transactions',
+            'icon': '💰',
+            'color': '#d69e2e',
+            'description': 'Order placement: options trades, averaging, futures averaging, close',
+            'keywords': ['start-options-trade', 'batch-options-averaging', 'check-futures-averaging', 'close-trading'],
         },
         'monitoring': {
             'name': 'Position Monitoring',
@@ -3788,21 +3795,30 @@ def celery_task_control(request):
         # Parse schedule hour and minute for timeline positioning
         schedule_hour = None
         schedule_minute = None
-        schedule = config.get('schedule')
-        if hasattr(schedule, 'hour') and hasattr(schedule, 'minute'):
-            try:
-                # Handle crontab hour/minute
-                if hasattr(schedule.hour, '__iter__') and not isinstance(schedule.hour, str):
-                    schedule_hour = min(schedule.hour) if schedule.hour else None
-                else:
-                    schedule_hour = int(schedule.hour) if str(schedule.hour).isdigit() else None
+        if task_state and task_state.use_custom_schedule:
+            # Use custom schedule values from DB
+            if task_state.schedule_type == 'crontab':
+                schedule_hour = task_state.schedule_hour
+                schedule_minute = task_state.schedule_minute
+            elif task_state.schedule_type == 'recurring':
+                schedule_hour = task_state.recurring_start_hour
+                schedule_minute = getattr(task_state, 'recurring_start_minute', 0) or 0
+        else:
+            # Fall back to static config
+            schedule = config.get('schedule')
+            if hasattr(schedule, 'hour') and hasattr(schedule, 'minute'):
+                try:
+                    if hasattr(schedule.hour, '__iter__') and not isinstance(schedule.hour, str):
+                        schedule_hour = min(schedule.hour) if schedule.hour else None
+                    else:
+                        schedule_hour = int(schedule.hour) if str(schedule.hour).isdigit() else None
 
-                if hasattr(schedule.minute, '__iter__') and not isinstance(schedule.minute, str):
-                    schedule_minute = min(schedule.minute) if schedule.minute else 0
-                else:
-                    schedule_minute = int(schedule.minute) if str(schedule.minute).isdigit() else 0
-            except (ValueError, TypeError):
-                pass
+                    if hasattr(schedule.minute, '__iter__') and not isinstance(schedule.minute, str):
+                        schedule_minute = min(schedule.minute) if schedule.minute else 0
+                    else:
+                        schedule_minute = int(schedule.minute) if str(schedule.minute).isdigit() else 0
+                except (ValueError, TypeError):
+                    pass
 
         task_info = {
             'key': key,
@@ -3907,13 +3923,22 @@ def toggle_celery_task(request, task_id):
         task.save()
 
         status = 'enabled' if task.is_enabled else 'disabled'
-        messages.success(request, f"Task '{task.display_name}' {status} successfully.")
+
+        # Restart Celery Beat to pick up schedule changes
+        celery_result = ensure_celery_running()
+        beat_restarted = celery_result.get('beat_restarted', False)
+
+        message = f"Task '{task.display_name}' {status}"
+        if beat_restarted:
+            message += " (schedule reloaded)"
+        messages.success(request, message)
 
         return JsonResponse({
             'success': True,
             'task_id': task_id,
             'is_enabled': task.is_enabled,
-            'message': f"Task '{task.display_name}' {status}"
+            'beat_restarted': beat_restarted,
+            'message': message
         })
     except TradingScheduleConfig.DoesNotExist:
         return JsonResponse({'success': False, 'error': 'Task not found'}, status=404)
@@ -3984,255 +4009,8 @@ def reload_celery_schedule(request):
         return JsonResponse({'success': False, 'error': str(e)}, status=500)
 
 
-# Task configuration - default schedule info for tasks
-# All tasks now use CeleryTaskState for schedule storage
-# This dict provides display info and default values
-TASK_DEFAULT_CONFIG = {
-    # =========================================================================
-    # MARKET DATA TASKS
-    # =========================================================================
-    'morning-data-sync': {
-        'display_name': 'Morning Data Sync',
-        'description': 'Full morning data synchronization including market data, news, and indices',
-        'schedule_type': 'crontab',
-        'category': 'data',
-        'default_hour': 7,
-        'default_minute': 0,
-        'default_days': [0, 1, 2, 3, 4],  # Weekdays
-    },
-    'update-pre-market-data': {
-        'display_name': 'Pre-Market Data Update',
-        'description': 'Fetches pre-market data before market opens',
-        'schedule_type': 'crontab',
-        'category': 'data',
-        'default_hour': 8,
-        'default_minute': 50,
-        'default_days': [0, 1, 2, 3, 4],
-    },
-    'update-live-market-data': {
-        'display_name': 'Live Market Data Update',
-        'description': 'Updates live market data during trading hours',
-        'schedule_type': 'recurring',
-        'category': 'data',
-        'default_hour': 9,
-        'default_minute': 15,
-        'default_recurring_start_hour': 9,
-        'default_recurring_start_minute': 15,
-        'default_recurring_end_hour': 15,
-        'default_recurring_end_minute': 30,
-        'default_recurring_interval_minutes': 5,
-        'default_days': [0, 1, 2, 3, 4],
-    },
-    'update-post-market-data': {
-        'display_name': 'Post-Market Data Update',
-        'description': 'Updates data after market close for end-of-day analysis',
-        'schedule_type': 'crontab',
-        'category': 'data',
-        'default_hour': 15,
-        'default_minute': 35,
-        'default_days': [0, 1, 2, 3, 4],
-    },
-
-    # =========================================================================
-    # STRATEGY EXECUTION TASKS
-    # =========================================================================
-    'setup-trading-day': {
-        'display_name': 'Setup Trading Day',
-        'description': 'Prepares system for trading day (loads strategies, checks accounts)',
-        'schedule_type': 'crontab',
-        'category': 'strategies',
-        'default_hour': 8,
-        'default_minute': 55,
-        'default_days': [0, 1, 2, 3, 4],
-    },
-    'start-trading-day': {
-        'display_name': 'Start Trading Day',
-        'description': 'Initiates trading at market open',
-        'schedule_type': 'crontab',
-        'category': 'strategies',
-        'default_hour': 9,
-        'default_minute': 15,
-        'default_days': [0, 1, 2, 3, 4],
-    },
-    'evaluate-options-strategy': {
-        'display_name': 'Evaluate Options Strategy',
-        'description': 'Analyzes market conditions and selects options strategies',
-        'schedule_type': 'crontab',
-        'category': 'strategies',
-        'default_hour': 9,
-        'default_minute': 30,
-        'default_days': [0, 1, 2, 3, 4],
-    },
-    'start-options-trade': {
-        'display_name': 'Start Options Trade',
-        'description': 'Executes options trades based on strategy evaluation',
-        'schedule_type': 'crontab',
-        'category': 'strategies',
-        'default_hour': 9,
-        'default_minute': 40,
-        'default_days': [0, 1, 2, 3, 4],
-    },
-    'batch-options-averaging': {
-        'display_name': 'Options Averaging (Batch)',
-        'description': 'Runs averaging logic for options positions at regular intervals',
-        'schedule_type': 'recurring',
-        'category': 'strategies',
-        'default_hour': 9,
-        'default_minute': 40,
-        'default_recurring_start_hour': 9,
-        'default_recurring_start_minute': 40,
-        'default_recurring_end_hour': 10,
-        'default_recurring_end_minute': 15,
-        'default_recurring_interval_minutes': 5,
-        'default_days': [0, 1, 2, 3, 4],
-    },
-    'batch-options-averaging-10am': {
-        'display_name': 'Options Averaging (10 AM)',
-        'description': 'Continues options averaging after 10 AM',
-        'schedule_type': 'recurring',
-        'category': 'strategies',
-        'default_hour': 10,
-        'default_minute': 0,
-        'default_recurring_start_hour': 10,
-        'default_recurring_start_minute': 0,
-        'default_recurring_end_hour': 10,
-        'default_recurring_end_minute': 15,
-        'default_recurring_interval_minutes': 5,
-        'default_days': [0, 1, 2, 3, 4],
-    },
-    'screen-futures-opportunities': {
-        'display_name': 'Futures Screening',
-        'description': 'Scans for futures trading opportunities',
-        'schedule_type': 'crontab',
-        'category': 'strategies',
-        'default_hour': 9,
-        'default_minute': 45,
-        'default_days': [0, 1, 2, 3, 4],
-    },
-    'execute-futures-algorithm': {
-        'display_name': 'Futures Algorithm',
-        'description': 'Runs enhanced 12-component futures analysis on top 50 contracts by volume. Sends Telegram alerts for qualified candidates (score >= 65).',
-        'schedule_type': 'crontab',
-        'category': 'strategies',
-        'default_hour': 8,
-        'default_minute': 30,
-        'default_days': [0, 1, 2, 3, 4],  # Mon-Fri
-    },
-    'check-futures-averaging': {
-        'display_name': 'Futures Averaging Check',
-        'description': 'Checks and executes averaging for futures positions',
-        'schedule_type': 'recurring',
-        'category': 'strategies',
-        'default_hour': 9,
-        'default_minute': 0,
-        'default_recurring_start_hour': 9,
-        'default_recurring_start_minute': 0,
-        'default_recurring_end_hour': 15,
-        'default_recurring_end_minute': 0,
-        'default_recurring_interval_minutes': 10,
-        'default_days': [0, 1, 2, 3, 4],
-    },
-    'close-trading-day': {
-        'display_name': 'Close Trading Day',
-        'description': 'Closes positions and finalizes trading day',
-        'schedule_type': 'crontab',
-        'category': 'strategies',
-        'default_hour': 15,
-        'default_minute': 25,
-        'default_days': [0, 1, 2, 3, 4],
-    },
-
-    # =========================================================================
-    # POSITION MONITORING TASKS
-    # =========================================================================
-    'monitor-all-positions': {
-        'display_name': 'Position Monitoring',
-        'description': 'Real-time monitoring of all open positions',
-        'schedule_type': 'interval',
-        'category': 'monitoring',
-        'default_interval_seconds': 10,
-        'default_days': [0, 1, 2, 3, 4],
-    },
-    'update-position-pnl': {
-        'display_name': 'P&L Update',
-        'description': 'Updates profit/loss for all positions',
-        'schedule_type': 'interval',
-        'category': 'monitoring',
-        'default_interval_seconds': 15,
-        'default_days': [0, 1, 2, 3, 4],
-    },
-    'check-exit-conditions': {
-        'display_name': 'Exit Conditions Check',
-        'description': 'Checks stop-loss, target, and other exit conditions',
-        'schedule_type': 'interval',
-        'category': 'monitoring',
-        'default_interval_seconds': 30,
-        'default_days': [0, 1, 2, 3, 4],
-    },
-
-    # =========================================================================
-    # RISK MANAGEMENT TASKS
-    # =========================================================================
-    'check-risk-limits-all-accounts': {
-        'display_name': 'Risk Limits Check',
-        'description': 'Monitors risk limits across all trading accounts',
-        'schedule_type': 'interval',
-        'category': 'risk',
-        'default_interval_seconds': 60,
-        'default_days': [0, 1, 2, 3, 4],
-    },
-    'monitor-circuit-breakers': {
-        'display_name': 'Circuit Breaker Monitor',
-        'description': 'Monitors market circuit breakers and trading halts',
-        'schedule_type': 'interval',
-        'category': 'risk',
-        'default_interval_seconds': 30,
-        'default_days': [0, 1, 2, 3, 4],
-    },
-
-    # =========================================================================
-    # REPORTING & ANALYTICS TASKS
-    # =========================================================================
-    'generate-daily-pnl-report': {
-        'display_name': 'Daily P&L Report',
-        'description': 'Generates end-of-day profit/loss report',
-        'schedule_type': 'crontab',
-        'category': 'reports',
-        'default_hour': 16,
-        'default_minute': 0,
-        'default_days': [0, 1, 2, 3, 4],
-    },
-    'sync-benchmark-data': {
-        'display_name': 'Sync Benchmark Data',
-        'description': 'Syncs benchmark indices for performance comparison',
-        'schedule_type': 'crontab',
-        'category': 'reports',
-        'default_hour': 16,
-        'default_minute': 0,
-        'default_days': [0, 1, 2, 3, 4],
-    },
-    'daily-data-aggregation': {
-        'display_name': 'Daily Data Aggregation',
-        'description': 'Aggregates daily trading data for analytics',
-        'schedule_type': 'crontab',
-        'category': 'reports',
-        'default_hour': 16,
-        'default_minute': 30,
-        'default_days': [0, 1, 2, 3, 4],
-    },
-    'update-equity-curves': {
-        'display_name': 'Update Equity Curves',
-        'description': 'Updates equity curves for portfolio tracking',
-        'schedule_type': 'crontab',
-        'category': 'reports',
-        'default_hour': 17,
-        'default_minute': 0,
-        'default_days': [0, 1, 2, 3, 4],
-    },
-}
-
-# For backwards compatibility
-TASK_CONFIG_FIELDS = TASK_DEFAULT_CONFIG
+# Task configuration - imported from task_config.py to avoid circular imports
+from apps.core.task_config import TASK_DEFAULT_CONFIG, TASK_CONFIG_FIELDS
 
 
 @login_required
@@ -4433,41 +4211,37 @@ def save_task_config(request):
                 except (ValueError, TypeError) as e:
                     logger.warning(f"Invalid value for {field_name}: {request.POST[field_name]}")
 
+        # Always mark use_custom_schedule when user explicitly saves,
+        # even if field values didn't change (confirms user's intent).
+        task_state.use_custom_schedule = True
+        task_state.schedule_type = schedule_type
+        task_state.last_toggled_at = timezone.now()
+        task_state.last_toggled_by = request.user.username
+        task_state.save()
+
         if updated_fields:
-            task_state.use_custom_schedule = True
-            task_state.schedule_type = schedule_type
-            task_state.last_toggled_at = timezone.now()
-            task_state.last_toggled_by = request.user.username
-            task_state.save()
-
             logger.info(f"Task config saved by {request.user.username} for {task_key}: {updated_fields}")
-
-            # Restart Celery Beat to pick up the changes
-            celery_result = ensure_celery_running()
-
-            display_name = default_config.get('display_name', task_key)
-            messages.success(request, f"Schedule for '{display_name}' saved. Celery Beat restarted.")
-
-            return JsonResponse({
-                'success': True,
-                'task_key': task_key,
-                'updated_fields': updated_fields,
-                'message': 'Schedule saved and Celery restarted',
-                'celery': {
-                    'success': celery_result.get('success', False),
-                    'worker_status': celery_result.get('worker_status', 'unknown'),
-                    'beat_status': celery_result.get('beat_status', 'unknown'),
-                    'beat_restarted': celery_result.get('beat_restarted', False),
-                }
-            })
         else:
-            return JsonResponse({
-                'success': True,
-                'task_key': task_key,
-                'updated_fields': [],
-                'message': 'No changes detected',
-                'celery': {}
-            })
+            logger.info(f"Task config confirmed by {request.user.username} for {task_key} (custom schedule enabled, no value changes)")
+
+        # Restart Celery Beat to pick up the changes
+        celery_result = ensure_celery_running()
+
+        display_name = default_config.get('display_name', task_key)
+        messages.success(request, f"Schedule for '{display_name}' saved. Celery Beat restarted.")
+
+        return JsonResponse({
+            'success': True,
+            'task_key': task_key,
+            'updated_fields': updated_fields,
+            'message': 'Schedule saved and Celery restarted',
+            'celery': {
+                'success': celery_result.get('success', False),
+                'worker_status': celery_result.get('worker_status', 'unknown'),
+                'beat_status': celery_result.get('beat_status', 'unknown'),
+                'beat_restarted': celery_result.get('beat_restarted', False),
+            }
+        })
 
     except Exception as e:
         logger.error(f"Error saving task config for {task_key}: {e}", exc_info=True)
@@ -4511,7 +4285,8 @@ def run_task_now(request):
         from celery import current_app
 
         # Get task kwargs if defined
-        task_kwargs = task_config.get('kwargs', {})
+        task_kwargs = task_config.get('kwargs', {}).copy()
+        task_kwargs['_bypass_guard'] = True  # Manual runs bypass the enabled guard
 
         # Send task to Celery
         logger.info(f"Manually triggering task: {task_key} ({task_path}) by {request.user.username}")
@@ -4698,6 +4473,15 @@ def ensure_celery_running():
             # Wait for process to terminate
             time.sleep(1)
 
+        # Remove stale celerybeat-schedule.db so beat starts fresh from DB config
+        schedule_db = os.path.join(project_dir, 'celerybeat-schedule.db')
+        if os.path.exists(schedule_db):
+            try:
+                os.remove(schedule_db)
+                logger.info("Removed stale celerybeat-schedule.db")
+            except OSError:
+                pass
+
         # Start celery beat using venv Python
         log_file = os.path.join(project_dir, 'logs', 'celery_beat.log')
         os.makedirs(os.path.dirname(log_file), exist_ok=True)
@@ -4709,8 +4493,10 @@ def ensure_celery_running():
             log.write(f"{'='*60}\n")
 
             # Use python -m celery to ensure correct environment
+            # Use custom DBReloadScheduler to load schedule from DB after Django is ready
             proc = subprocess.Popen(
-                [python_path, '-m', 'celery', '-A', 'mcube_ai', 'beat', '--loglevel=info'],
+                [python_path, '-m', 'celery', '-A', 'mcube_ai', 'beat',
+                 '--scheduler=mcube_ai.celery:DBReloadScheduler', '--loglevel=info'],
                 cwd=project_dir,
                 stdout=log,
                 stderr=log,
@@ -4941,6 +4727,91 @@ def get_task_logs(request):
     })
 
 
+def _build_task_lookup_maps():
+    """Build lookup maps for category, display name, and task key from identifiers."""
+    category_map = {}   # identifier -> category
+    display_map = {}    # identifier -> display_name
+    key_map = {}        # identifier -> task_key (config key)
+
+    # From TASK_DEFAULT_CONFIG
+    for task_key, config in TASK_DEFAULT_CONFIG.items():
+        cat = config.get('category', 'other')
+        name = config.get('display_name', task_key.replace('-', ' ').title())
+        category_map[task_key] = cat
+        display_map[task_key] = name
+        key_map[task_key] = task_key
+
+    # From static schedule (maps task paths to keys, then to categories)
+    try:
+        from mcube_ai.celery import get_static_schedule
+        for key, sched_config in get_static_schedule().items():
+            task_path = sched_config.get('task', '')
+            if task_path:
+                cat = category_map.get(key, 'other')
+                name = display_map.get(key, key.replace('-', ' ').title())
+                category_map[task_path] = cat
+                display_map[task_path] = name
+                key_map[task_path] = key
+                # Also map the function name (last part of dotted path)
+                func_name = task_path.rsplit('.', 1)[-1]
+                if func_name:
+                    category_map.setdefault(func_name, cat)
+                    display_map.setdefault(func_name, name)
+                    key_map.setdefault(func_name, key)
+    except Exception:
+        pass
+
+    return category_map, display_map, key_map
+
+
+def _extract_task_info(message, category_map, display_map):
+    """Extract task category, display name, and task_id from a celery log message.
+
+    Returns (category, display_name, task_id) tuple.
+    """
+    import re
+
+    # Pattern 1: Worker logs - "Task morning_data_sync[uuid] ..." or "Task apps.data.tasks.func[uuid]"
+    m = re.search(r'Task\s+([\w.]+)\[([0-9a-f-]+)\]', message)
+    if m:
+        task_path = m.group(1)
+        task_id = m.group(2)
+        cat = category_map.get(task_path, '')
+        name = display_map.get(task_path, '')
+        if not cat:
+            func_name = task_path.rsplit('.', 1)[-1]
+            cat = category_map.get(func_name, '')
+            name = display_map.get(func_name, '')
+        return cat, name, task_id
+
+    # Pattern 1b: Worker inner logs - "morning_data_sync[uuid]: ..."
+    m = re.search(r'^([\w.]+)\[([0-9a-f-]+)\]:', message)
+    if m:
+        task_path = m.group(1)
+        task_id = m.group(2)
+        cat = category_map.get(task_path, '')
+        name = display_map.get(task_path, '')
+        if not cat:
+            func_name = task_path.rsplit('.', 1)[-1]
+            cat = category_map.get(func_name, '')
+            name = display_map.get(func_name, '')
+        return cat, name, task_id
+
+    # Pattern 2: Beat logs - "Sending due task setup-trading-day (apps.strategies.tasks.func)"
+    m = re.search(r'Sending due task\s+([\w.-]+)\s*\(([\w.]+)\)', message)
+    if m:
+        task_key = m.group(1)
+        task_path = m.group(2)
+        # Try key (may have hour suffix like "batch-options-averaging-9h")
+        base_key = re.sub(r'-\d+h$', '', task_key)
+        for k in (task_key, base_key, task_path):
+            if k in category_map:
+                return category_map[k], display_map.get(k, ''), ''
+        return '', '', ''
+
+    return '', '', ''
+
+
 @login_required
 @user_passes_test(is_admin_user)
 def get_all_celery_logs(request):
@@ -4961,10 +4832,15 @@ def get_all_celery_logs(request):
     beat_log = os.path.join(project_dir, 'logs', 'celery_beat.log')
 
     logs = []
+    category_map, display_map, key_map = _build_task_lookup_maps()
 
     def read_log_file(filepath, source, max_lines):
         """Read last N lines from a log file."""
         entries = []
+        # Track last-seen info per ForkPoolWorker so orphan lines
+        # (e.g. "F&O download failed") inherit from the parent task.
+        # Only for ForkPoolWorker-*, never MainProcess (which dispatches all tasks).
+        worker_context = {}  # process -> {category, display_name, task_id}
         if os.path.exists(filepath):
             try:
                 with open(filepath, 'r') as f:
@@ -4975,23 +4851,42 @@ def get_all_celery_logs(request):
                     parsed = parse_celery_log_line(line)
                     if parsed:
                         parsed['source'] = source
-                        # Determine status
+                        # Determine status from celery task lifecycle + log level
                         msg_lower = parsed['message'].lower()
-                        if 'succeeded' in msg_lower:
+                        level = parsed['level']
+                        if 'task' in msg_lower and 'succeeded' in msg_lower:
                             parsed['status'] = 'success'
-                        elif 'failed' in msg_lower or 'error' in msg_lower:
+                        elif level == 'error' or ('task' in msg_lower and ('failed' in msg_lower or 'raised' in msg_lower)):
                             parsed['status'] = 'error'
-                        elif 'received' in msg_lower:
+                        elif 'task' in msg_lower and 'received' in msg_lower:
                             parsed['status'] = 'received'
                         elif 'sending due task' in msg_lower:
                             parsed['status'] = 'scheduled'
-                        elif 'starting' in msg_lower:
-                            parsed['status'] = 'starting'
+                        elif '.start' in msg_lower or '.complete' in msg_lower:
+                            parsed['status'] = 'success' if '.complete' in msg_lower else 'starting'
                         else:
                             parsed['status'] = 'info'
+
+                        # Extract task info (category, display_name, task_id)
+                        cat, dname, tid = _extract_task_info(parsed['message'], category_map, display_map)
+                        proc = parsed.get('process', '')
+                        is_worker = proc.startswith('ForkPoolWorker')
+
+                        if cat and is_worker:
+                            worker_context[proc] = {'category': cat, 'display_name': dname, 'task_id': tid}
+                        elif not cat and is_worker and proc in worker_context:
+                            ctx = worker_context[proc]
+                            cat = ctx['category']
+                            dname = dname or ctx['display_name']
+                            tid = tid or ctx['task_id']
+
+                        parsed['category'] = cat
+                        parsed['task_display_name'] = dname
+                        parsed['task_id'] = tid
                         entries.append(parsed)
                     elif line.strip() and not line.startswith('='):
                         # Non-parsed lines (errors, tracebacks)
+                        cat, dname, tid = _extract_task_info(line.strip()[:500], category_map, display_map)
                         entries.append({
                             'timestamp': '',
                             'level': 'error' if 'error' in line.lower() or 'traceback' in line.lower() else 'info',
@@ -4999,6 +4894,9 @@ def get_all_celery_logs(request):
                             'message': line.strip()[:500],
                             'source': source,
                             'status': 'error' if 'error' in line.lower() else 'info',
+                            'category': cat,
+                            'task_display_name': dname,
+                            'task_id': tid,
                             'raw': line.strip()[:500]
                         })
             except Exception as e:
@@ -5100,10 +4998,11 @@ def control_category_tasks(request):
     action = request.POST.get('action', 'stop')
     category = request.POST.get('category', '')
 
-    # Category to queue/keyword mapping
+    # Category to queue/keyword mapping (None = keyword-only matching, no queue)
     CATEGORY_QUEUES = {
         'data': 'data',
-        'strategies': 'strategies',
+        'strategies': None,
+        'transactions': None,
         'monitoring': 'monitoring',
         'risk': 'risk',
         'reports': 'reports',
@@ -5111,7 +5010,8 @@ def control_category_tasks(request):
 
     CATEGORY_KEYWORDS = {
         'data': ['trendlyne', 'market-data', 'pre-market', 'post-market', 'live-market', 'morning-data-sync', 'news'],
-        'strategies': ['setup-trading', 'start-trading', 'options', 'futures', 'screen', 'averaging', 'strangle', 'close-trading', 'batch-options', 'evaluate-options'],
+        'strategies': ['setup-trading', 'start-trading', 'evaluate-options', 'screen', 'execute-futures', 'strangle'],
+        'transactions': ['start-options-trade', 'batch-options-averaging', 'check-futures-averaging', 'close-trading'],
         'monitoring': ['monitor', 'position', 'pnl', 'exit'],
         'risk': ['risk', 'circuit', 'limit'],
         'reports': ['report', 'pnl-report', 'benchmark', 'aggregation', 'equity'],
@@ -5135,8 +5035,9 @@ def control_category_tasks(request):
             key_lower = key.lower()
             belongs_to_category = False
 
-            # Match by queue
-            if queue == CATEGORY_QUEUES.get(category):
+            # Match by queue (only if category has a queue defined)
+            cat_queue = CATEGORY_QUEUES.get(category)
+            if cat_queue is not None and queue == cat_queue:
                 belongs_to_category = True
             else:
                 # Match by keywords
@@ -5415,9 +5316,8 @@ def api_task_timeline(request):
 
         # Get today's schedule
         static_schedule = get_static_schedule()
-        enabled_tasks = set(
-            CeleryTaskState.objects.filter(is_enabled=True).values_list('task_key', flat=True)
-        )
+        task_states = {s.task_key: s for s in CeleryTaskState.objects.all()}
+        enabled_tasks = set(k for k, s in task_states.items() if s.is_enabled)
 
         # Get today's executed tasks
         today_start = timezone.now().replace(hour=0, minute=0, second=0, microsecond=0)
@@ -5431,30 +5331,36 @@ def api_task_timeline(request):
         schedule_data = []
         for key, config in static_schedule.items():
             task_path = config.get('task', '')
-            schedule = config.get('schedule')
+            task_state = task_states.get(key)
 
-            # Extract hour/minute from crontab schedule
+            # Extract hour/minute — prefer custom schedule from DB
             hour = None
             minute = None
-            if hasattr(schedule, 'hour') and hasattr(schedule, 'minute'):
-                try:
-                    # Handle crontab hour/minute (could be sets or values)
-                    if hasattr(schedule.hour, '__iter__') and not isinstance(schedule.hour, str):
-                        hour = min(schedule.hour) if schedule.hour else None
-                    else:
-                        hour = int(schedule.hour) if str(schedule.hour).isdigit() else None
+            if task_state and task_state.use_custom_schedule:
+                if task_state.schedule_type == 'crontab':
+                    hour = task_state.schedule_hour
+                    minute = task_state.schedule_minute
+                elif task_state.schedule_type == 'recurring':
+                    hour = task_state.recurring_start_hour
+                    minute = getattr(task_state, 'recurring_start_minute', 0) or 0
+            else:
+                schedule = config.get('schedule')
+                if hasattr(schedule, 'hour') and hasattr(schedule, 'minute'):
+                    try:
+                        if hasattr(schedule.hour, '__iter__') and not isinstance(schedule.hour, str):
+                            hour = min(schedule.hour) if schedule.hour else None
+                        else:
+                            hour = int(schedule.hour) if str(schedule.hour).isdigit() else None
 
-                    if hasattr(schedule.minute, '__iter__') and not isinstance(schedule.minute, str):
-                        minute = min(schedule.minute) if schedule.minute else 0
-                    else:
-                        minute = int(schedule.minute) if str(schedule.minute).isdigit() else 0
-                except (ValueError, TypeError):
-                    pass
+                        if hasattr(schedule.minute, '__iter__') and not isinstance(schedule.minute, str):
+                            minute = min(schedule.minute) if schedule.minute else 0
+                        else:
+                            minute = int(schedule.minute) if str(schedule.minute).isdigit() else 0
+                    except (ValueError, TypeError):
+                        pass
 
             if hour is not None:
-                # Get display name from CeleryTaskState if available
-                task_state = CeleryTaskState.objects.filter(task_key=key).first()
-                display_name = task_state.display_name if task_state else key.replace('-', ' ').title()
+                display_name = task_state.display_name if task_state and task_state.display_name else key.replace('-', ' ').title()
 
                 schedule_data.append({
                     'key': key,
@@ -5480,6 +5386,115 @@ def api_task_timeline(request):
 
     except Exception as e:
         logger.error(f"Error fetching task timeline: {e}", exc_info=True)
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=500)
+
+
+@login_required
+@user_passes_test(is_admin_user)
+def api_recent_executions(request):
+    """
+    API endpoint returning today's task executions grouped by task_id.
+    Each group contains: task name, start/end time, overall status, steps.
+    """
+    from apps.core.models import BkLog
+    from django.utils import timezone
+    from collections import OrderedDict
+
+    try:
+        today_start = timezone.now().replace(hour=0, minute=0, second=0, microsecond=0)
+
+        logs = BkLog.objects.filter(
+            timestamp__gte=today_start,
+            task_id__gt='',
+        ).order_by('timestamp')
+
+        # Group by task_id
+        groups = OrderedDict()
+        for log in logs:
+            tid = log.task_id
+            if tid not in groups:
+                groups[tid] = []
+            groups[tid].append(log)
+
+        executions = []
+        for task_id, entries in groups.items():
+            first = entries[0]
+            last = entries[-1]
+
+            # Determine overall success: failed if any entry has success=False
+            overall_success = all(e.success for e in entries)
+            has_complete = any(e.action in ('COMPLETE', 'FAILED') for e in entries)
+
+            if not has_complete:
+                status = 'running'
+            elif overall_success:
+                status = 'success'
+            else:
+                status = 'failed'
+
+            # Get execution time from the COMPLETE/FAILED entry
+            exec_time_ms = None
+            for e in reversed(entries):
+                if e.execution_time_ms is not None:
+                    exec_time_ms = e.execution_time_ms
+                    break
+
+            # Count warnings/errors
+            warnings_count = sum(1 for e in entries if e.level == 'warning')
+            errors_count = sum(1 for e in entries if e.level in ('error', 'critical'))
+
+            # Collect error details
+            error_detail = ''
+            for e in entries:
+                if e.error_details:
+                    error_detail = e.error_details
+                    break
+
+            # Build step list
+            steps = []
+            for e in entries:
+                steps.append({
+                    'timestamp': e.timestamp.isoformat(),
+                    'action': e.action,
+                    'message': e.message,
+                    'level': e.level,
+                    'context_data': e.context_data if e.context_data else None,
+                    'error_details': e.error_details if e.error_details else None,
+                })
+
+            task_name = first.background_task or first.action
+            display_name = task_name.replace('_', ' ').replace('-', ' ').title()
+
+            executions.append({
+                'task_id': task_id,
+                'task_name': task_name,
+                'display_name': display_name,
+                'category': first.task_category,
+                'start_time': first.timestamp.isoformat(),
+                'end_time': last.timestamp.isoformat(),
+                'status': status,
+                'execution_time_ms': exec_time_ms,
+                'warnings_count': warnings_count,
+                'errors_count': errors_count,
+                'error_details': error_detail[:2000] if error_detail else '',
+                'steps': steps,
+            })
+
+        # Sort newest first, limit to 20
+        executions.sort(key=lambda x: x['start_time'], reverse=True)
+        executions = executions[:20]
+
+        return JsonResponse({
+            'success': True,
+            'executions': executions,
+            'total': len(executions),
+        })
+
+    except Exception as e:
+        logger.error(f"Error fetching recent executions: {e}", exc_info=True)
         return JsonResponse({
             'success': False,
             'error': str(e)
