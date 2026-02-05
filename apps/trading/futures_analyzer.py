@@ -1518,7 +1518,11 @@ def enhanced_futures_analysis(
         logger.info("STEP 1: Fetching Real-Time Prices from Breeze API")
         logger.info("=" * 80)
 
-        breeze = get_breeze_client()
+        try:
+            breeze = get_breeze_client()
+        except Exception as e:
+            logger.warning(f"Breeze not available, using database prices: {e}")
+            breeze = None
 
         # Fetch spot price
         spot_price = 0.0

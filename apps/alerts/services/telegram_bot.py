@@ -657,21 +657,24 @@ class TelegramBotHandler:
         """Show Kotak Neo positions"""
         await query.edit_message_text("Fetching Kotak Neo positions...")
 
-        positions = await self._fetch_kotak_positions()
+        result = await self._fetch_kotak_positions()
 
-        # Check for error response
-        if positions and len(positions) == 1 and 'error' in positions[0]:
-            error_msg = positions[0]['error']
+        # Check for error response (now returns dict with 'error' key)
+        if isinstance(result, dict) and 'error' in result:
+            error_msg = result['error']
             keyboard = [
                 [InlineKeyboardButton("Retry", callback_data="refresh_kotak")],
                 [InlineKeyboardButton("Back", callback_data="back_to_brokers")],
             ]
             await query.edit_message_text(
-                f"<b>Kotak Neo Error</b>\n\n{html.escape(error_msg[:500])}",
+                f"<b>Kotak Neo Error</b>\n\n{html.escape(str(error_msg)[:500])}",
                 parse_mode='HTML',
                 reply_markup=InlineKeyboardMarkup(keyboard)
             )
             return
+
+        positions = result.get('positions', [])
+        rms_net_pnl = result.get('rms_net_pnl')
 
         if not positions:
             keyboard = [
@@ -691,10 +694,8 @@ class TelegramBotHandler:
         message = f"<b>Kotak Neo Positions ({len(positions)})</b>\n\n"
         keyboard = []
 
-        total_pnl = 0
         for i, pos in enumerate(positions):
             pnl = float(pos.get('unrealized_pnl', 0))
-            total_pnl += pnl
             pnl_icon = "+" if pnl >= 0 else ""
             direction = "LONG" if pos.get('net_quantity', 0) > 0 else "SHORT"
 
@@ -702,7 +703,7 @@ class TelegramBotHandler:
             message += (
                 f"<b>{i+1}. {symbol}</b>\n"
                 f"   {direction} | Qty: {abs(pos.get('net_quantity', 0))}\n"
-                f"   Avg: {pos.get('average_price', 0):,.2f} | LTP: {pos.get('ltp', 0):,.2f}\n"
+                f"   Avg: {pos.get('average_price', 0):,.2f} | LTP: {pos.get('ltp', 0) or 0:,.2f}\n"
                 f"   P&L: {pnl_icon}{pnl:,.2f}\n\n"
             )
 
@@ -713,8 +714,17 @@ class TelegramBotHandler:
                 )
             ])
 
-        pnl_icon = "+" if total_pnl >= 0 else ""
-        message += f"<b>Total P&L: {pnl_icon}{total_pnl:,.2f}</b>"
+        # Cumulative P&L (since trade entry, from override avg prices)
+        cumulative_pnl = sum(float(p.get('unrealized_pnl', 0)) for p in positions)
+        cum_icon = "+" if cumulative_pnl >= 0 else ""
+        message += f"<b>Cumulative P&L: {cum_icon}{cumulative_pnl:,.0f}</b>\n"
+
+        # Today's M2M from broker RMS
+        if rms_net_pnl is not None:
+            rms_icon = "+" if rms_net_pnl >= 0 else ""
+            message += f"<b>Today's M2M: {rms_icon}{rms_net_pnl:,.0f}</b>"
+        else:
+            message += "<b>Today's M2M: N/A</b>"
 
         keyboard.append([InlineKeyboardButton("Refresh", callback_data="refresh_kotak")])
         keyboard.append([InlineKeyboardButton("Back", callback_data="back_to_brokers")])
@@ -992,7 +1002,14 @@ class TelegramBotHandler:
         await query.edit_message_text("Fetching positions from all brokers...")
 
         icici_positions = await self._fetch_icici_positions()
-        kotak_positions = await self._fetch_kotak_positions()
+        kotak_result = await self._fetch_kotak_positions()
+
+        # Extract Kotak positions from dict result
+        kotak_positions = []
+        kotak_rms_pnl = None
+        if isinstance(kotak_result, dict) and 'error' not in kotak_result:
+            kotak_positions = kotak_result.get('positions', [])
+            kotak_rms_pnl = kotak_result.get('rms_net_pnl')
 
         if not icici_positions and not kotak_positions:
             keyboard = [
@@ -1019,18 +1036,24 @@ class TelegramBotHandler:
                 message += f"  {symbol}: {pnl_icon}{pnl:,.0f}\n"
             message += "\n"
 
+        kotak_cumulative = 0
         if kotak_positions:
             message += f"<b>Kotak Neo ({len(kotak_positions)})</b>\n"
             for pos in kotak_positions:
                 pnl = float(pos.get('unrealized_pnl', 0))
-                total_pnl += pnl
+                kotak_cumulative += pnl
                 pnl_icon = "+" if pnl >= 0 else ""
                 symbol = html.escape(str(pos.get('symbol', 'N/A')))
                 message += f"  {symbol}: {pnl_icon}{pnl:,.0f}\n"
             message += "\n"
 
-        pnl_icon = "+" if total_pnl >= 0 else ""
-        message += f"<b>Combined P&L: {pnl_icon}{total_pnl:,.2f}</b>"
+        total_pnl += kotak_cumulative
+        cum_icon = "+" if total_pnl >= 0 else ""
+        message += f"<b>Combined P&L: {cum_icon}{total_pnl:,.0f}</b>\n"
+
+        if kotak_rms_pnl is not None:
+            rms_icon = "+" if kotak_rms_pnl >= 0 else ""
+            message += f"<b>Kotak Today's M2M: {rms_icon}{kotak_rms_pnl:,.0f}</b>"
 
         keyboard = [
             [InlineKeyboardButton("ICICI Details", callback_data="broker_icici")],
@@ -1097,51 +1120,40 @@ class TelegramBotHandler:
             return [{'error': str(e)}]
 
     @sync_to_async(thread_sensitive=False)
-    def _fetch_kotak_positions(self) -> List[Dict]:
-        """Fetch positions from Kotak Neo"""
+    def _fetch_kotak_positions(self) -> dict:
+        """Fetch positions from Kotak Neo using centralized get_neo_open_positions().
+
+        Returns:
+            dict with 'positions' list and 'rms_net_pnl', or
+            dict with 'error' key on failure.
+        """
         import traceback
         from django.db import close_old_connections
 
         try:
-            # Close old connections for thread safety
             close_old_connections()
 
-            from apps.brokers.integrations.kotak_neo import fetch_and_save_kotakneo_data
+            from apps.brokers.integrations.kotak_neo import get_neo_open_positions
             from apps.accounts.models import BrokerAccount
 
-            # Check if account is active
             if not BrokerAccount.objects.filter(broker='KOTAK', is_active=True).exists():
                 logger.info("Kotak account not active")
-                return [{'error': 'Kotak account not active or not found'}]
+                return {'error': 'Kotak account not active or not found'}
 
             logger.info("Fetching Kotak Neo positions...")
-            _, positions, _ = fetch_and_save_kotakneo_data()
-            logger.info(f"Fetched {len(positions)} raw positions from Kotak")
+            result = get_neo_open_positions()
 
-            # Convert to dict format and filter non-zero positions
-            result = []
-            for pos in positions:
-                logger.info(f"Position: {pos.symbol}, net_qty={pos.net_quantity}")
-                if pos.net_quantity != 0:
-                    result.append({
-                        'symbol': pos.symbol,
-                        'exchange_segment': pos.exchange_segment,
-                        'product': pos.product,
-                        'net_quantity': pos.net_quantity,
-                        'average_price': float(pos.average_price),
-                        'ltp': float(pos.ltp),
-                        'unrealized_pnl': float(pos.unrealized_pnl),
-                        'realized_pnl': float(pos.realized_pnl),
-                    })
+            if 'error' in result:
+                return result
 
-            logger.info(f"Returning {len(result)} non-zero positions")
+            logger.info(f"Returning {len(result['positions'])} positions, RMS P&L={result.get('rms_net_pnl')}")
             return result
 
         except Exception as e:
             error_msg = f"Error fetching Kotak positions: {e}"
             logger.error(error_msg)
             logger.error(traceback.format_exc())
-            return [{'error': str(e)}]
+            return {'error': str(e)}
 
     # =========================================================================
     # HELPER METHODS

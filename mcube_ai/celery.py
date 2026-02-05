@@ -77,6 +77,13 @@ def get_static_schedule():
     # STRATEGY EXECUTION TASKS - DAILY TRADING WORKFLOW
     # =========================================================================
 
+    # Pre-market Breeze session refresh (8:15 AM — before trading tasks)
+    'refresh-breeze-session': {
+        'task': 'apps.strategies.tasks.refresh_breeze_session',
+        'schedule': crontab(hour=8, minute=15, day_of_week='1-5'),  # 8:15 AM Mon-Fri
+        'options': {'queue': 'monitoring'},
+    },
+
     # Pre-market futures screening (8:30 AM)
     'execute-futures-algorithm': {
         'task': 'apps.strategies.tasks.execute_futures_algorithm',

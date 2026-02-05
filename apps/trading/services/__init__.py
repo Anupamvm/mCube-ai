@@ -88,6 +88,12 @@ except ImportError:
     pass
 
 try:
+    from .suggestion_service import save_futures_suggestions
+    __all__.append('save_futures_suggestions')
+except ImportError:
+    pass
+
+try:
     from .chart_data_service import (
         ChartDataService,
         ContractChartDataService,

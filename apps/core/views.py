@@ -3711,7 +3711,7 @@ def celery_task_control(request):
             'icon': '👁️',
             'color': '#dd6b20',
             'description': 'Monitor open positions, P&L updates, and exit conditions',
-            'keywords': ['monitor', 'position', 'pnl', 'exit'],
+            'keywords': ['monitor', 'position', 'pnl', 'exit', 'refresh-breeze'],
         },
         'risk': {
             'name': 'Risk Management',

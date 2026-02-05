@@ -32,6 +32,21 @@ from apps.brokers.utils.auth_manager import (
 
 logger = logging.getLogger(__name__)
 
+# Known lot sizes for common F&O instruments
+LOT_SIZES = {
+    'NIFTY': 75,
+    'BANKNIFTY': 30,
+    'FINNIFTY': 40,
+    'HDFCBANK': 550,
+    'RELIANCE': 250,
+    'TCS': 150,
+    'INFY': 300,
+    'ICICIBANK': 700,
+    'SBIN': 750,
+    'AXISBANK': 625,
+    'KOTAKBANK': 400,
+}
+
 
 class NeoAuthenticationError(Exception):
     """Custom exception for Neo authentication failures with detailed error info."""
@@ -2231,3 +2246,102 @@ def close_strangle_positions_in_batches(
             'call_orders': call_orders,
             'put_orders': put_orders
         }
+
+
+def get_neo_open_positions() -> dict:
+    """
+    Single source of truth for Neo open positions + RMS P&L.
+    Called by both web API and Telegram bot.
+
+    Returns:
+        {
+            'positions': [
+                {
+                    'symbol', 'exchange', 'product', 'direction',
+                    'quantity' (lots), 'net_quantity' (lots), 'net_quantity_shares',
+                    'lot_size', 'average_price', 'ltp',
+                    'unrealized_pnl', 'total_pnl', 'pnl_percentage',
+                    'expiry_date',
+                }, ...
+            ],
+            'rms_net_pnl': int or None,
+            'rms_unrealized_mtm': float or None,
+            'rms_realized_mtm': float or None,
+        }
+    or {'error': str} on failure.
+    """
+    try:
+        _, positions, raw_limits = fetch_and_save_kotakneo_data()
+
+        # ── RMS-based Net P&L from limits API (matches NEO UI) ──
+        rms_net_pnl = None
+        rms_unrealized_mtm = None
+        rms_realized_mtm = None
+        if isinstance(raw_limits, dict):
+            try:
+                fo_unrealized = float(raw_limits.get('FoUnRlsMtomPrsnt', 0) or 0)
+                fo_realized = float(raw_limits.get('FoRlsMtomPrsnt', 0) or 0)
+                rms_unrealized_mtm = fo_unrealized
+                rms_realized_mtm = fo_realized
+                rms_net_pnl = round(-(fo_unrealized + fo_realized))
+                logger.info(
+                    f"RMS P&L: FoUnRlsMtomPrsnt={fo_unrealized:,.2f}, "
+                    f"FoRlsMtomPrsnt={fo_realized:,.2f}, "
+                    f"Trader Net P&L={rms_net_pnl:,}"
+                )
+            except (ValueError, TypeError) as e:
+                logger.warning(f"Error parsing RMS MTM fields: {e}")
+
+        # ── Build position dicts ──
+        positions_data = []
+        for pos in positions:
+            avg_price = float(pos.average_price or 0)
+            ltp = float(pos.ltp or 0)
+            net_qty = pos.net_quantity  # in shares
+
+            if net_qty == 0:
+                continue
+
+            # Determine lot size from symbol
+            symbol_base = pos.symbol
+            for key in LOT_SIZES:
+                if key in pos.symbol.upper():
+                    symbol_base = key
+                    break
+            lot_size = LOT_SIZES.get(symbol_base, 1)
+
+            net_qty_lots = net_qty // lot_size if lot_size > 0 else net_qty
+            unrealized_pnl = net_qty * (ltp - avg_price) if ltp > 0 else 0.0
+            direction = 'LONG' if net_qty > 0 else 'SHORT'
+            investment = avg_price * abs(net_qty)
+            pnl_pct = (unrealized_pnl / investment * 100) if investment > 0 else 0
+
+            positions_data.append({
+                'symbol': pos.symbol,
+                'exchange': pos.exchange_segment or 'nse_fo',
+                'product': pos.product or 'NRML',
+                'direction': direction,
+                'quantity': abs(net_qty_lots),
+                'net_quantity': net_qty_lots,
+                'net_quantity_shares': net_qty,
+                'lot_size': lot_size,
+                'average_price': avg_price,
+                'ltp': ltp,
+                'unrealized_pnl': round(unrealized_pnl, 2),
+                'total_pnl': round(unrealized_pnl, 2),
+                'pnl_percentage': round(pnl_pct, 2),
+                'expiry_date': None,
+            })
+
+        return {
+            'positions': positions_data,
+            'rms_net_pnl': rms_net_pnl,
+            'rms_unrealized_mtm': rms_unrealized_mtm,
+            'rms_realized_mtm': rms_realized_mtm,
+        }
+
+    except NeoAuthenticationError:
+        raise  # Let callers handle auth errors specifically
+    except Exception as e:
+        logger.error(f"Error in get_neo_open_positions: {e}", exc_info=True)
+        return {'error': str(e)}

@@ -1772,91 +1772,26 @@ def get_active_positions(request):
                 return handle_breeze_auth_error(request, e, is_ajax=True)
 
         elif broker == 'neo':
-            # Use unified Neo integration for consistent data (includes avg price overrides)
             from apps.brokers.integrations.kotak_neo import (
-                fetch_and_save_kotakneo_data,
+                get_neo_open_positions,
                 NeoAuthenticationError
             )
 
             try:
-                _, positions, raw_limits = fetch_and_save_kotakneo_data()
+                result = get_neo_open_positions()
 
-                # ── RMS-based Net P&L from limits API (matches NEO UI) ──
-                # Broker RMS: Trader Net P&L = -(FoUnRlsMtomPrsnt + FoRlsMtomPrsnt)
-                rms_net_pnl = None
-                rms_unrealized_mtm = None
-                rms_realized_mtm = None
-                if isinstance(raw_limits, dict):
-                    try:
-                        fo_unrealized = float(raw_limits.get('FoUnRlsMtomPrsnt', 0) or 0)
-                        fo_realized = float(raw_limits.get('FoRlsMtomPrsnt', 0) or 0)
-                        rms_unrealized_mtm = fo_unrealized
-                        rms_realized_mtm = fo_realized
-                        rms_net_mtm = fo_unrealized + fo_realized
-                        rms_net_pnl = round(-rms_net_mtm)
-                        logger.info(
-                            f"RMS P&L: FoUnRlsMtomPrsnt={fo_unrealized:,.2f}, "
-                            f"FoRlsMtomPrsnt={fo_realized:,.2f}, "
-                            f"RMS Net MTM={rms_net_mtm:,.2f}, "
-                            f"Trader Net P&L={rms_net_pnl:,}"
-                        )
-                    except (ValueError, TypeError) as e:
-                        logger.warning(f"Error parsing RMS MTM fields: {e}")
-
-                # Known lot sizes for common instruments
-                lot_sizes = {
-                    'NIFTY': 75,
-                    'BANKNIFTY': 30,
-                    'FINNIFTY': 40,
-                    'HDFCBANK': 550,
-                    'RELIANCE': 250,
-                    'TCS': 150,
-                    'INFY': 300,
-                    'ICICIBANK': 700,
-                    'SBIN': 750,
-                    'AXISBANK': 625,
-                }
-
-                for pos in positions:
-                    # Get values from BrokerPosition model (already has override averages)
-                    avg_price = float(pos.average_price or 0)
-                    ltp = float(pos.ltp or 0)
-                    net_qty = pos.net_quantity  # In shares
-
-                    # Get lot size from mapping based on symbol
-                    symbol_base = pos.symbol.replace('FUT', '').rstrip('0123456789')
-                    for key in lot_sizes:
-                        if key in pos.symbol.upper():
-                            symbol_base = key
-                            break
-                    lot_size = lot_sizes.get(symbol_base, 1)
-
-                    # Calculate lots for display
-                    net_qty_lots = net_qty // lot_size if lot_size > 0 else net_qty
-
-                    # Unrealized P&L = net_qty * (ltp - avg_price)
-                    # Works for both LONG and SHORT (net_qty is negative for SHORT)
-                    unrealized_pnl = net_qty * (ltp - avg_price) if ltp > 0 else 0.0
-                    direction = 'LONG' if net_qty > 0 else 'SHORT'
-
-                    investment = avg_price * abs(net_qty)
-                    pnl_pct = (unrealized_pnl / investment * 100) if investment > 0 else 0
-
-                    positions_data.append({
-                        'symbol': pos.symbol,
-                        'exchange': pos.exchange_segment or 'nse_fo',
-                        'product': pos.product or 'NRML',
-                        'direction': direction,
-                        'quantity': abs(net_qty_lots),
-                        'net_quantity': net_qty_lots,
-                        'net_quantity_shares': net_qty,
-                        'average_price': avg_price,
-                        'ltp': ltp if ltp > 0 else None,
-                        'unrealized_pnl': round(unrealized_pnl, 2),
-                        'total_pnl': round(unrealized_pnl, 2),
-                        'pnl_percentage': round(pnl_pct, 2),
-                        'expiry_date': None,
+                if 'error' in result:
+                    return JsonResponse({
+                        'success': False,
+                        'error': f'Failed to fetch Neo positions: {result["error"]}',
+                        'error_type': 'unknown',
+                        'is_retryable': False
                     })
+
+                positions_data = result['positions']
+                rms_net_pnl = result.get('rms_net_pnl')
+                rms_unrealized_mtm = result.get('rms_unrealized_mtm')
+                rms_realized_mtm = result.get('rms_realized_mtm')
 
             except NeoAuthenticationError as e:
                 logger.error(f"Neo authentication error: {e.message}", exc_info=True)

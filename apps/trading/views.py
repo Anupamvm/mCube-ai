@@ -421,9 +421,9 @@ def manual_triggers_refactored(request):
 
     # Fetch the latest futures suggestions (created within last 7 days)
     # Include both SUGGESTED and TAKEN status (both were shortlisted by algorithm)
+    # No user filter: background task saves under superuser, UI under request.user
     cutoff_time = timezone.now() - timedelta(days=7)
     latest_suggestions = TradeSuggestion.objects.filter(
-        user=request.user,
         strategy='icici_futures',
         status__in=['SUGGESTED', 'TAKEN', 'ACTIVE'],
         created_at__gte=cutoff_time

@@ -793,17 +793,14 @@ function displayPositions(broker, positions, rmsPnl) {
         return;
     }
 
-    // Use RMS-based P&L from limits API (matches NEO UI) if available,
-    // otherwise fall back to summing per-position P&L
-    const positionSumPnL = positions.reduce((sum, pos) => sum + parseFloat(pos.total_pnl || 0), 0);
-    const totalPnL = (rmsPnl !== null && rmsPnl !== undefined) ? rmsPnl : positionSumPnL;
-    const pnlSource = (rmsPnl !== null && rmsPnl !== undefined) ? 'RMS' : 'Positions';
+    const hasRms = (rmsPnl !== null && rmsPnl !== undefined);
+    const todayMtm = hasRms ? rmsPnl : positions.reduce((sum, pos) => sum + parseFloat(pos.total_pnl || 0), 0);
 
     const tableHTML = `
-        <!-- Total P&L Summary -->
-        <div style="background: ${totalPnL >= 0 ? 'linear-gradient(135deg, #10b981 0%, #059669 100%)' : 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)'}; color: white; padding: 20px; border-radius: 8px; margin-bottom: 20px; text-align: center;">
-            <div style="font-size: 0.875rem; opacity: 0.9; margin-bottom: 5px;">Net P&L${pnlSource === 'RMS' ? ' (RMS)' : ''}</div>
-            <div style="font-size: 2.5rem; font-weight: 700;">${totalPnL >= 0 ? '+' : '-'}₹${formatIndianNumber(Math.abs(totalPnL).toFixed(0))}${totalPnL < 0 ? ' Loss' : ''}</div>
+        <!-- P&L Summary -->
+        <div style="background: ${todayMtm >= 0 ? 'linear-gradient(135deg, #10b981 0%, #059669 100%)' : 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)'}; color: white; padding: 20px; border-radius: 8px; margin-bottom: 20px; text-align: center;">
+            <div style="font-size: 0.875rem; opacity: 0.9; margin-bottom: 5px;">Today's M2M${hasRms ? '' : ' (est.)'}</div>
+            <div style="font-size: 2.5rem; font-weight: 700;">${todayMtm >= 0 ? '+' : '-'}₹${formatIndianNumber(Math.abs(todayMtm).toFixed(0))}</div>
             <div style="font-size: 0.875rem; opacity: 0.9; margin-top: 5px;">${positions.length} position(s)</div>
         </div>
 

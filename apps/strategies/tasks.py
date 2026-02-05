@@ -1250,6 +1250,58 @@ def check_futures_averaging():
 
 
 # =============================================================================
+# BREEZE SESSION REFRESH (Pre-market)
+# =============================================================================
+
+@shared_task(name='apps.strategies.tasks.refresh_breeze_session', bind=True)
+@task_enabled_guard('refresh-breeze-session')
+def refresh_breeze_session(self):
+    """
+    Refresh Breeze API Session - Scheduled Daily @ 8:15 AM
+
+    Ensures the Breeze session is valid before trading tasks run.
+    Breeze tokens expire daily at midnight IST. This task:
+    1. Checks if the current session token is still valid
+    2. If expired, triggers auto-login (Selenium + Telegram OTP)
+    3. Sends a Telegram notification with the result
+
+    Must run BEFORE execute_futures_algorithm (8:30 AM).
+    """
+    task_logger = TaskLogger(
+        task_name='refresh_breeze_session',
+        task_category='monitoring',
+        task_id=self.request.id
+    )
+
+    task_logger.start("Checking Breeze API session")
+
+    try:
+        # Same API call the web app uses — reads session token from DB,
+        # triggers auto-login (Selenium + Telegram OTP) if expired.
+        from apps.brokers.integrations.breeze import get_breeze_client
+        breeze = get_breeze_client()
+
+        # If we get here, session is valid
+        task_logger.success("Breeze session is valid and ready")
+        send_telegram_notification(
+            f"✅ BREEZE SESSION\n\nSession valid - ready for trading tasks.",
+            notification_type='INFO'
+        )
+        return {'success': True, 'status': 'valid'}
+
+    except Exception as e:
+        task_logger.failure("Breeze session not available", error=e)
+        send_telegram_notification(
+            f"⚠️ BREEZE SESSION\n\n"
+            f"Could not authenticate: {e}\n\n"
+            f"Trading tasks will use database prices.\n"
+            f"Login manually: /brokers/breeze/login/",
+            notification_type='WARNING'
+        )
+        return {'success': False, 'status': 'failed', 'message': str(e)}
+
+
+# =============================================================================
 # FUTURES ALGORITHM SCHEDULED TASK
 # =============================================================================
 
@@ -1360,6 +1412,7 @@ def execute_futures_algorithm(self, this_month_volume=1000, next_month_volume=80
 
         results = []
         qualified_candidates = []
+        qualified_candidates_full = []  # Full result dicts for saving to DB
 
         for contract in futures_contracts:  # Already limited to 50 by manager
             try:
@@ -1373,6 +1426,7 @@ def execute_futures_algorithm(self, this_month_volume=1000, next_month_volume=80
                 verdict = analysis_result.get('verdict', 'FAIL')
                 direction = analysis_result.get('direction', 'NEUTRAL')
                 hard_reject = analysis_result.get('hard_reject', False)
+                metrics = analysis_result.get('metrics', {})
 
                 result = {
                     'symbol': contract.symbol,
@@ -1390,6 +1444,36 @@ def execute_futures_algorithm(self, this_month_volume=1000, next_month_volume=80
                 if verdict == 'PASS' and composite_score >= min_score and not hard_reject:
                     qualified_candidates.append(result)
 
+                    # Build full result dict (same format as UI view) for saving
+                    execution_log = analysis_result.get('execution_log', [])
+                    explanation_parts = []
+                    for log in execution_log:
+                        if log['action'] == 'Open Interest Analysis' and log['status'] != 'SKIP':
+                            explanation_parts.append(f"OI: {log['message']}")
+                        elif log['action'] == 'Sector Strength' and log['status'] != 'SKIP':
+                            explanation_parts.append(f"Sector: {log['message']}")
+                        elif log['action'] == 'Multi-Factor Technical Analysis' and log['status'] != 'SKIP':
+                            explanation_parts.append(f"Technical: {log['message']}")
+                        elif log['action'] == 'DMA Analysis' and log['status'] != 'SKIP':
+                            explanation_parts.append(f"DMA: {log['message']}")
+                        elif log['action'] == 'Composite Scoring & Verdict':
+                            explanation_parts.append(f"Final: {log['message']}")
+
+                    qualified_candidates_full.append({
+                        'symbol': contract.symbol,
+                        'expiry_date': contract.expiry,
+                        'direction': direction,
+                        'spot_price': metrics.get('spot_price', 0),
+                        'futures_price': metrics.get('futures_price', 0),
+                        'composite_score': composite_score,
+                        'scores': analysis_result.get('scores', {}),
+                        'metrics': metrics,
+                        'execution_log': execution_log,
+                        'explanation': explanation_parts,
+                        'sr_data': metrics.get('sr_details', None),
+                        'breach_risks': analysis_result.get('breach_risks', None),
+                    })
+
             except Exception as e:
                 logger.error(f"Error analyzing {contract.symbol}: {e}")
                 results.append({
@@ -1404,8 +1488,25 @@ def execute_futures_algorithm(self, this_month_volume=1000, next_month_volume=80
             'min_score': min_score
         })
 
+        # ===== STEP 4b: Save qualified candidates to database =====
+        saved_count = 0
+        if qualified_candidates_full:
+            task_logger.step('save_suggestions', f"Saving {len(qualified_candidates_full)} suggestions to database")
+
+            try:
+                from apps.trading.services.suggestion_service import save_futures_suggestions
+                suggestion_ids = save_futures_suggestions(qualified_candidates_full)
+                saved_count = len([s for s in suggestion_ids if s])
+                task_logger.info('suggestions_saved', f"Saved {saved_count} suggestions to database")
+            except Exception as e:
+                logger.error(f"Error saving suggestions: {e}")
+                task_logger.warning('suggestions_save_failed', f"Failed to save suggestions: {e}")
+
         # ===== STEP 5: Send notification with results =====
         task_logger.step('notify', "Sending Telegram notification")
+
+        error_count = len([r for r in results if 'error' in r])
+        analyzed_ok = len(results) - error_count
 
         if qualified_candidates:
             # Sort by score descending
@@ -1414,7 +1515,7 @@ def execute_futures_algorithm(self, this_month_volume=1000, next_month_volume=80
             message_lines = [
                 "🎯 FUTURES ALGORITHM RESULTS\n",
                 f"📅 {today.strftime('%d %b %Y')}",
-                f"📊 Analyzed: {len(results)} | Qualified: {len(qualified_candidates)}\n",
+                f"📊 Analyzed: {analyzed_ok} | Errors: {error_count} | Qualified: {len(qualified_candidates)}\n",
                 "TOP CANDIDATES:"
             ]
 
@@ -1437,7 +1538,7 @@ def execute_futures_algorithm(self, this_month_volume=1000, next_month_volume=80
             send_telegram_notification(
                 f"📊 FUTURES ALGORITHM\n\n"
                 f"📅 {today.strftime('%d %b %Y')}\n"
-                f"Analyzed: {len(results)} contracts\n\n"
+                f"Analyzed: {analyzed_ok} | Errors: {error_count}\n\n"
                 f"❌ No qualified candidates (score >= {min_score})",
                 notification_type='INFO'
             )

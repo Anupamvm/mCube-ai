@@ -128,6 +128,15 @@ TASK_DEFAULT_CONFIG = {
         'default_minute': 45,
         'default_days': [0, 1, 2, 3, 4],
     },
+    'refresh-breeze-session': {
+        'display_name': 'Breeze Session Refresh',
+        'description': 'Validates and refreshes Breeze API session before trading tasks. Triggers auto-login with Telegram OTP if session expired.',
+        'schedule_type': 'crontab',
+        'category': 'monitoring',
+        'default_hour': 8,
+        'default_minute': 15,
+        'default_days': [0, 1, 2, 3, 4],  # Mon-Fri
+    },
     'execute-futures-algorithm': {
         'display_name': 'Futures Algorithm',
         'description': 'Runs enhanced 12-component futures analysis on top 50 contracts by volume. Sends Telegram alerts for qualified candidates (score >= 65).',
