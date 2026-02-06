@@ -261,7 +261,23 @@ def trigger_futures_algorithm(request):
         suggestion_ids = []
         if passed_results:
             from apps.trading.services.suggestion_service import save_futures_suggestions
-            suggestion_ids = save_futures_suggestions(passed_results, user=request.user)
+            suggestion_ids = save_futures_suggestions(passed_results, user=request.user, source='manual')
+
+            # Merge position sizing data from saved TradeSuggestion records back into results
+            from apps.trading.models import TradeSuggestion
+            valid_ids = [sid for sid in suggestion_ids if sid is not None]
+            if valid_ids:
+                suggestions = {
+                    s.instrument: s
+                    for s in TradeSuggestion.objects.filter(id__in=valid_ids)
+                }
+                for result in analyzed_results:
+                    if result['verdict'] == 'PASS' and result['symbol'] in suggestions:
+                        s = suggestions[result['symbol']]
+                        result['recommended_lots'] = s.recommended_lots
+                        result['margin_required'] = float(s.margin_required) if s.margin_required else 0
+                        result['max_profit'] = float(s.max_profit) if s.max_profit else 0
+                        result['max_loss'] = float(s.max_loss) if s.max_loss else 0
 
         # Prepare response - return ALL analyzed results
         response_data = {

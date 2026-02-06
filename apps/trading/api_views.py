@@ -5,6 +5,7 @@ AJAX endpoints for real-time position sizing, P&L calculations,
 and order placement via ICICI Breeze API.
 """
 
+import json
 import logging
 import time
 import uuid
@@ -1719,9 +1720,7 @@ def get_active_positions(request):
             })
 
         positions_data = []
-        rms_net_pnl = None
-        rms_unrealized_mtm = None
-        rms_realized_mtm = None
+        result = {}
 
         if broker == 'breeze':
             # Use unified Breeze integration for consistent data
@@ -1778,7 +1777,7 @@ def get_active_positions(request):
             )
 
             try:
-                result = get_neo_open_positions()
+                result = get_neo_open_positions(include_raw=True)
 
                 if 'error' in result:
                     return JsonResponse({
@@ -1789,9 +1788,6 @@ def get_active_positions(request):
                     })
 
                 positions_data = result['positions']
-                rms_net_pnl = result.get('rms_net_pnl')
-                rms_unrealized_mtm = result.get('rms_unrealized_mtm')
-                rms_realized_mtm = result.get('rms_realized_mtm')
 
             except NeoAuthenticationError as e:
                 logger.error(f"Neo authentication error: {e.message}", exc_info=True)
@@ -1836,11 +1832,16 @@ def get_active_positions(request):
             'count': len(positions_data),
         }
 
-        # Include RMS-based Net P&L for Neo (matches broker UI)
-        if broker == 'neo' and rms_net_pnl is not None:
-            response_data['rms_net_pnl'] = rms_net_pnl
-            response_data['rms_unrealized_mtm'] = rms_unrealized_mtm
-            response_data['rms_realized_mtm'] = rms_realized_mtm
+        # Include raw API debug data if available (Neo with include_raw=True)
+        try:
+            raw_pos = result.get('raw_positions_api')
+            raw_trades = result.get('raw_trade_report_api')
+            response_data['raw_positions_api'] = json.loads(json.dumps(raw_pos, default=str)) if raw_pos is not None else None
+            response_data['raw_trade_report_api'] = json.loads(json.dumps(raw_trades, default=str)) if raw_trades is not None else None
+        except Exception as e:
+            logger.warning(f"Could not serialize raw API data: {e}")
+            response_data['raw_positions_api'] = None
+            response_data['raw_trade_report_api'] = None
 
         return JsonResponse(response_data)
 

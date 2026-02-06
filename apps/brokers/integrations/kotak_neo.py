@@ -9,7 +9,6 @@ This module provides integration with Kotak Neo broker API for:
 
 import logging
 import re
-import jwt
 from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
 try:
@@ -23,29 +22,20 @@ from apps.core.models import CredentialStore
 from apps.core.constants import BROKER_KOTAK
 from apps.brokers.models import BrokerLimit, BrokerPosition
 from apps.brokers.utils.common import parse_float as _parse_float, parse_decimal
-from apps.brokers.utils.auth_manager import (
-    get_credentials,
-    validate_jwt_token as _is_token_valid,
-    save_session_token,
-    extract_sid_from_jwt
-)
+from apps.brokers.utils.auth_manager import get_credentials
 
 logger = logging.getLogger(__name__)
 
-# Known lot sizes for common F&O instruments
-LOT_SIZES = {
-    'NIFTY': 75,
-    'BANKNIFTY': 30,
-    'FINNIFTY': 40,
-    'HDFCBANK': 550,
-    'RELIANCE': 250,
-    'TCS': 150,
-    'INFY': 300,
-    'ICICIBANK': 700,
-    'SBIN': 750,
-    'AXISBANK': 625,
-    'KOTAKBANK': 400,
-}
+
+def _parse_expiry_date(expiry_str):
+    """Parse expiry date string from Kotak Neo API (e.g., '30 Jan, 2025') to a date object."""
+    if not expiry_str:
+        return None
+    try:
+        return datetime.strptime(expiry_str, '%d %b, %Y').date()
+    except (ValueError, TypeError):
+        return None
+
 
 
 class NeoAuthenticationError(Exception):
@@ -60,63 +50,54 @@ class NeoAuthenticationError(Exception):
 
 def _get_authenticated_client():
     """
-    Get authenticated Kotak Neo API client using tools.neo.NeoAPI wrapper.
+    Get authenticated Kotak Neo API client using the process-level cached wrapper.
 
-    Uses the NeoAPI wrapper from tools.neo which handles authentication properly.
-    Includes retry logic (10 attempts) for connection issues.
+    Uses tools.neo.get_neo_api() which caches the NeoAPI instance per-process.
+    First call creates the client and logs in (session restore or full login).
+    Subsequent calls return the same cached client — no repeated API calls.
 
     Returns:
-        NeoAPI: Authenticated Neo API client (the .neo attribute from tools.neo.NeoAPI)
+        neo_api_client.NeoAPI: Authenticated client instance
 
     Raises:
-        NeoAuthenticationError: If credentials not found or authentication fails
+        NeoAuthenticationError: If authentication fails
     """
     try:
-        from tools.neo import NeoAPI as NeoAPIWrapper
+        from tools.neo import get_neo_api
 
-        logger.info("Using NeoAPI wrapper from tools.neo for authentication")
-
-        # Create NeoAPI wrapper instance (loads creds from database automatically)
-        neo_wrapper = NeoAPIWrapper()
-
-        # Perform login (handles 2FA automatically with retries)
-        login_result = neo_wrapper.login()
-        logger.info(f"Neo login result: {login_result}, session_active: {neo_wrapper.session_active}")
-
-        if login_result and neo_wrapper.session_active:
-            logger.info("Neo API authentication successful via tools.neo wrapper")
+        neo_wrapper = get_neo_api()
+        if neo_wrapper.session_active:
             return neo_wrapper.neo
-        else:
-            # Get detailed error from the wrapper
-            last_error = neo_wrapper.get_last_error() or "Unknown authentication error"
-            logger.error(f"Neo API login failed: {last_error}")
 
-            # Categorize the error for better UI messaging
-            error_lower = last_error.lower()
-            if any(kw in error_lower for kw in ['timeout', 'connection', 'network', 'unreachable']):
-                raise NeoAuthenticationError(
-                    f"Kotak Neo server unreachable after multiple retries: {last_error}",
-                    error_type='connection',
-                    is_retryable=True
-                )
-            elif any(kw in error_lower for kw in ['invalid', 'credential', 'password', 'pan', 'mpin']):
-                raise NeoAuthenticationError(
-                    f"Invalid credentials: {last_error}",
-                    error_type='credentials',
-                    is_retryable=False
-                )
-            elif any(kw in error_lower for kw in ['2fa', 'otp', 'session']):
-                raise NeoAuthenticationError(
-                    f"2FA/Session error: {last_error}",
-                    error_type='2fa',
-                    is_retryable=False
-                )
-            else:
-                raise NeoAuthenticationError(
-                    f"Authentication failed: {last_error}",
-                    error_type='unknown',
-                    is_retryable=False
-                )
+        # Login failed — categorize the error for UI messaging
+        last_error = neo_wrapper.get_last_error() or "Unknown authentication error"
+        logger.error(f"Neo API login failed: {last_error}")
+
+        error_lower = last_error.lower()
+        if any(kw in error_lower for kw in ['timeout', 'connection', 'network', 'unreachable']):
+            raise NeoAuthenticationError(
+                f"Kotak Neo server unreachable: {last_error}",
+                error_type='connection',
+                is_retryable=True
+            )
+        elif any(kw in error_lower for kw in ['invalid', 'credential', 'password', 'pan', 'mpin']):
+            raise NeoAuthenticationError(
+                f"Invalid credentials: {last_error}",
+                error_type='credentials',
+                is_retryable=False
+            )
+        elif any(kw in error_lower for kw in ['2fa', 'otp', 'session']):
+            raise NeoAuthenticationError(
+                f"2FA/Session error: {last_error}",
+                error_type='2fa',
+                is_retryable=False
+            )
+        else:
+            raise NeoAuthenticationError(
+                f"Authentication failed: {last_error}",
+                error_type='unknown',
+                is_retryable=False
+            )
 
     except NeoAuthenticationError:
         raise
@@ -124,7 +105,6 @@ def _get_authenticated_client():
         error_msg = str(e) if str(e) else repr(e)
         logger.error(f"Failed to get authenticated Neo client: {error_msg}")
 
-        # Check if it's a connection error
         error_lower = error_msg.lower()
         if any(kw in error_lower for kw in ['timeout', 'connection', 'network']):
             raise NeoAuthenticationError(
@@ -143,10 +123,19 @@ def fetch_and_save_kotakneo_data():
     """
     Fetch limits and positions from Kotak Neo API and save to database.
 
+    Uses trade_report() for actual execution prices and maintains a blended
+    weighted-average cost across days (for position averaging).
+
     Returns:
-        tuple: (limit_record, pos_objs, raw_limits) - BrokerLimit, list of BrokerPosition, and raw limits API dict
+        tuple: (limit_record, pos_objs, raw_limits, raw_positions, raw_trades)
+            - limit_record: BrokerLimit instance
+            - pos_objs: list of BrokerPosition instances
+            - raw_limits: raw limits API response dict
+            - raw_positions: raw positions API response dict
+            - raw_trades: raw trade_report API response dict (or None)
 
     Raises:
+        NeoAuthenticationError: If authentication fails
         Exception: If API call or database save fails
     """
     client = _get_authenticated_client()
@@ -207,45 +196,41 @@ def fetch_and_save_kotakneo_data():
     resp = client.positions()
     raw_positions = resp.get('data', [])
 
-    # Get total unrealized P&L from limits for back-calculation
-    total_unrealized_pnl = _parse_float(lim.get('FoUnRlsMtomPrsnt', 0))
-
-    # Fetch Breeze positions for reference average prices
-    breeze_avgs = {}
+    # ── Fetch trade_report() for ACTUAL trade execution prices ──
+    # positions() cfBuyAmt/cfBuyQty gives MTM settlement price (resets daily),
+    # NOT the original entry price. trade_report() has real execution prices.
+    trades_by_symbol = {}
+    trade_resp = None
     try:
-        from apps.brokers.integrations.breeze import get_breeze_client
-        breeze = get_breeze_client()
-        breeze_pos = breeze.get_portfolio_positions()
-        for bp in breeze_pos.get('Success', []):
-            stock = bp.get('stock_code', '')
-            avg = _parse_float(bp.get('average_price', 0))
-            if stock and avg > 0:
-                breeze_avgs[stock] = avg
-        logger.info(f"Loaded {len(breeze_avgs)} Breeze position averages for reference")
+        trade_resp = client.trade_report()
+        raw_trades = []
+        if isinstance(trade_resp, dict) and 'Error' not in trade_resp and 'Error Message' not in trade_resp:
+            raw_trades = trade_resp.get('data', [])
+            if not isinstance(raw_trades, list):
+                raw_trades = []
+
+        for t in raw_trades:
+            tsym = t.get('trdSym', '')
+            if not tsym:
+                continue
+            if tsym not in trades_by_symbol:
+                trades_by_symbol[tsym] = {'buys': [], 'sells': []}
+
+            filled_qty = int(float(t.get('fldQty', 0) or 0))
+            avg_prc = _parse_float(t.get('avgPrc', 0))
+            trans_type = t.get('trnsTp', '')
+
+            if trans_type == 'B':
+                trades_by_symbol[tsym]['buys'].append({'qty': filled_qty, 'price': avg_prc})
+            elif trans_type == 'S':
+                trades_by_symbol[tsym]['sells'].append({'qty': filled_qty, 'price': avg_prc})
+
+        logger.info(f"Loaded trade_report: {len(raw_trades)} trades across {len(trades_by_symbol)} symbols")
     except Exception as e:
-        logger.warning(f"Could not fetch Breeze positions for reference: {e}")
+        logger.warning(f"Could not fetch trade_report for avg prices: {e}")
 
-    # Mapping from Kotak symbols to Breeze stock codes
-    kotak_to_breeze = {
-        'HDFCBANK': 'HDFBAN',
-        'ICICIBANK': 'ICICIBNK',
-        'KOTAKBANK': 'KOTAKBNK',
-        'AXISBANK': 'AXISBNK',
-        'SBIN': 'SBIN',
-        'NIFTY': 'NIFTY',
-        'BANKNIFTY': 'CNXBAN',
-    }
-
-    # Manual average price overrides (from Neo portal)
-    # These are the actual trade averages that Neo portal shows
-    # Format: {symbol: average_price}
-    avg_price_overrides = {
-        'HDFCBANK': 929.96,
-        'NIFTY': 25434.4,
-    }
-
-    # First pass: collect position data with LTPs and MTM costs
-    position_data = []
+    # Process each position
+    pos_objs = []
     for p in raw_positions:
         try:
             buy_qty = int(p.get('cfBuyQty', 0)) + int(p.get('flBuyQty', 0))
@@ -255,7 +240,7 @@ def fetch_and_save_kotakneo_data():
             buy_amt = _parse_float(p.get('cfBuyAmt', 0)) + _parse_float(p.get('buyAmt', 0))
             sell_amt = _parse_float(p.get('cfSellAmt', 0)) + _parse_float(p.get('sellAmt', 0))
 
-            # MTM cost basis (from cfBuyAmt - includes daily settlements)
+            # MTM cost basis (fallback only — resets daily, NOT original entry price)
             mtm_cost = (buy_amt / buy_qty) if buy_qty > 0 else (
                 (sell_amt / sell_qty) if sell_qty > 0 else 0.0)
 
@@ -263,150 +248,127 @@ def fetch_and_save_kotakneo_data():
             ltp = _parse_float(p.get('stkPrc', 0))
             if ltp == 0.0:
                 try:
-                    trading_symbol = p.get('trdSym', '')
+                    trading_symbol = p.get('trdSym') or ''
                     if trading_symbol:
                         fetched_ltp = get_ltp_from_neo(trading_symbol, client=client)
                         if fetched_ltp and fetched_ltp > 0:
                             ltp = fetched_ltp
-                            logger.info(f"✅ Fetched LTP for {p.get('sym')}: ₹{ltp:,.2f}")
                 except Exception as ltp_error:
                     logger.warning(f"Could not fetch LTP for {p.get('sym')}: {ltp_error}")
 
                 if ltp == 0.0:
                     ltp = mtm_cost
-                    logger.info(f"Using MTM cost as LTP fallback for {p.get('sym')}: ₹{ltp:,.2f}")
+                    logger.info(f"Using MTM cost as LTP fallback for {p.get('sym')}: {ltp:,.2f}")
 
-            # Check for manual override first, then Breeze reference
-            sym = p.get('sym', '')
-            override_avg = avg_price_overrides.get(sym)
-            breeze_code = kotak_to_breeze.get(sym)
-            breeze_avg = breeze_avgs.get(breeze_code) if breeze_code else None
+            # ── Average price: blended weighted average across days ──
+            #
+            # Maintains a true weighted-average cost from original entry, through
+            # any averaging (adding lots on subsequent days), until full square-off.
+            #
+            # Neo positions API fields:
+            #   cfBuyQty / cfSellQty  = carry-forward qty from previous days
+            #   flBuyQty / flSellQty  = fresh fills today
+            #   cfBuyAmt / cfSellAmt  = MTM settlement amounts (resets daily, NOT original cost)
+            #
+            # Data sources:
+            #   trade_report()  = today's actual execution prices (accurate, but only today)
+            #   DB avg_price    = blended weighted avg saved from previous fetches
+            #
+            # Blending logic:
+            #   LONG:  avg = (cf_buy_qty × db_avg + today_buy_value) / (cf_buy_qty + today_buy_qty)
+            #          Only buys affect avg; sells are exits that don't change cost basis.
+            #   SHORT: avg = (cf_sell_qty × db_avg + today_sell_value) / (cf_sell_qty + today_sell_qty)
+            #          Only sells affect avg; buys are exits that don't change cost basis.
+            trd_sym = p.get('trdSym') or ''
+            direction = 'LONG' if net_q > 0 else 'SHORT'
+            trade_data = trades_by_symbol.get(trd_sym, {'buys': [], 'sells': []})
 
-            position_data.append({
-                'raw': p,
-                'sym': sym,
-                'net_q': net_q,
-                'buy_qty': buy_qty,
-                'sell_qty': sell_qty,
-                'buy_amt': buy_amt,
-                'sell_amt': sell_amt,
-                'mtm_cost': mtm_cost,
-                'ltp': ltp,
-                'override_avg': override_avg,
-                'breeze_avg': breeze_avg,
-            })
-        except (ValueError, ZeroDivisionError) as e:
-            logger.error(f"Error processing Kotak position {p.get('sym', 'UNKNOWN')}: {e}")
-            continue
+            trade_buy_qty = sum(t['qty'] for t in trade_data['buys'])
+            trade_buy_value = sum(t['qty'] * t['price'] for t in trade_data['buys'])
+            trade_sell_qty = sum(t['qty'] for t in trade_data['sells'])
+            trade_sell_value = sum(t['qty'] * t['price'] for t in trade_data['sells'])
 
-    # Second pass: calculate actual average prices
-    # Priority: 1) Manual override, 2) Breeze reference, 3) Back-calculate from P&L
-    for pos in position_data:
-        if pos['override_avg']:
-            # Use manual override (from Neo portal)
-            pos['avg_price'] = pos['override_avg']
-            pos['unrealized_pnl'] = pos['net_q'] * (pos['ltp'] - pos['avg_price'])
-            logger.info(f"✅ {pos['sym']}: Using override avg {pos['avg_price']:.2f}, P&L: {pos['unrealized_pnl']:,.2f}")
-        elif pos['breeze_avg']:
-            # Use Breeze average as fallback
-            pos['avg_price'] = pos['breeze_avg']
-            pos['unrealized_pnl'] = pos['net_q'] * (pos['ltp'] - pos['avg_price'])
-            logger.info(f"✅ {pos['sym']}: Using Breeze avg {pos['avg_price']:.2f}, P&L: {pos['unrealized_pnl']:,.2f}")
-        else:
-            # Fallback to MTM cost
-            pos['avg_price'] = pos['mtm_cost']
-            pos['unrealized_pnl'] = pos['net_q'] * (pos['ltp'] - pos['avg_price'])
-            logger.warning(f"⚠️ {pos['sym']}: Using MTM cost {pos['avg_price']:.2f} (no override/Breeze ref)")
+            cf_buy_qty = int(p.get('cfBuyQty', 0))
+            cf_sell_qty = int(p.get('cfSellQty', 0))
 
-    # Save positions to database
-    pos_objs = []
-    for pos in position_data:
-        try:
-            p = pos['raw']
-            realized_pnl = pos['sell_amt'] - pos['buy_amt']
+            # Look up previous DB record for carry-forward avg price
+            prev = BrokerPosition.objects.filter(
+                broker=BROKER_KOTAK,
+                trading_symbol=trd_sym,
+            ).order_by('-fetched_at').first()
+            db_avg = float(prev.average_price) if prev and float(prev.average_price) > 0 else 0.0
+
+            if direction == 'LONG':
+                if cf_buy_qty > 0 and trade_buy_qty > 0 and db_avg > 0:
+                    # Averaging: blend carry-forward cost with today's new buys
+                    avg_price = (cf_buy_qty * db_avg + trade_buy_value) / (cf_buy_qty + trade_buy_qty)
+                    logger.info(
+                        f"{p.get('sym')}: Blended LONG avg: "
+                        f"({cf_buy_qty} × {db_avg:.2f} + {trade_buy_value:.2f}) "
+                        f"/ {cf_buy_qty + trade_buy_qty} = {avg_price:.2f}"
+                    )
+                elif trade_buy_qty > 0:
+                    # New position opened today (no carry-forward)
+                    avg_price = trade_buy_value / trade_buy_qty
+                    logger.info(f"{p.get('sym')}: New LONG from trade_report avg buy {avg_price:.2f}")
+                elif db_avg > 0 and abs(db_avg - mtm_cost) > 0.01:
+                    # Pure carry-forward, no trades today
+                    avg_price = db_avg
+                    logger.info(f"{p.get('sym')}: Carry-forward LONG avg from DB {avg_price:.2f} (MTM today={mtm_cost:.2f})")
+                else:
+                    avg_price = mtm_cost
+                    logger.warning(f"{p.get('sym')}: No trade data or DB record for LONG, using MTM cost {avg_price:.2f}")
+            else:  # SHORT
+                if cf_sell_qty > 0 and trade_sell_qty > 0 and db_avg > 0:
+                    # Averaging: blend carry-forward cost with today's new sells
+                    avg_price = (cf_sell_qty * db_avg + trade_sell_value) / (cf_sell_qty + trade_sell_qty)
+                    logger.info(
+                        f"{p.get('sym')}: Blended SHORT avg: "
+                        f"({cf_sell_qty} × {db_avg:.2f} + {trade_sell_value:.2f}) "
+                        f"/ {cf_sell_qty + trade_sell_qty} = {avg_price:.2f}"
+                    )
+                elif trade_sell_qty > 0:
+                    # New short position opened today (no carry-forward)
+                    avg_price = trade_sell_value / trade_sell_qty
+                    logger.info(f"{p.get('sym')}: New SHORT from trade_report avg sell {avg_price:.2f}")
+                elif db_avg > 0 and abs(db_avg - mtm_cost) > 0.01:
+                    # Pure carry-forward, no trades today
+                    avg_price = db_avg
+                    logger.info(f"{p.get('sym')}: Carry-forward SHORT avg from DB {avg_price:.2f} (MTM today={mtm_cost:.2f})")
+                else:
+                    avg_price = mtm_cost
+                    logger.warning(f"{p.get('sym')}: No trade data or DB record for SHORT, using MTM cost {avg_price:.2f}")
+
+            # P&L calculation
+            unrealized_pnl = net_q * (ltp - avg_price) if ltp > 0 else 0.0
+            realized_pnl = sell_amt - buy_amt
 
             db_pos = BrokerPosition.objects.create(
                 broker=BROKER_KOTAK,
                 fetched_at=timezone.now(),
-                symbol=p.get('sym', p.get('trdSym', '')),
-                exchange_segment=p.get('exSeg', ''),
-                product=p.get('prod', ''),
-                buy_qty=pos['buy_qty'],
-                sell_qty=pos['sell_qty'],
-                net_quantity=pos['net_q'],
-                buy_amount=Decimal(str(pos['buy_amt'])),
-                sell_amount=Decimal(str(pos['sell_amt'])),
-                ltp=Decimal(str(pos['ltp'])),
-                average_price=Decimal(str(pos['avg_price'])),
+                symbol=p.get('sym') or p.get('trdSym') or '',
+                trading_symbol=p.get('trdSym') or '',
+                expiry_date=_parse_expiry_date(p.get('expDt') or ''),
+                lot_size=int(p.get('lotSz') or 1),
+                exchange_segment=p.get('exSeg') or '',
+                product=p.get('prod') or '',
+                buy_qty=buy_qty,
+                sell_qty=sell_qty,
+                net_quantity=net_q,
+                buy_amount=Decimal(str(buy_amt)),
+                sell_amount=Decimal(str(sell_amt)),
+                ltp=Decimal(str(ltp)),
+                average_price=Decimal(str(avg_price)),
                 realized_pnl=Decimal(str(realized_pnl)),
-                unrealized_pnl=Decimal(str(pos['unrealized_pnl'])),
+                unrealized_pnl=Decimal(str(unrealized_pnl)),
             )
             pos_objs.append(db_pos)
-        except (ValueError, InvalidOperation) as e:
-            logger.error(f"Error saving Kotak position {pos['sym']}: {e}")
+        except (ValueError, InvalidOperation, ZeroDivisionError) as e:
+            logger.error(f"Error saving Kotak position {p.get('sym', 'UNKNOWN')}: {e}")
             continue
 
     logger.info(f"Saved {len(pos_objs)} Kotak Neo positions")
-    return limit_record, pos_objs, lim
-
-
-def auto_login_kotak_neo():
-    """
-    Perform Kotak Neo login and 2FA, returning session token and sid.
-
-    This function uses centralized auth_manager for session management,
-    reusing saved tokens when available to avoid OTP requirement.
-
-    Returns:
-        dict: {'token': str, 'sid': str}
-
-    Raises:
-        ValueError: If credentials not found
-    """
-    # Use centralized credential loading
-    creds = get_credentials('kotakneo')
-    if not creds:
-        raise ValueError("No Kotak Neo credentials found in CredentialStore")
-
-    # Check if we have a valid saved session token
-    saved_token = creds.sid  # JWT session token stored in sid field
-    otp_code = creds.session_token  # OTP code
-
-    # Use centralized token validation
-    if saved_token and _is_token_valid(saved_token):
-        logger.info("Reusing saved Kotak Neo session token for auto_login")
-
-        # Use centralized SID extraction
-        sid = extract_sid_from_jwt(saved_token)
-
-        return {
-            'token': saved_token,
-            'sid': sid
-        }
-
-    # No valid token, perform fresh login with OTP
-    logger.info("Performing fresh Kotak Neo login for auto_login")
-    client = NeoAPI(
-        consumer_key=creds.api_key,
-        consumer_secret=creds.api_secret,
-        environment='prod'
-    )
-    client.login(pan=creds.username, password=creds.password)
-    session_2fa = client.session_2fa(OTP=otp_code)
-    data = session_2fa.get('data', {})
-
-    session_token = data.get('token')
-    session_sid = data.get('sid')
-
-    # Use centralized token saving with additional sid field
-    if session_token:
-        save_session_token('kotakneo', session_token, additional_data={'sid': session_token})
-        logger.info(f"Saved new Kotak Neo session token from auto_login (valid until midnight, SID: {session_sid[:20]}...)")
-
-    return {
-        'token': session_token,
-        'sid': session_sid
-    }
+    return limit_record, pos_objs, lim, resp, trade_resp
 
 
 def get_order_book() -> dict:
@@ -2248,49 +2210,33 @@ def close_strangle_positions_in_batches(
         }
 
 
-def get_neo_open_positions() -> dict:
+def get_neo_open_positions(include_raw=False) -> dict:
     """
-    Single source of truth for Neo open positions + RMS P&L.
+    Single source of truth for Neo open positions.
     Called by both web API and Telegram bot.
+
+    Args:
+        include_raw: If True, includes raw API responses for debug display.
 
     Returns:
         {
             'positions': [
                 {
-                    'symbol', 'exchange', 'product', 'direction',
+                    'symbol', 'trading_symbol', 'exchange', 'product', 'direction',
                     'quantity' (lots), 'net_quantity' (lots), 'net_quantity_shares',
                     'lot_size', 'average_price', 'ltp',
                     'unrealized_pnl', 'total_pnl', 'pnl_percentage',
                     'expiry_date',
                 }, ...
             ],
-            'rms_net_pnl': int or None,
-            'rms_unrealized_mtm': float or None,
-            'rms_realized_mtm': float or None,
+            # Only when include_raw=True:
+            'raw_positions_api': <raw positions response>,
+            'raw_trade_report_api': <raw trade_report response>,
         }
     or {'error': str} on failure.
     """
     try:
-        _, positions, raw_limits = fetch_and_save_kotakneo_data()
-
-        # ── RMS-based Net P&L from limits API (matches NEO UI) ──
-        rms_net_pnl = None
-        rms_unrealized_mtm = None
-        rms_realized_mtm = None
-        if isinstance(raw_limits, dict):
-            try:
-                fo_unrealized = float(raw_limits.get('FoUnRlsMtomPrsnt', 0) or 0)
-                fo_realized = float(raw_limits.get('FoRlsMtomPrsnt', 0) or 0)
-                rms_unrealized_mtm = fo_unrealized
-                rms_realized_mtm = fo_realized
-                rms_net_pnl = round(-(fo_unrealized + fo_realized))
-                logger.info(
-                    f"RMS P&L: FoUnRlsMtomPrsnt={fo_unrealized:,.2f}, "
-                    f"FoRlsMtomPrsnt={fo_realized:,.2f}, "
-                    f"Trader Net P&L={rms_net_pnl:,}"
-                )
-            except (ValueError, TypeError) as e:
-                logger.warning(f"Error parsing RMS MTM fields: {e}")
+        _, positions, _, raw_positions_resp, raw_trade_resp = fetch_and_save_kotakneo_data()
 
         # ── Build position dicts ──
         positions_data = []
@@ -2302,13 +2248,8 @@ def get_neo_open_positions() -> dict:
             if net_qty == 0:
                 continue
 
-            # Determine lot size from symbol
-            symbol_base = pos.symbol
-            for key in LOT_SIZES:
-                if key in pos.symbol.upper():
-                    symbol_base = key
-                    break
-            lot_size = LOT_SIZES.get(symbol_base, 1)
+            # Use lot size from broker API (stored in DB), not hardcoded
+            lot_size = pos.lot_size or 1
 
             net_qty_lots = net_qty // lot_size if lot_size > 0 else net_qty
             unrealized_pnl = net_qty * (ltp - avg_price) if ltp > 0 else 0.0
@@ -2318,6 +2259,7 @@ def get_neo_open_positions() -> dict:
 
             positions_data.append({
                 'symbol': pos.symbol,
+                'trading_symbol': pos.trading_symbol or pos.symbol,
                 'exchange': pos.exchange_segment or 'nse_fo',
                 'product': pos.product or 'NRML',
                 'direction': direction,
@@ -2330,15 +2272,18 @@ def get_neo_open_positions() -> dict:
                 'unrealized_pnl': round(unrealized_pnl, 2),
                 'total_pnl': round(unrealized_pnl, 2),
                 'pnl_percentage': round(pnl_pct, 2),
-                'expiry_date': None,
+                'expiry_date': pos.expiry_date.strftime('%Y-%m-%d') if pos.expiry_date else None,
             })
 
-        return {
+        result = {
             'positions': positions_data,
-            'rms_net_pnl': rms_net_pnl,
-            'rms_unrealized_mtm': rms_unrealized_mtm,
-            'rms_realized_mtm': rms_realized_mtm,
         }
+
+        if include_raw:
+            result['raw_positions_api'] = raw_positions_resp
+            result['raw_trade_report_api'] = raw_trade_resp
+
+        return result
 
     except NeoAuthenticationError:
         raise  # Let callers handle auth errors specifically

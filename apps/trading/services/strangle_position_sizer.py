@@ -120,23 +120,14 @@ class StranglePositionSizer:
             Decimal: Actual margin per lot from Neo API, or None if unavailable
         """
         try:
-            from apps.core.models import CredentialStore
-            from neo_api_client import NeoAPI
+            from tools.neo import NeoAPI as NeoAPIWrapper
 
-            neo_creds = CredentialStore.objects.filter(service='kotakneo').first()
-
-            if not neo_creds or not neo_creds.session_token:
-                logger.warning("Neo credentials not available for margin calculation")
+            neo_wrapper = NeoAPIWrapper()
+            if not neo_wrapper.login():
+                logger.warning("Neo login failed for margin calculation")
                 return None
 
-            neo = NeoAPI(
-                access_token=neo_creds.session_token,
-                environment='prod'
-            )
-
-            # For Nifty options, we need to construct the trading symbol
-            # Format: NIFTY[DDMMMYY][STRIKE][CE/PE]
-            # Example: NIFTY05DEC2424000CE
+            neo = neo_wrapper.neo
 
             # If no expiry provided, use nearest weekly expiry (Thursday)
             if not expiry_date:
@@ -156,10 +147,7 @@ class StranglePositionSizer:
             call_symbol = f"NIFTY{expiry_str}{call_strike}CE"
             put_symbol = f"NIFTY{expiry_str}{put_strike}PE"
 
-            # Neo margin calculator - requires scrip details
-            # Try using span_calculator endpoint if available
             try:
-                # Get scrip codes first
                 call_quote = neo.quotes(
                     instrument_tokens=[
                         {"instrument_token": call_symbol, "exchange_segment": "nse_fo"}
@@ -172,8 +160,6 @@ class StranglePositionSizer:
                 )
 
                 if call_quote and put_quote:
-                    # Calculate combined margin using Neo's basket margin API if available
-                    # For now, return None to use estimate
                     logger.info(f"Got quotes for {call_symbol} and {put_symbol}")
                     # TODO: Implement actual margin calculation API call
                     return None

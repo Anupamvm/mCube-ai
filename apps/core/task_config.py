@@ -139,12 +139,31 @@ TASK_DEFAULT_CONFIG = {
     },
     'execute-futures-algorithm': {
         'display_name': 'Futures Algorithm',
-        'description': 'Runs enhanced 12-component futures analysis on top 50 contracts by volume. Sends Telegram alerts for qualified candidates (score >= 65).',
+        'description': 'Runs enhanced 12-component futures analysis on top contracts by volume. Sends Telegram alerts for qualified candidates.',
         'schedule_type': 'crontab',
         'category': 'strategies',
         'default_hour': 8,
         'default_minute': 30,
         'default_days': [0, 1, 2, 3, 4],  # Mon-Fri
+        'default_task_params': {
+            'top_contracts': 50,
+            'batch_size': 5,
+            'this_month_volume': 1000,
+            'next_month_volume': 800,
+            'min_score': 65,
+        },
+        'task_param_fields': [
+            {'name': 'top_contracts', 'label': 'Top Contracts by Volume', 'type': 'number',
+             'min': 10, 'max': 100, 'default': 50, 'help': 'Number of contracts to analyze'},
+            {'name': 'batch_size', 'label': 'Batch Size', 'type': 'number',
+             'min': 1, 'max': 20, 'default': 5, 'help': 'Contracts per parallel task'},
+            {'name': 'this_month_volume', 'label': 'This Month Min Volume', 'type': 'number',
+             'min': 100, 'max': 10000, 'default': 1000, 'help': 'Min volume for current month contracts'},
+            {'name': 'next_month_volume', 'label': 'Next Month Min Volume', 'type': 'number',
+             'min': 100, 'max': 10000, 'default': 800, 'help': 'Min volume for next month contracts'},
+            {'name': 'min_score', 'label': 'Min Score', 'type': 'number',
+             'min': 50, 'max': 90, 'default': 65, 'help': 'Minimum score for qualification'},
+        ],
     },
     'check-futures-averaging': {
         'display_name': 'Futures Averaging Check',

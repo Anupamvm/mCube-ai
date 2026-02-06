@@ -109,8 +109,8 @@ def sync_kotak_positions(account):
     result = {'created': 0, 'updated': 0, 'closed': 0}
 
     try:
-        from apps.brokers.integrations.neo.data_fetcher import fetch_and_save_kotakneo_data
-        limit_record, broker_positions = fetch_and_save_kotakneo_data()
+        from apps.brokers.integrations.kotak_neo import fetch_and_save_kotakneo_data
+        limit_record, broker_positions, *_ = fetch_and_save_kotakneo_data()
 
         broker_symbols = set()
 

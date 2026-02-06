@@ -206,7 +206,7 @@ def kotakneo_data(request):
     Fetch and display Kotak Neo limits and positions (Traders can view).
     """
     try:
-        limit_rec, pos_list, _ = fetch_and_save_kotakneo_data()
+        limit_rec, pos_list, *_ = fetch_and_save_kotakneo_data()
         has_positions = is_open_position()
 
         context = {

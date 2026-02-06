@@ -192,6 +192,21 @@ class BrokerPosition(TimeStampedModel):
         help_text="Trading symbol (e.g., NIFTY25DEC2025025000CE)"
     )
 
+    trading_symbol = models.CharField(
+        max_length=200, blank=True, default='',
+        help_text="Full trading symbol (e.g., NIFTY26JANFUT)"
+    )
+
+    expiry_date = models.DateField(
+        null=True, blank=True,
+        help_text="Contract expiry date for F&O positions"
+    )
+
+    lot_size = models.IntegerField(
+        default=1,
+        help_text="Lot size from broker API (e.g., 65 for NIFTY)"
+    )
+
     exchange_segment = models.CharField(
         max_length=50,
         blank=True,

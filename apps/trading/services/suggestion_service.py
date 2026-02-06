@@ -28,7 +28,7 @@ def _json_serial(obj):
     raise TypeError(f"Type {type(obj)} not serializable")
 
 
-def save_futures_suggestions(passed_results, user=None):
+def save_futures_suggestions(passed_results, user=None, source='manual'):
     """
     Save PASS results as TradeSuggestion records with real Breeze margin data.
 
@@ -168,6 +168,7 @@ def save_futures_suggestions(passed_results, user=None):
 
             suggestion = TradeSuggestion.objects.create(
                 user=user,
+                source=source,
                 strategy='icici_futures',
                 suggestion_type='FUTURES',
                 instrument=symbol,

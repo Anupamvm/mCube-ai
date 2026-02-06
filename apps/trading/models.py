@@ -42,8 +42,14 @@ class TradeSuggestion(models.Model):
         ('CANCELLED', 'Cancelled'),           # Cancelled before execution
     ]
 
+    SOURCE_CHOICES = [
+        ('auto', 'Automated'),
+        ('manual', 'Manual'),
+    ]
+
     # Core Information
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='trade_suggestions')
+    source = models.CharField(max_length=10, choices=SOURCE_CHOICES, default='manual', db_index=True)
     strategy = models.CharField(max_length=30, choices=STRATEGY_CHOICES)
     suggestion_type = models.CharField(max_length=10, choices=SUGGESTION_TYPE_CHOICES)
 

@@ -102,7 +102,44 @@ def manual_triggers_refactored(request):
     # Fetch the latest futures suggestions (created within last 7 days for current view)
     # AND 30 days history for aggregation
     preloaded_results = None
+    todays_results = None
     recommendation_history = {}  # symbol -> list of historical recommendations
+
+    def _suggestion_to_contract(suggestion, rec_count=0):
+        """Convert a TradeSuggestion to the contract data format expected by the frontend."""
+        reasoning = suggestion.algorithm_reasoning or {}
+        position_details = suggestion.position_details or {}
+        return {
+            'symbol': suggestion.instrument,
+            'expiry': suggestion.expiry_date.strftime('%d-%b-%Y') if suggestion.expiry_date else '',
+            'expiry_date': suggestion.expiry_date.strftime('%Y-%m-%d') if suggestion.expiry_date else '',
+            'composite_score': reasoning.get('composite_score', 0),
+            'direction': suggestion.direction,
+            'verdict': 'PASS',
+            'technical_verdict': 'PASS',
+            'historical_passed': True,
+            'success': True,
+            'spot_price': float(suggestion.spot_price or 0),
+            'futures_price': reasoning.get('metrics', {}).get('futures_price', 0),
+            'basis': reasoning.get('metrics', {}).get('basis', 0),
+            'basis_pct': reasoning.get('metrics', {}).get('basis_pct', 0),
+            'volume': reasoning.get('metrics', {}).get('volume', 0),
+            'lot_size': position_details.get('lot_size', 0),
+            'explanation': reasoning.get('explanation', []),
+            'execution_log': reasoning.get('execution_log', []),
+            'metrics': reasoning.get('metrics', {}),
+            'scores': reasoning.get('scores', {}),
+            'sr_data': reasoning.get('sr_data'),
+            'breach_risks': reasoning.get('breach_risks'),
+            'historical_verification': reasoning.get('historical_verification'),
+            'suggestion_id': suggestion.id,
+            'recommended_lots': suggestion.recommended_lots,
+            'margin_required': float(suggestion.margin_required or 0),
+            'margin_per_lot': float(suggestion.margin_per_lot or 0),
+            'max_profit': float(suggestion.max_profit or 0),
+            'max_loss': float(suggestion.max_loss or 0),
+            'recommendation_count': rec_count,
+        }
 
     try:
         # Get 30 days of history for aggregation
@@ -136,9 +173,36 @@ def manual_triggers_refactored(request):
                 'expiry_date': suggestion.expiry_date.strftime('%Y-%m-%d') if suggestion.expiry_date else '',
             })
 
-        # Get latest batch for current view (within last 7 days)
+        # ===== TODAY'S AUTOMATED RESULTS =====
+        today_start = timezone.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        todays_auto_suggestions = TradeSuggestion.objects.filter(
+            user=request.user,
+            strategy='icici_futures',
+            source='auto',
+            created_at__gte=today_start
+        ).order_by('-created_at')
+
+        if todays_auto_suggestions.exists():
+            todays_contracts = []
+            for suggestion in todays_auto_suggestions:
+                rec_count = len(recommendation_history.get(suggestion.instrument, []))
+                todays_contracts.append(_suggestion_to_contract(suggestion, rec_count))
+
+            todays_contracts.sort(key=lambda x: x['composite_score'], reverse=True)
+
+            most_recent_auto = todays_auto_suggestions.first()
+            todays_results = {
+                'success': True,
+                'all_contracts': todays_contracts,
+                'total_passed': len(todays_contracts),
+                'batch_time': most_recent_auto.created_at.strftime('%Y-%m-%d %H:%M:%S'),
+            }
+
+        # ===== PREVIOUS SUGGESTIONS (exclude today's auto to avoid duplication) =====
         cutoff_time = timezone.now() - timedelta(days=7)
-        latest_suggestions = all_history.filter(created_at__gte=cutoff_time)
+        latest_suggestions = all_history.filter(created_at__gte=cutoff_time).exclude(
+            source='auto', created_at__gte=today_start
+        )
 
         if latest_suggestions.exists():
             # Get the most recent suggestion's timestamp
@@ -148,49 +212,10 @@ def manual_triggers_refactored(request):
             # Get all suggestions from this batch
             batch_suggestions = latest_suggestions.filter(created_at__gte=batch_start)
 
-            # Convert to the format expected by displayResults
             all_contracts = []
             for suggestion in batch_suggestions:
-                reasoning = suggestion.algorithm_reasoning or {}
-                position_details = suggestion.position_details or {}
-                symbol = suggestion.instrument
-
-                # Get recommendation count for this symbol
-                rec_count = len(recommendation_history.get(symbol, []))
-
-                contract_data = {
-                    'symbol': symbol,
-                    'expiry': suggestion.expiry_date.strftime('%d-%b-%Y') if suggestion.expiry_date else '',
-                    'expiry_date': suggestion.expiry_date.strftime('%Y-%m-%d') if suggestion.expiry_date else '',
-                    'composite_score': reasoning.get('composite_score', 0),
-                    'direction': suggestion.direction,
-                    'verdict': 'PASS',
-                    'technical_verdict': 'PASS',
-                    'historical_passed': True,
-                    'success': True,
-                    'spot_price': float(suggestion.spot_price or 0),
-                    'futures_price': reasoning.get('metrics', {}).get('futures_price', 0),
-                    'basis': reasoning.get('metrics', {}).get('basis', 0),
-                    'basis_pct': reasoning.get('metrics', {}).get('basis_pct', 0),
-                    'volume': reasoning.get('metrics', {}).get('volume', 0),
-                    'lot_size': position_details.get('lot_size', 0),
-                    'explanation': reasoning.get('explanation', []),
-                    'execution_log': reasoning.get('execution_log', []),
-                    'metrics': reasoning.get('metrics', {}),
-                    'scores': reasoning.get('scores', {}),
-                    'sr_data': reasoning.get('sr_data'),
-                    'breach_risks': reasoning.get('breach_risks'),
-                    'historical_verification': reasoning.get('historical_verification'),
-                    'suggestion_id': suggestion.id,
-                    'recommended_lots': suggestion.recommended_lots,
-                    'margin_required': float(suggestion.margin_required or 0),
-                    'margin_per_lot': float(suggestion.margin_per_lot or 0),
-                    'max_profit': float(suggestion.max_profit or 0),
-                    'max_loss': float(suggestion.max_loss or 0),
-                    # New: recommendation count
-                    'recommendation_count': rec_count,
-                }
-                all_contracts.append(contract_data)
+                rec_count = len(recommendation_history.get(suggestion.instrument, []))
+                all_contracts.append(_suggestion_to_contract(suggestion, rec_count))
 
             # Sort by composite score descending
             all_contracts.sort(key=lambda x: x['composite_score'], reverse=True)
@@ -222,6 +247,7 @@ def manual_triggers_refactored(request):
     context = {
         'data_freshness': data_freshness,
         'preloaded_results': json.dumps(preloaded_results, default=json_serial) if preloaded_results else 'null',
+        'todays_results': json.dumps(todays_results, default=json_serial) if todays_results else 'null',
         'recommendation_history': json.dumps(recommendation_history, default=json_serial) if recommendation_history else '{}',
     }
 

@@ -176,6 +176,11 @@
                 <div class="error-message" id="futuresError" style="display: none;"></div>
             </div>
 
+            <!-- Today's Automated Results Section -->
+            <div id="todaysResultsSection" style="margin-top: 20px;">
+                <!-- Will be populated by today's automated analysis results -->
+            </div>
+
             <!-- Previous Results Section (always visible) -->
             <div id="previousResultsSection" style="margin-top: 20px;">
                 <!-- Will be populated by preloaded results or show empty state -->
@@ -515,7 +520,7 @@
 
 <!-- Component Modules -->
 <script src="{% static 'js/trading/components/position-sizing.js' %}"></script>
-<script src="{% static 'js/trading/components/ui-builders.js' %}?v=4"></script>
+<script src="{% static 'js/trading/components/ui-builders.js' %}?v=5"></script>
 
 <!-- Chart Libraries (must load before inline scripts that use InteractiveChart) -->
 <script src="https://unpkg.com/lightweight-charts@4.1.0/dist/lightweight-charts.standalone.production.js"></script>
@@ -738,18 +743,60 @@ const FuturesAlgorithm = {
             </div>
         `;
 
-        // Display contracts using collapsible cards
-        if (allContracts.length > 0) {
-            allContracts.forEach((contract, index) => {
-                html += this.buildContractCard(contract, index, histValidationEnabled);
+        // Separate PASS and non-PASS contracts
+        const passContracts = allContracts.filter(c => c.verdict === 'PASS');
+        const failContracts = allContracts.filter(c => c.verdict !== 'PASS');
+
+        // Display PASS contracts as rich cards
+        if (passContracts.length > 0) {
+            passContracts.forEach((contract, index) => {
+                const recCount = contract.recommendation_count || (RECOMMENDATION_HISTORY[contract.symbol] || []).length;
+                const recBadge = buildRecommendationBadge(contract.symbol, recCount);
+                html += buildUnifiedContractCard(contract, `fresh-${index}`, { recBadge });
             });
-        } else {
+        } else if (allContracts.length === 0) {
             html += `
                 <div style="text-align: center; padding: 40px; background: #f9fafb; border-radius: 12px;">
                     <div style="font-size: 3rem; margin-bottom: 15px;">📭</div>
                     <div style="color: #6b7280; font-size: 1.125rem;">No contracts analyzed</div>
                 </div>
             `;
+        }
+
+        // Display FAIL/ERROR contracts in a collapsed group
+        if (failContracts.length > 0) {
+            let failRowsHtml = '<div style="display: flex; flex-direction: column; gap: 6px;">';
+            failContracts.forEach(contract => {
+                const verdictStyles = {
+                    'FAIL': { color: '#ef4444', bg: '#fee2e2', icon: '❌' },
+                    'HIST_FAIL': { color: '#f59e0b', bg: '#fef3c7', icon: '⚠️' },
+                    'HARD REJECT': { color: '#7c3aed', bg: '#ede9fe', icon: '🚫' },
+                    'BLOCKED': { color: '#dc2626', bg: '#fef2f2', icon: '🛑' },
+                    'ERROR': { color: '#6b7280', bg: '#f3f4f6', icon: '⚪' }
+                };
+                const vs = verdictStyles[contract.verdict] || verdictStyles['ERROR'];
+                const dirColor = contract.direction === 'LONG' ? '#10b981' : '#ef4444';
+                failRowsHtml += `
+                    <div style="display: flex; align-items: center; gap: 12px; padding: 8px 12px; background: ${vs.bg}; border-radius: 6px; font-size: 0.85rem;">
+                        <span>${vs.icon}</span>
+                        <span style="font-weight: 600; color: #1f2937; min-width: 100px;">${contract.symbol}</span>
+                        <span style="color: #6b7280;">${contract.expiry || 'N/A'}</span>
+                        <span style="color: ${dirColor}; font-weight: 600;">${contract.direction}</span>
+                        <span style="color: ${vs.color}; font-weight: 600;">${contract.composite_score}/100</span>
+                        <span style="color: ${vs.color}; font-size: 0.75rem;">${contract.reason || contract.reject_reason || ''}</span>
+                    </div>
+                `;
+            });
+            failRowsHtml += '</div>';
+
+            html += UIBuilders.buildCollapsibleSection({
+                id: 'failed-contracts-group',
+                title: `Failed Contracts (${failContracts.length})`,
+                icon: '❌',
+                summary: `${failContracts.length} contracts did not pass screening`,
+                expanded: false,
+                content: failRowsHtml
+            });
         }
 
         html += '</div>';
@@ -759,193 +806,7 @@ const FuturesAlgorithm = {
         this.analyzedContracts = allContracts;
     },
 
-    // Build a collapsible contract card with sections
-    buildContractCard(contract, index, histValidationEnabled) {
-        // Determine styling based on verdict
-        const verdictStyles = {
-            'PASS': { color: '#10b981', bg: '#d1fae5', icon: '✅', border: '#10b981' },
-            'FAIL': { color: '#ef4444', bg: '#fee2e2', icon: '❌', border: '#e5e7eb' },
-            'HIST_FAIL': { color: '#f59e0b', bg: '#fef3c7', icon: '⚠️', border: '#f59e0b' },
-            'HARD REJECT': { color: '#7c3aed', bg: '#ede9fe', icon: '🚫', border: '#7c3aed' },
-            'BLOCKED': { color: '#dc2626', bg: '#fef2f2', icon: '🛑', border: '#dc2626' },
-            'ERROR': { color: '#6b7280', bg: '#f3f4f6', icon: '⚪', border: '#e5e7eb' }
-        };
-        const style = verdictStyles[contract.verdict] || verdictStyles['ERROR'];
-        const directionColor = contract.direction === 'LONG' ? '#10b981' : '#ef4444';
-
-        // Build score breakdown summary
-        const scores = contract.scores || {};
-        const scoreItems = [];
-        if (scores.oi) scoreItems.push(`OI:${scores.oi}`);
-        if (scores.technical) scoreItems.push(`Tech:${scores.technical}`);
-        if (scores.dma) scoreItems.push(`DMA:${scores.dma}`);
-        if (scores.sector) scoreItems.push(`Sector:${scores.sector}`);
-        const scoreSummary = scoreItems.length > 0 ? scoreItems.join(', ') : 'N/A';
-
-        // Historical badge
-        const histBadge = histValidationEnabled && contract.historical_passed !== undefined
-            ? `<span style="background: ${contract.historical_passed ? '#d1fae5' : '#fee2e2'}; color: ${contract.historical_passed ? '#10b981' : '#ef4444'}; padding: 2px 8px; border-radius: 12px; font-size: 0.75rem; margin-left: 5px;">
-                ${contract.historical_passed ? '📈 Hist OK' : '📉 Hist Fail'}
-               </span>`
-            : '';
-
-        // Build collapsible sections for PASS contracts
-        let sectionsHtml = '';
-        if (contract.verdict === 'PASS') {
-            // Score Breakdown Section
-            sectionsHtml += UIBuilders.buildCollapsibleSection({
-                id: `score-${index}`,
-                title: 'Score Breakdown',
-                icon: '🎯',
-                summary: `Score: ${contract.composite_score}/100 (${scoreSummary})`,
-                expanded: false,
-                content: this.buildScoreBreakdownContent(contract)
-            });
-
-            // Enhanced Analysis Section (12-Factor for Futures)
-            if (contract.enhanced_analysis) {
-                const ea = contract.enhanced_analysis;
-                sectionsHtml += UIBuilders.buildCollapsibleSection({
-                    id: `enhanced-${index}`,
-                    title: 'Enhanced Multi-Factor Analysis',
-                    icon: '🧠',
-                    summary: `Score: ${ea.composite_score || 0}/100 | ${ea.recommendation || 'N/A'}`,
-                    expanded: false,
-                    content: UIBuilders.buildEnhancedScoreCard(ea, 'FUTURES')
-                });
-            }
-
-            // Technical Indicators Section (if available)
-            if (contract.metrics && (contract.metrics.sma_20 || contract.metrics.support_1)) {
-                sectionsHtml += UIBuilders.buildCollapsibleSection({
-                    id: `tech-${index}`,
-                    title: 'Technical Indicators',
-                    icon: '📈',
-                    summary: `SMA20: ₹${contract.metrics.sma_20 ? contract.metrics.sma_20.toFixed(0) : 'N/A'}`,
-                    expanded: false,
-                    content: this.buildTechnicalContent(contract)
-                });
-            }
-
-            // Execution Log Section
-            if (contract.execution_log && contract.execution_log.length > 0) {
-                sectionsHtml += UIBuilders.buildCollapsibleSection({
-                    id: `log-${index}`,
-                    title: 'Execution Log',
-                    icon: '📋',
-                    summary: `${contract.execution_log.length} steps completed`,
-                    expanded: false,
-                    content: this.buildExecutionLogContent(contract.execution_log)
-                });
-            }
-        }
-
-        // Build action button for PASS contracts
-        let actionHtml = '';
-        if (contract.verdict === 'PASS') {
-            actionHtml = `
-                <div style="padding: 15px 20px; border-top: 1px solid #e5e7eb;">
-                    <button onclick="FuturesAlgorithm.showContractDetails(${index})"
-                            style="width: 100%; padding: 12px; background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%); color: white; border: none; border-radius: 8px; font-weight: 600; cursor: pointer; font-size: 1rem;">
-                        📊 View Full Details & Place Order
-                    </button>
-                </div>
-            `;
-        } else if (contract.verdict === 'HIST_FAIL') {
-            actionHtml = `
-                <div style="padding: 15px 20px; border-top: 1px solid #e5e7eb;">
-                    <div style="background: #fef3c7; border: 1px solid #f59e0b; border-radius: 8px; padding: 12px;">
-                        <strong style="color: #92400e;">⚠️ Technical analysis passed but historical verification failed.</strong>
-                        <p style="color: #78350f; margin: 5px 0 0 0; font-size: 0.875rem;">
-                            Risk checks detected potential issues in price history. Review carefully before trading.
-                        </p>
-                    </div>
-                </div>
-            `;
-        } else if (contract.verdict === 'HARD REJECT') {
-            // Show hard reject reason from enhanced analyzer
-            const rejectReason = contract.reject_reason || contract.reason || 'Failed hard reject filter';
-            actionHtml = `
-                <div style="padding: 15px 20px; border-top: 1px solid #e5e7eb;">
-                    <div style="background: #ede9fe; border: 1px solid #7c3aed; border-radius: 8px; padding: 12px;">
-                        <strong style="color: #5b21b6;">🚫 Hard Reject Filter Failed</strong>
-                        <p style="color: #6b21a8; margin: 5px 0 0 0; font-size: 0.875rem;">
-                            ${rejectReason}
-                        </p>
-                        <p style="color: #7c3aed; margin: 8px 0 0 0; font-size: 0.75rem; font-style: italic;">
-                            This stock failed one of the mandatory quality filters (MWPL, Volatility, Piotroski, Promoter Pledge, FII Change, News, or Analyst Upside).
-                        </p>
-                    </div>
-                </div>
-            `;
-        } else if (contract.verdict === 'BLOCKED' || (contract.verdict && contract.verdict.includes('BLOCKED'))) {
-            // Show blocked reason (news, analyst, etc.)
-            const blockReason = contract.reason || 'Trade blocked by verification checks';
-            actionHtml = `
-                <div style="padding: 15px 20px; border-top: 1px solid #e5e7eb;">
-                    <div style="background: #fef2f2; border: 1px solid #dc2626; border-radius: 8px; padding: 12px;">
-                        <strong style="color: #991b1b;">🛑 Trade Blocked</strong>
-                        <p style="color: #b91c1c; margin: 5px 0 0 0; font-size: 0.875rem;">
-                            ${blockReason}
-                        </p>
-                    </div>
-                </div>
-            `;
-        }
-
-        return `
-            <div class="collapsible-card ${contract.verdict === 'PASS' ? 'verdict-pass' : contract.verdict === 'HIST_FAIL' ? 'verdict-warning' : 'verdict-fail'}"
-                 data-card="contract-${index}" style="border: 2px solid ${style.border};">
-                <!-- Card Header (always visible) -->
-                <div class="card-header" ${contract.verdict === 'PASS' ? `onclick="UIBuilders.toggleCard('contract-${index}')"` : ''}>
-                    <div class="header-main">
-                        <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
-                            <h3 style="margin: 0; font-size: 1.5rem; color: #1f2937;">${contract.symbol}</h3>
-                            <span style="background: ${style.bg}; color: ${style.color}; padding: 4px 12px; border-radius: 20px; font-size: 0.875rem; font-weight: 600;">
-                                ${style.icon} ${contract.verdict === 'HIST_FAIL' ? 'HIST FAIL' : contract.verdict}
-                            </span>
-                            <span style="color: ${directionColor}; font-weight: 600;">${contract.direction}</span>
-                            ${histBadge}
-                        </div>
-                        <div style="color: #6b7280; font-size: 0.875rem; margin-top: 5px;">Expiry: ${contract.expiry}</div>
-
-                        <!-- Quick Stats Row -->
-                        <div class="quick-stats-row">
-                            <div class="quick-stat">
-                                <div class="stat-label">Spot</div>
-                                <div class="stat-value">₹${contract.spot_price ? contract.spot_price.toFixed(2) : 'N/A'}</div>
-                            </div>
-                            <div class="quick-stat">
-                                <div class="stat-label">Futures</div>
-                                <div class="stat-value">₹${contract.futures_price ? contract.futures_price.toFixed(2) : 'N/A'}</div>
-                            </div>
-                            <div class="quick-stat">
-                                <div class="stat-label">Lot Size</div>
-                                <div class="stat-value">${contract.lot_size}</div>
-                            </div>
-                            <div class="quick-stat">
-                                <div class="stat-label">Volume</div>
-                                <div class="stat-value">${(contract.volume || 0).toLocaleString()}</div>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="header-score">
-                        <div style="font-size: 2rem; font-weight: 700; color: ${style.color};">${contract.composite_score}</div>
-                        <div style="color: #6b7280; font-size: 0.875rem;">Score</div>
-                        ${contract.verdict === 'PASS' ? '<div style="font-size: 0.7rem; color: #9ca3af; margin-top: 5px;">Click to expand</div>' : ''}
-                    </div>
-                </div>
-
-                <!-- Collapsible Content (for PASS, HIST_FAIL, HARD REJECT, BLOCKED) -->
-                ${contract.verdict === 'PASS' || contract.verdict === 'HIST_FAIL' || contract.verdict === 'HARD REJECT' || (contract.verdict && contract.verdict.includes('BLOCKED')) ? `
-                    <div class="card-content" style="${contract.verdict === 'HARD REJECT' || (contract.verdict && contract.verdict.includes('BLOCKED')) ? '' : 'display: none;'}">
-                        ${sectionsHtml}
-                        ${actionHtml}
-                    </div>
-                ` : ''}
-            </div>
-        `;
-    },
+    // buildContractCard removed - replaced by standalone buildUnifiedContractCard()
 
     // Build score breakdown content for collapsible section
     buildScoreBreakdownContent(contract) {
@@ -1405,7 +1266,7 @@ const NiftyStrangle = {
                     title: 'Enhanced Multi-Factor Analysis',
                     summary: `Score: ${eaScore}/100 | ${ea.entry_bias || 'SYMMETRIC'}`,
                     icon: '🧠',
-                    expanded: ea.hard_reject || eaScore < 50,  // Expand if issues
+                    expanded: false,
                     content: UIBuilders.buildEnhancedScoreCard(ea, 'STRANGLE'),
                     statusBadge: `status-${eaStatus}`,
                     statusText: eaStatusText
@@ -4521,7 +4382,7 @@ const TradeVerification = {
                 summary: eaSummary,
                 statusBadge: `status-${eaStatus}`,
                 statusText: eaStatusText,
-                expanded: ea.hard_reject || eaScore < 50,  // Expand if issues
+                expanded: false,
                 content: UIBuilders.buildEnhancedScoreCard(ea, 'FUTURES')
             });
         }
@@ -4538,7 +4399,7 @@ const TradeVerification = {
                 title: 'Position Sizing & Risk',
                 icon: '💰',
                 summary: positionSummary,
-                expanded: true, // Position sizing is important, keep expanded
+                expanded: false,
                 content: this.buildPositionSizingContent(positionSizing, analysis)
             });
         }
@@ -6939,6 +6800,9 @@ function hideResults() {
 // Preloaded results from server (latest algorithm run)
 const PRELOADED_FUTURES_RESULTS = {{ preloaded_results|safe }};
 
+// Today's automated results from daily Celery task
+const TODAYS_AUTOMATED_RESULTS = {{ todays_results|safe }};
+
 // Recommendation history for last 30 days (symbol -> array of recommendations)
 const RECOMMENDATION_HISTORY = {{ recommendation_history|safe }};
 
@@ -7116,6 +6980,106 @@ function buildRecommendationBadge(symbol, count) {
     `;
 }
 
+// Toggle visibility of previous results cards
+// Toggle today's automated results visibility
+function toggleTodaysResults() {
+    const container = document.getElementById('todaysResultsCards');
+    const chevron = document.getElementById('todaysResultsChevron');
+    if (!container) return;
+    const isHidden = container.style.display === 'none';
+    container.style.display = isHidden ? 'block' : 'none';
+    if (chevron) chevron.style.transform = isHidden ? 'rotate(90deg)' : 'rotate(0deg)';
+}
+
+// Display today's automated results in the dedicated section
+function displayTodaysResults(results) {
+    const sectionDiv = document.getElementById('todaysResultsSection');
+
+    if (!results || !results.success || !results.all_contracts || results.all_contracts.length === 0) {
+        // Show empty state
+        sectionDiv.innerHTML = `
+            <div style="background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%); border-radius: 12px; padding: 20px; border: 1px dashed #93c5fd;">
+                <div style="display: flex; align-items: center; gap: 15px;">
+                    <span style="font-size: 2rem;">🤖</span>
+                    <div>
+                        <h3 style="margin: 0 0 5px 0; color: #1e40af; font-weight: 600;">Today's Automated Results</h3>
+                        <p style="margin: 0; color: #3b82f6; font-size: 0.875rem;">
+                            No automated analysis ran today. Daily task runs at 8:30 AM on weekdays.
+                        </p>
+                    </div>
+                </div>
+            </div>
+        `;
+        return;
+    }
+
+    const allContracts = results.all_contracts || [];
+    const totalPassed = results.total_passed || allContracts.length;
+    const batchTime = results.batch_time || 'Unknown';
+
+    // Build cards HTML
+    let cardsHtml = '';
+    allContracts.forEach((contract, index) => {
+        const recCount = contract.recommendation_count || (RECOMMENDATION_HISTORY[contract.symbol] || []).length;
+        const recBadge = buildRecommendationBadge(contract.symbol, recCount);
+        cardsHtml += buildUnifiedContractCard(contract, `today-${index}`, { recBadge });
+    });
+
+    // Today's Results Banner (blue/cyan gradient) - clickable to toggle cards
+    let html = `
+        <div style="background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%); border-radius: 12px; padding: 20px; margin-bottom: 20px; border: 2px solid #3b82f6; cursor: pointer;"
+             onclick="toggleTodaysResults()">
+            <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 15px;">
+                <div>
+                    <h2 style="color: #1e40af; margin: 0 0 8px 0; display: flex; align-items: center; gap: 10px; font-size: 1.25rem;">
+                        <span style="font-size: 1.5rem;">🤖</span>
+                        Today's Automated Results
+                        <span id="todaysResultsChevron" style="font-size: 1rem; transition: transform 0.2s; transform: rotate(90deg);">&#9654;</span>
+                    </h2>
+                    <div style="color: #2563eb; font-size: 0.875rem;">
+                        <span style="font-weight: 600;">${totalPassed} contracts passed</span> automated screening
+                        <span style="margin-left: 10px; padding: 2px 8px; background: #bfdbfe; border-radius: 4px;">
+                            🕐 ${batchTime}
+                        </span>
+                    </div>
+                </div>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <span style="background: #dbeafe; color: #1e40af; padding: 4px 12px; border-radius: 20px; font-size: 0.8rem; font-weight: 600;">
+                        Daily 8:30 AM
+                    </span>
+                </div>
+            </div>
+        </div>
+    `;
+
+    // Cards container - expanded by default
+    html += `<div id="todaysResultsCards" style="display: block;">${cardsHtml}</div>`;
+
+    sectionDiv.innerHTML = html;
+
+    // Store contracts for reference (merge with any existing)
+    if (!FuturesAlgorithm.analyzedContracts || FuturesAlgorithm.analyzedContracts.length === 0) {
+        FuturesAlgorithm.analyzedContracts = allContracts;
+    } else {
+        // Add today's contracts that aren't already in the list
+        const existingSymbols = new Set(FuturesAlgorithm.analyzedContracts.map(c => c.symbol));
+        allContracts.forEach(c => {
+            if (!existingSymbols.has(c.symbol)) {
+                FuturesAlgorithm.analyzedContracts.push(c);
+            }
+        });
+    }
+}
+
+function togglePreviousResults() {
+    const container = document.getElementById('previousResultsCards');
+    const chevron = document.getElementById('previousResultsChevron');
+    if (!container) return;
+    const isHidden = container.style.display === 'none';
+    container.style.display = isHidden ? 'block' : 'none';
+    if (chevron) chevron.style.transform = isHidden ? 'rotate(90deg)' : 'rotate(0deg)';
+}
+
 // Display preloaded results in the dedicated previous results section
 function displayPreloadedResults(results) {
     const sectionDiv = document.getElementById('previousResultsSection');
@@ -7145,14 +7109,24 @@ function displayPreloadedResults(results) {
     // Build HTML with "Previous Results" header
     let html = '';
 
-    // Previous Results Banner (yellow/amber styling to distinguish from fresh results)
+    // Build cards HTML first (for embedding inside collapsible container)
+    let cardsHtml = '';
+    allContracts.forEach((contract, index) => {
+        const recCount = contract.recommendation_count || (RECOMMENDATION_HISTORY[contract.symbol] || []).length;
+        const recBadge = buildRecommendationBadge(contract.symbol, recCount);
+        cardsHtml += buildUnifiedContractCard(contract, `prev-${index}`, { recBadge });
+    });
+
+    // Previous Results Banner (yellow/amber styling) - clickable to toggle cards
     html += `
-        <div style="background: linear-gradient(135deg, #fefce8 0%, #fef9c3 100%); border-radius: 12px; padding: 20px; margin-bottom: 20px; border: 2px solid #eab308;">
+        <div style="background: linear-gradient(135deg, #fefce8 0%, #fef9c3 100%); border-radius: 12px; padding: 20px; margin-bottom: 20px; border: 2px solid #eab308; cursor: pointer;"
+             onclick="togglePreviousResults()">
             <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 15px;">
                 <div>
                     <h2 style="color: #854d0e; margin: 0 0 8px 0; display: flex; align-items: center; gap: 10px; font-size: 1.25rem;">
                         <span style="font-size: 1.5rem;">📋</span>
                         Previous Shortlisted Suggestions
+                        <span id="previousResultsChevron" style="font-size: 1rem; transition: transform 0.2s;">&#9654;</span>
                     </h2>
                     <div style="color: #a16207; font-size: 0.875rem;">
                         <span style="font-weight: 600;">${totalPassed} contracts passed</span> algorithm screening
@@ -7161,7 +7135,7 @@ function displayPreloadedResults(results) {
                         </span>
                     </div>
                 </div>
-                <button onclick="FuturesAlgorithm.run()"
+                <button onclick="event.stopPropagation(); FuturesAlgorithm.run()"
                         style="background: #3b82f6; color: white; border: none; padding: 10px 20px; border-radius: 8px; cursor: pointer; font-weight: 600; display: flex; align-items: center; gap: 8px; font-size: 0.875rem;">
                     🔄 Run Fresh Analysis
                 </button>
@@ -7169,14 +7143,8 @@ function displayPreloadedResults(results) {
         </div>
     `;
 
-    // Display contracts using custom card with recommendation badge
-    allContracts.forEach((contract, index) => {
-        const recCount = contract.recommendation_count || (RECOMMENDATION_HISTORY[contract.symbol] || []).length;
-        const recBadge = buildRecommendationBadge(contract.symbol, recCount);
-
-        // Build card with recommendation badge injected
-        html += buildPreloadedContractCard(contract, `prev-${index}`, recBadge);
-    });
+    // Cards container - collapsed by default
+    html += `<div id="previousResultsCards" style="display: none;">${cardsHtml}</div>`;
 
     sectionDiv.innerHTML = html;
 
@@ -7184,12 +7152,10 @@ function displayPreloadedResults(results) {
     FuturesAlgorithm.analyzedContracts = allContracts;
 }
 
-// Build a contract card specifically for preloaded results (with recommendation badge)
-function buildPreloadedContractCard(contract, index, recBadge) {
-    const verdictStyles = {
-        'PASS': { color: '#10b981', bg: '#d1fae5', icon: '✅', border: '#10b981' },
-    };
-    const style = verdictStyles['PASS'];
+// Unified contract card builder for PASS contracts (used by both fresh and preloaded results)
+function buildUnifiedContractCard(contract, index, options = {}) {
+    const recBadge = options.recBadge || '';
+    const style = { color: '#10b981', bg: '#d1fae5', icon: '✅', border: '#10b981' };
     const directionColor = contract.direction === 'LONG' ? '#10b981' : '#ef4444';
     const directionIcon = contract.direction === 'LONG' ? '📈' : '📉';
 
@@ -7252,11 +7218,19 @@ function buildPreloadedContractCard(contract, index, recBadge) {
 // Initialize preloaded results on page load
 document.addEventListener('DOMContentLoaded', function() {
     console.log('[Futures] Checking for preloaded results...');
+    console.log('[Futures] TODAYS_AUTOMATED_RESULTS:', TODAYS_AUTOMATED_RESULTS);
     console.log('[Futures] PRELOADED_FUTURES_RESULTS:', PRELOADED_FUTURES_RESULTS);
 
     // Small delay to ensure all modules (especially FuturesAlgorithm) are loaded
     setTimeout(function() {
-        // Always call displayPreloadedResults - it will show empty state if no results
+        // Display today's automated results first (expanded by default)
+        displayTodaysResults(TODAYS_AUTOMATED_RESULTS);
+
+        if (TODAYS_AUTOMATED_RESULTS && TODAYS_AUTOMATED_RESULTS.all_contracts) {
+            console.log('[Futures] Loaded', TODAYS_AUTOMATED_RESULTS.all_contracts.length, "today's automated results from", TODAYS_AUTOMATED_RESULTS.batch_time);
+        }
+
+        // Then display previous suggestions (collapsed by default)
         displayPreloadedResults(PRELOADED_FUTURES_RESULTS);
 
         if (PRELOADED_FUTURES_RESULTS && PRELOADED_FUTURES_RESULTS.all_contracts) {

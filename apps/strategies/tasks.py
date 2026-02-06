@@ -1302,56 +1302,286 @@ def refresh_breeze_session(self):
 
 
 # =============================================================================
-# FUTURES ALGORITHM SCHEDULED TASK
+# FUTURES ALGORITHM SCHEDULED TASK (PARALLELIZED)
 # =============================================================================
+
+@shared_task(name='apps.strategies.tasks.analyze_futures_batch', bind=True)
+def analyze_futures_batch(self, contract_ids, min_score=65):
+    """
+    Analyze a batch of futures contracts (subtask for parallel execution).
+
+    Args:
+        contract_ids: List of ContractData IDs to analyze
+        min_score: Minimum score for qualification
+
+    Returns:
+        dict: {
+            'passed_summary': list of {symbol, expiry, score, direction, recommendation},
+            'passed_full': list of full result dicts for saving,
+            'errors': list of {symbol, error},
+            'batch_size': int
+        }
+    """
+    from apps.data.models import ContractData
+    from apps.trading.futures_analyzer import enhanced_futures_analysis
+
+    passed_summary = []
+    passed_full = []
+    errors = []
+
+    contracts = ContractData.objects.filter(id__in=contract_ids)
+
+    for contract in contracts:
+        try:
+            analysis_result = enhanced_futures_analysis(
+                stock_symbol=contract.symbol,
+                expiry_date=contract.expiry,
+                contract=contract
+            )
+
+            composite_score = analysis_result.get('composite_score', 0)
+            verdict = analysis_result.get('verdict', 'FAIL')
+            direction = analysis_result.get('direction', 'NEUTRAL')
+            hard_reject = analysis_result.get('hard_reject', False)
+            metrics = analysis_result.get('metrics', {})
+
+            if verdict == 'PASS':
+                summary = {
+                    'symbol': contract.symbol,
+                    'expiry': str(contract.expiry),
+                    'score': composite_score,
+                    'verdict': verdict,
+                    'direction': direction,
+                    'hard_reject': hard_reject,
+                    'reject_reason': analysis_result.get('reject_reason'),
+                    'recommendation': analysis_result.get('recommendation', 'N/A'),
+                    'qualified': composite_score >= min_score and not hard_reject
+                }
+                passed_summary.append(summary)
+
+                # Build full result dict for saving
+                execution_log = analysis_result.get('execution_log', [])
+                explanation_parts = []
+                for log in execution_log:
+                    if log['action'] == 'Open Interest Analysis' and log['status'] != 'SKIP':
+                        explanation_parts.append(f"OI: {log['message']}")
+                    elif log['action'] == 'Sector Strength' and log['status'] != 'SKIP':
+                        explanation_parts.append(f"Sector: {log['message']}")
+                    elif log['action'] == 'Multi-Factor Technical Analysis' and log['status'] != 'SKIP':
+                        explanation_parts.append(f"Technical: {log['message']}")
+                    elif log['action'] == 'DMA Analysis' and log['status'] != 'SKIP':
+                        explanation_parts.append(f"DMA: {log['message']}")
+                    elif log['action'] == 'Composite Scoring & Verdict':
+                        explanation_parts.append(f"Final: {log['message']}")
+
+                passed_full.append({
+                    'symbol': contract.symbol,
+                    'expiry_date': str(contract.expiry),
+                    'direction': direction,
+                    'spot_price': metrics.get('spot_price', 0),
+                    'futures_price': metrics.get('futures_price', 0),
+                    'composite_score': composite_score,
+                    'scores': analysis_result.get('scores', {}),
+                    'metrics': metrics,
+                    'execution_log': execution_log,
+                    'explanation': explanation_parts,
+                    'sr_data': metrics.get('sr_details', None),
+                    'breach_risks': analysis_result.get('breach_risks', None),
+                })
+
+        except Exception as e:
+            logger.error(f"Error analyzing {contract.symbol}: {e}")
+            errors.append({'symbol': contract.symbol, 'error': str(e)})
+
+    return {
+        'passed_summary': passed_summary,
+        'passed_full': passed_full,
+        'errors': errors,
+        'batch_size': len(contract_ids)
+    }
+
+
+@shared_task(name='apps.strategies.tasks.aggregate_futures_results', bind=True)
+def aggregate_futures_results(self, batch_results, min_score=65, orchestrator_task_id=None):
+    """
+    Aggregate results from parallel futures analysis batches (chord callback).
+
+    Args:
+        batch_results: List of results from analyze_futures_batch subtasks
+        min_score: Minimum score for qualification (for notification)
+        orchestrator_task_id: Original task ID for logging
+
+    Returns:
+        dict: Final aggregated result
+    """
+    from apps.trading.services.suggestion_service import save_futures_suggestions
+
+    task_logger = TaskLogger(
+        task_name='aggregate_futures_results',
+        task_category='strategy',
+        task_id=self.request.id
+    )
+
+    task_logger.start("Aggregating batch results", context={
+        'batch_count': len(batch_results),
+        'orchestrator_task_id': orchestrator_task_id
+    })
+
+    # Merge all batch results
+    all_passed_summary = []
+    all_passed_full = []
+    all_errors = []
+    total_analyzed = 0
+
+    for batch in batch_results:
+        if batch:  # Handle potential None from failed subtasks
+            all_passed_summary.extend(batch.get('passed_summary', []))
+            all_passed_full.extend(batch.get('passed_full', []))
+            all_errors.extend(batch.get('errors', []))
+            total_analyzed += batch.get('batch_size', 0)
+
+    task_logger.info('merged', f"Merged {len(batch_results)} batches", context={
+        'total_analyzed': total_analyzed,
+        'passed': len(all_passed_summary),
+        'errors': len(all_errors)
+    })
+
+    # Save all PASS candidates to database
+    saved_count = 0
+    if all_passed_full:
+        task_logger.step('save_suggestions', f"Saving {len(all_passed_full)} PASS suggestions")
+        try:
+            # Convert expiry_date strings back to date objects
+            for result in all_passed_full:
+                if isinstance(result.get('expiry_date'), str):
+                    from datetime import datetime as dt
+                    result['expiry_date'] = dt.strptime(result['expiry_date'], '%Y-%m-%d').date()
+
+            suggestion_ids = save_futures_suggestions(all_passed_full, source='auto')
+            saved_count = len([s for s in suggestion_ids if s])
+            task_logger.info('saved', f"Saved {saved_count} suggestions to database")
+        except Exception as e:
+            logger.error(f"Error saving suggestions: {e}")
+            task_logger.warning('save_failed', f"Failed to save suggestions: {e}")
+
+    # Get qualified candidates (score >= min_score, not hard rejected)
+    qualified_candidates = [s for s in all_passed_summary if s.get('qualified', False)]
+    qualified_candidates.sort(key=lambda x: x['score'], reverse=True)
+
+    # Send single Telegram notification
+    task_logger.step('notify', "Sending Telegram notification")
+    today = date.today()
+
+    if qualified_candidates:
+        message_lines = [
+            "🎯 FUTURES ALGORITHM RESULTS\n",
+            f"📅 {today.strftime('%d %b %Y')}",
+            f"📊 Analyzed: {total_analyzed} | Passed: {len(all_passed_summary)} | Qualified: {len(qualified_candidates)}\n",
+            "TOP CANDIDATES:"
+        ]
+
+        for i, candidate in enumerate(qualified_candidates[:5], 1):
+            message_lines.append(
+                f"\n{i}. {candidate['symbol']} ({candidate['direction']})"
+                f"\n   Score: {candidate['score']}/100 | {candidate['recommendation']}"
+            )
+
+        if len(qualified_candidates) > 5:
+            message_lines.append(f"\n\n... and {len(qualified_candidates) - 5} more")
+
+        message_lines.append("\n\n✅ Ready for manual verification")
+
+        send_telegram_notification(
+            '\n'.join(message_lines),
+            notification_type='SUCCESS'
+        )
+    else:
+        send_telegram_notification(
+            f"📊 FUTURES ALGORITHM\n\n"
+            f"📅 {today.strftime('%d %b %Y')}\n"
+            f"Analyzed: {total_analyzed} | Passed: {len(all_passed_summary)} | Errors: {len(all_errors)}\n\n"
+            f"❌ No qualified candidates (score >= {min_score})",
+            notification_type='INFO'
+        )
+
+    task_logger.success("Aggregation completed", context={
+        'total_analyzed': total_analyzed,
+        'passed': len(all_passed_summary),
+        'qualified': len(qualified_candidates),
+        'saved': saved_count
+    })
+
+    return {
+        'success': True,
+        'candidates_found': total_analyzed,
+        'passed': len(all_passed_summary),
+        'qualified': len(qualified_candidates),
+        'saved': saved_count,
+        'errors': len(all_errors),
+        'qualified_candidates': qualified_candidates[:5]
+    }
+
 
 @shared_task(name='apps.strategies.tasks.execute_futures_algorithm', bind=True)
 @task_enabled_guard('execute-futures-algorithm')
-def execute_futures_algorithm(self, this_month_volume=1000, next_month_volume=800, min_score=65):
+def execute_futures_algorithm(self, this_month_volume=1000, next_month_volume=800, min_score=65, top_contracts=50, batch_size=5):
     """
-    Execute Futures Algorithm - Scheduled Daily @ 8:30 AM
+    Execute Futures Algorithm - Scheduled Daily @ 8:30 AM (Parallelized)
 
-    This task runs the enhanced 12-component futures analysis on all
-    liquid futures contracts and identifies trading opportunities.
+    This task orchestrates parallel futures analysis using Celery chord.
+    Contracts are split into batches and analyzed concurrently.
 
     Workflow:
     1. Check if trading day is valid (not holiday, market is open)
-    2. Get active ICICI account for futures trading
-    3. Screen futures contracts using volume filters
-    4. Run enhanced analysis (12-component scoring + hard reject filters)
-    5. Identify qualified candidates (score >= min_score)
-    6. Send Telegram notification with results
-    7. Optionally auto-execute top candidates (if enabled)
+    2. Load task_params from CeleryTaskState (if configured)
+    3. Get active ICICI account for futures trading
+    4. Screen futures contracts using volume filters
+    5. Split contracts into batches and dispatch parallel subtasks
+    6. Chord callback aggregates results, saves to DB, sends notification
 
     Args:
         this_month_volume: Min volume for current month contracts (default: 1000)
         next_month_volume: Min volume for next month contracts (default: 800)
         min_score: Minimum composite score to qualify (default: 65)
+        top_contracts: Number of top contracts to analyze (default: 50)
+        batch_size: Contracts per parallel task (default: 5)
 
     Returns:
-        dict: {
-            'success': bool,
-            'candidates_found': int,
-            'qualified': int,
-            'executed': int,
-            'results': list
-        }
+        dict: Chord dispatch info (results come via callback)
     """
+    from celery import chord
+    from apps.core.models import CeleryTaskState
+
     task_logger = TaskLogger(
         task_name='execute_futures_algorithm',
         task_category='strategy',
         task_id=self.request.id
     )
 
-    task_logger.start("Starting Futures Algorithm execution", context={
+    # Load task_params from CeleryTaskState if available
+    try:
+        task_state = CeleryTaskState.objects.filter(task_key='execute-futures-algorithm').first()
+        if task_state and task_state.task_params:
+            params = task_state.task_params
+            top_contracts = params.get('top_contracts', top_contracts)
+            batch_size = params.get('batch_size', batch_size)
+            this_month_volume = params.get('this_month_volume', this_month_volume)
+            next_month_volume = params.get('next_month_volume', next_month_volume)
+            min_score = params.get('min_score', min_score)
+            task_logger.info('params_loaded', "Loaded task_params from CeleryTaskState", context=params)
+    except Exception as e:
+        logger.warning(f"Could not load task_params: {e}")
+
+    task_logger.start("Starting Futures Algorithm (parallel)", context={
         'this_month_volume': this_month_volume,
         'next_month_volume': next_month_volume,
-        'min_score': min_score
+        'min_score': min_score,
+        'top_contracts': top_contracts,
+        'batch_size': batch_size
     })
 
     try:
         from apps.data.models import ContractData
-        from apps.trading.futures_analyzer import enhanced_futures_analysis
         from apps.core.models import NseFlag
 
         # ===== STEP 1: Check trading day validity =====
@@ -1388,16 +1618,19 @@ def execute_futures_algorithm(self, this_month_volume=1000, next_month_volume=80
         task_logger.info('account_found', f"Using account: {icici_account.account_name}")
 
         # ===== STEP 3: Get filtered contracts =====
-        task_logger.step('get_contracts', "Screening top 50 futures contracts by volume")
+        task_logger.step('get_contracts', f"Screening top {top_contracts} futures contracts by volume")
 
-        # Use model manager for standardized query (limit=50 for background task)
+        # Use model manager for standardized query
         futures_contracts = ContractData.objects.get_tradable_futures(
             this_month_volume=this_month_volume,
             next_month_volume=next_month_volume,
-            limit=50  # Top 50 by volume for background task
+            limit=top_contracts
         )
 
-        contract_count = futures_contracts.count()
+        # Get contract IDs for subtasks
+        contract_ids = list(futures_contracts.values_list('id', flat=True))
+        contract_count = len(contract_ids)
+
         task_logger.info('contracts_found', f"Found {contract_count} contracts matching volume criteria", context={
             'this_month_volume': this_month_volume,
             'next_month_volume': next_month_volume
@@ -1405,158 +1638,53 @@ def execute_futures_algorithm(self, this_month_volume=1000, next_month_volume=80
 
         if contract_count == 0:
             task_logger.warning('no_contracts', "No contracts match volume criteria")
-            return {'success': True, 'candidates_found': 0, 'qualified': 0}
-
-        # ===== STEP 4: Run enhanced analysis on each contract =====
-        task_logger.step('analyze', f"Running enhanced analysis on {contract_count} contracts")
-
-        results = []
-        qualified_candidates = []
-        qualified_candidates_full = []  # Full result dicts for saving to DB
-
-        for contract in futures_contracts:  # Already limited to 50 by manager
-            try:
-                analysis_result = enhanced_futures_analysis(
-                    stock_symbol=contract.symbol,
-                    expiry_date=contract.expiry,
-                    contract=contract
-                )
-
-                composite_score = analysis_result.get('composite_score', 0)
-                verdict = analysis_result.get('verdict', 'FAIL')
-                direction = analysis_result.get('direction', 'NEUTRAL')
-                hard_reject = analysis_result.get('hard_reject', False)
-                metrics = analysis_result.get('metrics', {})
-
-                result = {
-                    'symbol': contract.symbol,
-                    'expiry': contract.expiry,
-                    'score': composite_score,
-                    'verdict': verdict,
-                    'direction': direction,
-                    'hard_reject': hard_reject,
-                    'reject_reason': analysis_result.get('reject_reason'),
-                    'recommendation': analysis_result.get('recommendation', 'N/A')
-                }
-                results.append(result)
-
-                # Check if qualified
-                if verdict == 'PASS' and composite_score >= min_score and not hard_reject:
-                    qualified_candidates.append(result)
-
-                    # Build full result dict (same format as UI view) for saving
-                    execution_log = analysis_result.get('execution_log', [])
-                    explanation_parts = []
-                    for log in execution_log:
-                        if log['action'] == 'Open Interest Analysis' and log['status'] != 'SKIP':
-                            explanation_parts.append(f"OI: {log['message']}")
-                        elif log['action'] == 'Sector Strength' and log['status'] != 'SKIP':
-                            explanation_parts.append(f"Sector: {log['message']}")
-                        elif log['action'] == 'Multi-Factor Technical Analysis' and log['status'] != 'SKIP':
-                            explanation_parts.append(f"Technical: {log['message']}")
-                        elif log['action'] == 'DMA Analysis' and log['status'] != 'SKIP':
-                            explanation_parts.append(f"DMA: {log['message']}")
-                        elif log['action'] == 'Composite Scoring & Verdict':
-                            explanation_parts.append(f"Final: {log['message']}")
-
-                    qualified_candidates_full.append({
-                        'symbol': contract.symbol,
-                        'expiry_date': contract.expiry,
-                        'direction': direction,
-                        'spot_price': metrics.get('spot_price', 0),
-                        'futures_price': metrics.get('futures_price', 0),
-                        'composite_score': composite_score,
-                        'scores': analysis_result.get('scores', {}),
-                        'metrics': metrics,
-                        'execution_log': execution_log,
-                        'explanation': explanation_parts,
-                        'sr_data': metrics.get('sr_details', None),
-                        'breach_risks': analysis_result.get('breach_risks', None),
-                    })
-
-            except Exception as e:
-                logger.error(f"Error analyzing {contract.symbol}: {e}")
-                results.append({
-                    'symbol': contract.symbol,
-                    'expiry': contract.expiry,
-                    'error': str(e)
-                })
-
-        task_logger.info('analysis_complete', f"Analyzed {len(results)} contracts, {len(qualified_candidates)} qualified", context={
-            'total_analyzed': len(results),
-            'qualified': len(qualified_candidates),
-            'min_score': min_score
-        })
-
-        # ===== STEP 4b: Save qualified candidates to database =====
-        saved_count = 0
-        if qualified_candidates_full:
-            task_logger.step('save_suggestions', f"Saving {len(qualified_candidates_full)} suggestions to database")
-
-            try:
-                from apps.trading.services.suggestion_service import save_futures_suggestions
-                suggestion_ids = save_futures_suggestions(qualified_candidates_full)
-                saved_count = len([s for s in suggestion_ids if s])
-                task_logger.info('suggestions_saved', f"Saved {saved_count} suggestions to database")
-            except Exception as e:
-                logger.error(f"Error saving suggestions: {e}")
-                task_logger.warning('suggestions_save_failed', f"Failed to save suggestions: {e}")
-
-        # ===== STEP 5: Send notification with results =====
-        task_logger.step('notify', "Sending Telegram notification")
-
-        error_count = len([r for r in results if 'error' in r])
-        analyzed_ok = len(results) - error_count
-
-        if qualified_candidates:
-            # Sort by score descending
-            qualified_candidates.sort(key=lambda x: x['score'], reverse=True)
-
-            message_lines = [
-                "🎯 FUTURES ALGORITHM RESULTS\n",
-                f"📅 {today.strftime('%d %b %Y')}",
-                f"📊 Analyzed: {analyzed_ok} | Errors: {error_count} | Qualified: {len(qualified_candidates)}\n",
-                "TOP CANDIDATES:"
-            ]
-
-            for i, candidate in enumerate(qualified_candidates[:5], 1):
-                message_lines.append(
-                    f"\n{i}. {candidate['symbol']} ({candidate['direction']})"
-                    f"\n   Score: {candidate['score']}/100 | {candidate['recommendation']}"
-                )
-
-            if len(qualified_candidates) > 5:
-                message_lines.append(f"\n\n... and {len(qualified_candidates) - 5} more")
-
-            message_lines.append("\n\n✅ Ready for manual verification")
-
-            send_telegram_notification(
-                '\n'.join(message_lines),
-                notification_type='SUCCESS'
-            )
-        else:
             send_telegram_notification(
                 f"📊 FUTURES ALGORITHM\n\n"
-                f"📅 {today.strftime('%d %b %Y')}\n"
-                f"Analyzed: {analyzed_ok} | Errors: {error_count}\n\n"
-                f"❌ No qualified candidates (score >= {min_score})",
+                f"📅 {today.strftime('%d %b %Y')}\n\n"
+                f"No contracts match volume criteria",
                 notification_type='INFO'
             )
+            return {'success': True, 'candidates_found': 0, 'qualified': 0}
 
-        # ===== STEP 6: Success =====
-        task_logger.success("Futures Algorithm completed successfully", context={
-            'total_analyzed': len(results),
-            'qualified': len(qualified_candidates),
-            'top_candidate': qualified_candidates[0]['symbol'] if qualified_candidates else None
+        # ===== STEP 4: Split into batches and dispatch chord =====
+        task_logger.step('dispatch', f"Dispatching {contract_count} contracts in batches of {batch_size}")
+
+        # Split contract IDs into batches
+        batches = [contract_ids[i:i + batch_size] for i in range(0, len(contract_ids), batch_size)]
+
+        task_logger.info('batches_created', f"Created {len(batches)} batches", context={
+            'batch_count': len(batches),
+            'batch_size': batch_size,
+            'total_contracts': contract_count
+        })
+
+        # Create chord: parallel subtasks + callback
+        subtasks = [
+            analyze_futures_batch.s(batch, min_score=min_score)
+            for batch in batches
+        ]
+
+        callback = aggregate_futures_results.s(
+            min_score=min_score,
+            orchestrator_task_id=self.request.id
+        )
+
+        # Dispatch chord
+        chord_result = chord(subtasks)(callback)
+
+        task_logger.success("Chord dispatched successfully", context={
+            'chord_id': str(chord_result.id),
+            'subtask_count': len(subtasks),
+            'total_contracts': contract_count
         })
 
         return {
             'success': True,
-            'candidates_found': len(results),
-            'qualified': len(qualified_candidates),
-            'executed': 0,  # Manual execution only for now
-            'results': results[:10],  # Return top 10 for logging
-            'qualified_candidates': qualified_candidates[:5]  # Top 5 qualified
+            'dispatched': True,
+            'chord_id': str(chord_result.id),
+            'batch_count': len(batches),
+            'total_contracts': contract_count,
+            'message': f"Dispatched {len(batches)} parallel tasks for {contract_count} contracts"
         }
 
     except Exception as e:

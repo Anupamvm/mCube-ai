@@ -21,6 +21,8 @@ Usage:
 """
 
 import logging
+import threading
+import time
 from typing import Optional, Tuple
 from datetime import datetime
 
@@ -36,6 +38,11 @@ from apps.brokers.utils.auth_manager import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Cross-process lock flag for auto-login (prevents multiple processes from
+# opening browsers simultaneously)
+AUTO_LOGIN_LOCK_FLAG = 'breeze_auto_login_lock'
+AUTO_LOGIN_LOCK_TIMEOUT = 300  # seconds - max time an auto-login should take
 
 
 class BreezeSessionManager:
@@ -61,6 +68,7 @@ class BreezeSessionManager:
     """
 
     _instance = None  # Singleton instance
+    _auto_login_lock = threading.Lock()  # Thread-level lock for auto-login
 
     def __new__(cls):
         """Singleton pattern - only one manager instance."""
@@ -136,9 +144,65 @@ class BreezeSessionManager:
 
         return breeze
 
+    def _is_auto_login_locked(self) -> bool:
+        """Check if another process is already running auto-login (cross-process lock via NseFlag)."""
+        try:
+            from apps.core.models import NseFlag
+            lock_value = NseFlag.get(AUTO_LOGIN_LOCK_FLAG, '')
+            if lock_value:
+                lock_time = float(lock_value)
+                if time.time() - lock_time < AUTO_LOGIN_LOCK_TIMEOUT:
+                    return True
+                logger.warning("Found stale auto-login lock - ignoring")
+        except Exception:
+            pass
+        return False
+
+    def _set_auto_login_lock(self):
+        """Set cross-process auto-login lock."""
+        try:
+            from apps.core.models import NseFlag
+            NseFlag.set(AUTO_LOGIN_LOCK_FLAG, str(time.time()), "Auto-login in progress")
+        except Exception:
+            pass
+
+    def _clear_auto_login_lock(self):
+        """Clear cross-process auto-login lock."""
+        try:
+            from apps.core.models import NseFlag
+            NseFlag.set(AUTO_LOGIN_LOCK_FLAG, '', "Auto-login completed")
+        except Exception:
+            pass
+
+    def _wait_for_concurrent_auto_login(self, timeout: int = 90) -> bool:
+        """
+        Wait for another process/thread's auto-login to complete,
+        then check if session is now valid.
+
+        Returns:
+            True if session became valid while waiting
+        """
+        logger.info("Another auto-login is in progress - waiting for it to complete...")
+        start = time.time()
+        while time.time() - start < timeout:
+            time.sleep(3)
+            if not self._is_auto_login_locked():
+                break
+
+        is_valid, msg = self.is_session_valid()
+        if is_valid:
+            logger.info("Session is now valid after waiting for concurrent auto-login")
+            return True
+        logger.warning("Concurrent auto-login finished but session is still invalid")
+        return False
+
     def _try_auto_login(self, task_name: str = "") -> Tuple[bool, str]:
         """
         Attempt automatic login using stored credentials.
+
+        Uses both thread-level and cross-process locking to prevent
+        concurrent auto-login attempts (which would open multiple browsers
+        and send multiple OTPs).
 
         Args:
             task_name: Description of what triggered this login (shown in Telegram OTP request)
@@ -146,41 +210,69 @@ class BreezeSessionManager:
         Returns:
             Tuple[bool, str]: (success, message)
         """
-        creds = self.get_credentials()
-
-        if not creds:
-            return False, "No credentials configured"
-
-        if not creds.username or not creds.password:
-            return False, "Auto-login credentials (username/password) not configured"
-
-        if not creds.api_key:
-            return False, "API key not configured"
+        # Thread-level lock: prevent concurrent auto-login within the same process
+        acquired = self._auto_login_lock.acquire(blocking=False)
+        if not acquired:
+            logger.info("Auto-login already in progress in another thread - waiting...")
+            # Block until the other thread's auto-login finishes
+            with self._auto_login_lock:
+                pass
+            # Check if session is now valid after the other thread finished
+            is_valid, msg = self.is_session_valid()
+            if is_valid:
+                self._client = None
+                return True, "Session refreshed by concurrent auto-login"
+            return False, "Concurrent auto-login completed but session still invalid"
 
         try:
-            from apps.brokers.services.breeze_auto_login import auto_login_breeze
+            # Cross-process lock: prevent concurrent auto-login across processes
+            if self._is_auto_login_locked():
+                if self._wait_for_concurrent_auto_login():
+                    self._client = None
+                    return True, "Session refreshed by another process's auto-login"
+                # Other process's login failed or timed out, we'll try ourselves
 
-            logger.info("Attempting Breeze auto-login...")
-            success, message = auto_login_breeze(
-                headless=False,  # Show browser for OTP entry
-                timeout=300,
-                skip_validation=True,  # We know session is expired
-                task_name=task_name or "session auto-refresh"
-            )
+            self._set_auto_login_lock()
 
-            if success:
-                logger.info(f"Breeze auto-login successful: {message}")
-                self._client = None  # Reset cached client
-                return True, message
-            else:
-                logger.error(f"Breeze auto-login failed: {message}")
-                return False, message
+            creds = self.get_credentials()
 
-        except ImportError:
-            return False, "Selenium not installed - cannot auto-login"
-        except Exception as e:
-            logger.error(f"Auto-login error: {e}", exc_info=True)
-            return False, f"Auto-login error: {e}"
+            if not creds:
+                return False, "No credentials configured"
+
+            if not creds.username or not creds.password:
+                return False, "Auto-login credentials (username/password) not configured"
+
+            if not creds.api_key:
+                return False, "API key not configured"
+
+            try:
+                from apps.brokers.services.breeze_auto_login import auto_login_breeze
+
+                logger.info("Attempting Breeze auto-login...")
+                success, message = auto_login_breeze(
+                    headless=False,  # Show browser for OTP entry
+                    timeout=300,
+                    skip_validation=True,  # We know session is expired
+                    task_name=task_name or "session auto-refresh"
+                )
+
+                if success:
+                    logger.info(f"Breeze auto-login successful: {message}")
+                    self._client = None  # Reset cached client
+                    return True, message
+                else:
+                    logger.error(f"Breeze auto-login failed: {message}")
+                    return False, message
+
+            except ImportError:
+                return False, "Selenium not installed - cannot auto-login"
+            except Exception as e:
+                logger.error(f"Auto-login error: {e}", exc_info=True)
+                return False, f"Auto-login error: {e}"
+
+        finally:
+            self._clear_auto_login_lock()
+            self._auto_login_lock.release()
 
     def get_client(self, auto_refresh: bool = True) -> BreezeConnect:
         """
@@ -216,6 +308,7 @@ class BreezeSessionManager:
 
         # Check session validity
         is_valid, message = self.is_session_valid()
+        auto_login_attempted = False
 
         if not is_valid:
             logger.warning(f"Breeze session invalid: {message}")
@@ -223,6 +316,7 @@ class BreezeSessionManager:
             if auto_refresh:
                 # Check if auto-login credentials are available
                 if creds.username and creds.password:
+                    auto_login_attempted = True
                     success, login_msg = self._try_auto_login(task_name="session validation refresh")
                     if success:
                         # Reload credentials after auto-login
@@ -252,8 +346,8 @@ class BreezeSessionManager:
 
             # Check if it's a session error
             if any(kw in error_str for kw in ['session', 'expired', 'unauthorized', 'invalid', 'resource not available']):
-                if auto_refresh and creds.username and creds.password:
-                    # Try auto-login
+                # Only attempt auto-login if we haven't already tried in this call
+                if auto_refresh and not auto_login_attempted and creds.username and creds.password:
                     success, login_msg = self._try_auto_login(task_name="session error recovery")
                     if success:
                         # Retry with new credentials

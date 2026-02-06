@@ -42,7 +42,6 @@ from apps.trading.api.suggestion_views import (
 
 # Position Management
 from apps.trading.api.position_management_views import (
-    get_active_positions,
     get_position_details,
     close_position,
     close_live_position,
@@ -99,7 +98,6 @@ __all__ = [
     'update_suggestion_status',
     'update_suggestion_parameters',
     # Positions
-    'get_active_positions',
     'get_position_details',
     'close_position',
     'close_live_position',

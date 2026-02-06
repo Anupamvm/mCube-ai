@@ -37,8 +37,13 @@ import pandas as pd
 import re
 import logging
 import time
+import threading
 
 logger = logging.getLogger(__name__)
+
+# Process-level singleton: avoids repeated session_init() API calls
+_cached_instance = None
+_cache_lock = threading.Lock()
 
 try:
     from apps.brokers.interfaces import BrokerInterface, MarginData, Position, Order, Quote
@@ -85,10 +90,13 @@ class NeoAPI(BrokerInterface if isinstance(BrokerInterface, type) else object):
     Handles all broker interactions including margin, positions, orders, and data fetching.
     """
     
+    AUTH_ERROR_KEYWORDS = ['unauthorized', 'invalid token', 'session', 'auth', '401']
+
     def __init__(self):
         """Initialize Neo API client"""
         self.neo = None
         self.session_active = False
+        self.last_error = None
         self._load_credentials()
     
     def _load_credentials(self):
@@ -107,9 +115,51 @@ class NeoAPI(BrokerInterface if isinstance(BrokerInterface, type) else object):
             self.mpin = creds.neo_password  # MPIN stored in neo_password field
             
         except Exception as e:
-            print(f"Error loading Neo credentials: {e}")
+            logger.error(f"Error loading Neo credentials: {e}")
             raise
     
+    def try_restore_session(self) -> bool:
+        """
+        Try to restore a previously saved session from the database.
+
+        Creates a fresh NeoAPI client, runs session_init() for bearer_token,
+        then injects saved edit_token/edit_sid/serverId — skipping login+2FA entirely.
+
+        Returns:
+            bool: True if session was successfully restored
+        """
+        from apps.brokers.utils.auth_manager import restore_neo_session
+
+        saved = restore_neo_session()
+        if not saved:
+            return False
+
+        edit_token, edit_sid, server_id = saved
+
+        try:
+            from neo_api_client import NeoAPI as KotakNeoAPI
+
+            # Create client and run session_init (gets bearer_token, no OTP)
+            self.neo = KotakNeoAPI(
+                consumer_key=self.consumer_key,
+                consumer_secret=self.consumer_secret,
+                environment='prod'
+            )
+
+            # Inject saved session values into the client configuration
+            self.neo.configuration.edit_token = edit_token
+            self.neo.configuration.edit_sid = edit_sid
+            if server_id:
+                self.neo.configuration.serverId = server_id
+
+            self.session_active = True
+            self.last_error = None
+            return True
+
+        except Exception as e:
+            logger.warning(f"Session restore failed during client init: {e}")
+            return False
+
     def login(self, max_retries: int = 10, retry_delay: float = 2.0) -> bool:
         """
         Login to Kotak Neo and establish session with retry logic.
@@ -121,6 +171,11 @@ class NeoAPI(BrokerInterface if isinstance(BrokerInterface, type) else object):
         Returns:
             bool: True if login successful
         """
+        # Try restoring a saved session first (avoids login+2FA entirely)
+        if self.try_restore_session():
+            logger.info("Session restored from database — skipping login/2FA")
+            return True
+
         from neo_api_client import NeoAPI as KotakNeoAPI
         from apps.core.models import CredentialStore
 
@@ -150,44 +205,48 @@ class NeoAPI(BrokerInterface if isinstance(BrokerInterface, type) else object):
                     password=creds.password
                 )
 
-                if response and 'error' in response:
-                    last_error = f"Login error: {response.get('error', 'Unknown error')}"
+                if not response or 'error' in response:
+                    last_error = f"Login error: {response.get('error', 'Unknown') if response else 'No response'}"
                     logger.warning(f"Attempt {attempt}: {last_error}")
                     if attempt < max_retries:
                         time.sleep(retry_delay)
                     continue
 
-                if response and 'error' not in response:
-                    # Complete 2FA with MPIN
-                    mpin_value = creds.session_token  # 6-digit MPIN
-                    logger.info(f"Attempting 2FA with MPIN (length: {len(str(mpin_value))})")
-                    session_response = self.neo.session_2fa(OTP=mpin_value)
+                # Login succeeded — complete 2FA with MPIN
+                mpin_value = creds.session_token  # 6-digit MPIN
+                logger.info(f"Attempting 2FA with MPIN (length: {len(str(mpin_value))})")
+                session_response = self.neo.session_2fa(OTP=mpin_value)
 
-                    if session_response and session_response.get('data'):
-                        self.session_active = True
-                        self.last_error = None
-
-                        # Log serverId availability for debugging
-                        server_id = session_response.get('data', {}).get('hsServerId')
-                        has_server_id = hasattr(self.neo.configuration, 'serverId') and self.neo.configuration.serverId
-                        logger.info(f"Neo login successful on attempt {attempt} - serverId: {server_id}")
-
-                        if not has_server_id:
-                            logger.warning("serverId not set in configuration. Quotes API may not work.")
-
-                        return True
-                    else:
-                        last_error = f"2FA failed: {session_response}"
-                        logger.warning(f"Attempt {attempt}: {last_error}")
-                        if attempt < max_retries:
-                            time.sleep(retry_delay)
-                        continue
-                else:
-                    last_error = f"Login failed: {response}"
+                if not session_response or not session_response.get('data'):
+                    last_error = f"2FA failed: {session_response}"
                     logger.warning(f"Attempt {attempt}: {last_error}")
                     if attempt < max_retries:
                         time.sleep(retry_delay)
                     continue
+
+                # 2FA succeeded
+                self.session_active = True
+                self.last_error = None
+
+                server_id = session_response.get('data', {}).get('hsServerId')
+                has_server_id = hasattr(self.neo.configuration, 'serverId') and self.neo.configuration.serverId
+                logger.info(f"Neo login successful on attempt {attempt} - serverId: {server_id}")
+
+                if not has_server_id:
+                    logger.warning("serverId not set in configuration. Quotes API may not work.")
+
+                # Persist session for reuse across processes/restarts
+                try:
+                    from apps.brokers.utils.auth_manager import save_neo_session
+                    save_neo_session(
+                        edit_token=self.neo.configuration.edit_token,
+                        edit_sid=self.neo.configuration.edit_sid,
+                        server_id=getattr(self.neo.configuration, 'serverId', '') or ''
+                    )
+                except Exception as save_err:
+                    logger.warning(f"Failed to persist Neo session (non-fatal): {save_err}")
+
+                return True
 
             except Exception as e:
                 # Handle exceptions with broken __str__ methods (like ApiException)
@@ -238,9 +297,27 @@ class NeoAPI(BrokerInterface if isinstance(BrokerInterface, type) else object):
 
         return f"{type(e).__name__}: Unknown error"
 
+    def _is_auth_error(self, exception: Exception) -> bool:
+        """Check if an exception indicates an authentication/session error."""
+        error_str = self._format_exception(exception).lower()
+        return any(kw in error_str for kw in self.AUTH_ERROR_KEYWORDS)
+
+    def _handle_auth_error(self, source: str = ''):
+        """Clear saved session, invalidate cache, so next call triggers fresh login."""
+        global _cached_instance
+        if source:
+            logger.warning(f"Auth error in {source}, clearing saved session")
+        self.session_active = False
+        _cached_instance = None  # Invalidate process cache
+        try:
+            from apps.brokers.utils.auth_manager import clear_neo_session
+            clear_neo_session()
+        except Exception as e:
+            logger.warning(f"Failed to clear saved Neo session: {e}")
+
     def get_last_error(self) -> Optional[str]:
         """Get the last error message from login or API calls."""
-        return getattr(self, 'last_error', None)
+        return self.last_error
     
     def logout(self) -> bool:
         """Logout from Neo"""
@@ -250,7 +327,7 @@ class NeoAPI(BrokerInterface if isinstance(BrokerInterface, type) else object):
                 self.session_active = False
             return True
         except Exception as e:
-            print(f"Error during logout: {e}")
+            logger.error(f"Error during logout: {e}")
             return False
     
     # ========== MARGIN & FUNDS ==========
@@ -295,11 +372,11 @@ class NeoAPI(BrokerInterface if isinstance(BrokerInterface, type) else object):
             return {}
 
         except Exception as e:
-            print(f"Error fetching margin: {e}")
-            import traceback
-            traceback.print_exc()
+            if self._is_auth_error(e):
+                self._handle_auth_error('get_margin')
+            logger.exception(f"Error fetching margin: {e}")
             return {}
-    
+
     def get_available_margin(self) -> float:
         """
         Get available margin as simple float
@@ -398,11 +475,11 @@ class NeoAPI(BrokerInterface if isinstance(BrokerInterface, type) else object):
             return positions
 
         except Exception as e:
-            print(f"Error fetching positions: {e}")
-            import traceback
-            traceback.print_exc()
+            if self._is_auth_error(e):
+                self._handle_auth_error('get_positions')
+            logger.exception(f"Error fetching positions: {e}")
             return []
-    
+
     def isOpenPos(self) -> bool:
         """
         Check if any open positions exist
@@ -446,7 +523,7 @@ class NeoAPI(BrokerInterface if isinstance(BrokerInterface, type) else object):
             return 0.0
             
         except Exception as e:
-            print(f"Error calculating P&L: {e}")
+            logger.error(f"Error calculating P&L: {e}")
             return 0.0
     
     # ========== ORDERS ==========
@@ -501,16 +578,18 @@ class NeoAPI(BrokerInterface if isinstance(BrokerInterface, type) else object):
             
             if response and response.get('stat') == 'Ok':
                 order_id = response.get('nOrdNo')
-                print(f"✅ Order placed: {order_id}")
+                logger.info(f"Order placed: {order_id}")
                 return order_id
             else:
-                print(f"❌ Order failed: {response}")
+                logger.error(f"Order failed: {response}")
                 return None
-                
+
         except Exception as e:
-            print(f"❌ Order placement error: {e}")
+            if self._is_auth_error(e):
+                self._handle_auth_error('place_order')
+            logger.error(f"Order placement error: {e}")
             return None
-    
+
     def get_orders(self) -> List[Dict]:
         """
         Get all orders for the day
@@ -530,9 +609,11 @@ class NeoAPI(BrokerInterface if isinstance(BrokerInterface, type) else object):
             return []
             
         except Exception as e:
-            print(f"Error fetching orders: {e}")
+            if self._is_auth_error(e):
+                self._handle_auth_error('get_orders')
+            logger.error(f"Error fetching orders: {e}")
             return []
-    
+
     def cancel_order(self, order_id: str) -> bool:
         """
         Cancel an order
@@ -550,16 +631,18 @@ class NeoAPI(BrokerInterface if isinstance(BrokerInterface, type) else object):
             response = self.neo.cancel_order(order_id=order_id)
             
             if response and response.get('stat') == 'Ok':
-                print(f"✅ Order {order_id} cancelled")
+                logger.info(f"Order {order_id} cancelled")
                 return True
             else:
-                print(f"❌ Cancel failed: {response}")
+                logger.error(f"Cancel failed: {response}")
                 return False
-                
+
         except Exception as e:
-            print(f"❌ Cancel error: {e}")
+            if self._is_auth_error(e):
+                self._handle_auth_error('cancel_order')
+            logger.error(f"Cancel error: {e}")
             return False
-    
+
     # ========== QUOTES & DATA ==========
     
     def get_quote(
@@ -594,9 +677,11 @@ class NeoAPI(BrokerInterface if isinstance(BrokerInterface, type) else object):
             return None
             
         except Exception as e:
-            print(f"Error fetching quote: {e}")
+            if self._is_auth_error(e):
+                self._handle_auth_error('get_quote')
+            logger.error(f"Error fetching quote: {e}")
             return None
-    
+
     def search_scrip(self, symbol: str, exchange: str = 'NSE') -> List[Dict]:
         """
         Search for scrip to get instrument token
@@ -623,7 +708,9 @@ class NeoAPI(BrokerInterface if isinstance(BrokerInterface, type) else object):
             return []
             
         except Exception as e:
-            print(f"Error searching scrip: {e}")
+            if self._is_auth_error(e):
+                self._handle_auth_error('search_scrip')
+            logger.error(f"Error searching scrip: {e}")
             return []
     
     # ========== MARKET STATUS ==========
@@ -649,7 +736,7 @@ class NeoAPI(BrokerInterface if isinstance(BrokerInterface, type) else object):
             return market_open <= now <= market_close
 
         except Exception as e:
-            print(f"Error checking market status: {e}")
+            logger.error(f"Error checking market status: {e}")
             return False
 
     def search_symbol(self, symbol: str, **kwargs) -> List[Dict]:
@@ -670,7 +757,9 @@ class NeoAPI(BrokerInterface if isinstance(BrokerInterface, type) else object):
             exchange = kwargs.get('exchange', 'NSE')
             return self.search_scrip(symbol=symbol, exchange=exchange)
         except Exception as e:
-            print(f"Error searching symbol: {e}")
+            if self._is_auth_error(e):
+                self._handle_auth_error('search_symbol')
+            logger.error(f"Error searching symbol: {e}")
             return []
 
     def subscribe_live_feed(self, symbols: List[str], **kwargs) -> bool:
@@ -691,7 +780,9 @@ class NeoAPI(BrokerInterface if isinstance(BrokerInterface, type) else object):
             self.subscribe(symbols)
             return True
         except Exception as e:
-            print(f"Error subscribing to live feed: {e}")
+            if self._is_auth_error(e):
+                self._handle_auth_error('subscribe_live_feed')
+            logger.error(f"Error subscribing to live feed: {e}")
             return False
 
     def unsubscribe_live_feed(self, symbols: List[str]) -> bool:
@@ -711,17 +802,33 @@ class NeoAPI(BrokerInterface if isinstance(BrokerInterface, type) else object):
             self.un_subscribe(symbols)
             return True
         except Exception as e:
-            print(f"Error unsubscribing from live feed: {e}")
+            if self._is_auth_error(e):
+                self._handle_auth_error('unsubscribe_live_feed')
+            logger.error(f"Error unsubscribing from live feed: {e}")
             return False
 
 
 # ========== Helper Functions ==========
 
 def get_neo_api() -> NeoAPI:
-    """Get initialized Neo API instance"""
-    api = NeoAPI()
-    api.login()
-    return api
+    """
+    Get authenticated Neo API instance, cached per-process.
+
+    First call creates the instance and logs in (restores session or full login).
+    Subsequent calls return the same instance — no repeated session_init() or login.
+    If the cached session becomes invalid, creates a fresh one.
+    """
+    global _cached_instance
+
+    with _cache_lock:
+        if _cached_instance and _cached_instance.session_active:
+            return _cached_instance
+
+        api = NeoAPI()
+        api.login()
+        if api.session_active:
+            _cached_instance = api
+        return api
 
 
 def check_margin(required: float) -> bool:

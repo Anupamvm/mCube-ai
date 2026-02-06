@@ -84,12 +84,18 @@ def get_static_schedule():
         'options': {'queue': 'monitoring'},
     },
 
-    # Pre-market futures screening (8:30 AM)
+    # Pre-market futures screening (8:30 AM) - parallelized
     'execute-futures-algorithm': {
         'task': 'apps.strategies.tasks.execute_futures_algorithm',
         'schedule': crontab(hour=8, minute=30, day_of_week='1-5'),  # 8:30 AM Mon-Fri
         'options': {'queue': 'strategies'},
-        'kwargs': {'this_month_volume': 1000, 'next_month_volume': 800, 'min_score': 65},
+        'kwargs': {
+            'this_month_volume': 1000,
+            'next_month_volume': 800,
+            'min_score': 65,
+            'top_contracts': 50,
+            'batch_size': 5,
+        },
     },
 
     'setup-trading-day': {

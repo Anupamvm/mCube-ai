@@ -16,11 +16,10 @@ kotak_neo.py monolithic file.
 from .client import (
     _get_authenticated_client,
     get_kotak_neo_client,
-    auto_login_kotak_neo,
 )
 
 # Data Fetching
-from .data_fetcher import (
+from apps.brokers.integrations.kotak_neo import (
     fetch_and_save_kotakneo_data,
     is_open_position,
 )
@@ -57,7 +56,6 @@ __all__ = [
     # Client
     '_get_authenticated_client',
     'get_kotak_neo_client',
-    'auto_login_kotak_neo',
     # Data
     'fetch_and_save_kotakneo_data',
     'is_open_position',

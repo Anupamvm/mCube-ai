@@ -674,7 +674,6 @@ class TelegramBotHandler:
             return
 
         positions = result.get('positions', [])
-        rms_net_pnl = result.get('rms_net_pnl')
 
         if not positions:
             keyboard = [
@@ -714,17 +713,10 @@ class TelegramBotHandler:
                 )
             ])
 
-        # Cumulative P&L (since trade entry, from override avg prices)
-        cumulative_pnl = sum(float(p.get('unrealized_pnl', 0)) for p in positions)
-        cum_icon = "+" if cumulative_pnl >= 0 else ""
-        message += f"<b>Cumulative P&L: {cum_icon}{cumulative_pnl:,.0f}</b>\n"
-
-        # Today's M2M from broker RMS
-        if rms_net_pnl is not None:
-            rms_icon = "+" if rms_net_pnl >= 0 else ""
-            message += f"<b>Today's M2M: {rms_icon}{rms_net_pnl:,.0f}</b>"
-        else:
-            message += "<b>Today's M2M: N/A</b>"
+        # Unrealized P&L (sum of per-position unrealized_pnl)
+        unrealized_pnl = sum(float(p.get('unrealized_pnl', 0)) for p in positions)
+        pnl_icon = "+" if unrealized_pnl >= 0 else ""
+        message += f"<b>Unrealized P&L: {pnl_icon}{unrealized_pnl:,.0f}</b>"
 
         keyboard.append([InlineKeyboardButton("Refresh", callback_data="refresh_kotak")])
         keyboard.append([InlineKeyboardButton("Back", callback_data="back_to_brokers")])
@@ -1006,10 +998,8 @@ class TelegramBotHandler:
 
         # Extract Kotak positions from dict result
         kotak_positions = []
-        kotak_rms_pnl = None
         if isinstance(kotak_result, dict) and 'error' not in kotak_result:
             kotak_positions = kotak_result.get('positions', [])
-            kotak_rms_pnl = kotak_result.get('rms_net_pnl')
 
         if not icici_positions and not kotak_positions:
             keyboard = [
@@ -1049,11 +1039,7 @@ class TelegramBotHandler:
 
         total_pnl += kotak_cumulative
         cum_icon = "+" if total_pnl >= 0 else ""
-        message += f"<b>Combined P&L: {cum_icon}{total_pnl:,.0f}</b>\n"
-
-        if kotak_rms_pnl is not None:
-            rms_icon = "+" if kotak_rms_pnl >= 0 else ""
-            message += f"<b>Kotak Today's M2M: {rms_icon}{kotak_rms_pnl:,.0f}</b>"
+        message += f"<b>Combined P&L: {cum_icon}{total_pnl:,.0f}</b>"
 
         keyboard = [
             [InlineKeyboardButton("ICICI Details", callback_data="broker_icici")],
@@ -1124,7 +1110,7 @@ class TelegramBotHandler:
         """Fetch positions from Kotak Neo using centralized get_neo_open_positions().
 
         Returns:
-            dict with 'positions' list and 'rms_net_pnl', or
+            dict with 'positions' list, or
             dict with 'error' key on failure.
         """
         import traceback
@@ -1146,7 +1132,7 @@ class TelegramBotHandler:
             if 'error' in result:
                 return result
 
-            logger.info(f"Returning {len(result['positions'])} positions, RMS P&L={result.get('rms_net_pnl')}")
+            logger.info(f"Returning {len(result['positions'])} Kotak Neo positions")
             return result
 
         except Exception as e:

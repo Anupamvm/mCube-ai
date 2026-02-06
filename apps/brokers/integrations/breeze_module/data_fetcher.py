@@ -93,6 +93,7 @@ def fetch_and_save_breeze_data():
                 broker=BROKER_ICICI,
                 fetched_at=dj_timezone.now(),
                 symbol=symbol,
+                trading_symbol='',
                 exchange_segment=p.get('segment', ''),
                 product=p.get('product_type', ''),
                 buy_qty=buy_qty,

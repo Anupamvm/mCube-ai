@@ -4108,6 +4108,19 @@ def get_task_config(request):
             {'name': 'days_of_week', 'label': 'Days of Week', 'type': 'days', 'help': 'Select days to run'},
         ]
 
+    # Get task param fields and current values (for tasks with configurable params)
+    task_param_fields = default_config.get('task_param_fields', [])
+    default_task_params = default_config.get('default_task_params', {})
+
+    # Get current task_params from DB or use defaults
+    try:
+        task_params_values = task_state.task_params if task_state.task_params else {}
+    except NameError:
+        task_params_values = {}
+
+    # Merge defaults with saved values (saved values take precedence)
+    merged_task_params = {**default_task_params, **task_params_values}
+
     return JsonResponse({
         'success': True,
         'task_key': task_key,
@@ -4118,6 +4131,8 @@ def get_task_config(request):
         'fields': fields,
         'values': values,
         'use_custom_schedule': use_custom,
+        'task_param_fields': task_param_fields,
+        'task_params_values': merged_task_params,
     })
 
 
@@ -4210,6 +4225,37 @@ def save_task_config(request):
                         logger.info(f"Task {task_key}: {field_name} = {new_value} (was {old_value})")
                 except (ValueError, TypeError) as e:
                     logger.warning(f"Invalid value for {field_name}: {request.POST[field_name]}")
+
+        # Handle task_params (task-specific parameters from task_param_fields)
+        task_param_fields = default_config.get('task_param_fields', [])
+        if task_param_fields:
+            # Get existing task_params or start fresh
+            current_task_params = task_state.task_params if task_state.task_params else {}
+            default_task_params = default_config.get('default_task_params', {})
+
+            for field in task_param_fields:
+                field_name = field['name']
+                if field_name in request.POST:
+                    try:
+                        new_value = int(request.POST[field_name])
+
+                        # Apply limits if specified
+                        if 'min' in field:
+                            new_value = max(field['min'], new_value)
+                        if 'max' in field:
+                            new_value = min(field['max'], new_value)
+
+                        old_value = current_task_params.get(field_name, default_task_params.get(field_name))
+                        if old_value != new_value:
+                            current_task_params[field_name] = new_value
+                            updated_fields.append(f'task_params.{field_name}')
+                            logger.info(f"Task {task_key}: task_params.{field_name} = {new_value} (was {old_value})")
+                        else:
+                            current_task_params[field_name] = new_value  # Ensure it's set even if unchanged
+                    except (ValueError, TypeError) as e:
+                        logger.warning(f"Invalid value for task_params.{field_name}: {request.POST[field_name]}")
+
+            task_state.task_params = current_task_params
 
         # Always mark use_custom_schedule when user explicitly saves,
         # even if field values didn't change (confirms user's intent).

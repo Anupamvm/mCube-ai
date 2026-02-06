@@ -19,7 +19,7 @@ Benefits:
 Example:
     >>> from apps.brokers.utils.auth_manager import get_credentials, validate_jwt_token
     >>> creds = get_credentials('kotakneo')
-    >>> if creds and validate_jwt_token(creds.sid):
+    >>> if creds and validate_jwt_token(creds.neo_edit_token):
     ...     print("Session valid, reusing token")
 """
 
@@ -145,7 +145,6 @@ def save_session_token(service: str, session_token: str, additional_data: Option
     Save session token to database for a broker service.
 
     Replaces duplicate save patterns in:
-    - kotak_neo.py (auto_login_kotak_neo)
     - breeze.py (save_breeze_token)
 
     Args:
@@ -282,6 +281,101 @@ def extract_sid_from_jwt(token: str) -> Optional[str]:
         return 'unknown'
 
 
+def save_neo_session(edit_token: str, edit_sid: str, server_id: str) -> bool:
+    """
+    Save Kotak Neo session values to CredentialStore for reuse.
+
+    Args:
+        edit_token: JWT edit_token from session_2fa (valid until midnight IST)
+        edit_sid: Session ID from session_2fa
+        server_id: hsServerId needed for quotes API
+
+    Returns:
+        bool: True if save successful
+    """
+    try:
+        creds = get_credentials('kotakneo')
+        if not creds:
+            logger.error("Cannot save Neo session — no kotakneo credentials found")
+            return False
+
+        creds.neo_edit_token = edit_token
+        creds.neo_edit_sid = edit_sid
+        creds.neo_server_id = server_id
+        creds.last_session_update = timezone.now()
+        creds.save(update_fields=[
+            'neo_edit_token', 'neo_edit_sid', 'neo_server_id', 'last_session_update'
+        ])
+
+        logger.info("Saved Neo session to database")
+        return True
+
+    except Exception as e:
+        logger.error(f"Error saving Neo session: {e}")
+        return False
+
+
+def restore_neo_session() -> Optional[tuple]:
+    """
+    Restore a previously saved Kotak Neo session if the JWT is still valid.
+
+    Returns:
+        tuple (edit_token, edit_sid, server_id) if valid session exists, None otherwise
+    """
+    try:
+        creds = get_credentials('kotakneo')
+        if not creds:
+            return None
+
+        token = creds.neo_edit_token
+        if not token:
+            logger.debug("No saved Neo edit_token found")
+            return None
+
+        if not validate_jwt_token(token):
+            logger.info("Saved Neo edit_token is expired or invalid")
+            return None
+
+        edit_sid = creds.neo_edit_sid
+        server_id = creds.neo_server_id
+
+        if not edit_sid:
+            logger.warning("Neo edit_token valid but edit_sid missing")
+            return None
+
+        logger.info("Restored valid Neo session from database")
+        return (token, edit_sid, server_id)
+
+    except Exception as e:
+        logger.error(f"Error restoring Neo session: {e}")
+        return None
+
+
+def clear_neo_session() -> bool:
+    """
+    Clear saved Neo session from database (e.g., after auth error).
+
+    Returns:
+        bool: True if cleared successfully
+    """
+    try:
+        creds = get_credentials('kotakneo')
+        if not creds:
+            return False
+
+        creds.neo_edit_token = None
+        creds.neo_edit_sid = None
+        creds.neo_server_id = None
+        creds.save(update_fields=['neo_edit_token', 'neo_edit_sid', 'neo_server_id'])
+
+        logger.info("Cleared saved Neo session from database")
+        return True
+
+    except Exception as e:
+        logger.error(f"Error clearing Neo session: {e}")
+        return False
+
+
 def should_refresh_session(service: str) -> Tuple[bool, str]:
     """
     Determine if broker session should be refreshed.
@@ -321,8 +415,7 @@ def should_refresh_session(service: str) -> Tuple[bool, str]:
             return True, "Breeze token expired (not from today)"
 
     elif service == 'kotakneo':
-        # For Neo, check JWT expiration (stored in 'sid' field)
-        saved_token = creds.sid if hasattr(creds, 'sid') else None
+        saved_token = creds.neo_edit_token if hasattr(creds, 'neo_edit_token') else None
 
         if saved_token and validate_jwt_token(saved_token):
             return False, "Neo JWT token is valid"

@@ -82,6 +82,11 @@ class CredentialStore(models.Model):
     neo_password = models.CharField(max_length=100, null=True, blank=True)  # Kotak Neo password
     sid = models.CharField(max_length=256, null=True, blank=True)  # Session ID
 
+    # Kotak Neo persisted session fields (for session reuse without re-login)
+    neo_edit_token = models.TextField(null=True, blank=True)
+    neo_edit_sid = models.CharField(max_length=256, null=True, blank=True)
+    neo_server_id = models.CharField(max_length=100, null=True, blank=True)
+
     created_at = models.DateTimeField(auto_now_add=True)
     last_session_update = models.DateTimeField(null=True, blank=True)
 
@@ -856,6 +861,13 @@ class CeleryTaskState(TimeStampedModel):
         default=list,
         blank=True,
         help_text="Days of week to run (0=Mon, 1=Tue, ..., 6=Sun). Empty = all weekdays."
+    )
+
+    # Task-specific parameters (JSON)
+    task_params = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Task-specific parameters as JSON (e.g., {'top_contracts': 50})"
     )
 
     # Whether to use custom schedule (if False, use defaults from celery.py)
