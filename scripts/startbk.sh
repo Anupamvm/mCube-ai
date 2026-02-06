@@ -26,7 +26,28 @@ cd "$PROJECT_DIR"
 # Activate virtual environment
 source "$PROJECT_DIR/venv/bin/activate"
 
+# =============================================================================
+# DYNAMIC CELERY CONCURRENCY
+# =============================================================================
+# Calculate concurrency based on available CPU cores (half of cores)
+if [[ "$OSTYPE" == "darwin"* ]]; then
+    CPU_CORES=$(sysctl -n hw.ncpu 2>/dev/null || echo 4)
+else
+    CPU_CORES=$(nproc 2>/dev/null || grep -c ^processor /proc/cpuinfo 2>/dev/null || echo 4)
+fi
+
+# Use half the cores, minimum 2, maximum 32
+CELERY_CONCURRENCY=$((CPU_CORES / 2))
+if [ "$CELERY_CONCURRENCY" -lt 2 ]; then
+    CELERY_CONCURRENCY=2
+elif [ "$CELERY_CONCURRENCY" -gt 32 ]; then
+    CELERY_CONCURRENCY=32
+fi
+
+export CELERY_CONCURRENCY
+
 echo -e "${YELLOW}=== mCube-ai Background Services ===${NC}"
+echo -e "CPU Cores: $CPU_CORES | Celery Workers: $CELERY_CONCURRENCY"
 echo ""
 
 # Check if Redis is running
@@ -61,11 +82,11 @@ else
 fi
 
 # Start Celery Worker with all queues
-echo -e "${YELLOW}Starting Celery Worker (all queues)...${NC}"
+echo -e "${YELLOW}Starting Celery Worker (all queues, concurrency=$CELERY_CONCURRENCY)...${NC}"
 nohup celery -A mcube_ai worker \
     --queues=data,strategies,monitoring,risk,reports,celery \
     --loglevel=info \
-    --concurrency=4 >> "$LOG_DIR/celery_worker.log" 2>&1 &
+    --concurrency=$CELERY_CONCURRENCY >> "$LOG_DIR/celery_worker.log" 2>&1 &
 WORKER_PID=$!
 echo $WORKER_PID > "$PID_DIR/celery_worker.pid"
 sleep 2

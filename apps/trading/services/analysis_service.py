@@ -60,6 +60,64 @@ def clean_dict_for_json(data):
         return clean_numeric_value(data)
 
 
+def build_suggestion_result(contract, analysis_result: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Build a standardized result dict suitable for save_futures_suggestions().
+
+    This is the SINGLE source of truth for building suggestion result dicts.
+    Used by both Celery tasks and web views to ensure consistency.
+
+    Args:
+        contract: ContractData model instance
+        analysis_result: Raw result from enhanced_futures_analysis()
+
+    Returns:
+        dict: Standardized result dict with all fields needed for TradeSuggestion
+    """
+    metrics = analysis_result.get('metrics', {})
+    composite_score = analysis_result.get('composite_score', 0)
+    direction = analysis_result.get('direction', 'NEUTRAL')
+    verdict = analysis_result.get('verdict', 'FAIL')
+    execution_log = analysis_result.get('execution_log', [])
+
+    # Build explanation from execution log (single place for this logic)
+    explanation_parts = []
+    for log in execution_log:
+        action = log.get('action', '')
+        status = log.get('status', '')
+        message = log.get('message', '')
+
+        if action == 'Open Interest Analysis' and status != 'SKIP':
+            explanation_parts.append(f"OI: {message}")
+        elif action == 'Sector Strength' and status != 'SKIP':
+            explanation_parts.append(f"Sector: {message}")
+        elif action == 'Multi-Factor Technical Analysis' and status != 'SKIP':
+            explanation_parts.append(f"Technical: {message}")
+        elif action == 'DMA Analysis' and status != 'SKIP':
+            explanation_parts.append(f"DMA: {message}")
+        elif action == 'Composite Scoring & Verdict':
+            explanation_parts.append(f"Final: {message}")
+
+    return {
+        'symbol': contract.symbol,
+        'expiry_date': str(contract.expiry),
+        'direction': direction,
+        'verdict': verdict,
+        'composite_score': composite_score,
+        'spot_price': metrics.get('spot_price', 0),
+        'futures_price': metrics.get('futures_price', 0),
+        'scores': analysis_result.get('scores', {}),
+        'metrics': metrics,
+        'execution_log': execution_log,
+        'explanation': explanation_parts,
+        'sr_data': metrics.get('sr_details'),
+        'breach_risks': analysis_result.get('breach_risks'),
+        'hard_reject': analysis_result.get('hard_reject', False),
+        'reject_reason': analysis_result.get('reject_reason'),
+        'recommendation': analysis_result.get('recommendation', 'N/A'),
+    }
+
+
 def run_basic_analysis(
     stock_symbol: str,
     expiry_date: str,

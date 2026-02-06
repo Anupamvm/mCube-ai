@@ -32,7 +32,7 @@ class GNewsClient:
     """
 
     BASE_URL = "https://gnews.io/api/v4"
-    CACHE_TTL = 3600  # 1 hour cache
+    CACHE_TTL = 28800  # 8 hour cache - avoid repetitive API calls for same keywords
 
     def __init__(self):
         """Initialize GNews client with API credentials"""

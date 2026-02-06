@@ -237,6 +237,14 @@ def fetch_and_save_kotakneo_data():
             sell_qty = int(p.get('cfSellQty', 0)) + int(p.get('flSellQty', 0))
             net_q = buy_qty - sell_qty
 
+            # Debug log raw API values for position
+            api_lot_size = p.get('lotSz', 'N/A')
+            logger.info(
+                f"[RAW API] {p.get('sym')}: cfBuyQty={p.get('cfBuyQty')}, flBuyQty={p.get('flBuyQty')}, "
+                f"cfSellQty={p.get('cfSellQty')}, flSellQty={p.get('flSellQty')}, "
+                f"net_qty={net_q}, lotSz={api_lot_size}, stkPrc={p.get('stkPrc')}"
+            )
+
             buy_amt = _parse_float(p.get('cfBuyAmt', 0)) + _parse_float(p.get('buyAmt', 0))
             sell_amt = _parse_float(p.get('cfSellAmt', 0)) + _parse_float(p.get('sellAmt', 0))
 
@@ -297,6 +305,10 @@ def fetch_and_save_kotakneo_data():
                 trading_symbol=trd_sym,
             ).order_by('-fetched_at').first()
             db_avg = float(prev.average_price) if prev and float(prev.average_price) > 0 else 0.0
+            logger.info(
+                f"[DB LOOKUP] {p.get('sym')}: trading_symbol={trd_sym}, "
+                f"found_record={prev is not None}, db_avg={db_avg:.2f}, mtm_cost={mtm_cost:.2f}"
+            )
 
             if direction == 'LONG':
                 if cf_buy_qty > 0 and trade_buy_qty > 0 and db_avg > 0:
@@ -311,8 +323,8 @@ def fetch_and_save_kotakneo_data():
                     # New position opened today (no carry-forward)
                     avg_price = trade_buy_value / trade_buy_qty
                     logger.info(f"{p.get('sym')}: New LONG from trade_report avg buy {avg_price:.2f}")
-                elif db_avg > 0 and abs(db_avg - mtm_cost) > 0.01:
-                    # Pure carry-forward, no trades today
+                elif db_avg > 0:
+                    # Pure carry-forward, no trades today - use stored avg from previous days
                     avg_price = db_avg
                     logger.info(f"{p.get('sym')}: Carry-forward LONG avg from DB {avg_price:.2f} (MTM today={mtm_cost:.2f})")
                 else:
@@ -331,8 +343,8 @@ def fetch_and_save_kotakneo_data():
                     # New short position opened today (no carry-forward)
                     avg_price = trade_sell_value / trade_sell_qty
                     logger.info(f"{p.get('sym')}: New SHORT from trade_report avg sell {avg_price:.2f}")
-                elif db_avg > 0 and abs(db_avg - mtm_cost) > 0.01:
-                    # Pure carry-forward, no trades today
+                elif db_avg > 0:
+                    # Pure carry-forward, no trades today - use stored avg from previous days
                     avg_price = db_avg
                     logger.info(f"{p.get('sym')}: Carry-forward SHORT avg from DB {avg_price:.2f} (MTM today={mtm_cost:.2f})")
                 else:
@@ -2238,10 +2250,80 @@ def get_neo_open_positions(include_raw=False) -> dict:
     try:
         _, positions, _, raw_positions_resp, raw_trade_resp = fetch_and_save_kotakneo_data()
 
+        # ── Fetch Holdings API for TRUE average prices (carry-forward positions) ──
+        # The positions() API returns MTM-settled prices that reset daily.
+        # The holdings() API returns the actual average purchase price.
+        client = _get_authenticated_client()
+        holdings_avg_map = {}
+        raw_holdings_resp = None
+
+        try:
+            raw_holdings_resp = client.holdings()
+            if isinstance(raw_holdings_resp, dict) and 'data' in raw_holdings_resp:
+                holdings_data = raw_holdings_resp.get('data', [])
+                if isinstance(holdings_data, list):
+                    for h in holdings_data:
+                        symbol = h.get('symbol', '').upper()
+                        avg_price = _parse_float(h.get('averagePrice', 0))
+                        exchange_seg = h.get('exchangeSegment', '')
+
+                        if avg_price > 0:
+                            holdings_avg_map[symbol] = {
+                                'avg_price': avg_price,
+                                'quantity': int(h.get('quantity', 0)),
+                                'holding_cost': _parse_float(h.get('holdingCost', 0)),
+                                'exchange_segment': exchange_seg,
+                                'instrument_type': h.get('instrumentType', ''),
+                                'expiry_date': h.get('expiryDate', ''),
+                            }
+                            logger.info(f"[HOLDINGS] {symbol}: avg_price={avg_price:.2f}, "
+                                       f"qty={h.get('quantity')}, segment={exchange_seg}")
+        except Exception as holdings_err:
+            logger.warning(f"Could not fetch holdings for avg prices: {holdings_err}")
+
+        # ── Parse Trade Report for today's trades (same-day accuracy) ──
+        # Trade report has actual execution prices for trades made TODAY
+        today_trades_map = {}  # symbol -> {buy_qty, buy_value, sell_qty, sell_value}
+        if raw_trade_resp and isinstance(raw_trade_resp, dict) and 'data' in raw_trade_resp:
+            trades_data = raw_trade_resp.get('data', [])
+            if isinstance(trades_data, list):
+                for t in trades_data:
+                    symbol = (t.get('sym') or '').upper()
+                    trd_sym = (t.get('trdSym') or '').upper()
+                    key = symbol or trd_sym
+                    if not key:
+                        continue
+
+                    if key not in today_trades_map:
+                        today_trades_map[key] = {
+                            'buy_qty': 0, 'buy_value': 0,
+                            'sell_qty': 0, 'sell_value': 0,
+                            'trading_symbol': trd_sym,
+                        }
+
+                    filled_qty = int(float(t.get('fldQty', 0) or 0))
+                    avg_prc = _parse_float(t.get('avgPrc', 0))
+                    trans_type = t.get('trnsTp', '')
+
+                    if trans_type == 'B':
+                        today_trades_map[key]['buy_qty'] += filled_qty
+                        today_trades_map[key]['buy_value'] += filled_qty * avg_prc
+                    elif trans_type == 'S':
+                        today_trades_map[key]['sell_qty'] += filled_qty
+                        today_trades_map[key]['sell_value'] += filled_qty * avg_prc
+
+                for sym, data in today_trades_map.items():
+                    if data['buy_qty'] > 0:
+                        data['buy_avg'] = data['buy_value'] / data['buy_qty']
+                        logger.info(f"[TODAY TRADES] {sym}: BUY {data['buy_qty']} @ avg {data['buy_avg']:.2f}")
+                    if data['sell_qty'] > 0:
+                        data['sell_avg'] = data['sell_value'] / data['sell_qty']
+                        logger.info(f"[TODAY TRADES] {sym}: SELL {data['sell_qty']} @ avg {data['sell_avg']:.2f}")
+
         # ── Build position dicts ──
         positions_data = []
         for pos in positions:
-            avg_price = float(pos.average_price or 0)
+            broker_avg_price = float(pos.average_price or 0)
             ltp = float(pos.ltp or 0)
             net_qty = pos.net_quantity  # in shares
 
@@ -2251,11 +2333,106 @@ def get_neo_open_positions(include_raw=False) -> dict:
             # Use lot size from broker API (stored in DB), not hardcoded
             lot_size = pos.lot_size or 1
 
+            # ── Calculate TRUE average price combining Holdings + Today's Trades ──
+            # Priority:
+            # 1. If both carry-forward (holdings) and today's trades -> weighted blend
+            # 2. If only carry-forward (no trades today) -> use holdings avg
+            # 3. If only today's trades (new position) -> use trade_report avg
+            # 4. Fallback -> use positions API (MTM, least accurate)
+            symbol_upper = (pos.symbol or '').upper()
+
+            holdings_data = holdings_avg_map.get(symbol_upper)
+            today_data = today_trades_map.get(symbol_upper)
+
+            # Determine direction for correct avg calculation
+            direction = 'LONG' if net_qty > 0 else 'SHORT'
+            avg_price = None
+            avg_price_source = 'unknown'
+
+            # Get carry-forward quantities from raw positions data
+            raw_pos = next((p for p in raw_positions_resp.get('data', [])
+                           if (p.get('sym') or '').upper() == symbol_upper), None) if raw_positions_resp else None
+            cf_buy_qty = int(raw_pos.get('cfBuyQty', 0)) if raw_pos else 0
+            cf_sell_qty = int(raw_pos.get('cfSellQty', 0)) if raw_pos else 0
+
+            if direction == 'LONG':
+                # For LONG: avg is weighted avg of buys
+                holdings_qty = holdings_data['quantity'] if holdings_data else 0
+                holdings_avg = holdings_data['avg_price'] if holdings_data else 0
+                today_buy_qty = today_data['buy_qty'] if today_data else 0
+                today_buy_avg = today_data.get('buy_avg', 0) if today_data else 0
+
+                if holdings_qty > 0 and today_buy_qty > 0:
+                    # Blend: carry-forward + today's buys (averaging up/down)
+                    # Note: holdings_qty might include today's buys if Holdings API updates intraday
+                    # Use cf_buy_qty for more accurate carry-forward count
+                    if cf_buy_qty > 0 and cf_buy_qty != holdings_qty:
+                        # Holdings updated intraday, use holdings as-is (already includes today)
+                        avg_price = holdings_avg
+                        avg_price_source = 'holdings (updated intraday)'
+                    else:
+                        # Blend carry-forward with today's new buys
+                        total_qty = holdings_qty + today_buy_qty
+                        avg_price = (holdings_qty * holdings_avg + today_buy_qty * today_buy_avg) / total_qty
+                        avg_price_source = 'blended (holdings + today)'
+                    logger.info(f"[AVG PRICE] {pos.symbol}: {avg_price_source} = {avg_price:.2f} "
+                               f"(holdings: {holdings_qty}@{holdings_avg:.2f}, today: {today_buy_qty}@{today_buy_avg:.2f})")
+                elif holdings_qty > 0:
+                    # Pure carry-forward, no new buys today
+                    avg_price = holdings_avg
+                    avg_price_source = 'holdings'
+                    logger.info(f"[AVG PRICE] {pos.symbol}: Using Holdings avg {avg_price:.2f} (carry-forward only)")
+                elif today_buy_qty > 0:
+                    # New position opened today
+                    avg_price = today_buy_avg
+                    avg_price_source = 'trade_report'
+                    logger.info(f"[AVG PRICE] {pos.symbol}: Using Trade Report avg {avg_price:.2f} (new position today)")
+                else:
+                    # Fallback to positions API
+                    avg_price = broker_avg_price
+                    avg_price_source = 'positions (MTM)'
+                    logger.info(f"[AVG PRICE] {pos.symbol}: Fallback to positions MTM avg {avg_price:.2f}")
+
+            else:  # SHORT
+                # For SHORT: avg is weighted avg of sells
+                holdings_qty = holdings_data['quantity'] if holdings_data else 0
+                holdings_avg = holdings_data['avg_price'] if holdings_data else 0
+                today_sell_qty = today_data['sell_qty'] if today_data else 0
+                today_sell_avg = today_data.get('sell_avg', 0) if today_data else 0
+
+                if holdings_qty > 0 and today_sell_qty > 0:
+                    if cf_sell_qty > 0 and cf_sell_qty != holdings_qty:
+                        avg_price = holdings_avg
+                        avg_price_source = 'holdings (updated intraday)'
+                    else:
+                        total_qty = holdings_qty + today_sell_qty
+                        avg_price = (holdings_qty * holdings_avg + today_sell_qty * today_sell_avg) / total_qty
+                        avg_price_source = 'blended (holdings + today)'
+                    logger.info(f"[AVG PRICE] {pos.symbol}: {avg_price_source} = {avg_price:.2f}")
+                elif holdings_qty > 0:
+                    avg_price = holdings_avg
+                    avg_price_source = 'holdings'
+                    logger.info(f"[AVG PRICE] {pos.symbol}: Using Holdings avg {avg_price:.2f} (carry-forward only)")
+                elif today_sell_qty > 0:
+                    avg_price = today_sell_avg
+                    avg_price_source = 'trade_report'
+                    logger.info(f"[AVG PRICE] {pos.symbol}: Using Trade Report avg {avg_price:.2f} (new position today)")
+                else:
+                    avg_price = broker_avg_price
+                    avg_price_source = 'positions (MTM)'
+                    logger.info(f"[AVG PRICE] {pos.symbol}: Fallback to positions MTM avg {avg_price:.2f}")
+
             net_qty_lots = net_qty // lot_size if lot_size > 0 else net_qty
             unrealized_pnl = net_qty * (ltp - avg_price) if ltp > 0 else 0.0
             direction = 'LONG' if net_qty > 0 else 'SHORT'
             investment = avg_price * abs(net_qty)
             pnl_pct = (unrealized_pnl / investment * 100) if investment > 0 else 0
+
+            # Get today's trade info for response
+            today_buy_qty = today_data['buy_qty'] if today_data else 0
+            today_buy_avg = today_data.get('buy_avg', 0) if today_data else 0
+            today_sell_qty = today_data['sell_qty'] if today_data else 0
+            today_sell_avg = today_data.get('sell_avg', 0) if today_data else 0
 
             positions_data.append({
                 'symbol': pos.symbol,
@@ -2268,6 +2445,13 @@ def get_neo_open_positions(include_raw=False) -> dict:
                 'net_quantity_shares': net_qty,
                 'lot_size': lot_size,
                 'average_price': avg_price,
+                'holdings_avg_price': holdings_data['avg_price'] if holdings_data else None,
+                'positions_avg_price': broker_avg_price,  # MTM avg (resets daily)
+                'today_buy_qty': today_buy_qty,
+                'today_buy_avg': round(today_buy_avg, 2) if today_buy_avg else None,
+                'today_sell_qty': today_sell_qty,
+                'today_sell_avg': round(today_sell_avg, 2) if today_sell_avg else None,
+                'avg_price_source': avg_price_source,
                 'ltp': ltp,
                 'unrealized_pnl': round(unrealized_pnl, 2),
                 'total_pnl': round(unrealized_pnl, 2),
@@ -2282,6 +2466,7 @@ def get_neo_open_positions(include_raw=False) -> dict:
         if include_raw:
             result['raw_positions_api'] = raw_positions_resp
             result['raw_trade_report_api'] = raw_trade_resp
+            result['raw_holdings_api'] = raw_holdings_resp
 
         return result
 

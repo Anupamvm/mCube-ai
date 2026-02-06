@@ -6,14 +6,22 @@ Analyzes analyst research report PDFs using LLM to extract:
 - Sentiment score (-1 to 1)
 - Trade recommendation (BULLISH/NEUTRAL/BEARISH)
 - Risk factors and positive catalysts
+
+Caching:
+- PDF extraction results are stored in AnalystReport.pdf_content_text (persisted)
+- LLM analysis results are cached for 8 hours (via llm_processed_at timestamp)
+- Avoids repetitive API calls and PDF parsing for the same reports
 """
 
 import json
 import logging
 from typing import Dict, Optional
-from datetime import datetime
+from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
+
+# Cache duration for LLM analysis - reports don't change, so 8 hours is reasonable
+ANALYSIS_CACHE_HOURS = 8
 
 
 class AnalystReportAnalyzer:
@@ -199,12 +207,16 @@ Always respond with valid JSON only, no markdown formatting or code blocks."""
             'error': reason
         }
 
-    def analyze_and_save(self, report) -> bool:
+    def analyze_and_save(self, report, force_refresh: bool = False) -> bool:
         """
         Analyze report and save results to database.
 
+        Implements 8-hour caching: if report was already analyzed within
+        ANALYSIS_CACHE_HOURS, skips re-analysis to avoid repetitive LLM calls.
+
         Args:
             report: AnalystReport model instance
+            force_refresh: Force re-analysis even if cached (default: False)
 
         Returns:
             bool: True if analysis succeeded and was saved
@@ -213,7 +225,14 @@ Always respond with valid JSON only, no markdown formatting or code blocks."""
         from django.utils import timezone
 
         try:
-            # Extract PDF text if not already done
+            # Check if analysis is already cached (within 8 hours)
+            if not force_refresh and report.llm_processed and report.llm_processed_at:
+                cache_cutoff = timezone.now() - timedelta(hours=ANALYSIS_CACHE_HOURS)
+                if report.llm_processed_at > cache_cutoff:
+                    logger.debug(f"Report {report.id} already analyzed within {ANALYSIS_CACHE_HOURS}h, skipping")
+                    return True
+
+            # Extract PDF text if not already done (persisted in DB)
             if not report.pdf_content_text and report.pdf_local_path:
                 success, text, metadata = extract_pdf_text_truncated(report.pdf_local_path)
                 if success:
@@ -430,23 +449,27 @@ Keep each point to 1 short sentence (max 15 words). Focus on: key thesis, target
         }
 
 
-def get_quick_summaries_for_reports(reports: list, symbol: str, max_reports: int = 3) -> list:
+def get_quick_summaries_for_reports(reports: list, symbol: str, max_reports: int = 3, force_refresh: bool = False) -> list:
     """
     Get quick summaries for multiple reports.
 
-    Downloads PDFs on-demand if not already downloaded.
+    Implements 8-hour caching: if report was already analyzed within
+    ANALYSIS_CACHE_HOURS, returns cached data to avoid repetitive LLM calls.
 
     Args:
         reports: List of AnalystReport model instances or dicts
         symbol: Stock symbol
         max_reports: Maximum number of reports to summarize (default: 3)
+        force_refresh: Force re-analysis even if cached (default: False)
 
     Returns:
         List of dicts with report info and summary
     """
     from apps.data.utils.pdf_extractor import extract_pdf_text_truncated
+    from django.utils import timezone
 
     summaries = []
+    cache_cutoff = timezone.now() - timedelta(hours=ANALYSIS_CACHE_HOURS)
 
     for report in reports[:max_reports]:
         # Handle both model instances and dicts
@@ -460,6 +483,10 @@ def get_quick_summaries_for_reports(reports: list, symbol: str, max_reports: int
             pdf_path = report.pdf_local_path
             pdf_text = report.pdf_content_text
             pdf_url = report.pdf_url
+            llm_processed = report.llm_processed
+            llm_processed_at = report.llm_processed_at
+            key_insights = report.key_insights
+            trade_recommendation = report.trade_recommendation
         else:
             # Dict
             author = report.get('author', 'Unknown')
@@ -469,6 +496,10 @@ def get_quick_summaries_for_reports(reports: list, symbol: str, max_reports: int
             pdf_path = report.get('pdf_local_path')
             pdf_text = report.get('pdf_content_text')
             pdf_url = report.get('pdf_url')
+            llm_processed = report.get('llm_processed', False)
+            llm_processed_at = report.get('llm_processed_at')
+            key_insights = report.get('key_insights', [])
+            trade_recommendation = report.get('trade_recommendation')
 
         summary_data = {
             'author': author,
@@ -480,19 +511,37 @@ def get_quick_summaries_for_reports(reports: list, symbol: str, max_reports: int
             'success': False
         }
 
+        # Check if we have cached analysis within 8 hours
+        if not force_refresh and llm_processed and llm_processed_at:
+            if llm_processed_at > cache_cutoff and key_insights:
+                # Use cached analysis - avoid repetitive LLM calls
+                logger.debug(f"Using cached analysis for {author} report (analyzed {llm_processed_at})")
+                summary_data['summary_points'] = key_insights[:5] if key_insights else []
+                # Map trade_recommendation to sentiment
+                if trade_recommendation == 'BULLISH':
+                    summary_data['sentiment'] = 'BULLISH'
+                elif trade_recommendation == 'BEARISH':
+                    summary_data['sentiment'] = 'BEARISH'
+                else:
+                    summary_data['sentiment'] = 'NEUTRAL'
+                summary_data['success'] = True
+                summary_data['cached'] = True
+                summaries.append(summary_data)
+                continue
+
         # Note: PDFs should be downloaded during verification flow with authenticated session
         # This is just a fallback check
         if not pdf_path and pdf_url:
             logger.debug(f"No local PDF for {author} - PDF should be downloaded during verification")
 
-        # Step 2: Extract PDF text if not available
+        # Step 2: Extract PDF text if not available (will be cached in DB)
         if not pdf_text and pdf_path:
             try:
                 success, text, _ = extract_pdf_text_truncated(pdf_path, max_chars=8000)
                 if success:
                     pdf_text = text
                     if is_model:
-                        # Cache extracted text in model
+                        # Cache extracted text in model (persisted to DB)
                         report.pdf_content_text = text
                         report.save(update_fields=['pdf_content_text'])
             except Exception as e:
@@ -512,6 +561,25 @@ def get_quick_summaries_for_reports(reports: list, symbol: str, max_reports: int
             summary_data['success'] = result.get('success', False)
             if not result.get('success'):
                 summary_data['error'] = result.get('error', 'LLM analysis failed')
+            else:
+                # Cache the analysis in the model if possible
+                if is_model and result.get('success'):
+                    try:
+                        report.key_insights = result.get('summary_points', [])
+                        # Map sentiment to trade_recommendation
+                        sentiment = result.get('sentiment', 'NEUTRAL')
+                        if sentiment == 'BULLISH':
+                            report.trade_recommendation = 'BULLISH'
+                        elif sentiment == 'BEARISH':
+                            report.trade_recommendation = 'BEARISH'
+                        else:
+                            report.trade_recommendation = 'NEUTRAL'
+                        report.llm_processed = True
+                        report.llm_processed_at = timezone.now()
+                        report.save(update_fields=['key_insights', 'trade_recommendation', 'llm_processed', 'llm_processed_at'])
+                        logger.debug(f"Cached quick summary for {author} report")
+                    except Exception as e:
+                        logger.warning(f"Could not cache quick summary for {author}: {e}")
         else:
             summary_data['error'] = 'No PDF content available'
 

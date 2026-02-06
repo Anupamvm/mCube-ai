@@ -61,6 +61,22 @@
                 <p>Advanced screening algorithm to find top 3 futures trading opportunities</p>
             </div>
 
+            <!-- Today's Automated Results Section (TOP) -->
+            <div id="todaysResultsSection" style="margin-bottom: 20px;">
+                <!-- Will be populated by today's automated analysis results -->
+            </div>
+
+            <!-- Previous Shortlisted Suggestions Section -->
+            <div id="previousResultsSection" style="margin-bottom: 20px;">
+                <!-- Will be populated by preloaded results or show empty state -->
+            </div>
+
+            <!-- Results Panel - List of contracts (for fresh manual analysis) -->
+            <div id="futuresResults" style="display: none; margin-bottom: 20px;">
+                <!-- Results will be dynamically populated -->
+            </div>
+
+            <!-- Run Futures Screening Card (BOTTOM) -->
             <div class="trigger-card">
                 <div class="trigger-header">
                     <span class="trigger-icon">🚀</span>
@@ -174,21 +190,6 @@
                     <div>⏳ Analyzing market data...</div>
                 </div>
                 <div class="error-message" id="futuresError" style="display: none;"></div>
-            </div>
-
-            <!-- Today's Automated Results Section -->
-            <div id="todaysResultsSection" style="margin-top: 20px;">
-                <!-- Will be populated by today's automated analysis results -->
-            </div>
-
-            <!-- Previous Results Section (always visible) -->
-            <div id="previousResultsSection" style="margin-top: 20px;">
-                <!-- Will be populated by preloaded results or show empty state -->
-            </div>
-
-            <!-- Results Panel - List of contracts (for fresh analysis) -->
-            <div id="futuresResults" style="display: none;">
-                <!-- Results will be dynamically populated -->
             </div>
 
         </div>

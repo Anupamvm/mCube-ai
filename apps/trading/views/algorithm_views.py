@@ -13,6 +13,8 @@ from django.contrib.auth.decorators import login_required
 from django.views.decorators.http import require_POST
 from django.http import JsonResponse
 
+from apps.trading.services.analysis_service import build_suggestion_result
+
 logger = logging.getLogger(__name__)
 
 
@@ -123,66 +125,42 @@ def trigger_futures_algorithm(request):
                     contract=contract
                 )
 
-                # Extract metrics regardless of pass/fail
+                # Use shared function to build base result (eliminates code duplication)
+                base_result = build_suggestion_result(contract, analysis_result)
+
+                # Extract commonly used fields
                 metrics = analysis_result.get('metrics', {})
-                composite_score = analysis_result.get('composite_score', 0)
-                direction = analysis_result.get('direction', 'NEUTRAL')
-                verdict = analysis_result.get('verdict', 'FAIL')
+                composite_score = base_result['composite_score']
+                direction = base_result['direction']
+                verdict = base_result['verdict']
                 success = analysis_result.get('success', False)
 
-                # Format expiry
+                # Format expiry for display
                 expiry_dt = datetime.strptime(contract.expiry, '%Y-%m-%d')
                 expiry_formatted = expiry_dt.strftime('%d-%b-%Y')
 
-                # Build explanation using execution log
-                explanation_parts = []
-                execution_log = analysis_result.get('execution_log', [])
-
-                # Extract key analysis points (both pass and fail)
-                for log in execution_log:
-                    if log['action'] == 'Open Interest Analysis' and log['status'] != 'SKIP':
-                        explanation_parts.append(f"OI: {log['message']}")
-                    elif log['action'] == 'Sector Strength' and log['status'] != 'SKIP':
-                        explanation_parts.append(f"Sector: {log['message']}")
-                    elif log['action'] == 'Multi-Factor Technical Analysis' and log['status'] != 'SKIP':
-                        explanation_parts.append(f"Technical: {log['message']}")
-                    elif log['action'] == 'DMA Analysis' and log['status'] != 'SKIP':
-                        explanation_parts.append(f"DMA: {log['message']}")
-                    elif log['action'] == 'Composite Scoring & Verdict':
-                        explanation_parts.append(f"Final: {log['message']}")
-
-                # Add to results regardless of pass/fail
-                analyzed_results.append({
-                    'symbol': contract.symbol,
-                    'expiry': expiry_formatted,
-                    'expiry_date': contract.expiry,
-                    'composite_score': composite_score,
-                    'direction': direction,
-                    'verdict': verdict,
+                # Extend base result with UI-specific fields
+                ui_result = {
+                    **base_result,
+                    'expiry': expiry_formatted,  # Formatted for display
                     'success': success,
-                    'spot_price': metrics.get('spot_price', 0),
-                    'futures_price': metrics.get('futures_price', 0),
                     'basis': metrics.get('basis', 0),
                     'basis_pct': metrics.get('basis_pct', 0),
                     'volume': contract.traded_contracts,
                     'lot_size': contract.lot_size,
-                    'explanation': explanation_parts,
-                    'execution_log': execution_log,
-                    'metrics': metrics,
-                    'scores': analysis_result.get('scores', {}),
-                    'sr_data': metrics.get('sr_details', None),  # Support/Resistance data
-                    'breach_risks': analysis_result.get('breach_risks', None),  # Breach risk calculations
                     'error': analysis_result.get('error', None) if not success else None,
                     # Enhanced Analysis (12-component scoring) for UI display
                     'enhanced_analysis': {
                         'composite_score': composite_score,
-                        'recommendation': analysis_result.get('recommendation', 'N/A'),
-                        'hard_reject': analysis_result.get('hard_reject', False),
-                        'reject_reason': analysis_result.get('reject_reason'),
-                        'scores': analysis_result.get('scores', {}),
+                        'recommendation': base_result.get('recommendation', 'N/A'),
+                        'hard_reject': base_result.get('hard_reject', False),
+                        'reject_reason': base_result.get('reject_reason'),
+                        'scores': base_result.get('scores', {}),
                         'details': analysis_result.get('details', {}),
                     }
-                })
+                }
+
+                analyzed_results.append(ui_result)
 
                 execution_summary.append({
                     'symbol': contract.symbol,

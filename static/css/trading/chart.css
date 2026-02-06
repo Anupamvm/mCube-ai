@@ -1,0 +1,269 @@
+/**
+ * Chart Styles
+ *
+ * Styles for the interactive chart component on suggestion detail page.
+ * Includes VIX badge, legend styling, and responsive layout.
+ */
+
+/* Chart Container */
+.chart-container {
+    position: relative;
+    width: 100%;
+    background: #fff;
+    border-radius: 4px;
+}
+
+/* Chart Header Controls */
+.chart-controls {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
+
+.chart-controls select {
+    padding: 0.25rem 0.5rem;
+    font-size: 0.875rem;
+    border-radius: 4px;
+    border: 1px solid #dee2e6;
+}
+
+/* VIX Badge */
+.vix-badge-container {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    z-index: 10;
+}
+
+#vix-badge .badge {
+    font-size: 0.75rem;
+    padding: 0.35em 0.65em;
+    font-weight: 500;
+}
+
+/* Chart Legend */
+.chart-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem;
+    padding: 0.75rem 1rem;
+    background: #f8f9fa;
+    border-top: 1px solid #dee2e6;
+    font-size: 0.8125rem;
+}
+
+.chart-legend-item {
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+}
+
+.chart-legend-item input[type="checkbox"] {
+    margin: 0;
+}
+
+.legend-color {
+    width: 20px;
+    height: 3px;
+    border-radius: 2px;
+}
+
+.legend-color.dma-20 {
+    background-color: #FF9800;
+}
+
+.legend-color.dma-50 {
+    background-color: #9C27B0;
+}
+
+.legend-color.dma-100 {
+    background-color: #00BCD4;
+}
+
+.legend-color.dma-200 {
+    background-color: #2196F3;
+}
+
+.legend-color.support {
+    background-color: #4CAF50;
+}
+
+.legend-color.resistance {
+    background-color: #F44336;
+}
+
+.legend-color.pivot {
+    background-color: #2196F3;
+}
+
+/* OI Chart Container */
+#oi-chart {
+    position: relative;
+    width: 100%;
+    padding: 0.5rem;
+    background: #fafafa;
+    border-top: 1px solid #dee2e6;
+}
+
+#oi-chart canvas {
+    width: 100% !important;
+}
+
+.oi-annotation {
+    padding: 0.5rem;
+    background: #fff;
+    border-radius: 4px;
+}
+
+/* S/R Legend */
+.sr-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    padding: 0.5rem 1rem;
+    font-size: 0.75rem;
+}
+
+.sr-legend-item {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+}
+
+.sr-legend-item .line-style {
+    width: 20px;
+    height: 0;
+    border-bottom: 2px dotted;
+}
+
+.sr-legend-item.support .line-style {
+    border-color: #4CAF50;
+}
+
+.sr-legend-item.resistance .line-style {
+    border-color: #F44336;
+}
+
+/* Trade Markers Legend */
+.marker-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    padding: 0.5rem 1rem;
+    font-size: 0.75rem;
+    background: #fff5e6;
+    border-radius: 4px;
+    margin-top: 0.5rem;
+}
+
+.marker-legend-item {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+}
+
+.marker-legend-item .line-indicator {
+    width: 20px;
+    height: 2px;
+}
+
+.marker-legend-item.entry .line-indicator {
+    background-color: #2962FF;
+}
+
+.marker-legend-item.stoploss .line-indicator {
+    background-color: #F44336;
+}
+
+.marker-legend-item.target .line-indicator {
+    background-color: #4CAF50;
+}
+
+.marker-legend-item.call-strike .line-indicator {
+    background-color: #ef5350;
+}
+
+.marker-legend-item.put-strike .line-indicator {
+    background-color: #26a69a;
+}
+
+.marker-legend-item.breakeven .line-indicator {
+    background-color: #FF9800;
+    border-style: dashed;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .chart-controls {
+        flex-wrap: wrap;
+        gap: 0.5rem;
+    }
+
+    .chart-legend {
+        gap: 0.5rem;
+        font-size: 0.75rem;
+    }
+
+    .chart-legend-item {
+        flex: 0 0 auto;
+    }
+
+    #oi-chart {
+        height: 200px !important;
+    }
+}
+
+@media (max-width: 576px) {
+    .chart-legend {
+        flex-direction: column;
+        gap: 0.25rem;
+    }
+
+    .sr-legend,
+    .marker-legend {
+        flex-direction: column;
+        gap: 0.25rem;
+    }
+}
+
+/* Chart loading state */
+.chart-loading {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 300px;
+    background: #f8f9fa;
+}
+
+/* Chart error state */
+.chart-error {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 200px;
+    padding: 2rem;
+    text-align: center;
+}
+
+/* Collapsible chart section */
+.chart-section .card-header {
+    cursor: pointer;
+    user-select: none;
+}
+
+.chart-section .card-header:hover {
+    background-color: #e9ecef !important;
+}
+
+.chart-section .collapse-icon {
+    transition: transform 0.2s ease;
+}
+
+.chart-section .collapsed .collapse-icon {
+    transform: rotate(-90deg);
+}
+
+/* Price line labels */
+.tv-chart-price-line-label {
+    font-size: 10px !important;
+}

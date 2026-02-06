@@ -253,7 +253,8 @@ class BreezeSessionManager:
                     headless=False,  # Show browser for OTP entry
                     timeout=300,
                     skip_validation=True,  # We know session is expired
-                    task_name=task_name or "session auto-refresh"
+                    task_name=task_name or "session auto-refresh",
+                    caller_holds_lock=True  # We hold the lock, don't re-acquire
                 )
 
                 if success:

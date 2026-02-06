@@ -32,6 +32,10 @@ def save_futures_suggestions(passed_results, user=None, source='manual'):
     """
     Save PASS results as TradeSuggestion records with real Breeze margin data.
 
+    DEDUPLICATION: Skips creating suggestions for (symbol, expiry_date) combinations
+    that already have a TradeSuggestion created today. This prevents duplicate records
+    when both Celery task (8:30 AM) and web trigger run on the same day.
+
     Args:
         passed_results: list of analysis result dicts with verdict='PASS'.
             Required keys per result:
@@ -40,15 +44,27 @@ def save_futures_suggestions(passed_results, user=None, source='manual'):
             Optional keys:
                 sr_data, breach_risks
         user: Django User instance. If None, uses first superuser.
+        source: 'manual' or 'auto' - used for logging only, not deduplication
 
     Returns:
-        list of saved suggestion IDs (None entries for failures)
+        list of saved suggestion IDs (None entries for failures or skipped duplicates)
     """
     from apps.trading.models import TradeSuggestion
     from apps.data.models import ContractData
 
     if not passed_results:
         return []
+
+    today = date.today()
+
+    # Get existing suggestions for today to avoid duplicates
+    existing_suggestions = set(
+        TradeSuggestion.objects.filter(
+            created_at__date=today,
+            suggestion_type='FUTURES'
+        ).values_list('instrument', 'expiry_date')
+    )
+    logger.info(f"Found {len(existing_suggestions)} existing futures suggestions for today")
 
     # Resolve user
     if user is None:
@@ -89,11 +105,28 @@ def save_futures_suggestions(passed_results, user=None, source='manual'):
             from apps.trading.services.position_service import calculate_position_sizing
 
             symbol = result['symbol']
-            expiry_date_str = result['expiry_date']
+            expiry_date_raw = result['expiry_date']
             direction = result['direction']
             futures_price = Decimal(str(result['futures_price']))
             spot_price = Decimal(str(result['spot_price']))
             composite_score = result['composite_score']
+
+            # Parse expiry date for deduplication check (handle both string and date objects)
+            if isinstance(expiry_date_raw, str):
+                expiry_dt = datetime.strptime(expiry_date_raw, '%Y-%m-%d')
+                expiry_date_str = expiry_date_raw
+            elif isinstance(expiry_date_raw, date):
+                expiry_dt = datetime.combine(expiry_date_raw, datetime.min.time())
+                expiry_date_str = expiry_date_raw.strftime('%Y-%m-%d')
+            else:
+                expiry_dt = datetime.strptime(str(expiry_date_raw), '%Y-%m-%d')
+                expiry_date_str = str(expiry_date_raw)
+
+            # DEDUPLICATION: Skip if already saved today
+            if (symbol, expiry_dt.date()) in existing_suggestions:
+                logger.info(f"Skipping duplicate suggestion for {symbol} (expiry: {expiry_date_str}) - already exists today")
+                suggestion_ids.append(None)
+                continue
 
             # Get contract details
             contract = ContractData.objects.filter(
@@ -108,9 +141,8 @@ def save_futures_suggestions(passed_results, user=None, source='manual'):
                 continue
 
             lot_size = contract.lot_size
-            expiry_dt = datetime.strptime(expiry_date_str, '%Y-%m-%d')
 
-            # Format expiry for Breeze API
+            # Format expiry for Breeze API (expiry_dt already parsed above)
             expiry_breeze = expiry_dt.strftime('%d-%b-%Y').upper()
 
             # Calculate position sizing using shared service

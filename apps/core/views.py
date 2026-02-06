@@ -4455,10 +4455,18 @@ def ensure_celery_running():
             log_file = os.path.join(project_dir, 'logs', 'celery_worker.log')
             os.makedirs(os.path.dirname(log_file), exist_ok=True)
 
+            # Determine concurrency from environment or auto-detect
+            # Uses same logic as install_and_run.sh: half of CPU cores, min 2, max 32
+            concurrency = os.environ.get('CELERY_CONCURRENCY')
+            if not concurrency:
+                cpu_count = os.cpu_count() or 4
+                concurrency = max(2, min(cpu_count // 2, 32))  # Half of cores, min 2, max 32
+
             with open(log_file, 'a') as log:
                 log.write(f"\n{'='*60}\n")
                 log.write(f"Worker starting at {datetime.now().isoformat()}\n")
                 log.write(f"Using Python: {python_path}\n")
+                log.write(f"Concurrency: {concurrency} (env: {os.environ.get('CELERY_CONCURRENCY', 'auto')})\n")
                 log.write(f"{'='*60}\n")
 
                 # Use python -m celery to ensure correct environment
@@ -4468,7 +4476,7 @@ def ensure_celery_running():
                         '-A', 'mcube_ai', 'worker',
                         '--loglevel=info',
                         '-Q', 'data,strategies,monitoring,risk,reports,celery',
-                        '--concurrency=2'
+                        f'--concurrency={concurrency}'
                     ],
                     cwd=project_dir,
                     stdout=log,
@@ -4477,7 +4485,7 @@ def ensure_celery_running():
                 )
                 result['worker_pid'] = proc.pid
 
-            logger.info(f"Celery worker started with PID {proc.pid} using {python_path}")
+            logger.info(f"Celery worker started with PID {proc.pid}, concurrency={concurrency}, using {python_path}")
             result['worker_started'] = True
             result['worker_status'] = 'started'
 

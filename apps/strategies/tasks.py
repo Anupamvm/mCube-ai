@@ -1305,7 +1305,12 @@ def refresh_breeze_session(self):
 # FUTURES ALGORITHM SCHEDULED TASK (PARALLELIZED)
 # =============================================================================
 
-@shared_task(name='apps.strategies.tasks.analyze_futures_batch', bind=True)
+@shared_task(
+    name='apps.strategies.tasks.analyze_futures_batch',
+    bind=True,
+    soft_time_limit=480,  # 8 minutes soft limit (return partial results)
+    time_limit=540,       # 9 minutes hard limit
+)
 def analyze_futures_batch(self, contract_ids, min_score=65):
     """
     Analyze a batch of futures contracts (subtask for parallel execution).
@@ -1319,85 +1324,81 @@ def analyze_futures_batch(self, contract_ids, min_score=65):
             'passed_summary': list of {symbol, expiry, score, direction, recommendation},
             'passed_full': list of full result dicts for saving,
             'errors': list of {symbol, error},
-            'batch_size': int
+            'batch_size': int,
+            'timed_out': bool (True if soft limit was hit)
         }
     """
+    from celery.exceptions import SoftTimeLimitExceeded
     from apps.data.models import ContractData
     from apps.trading.futures_analyzer import enhanced_futures_analysis
+    from apps.trading.services.analysis_service import build_suggestion_result
 
     passed_summary = []
     passed_full = []
     errors = []
+    timed_out = False
 
     contracts = ContractData.objects.filter(id__in=contract_ids)
+    analyzed_count = 0
 
-    for contract in contracts:
-        try:
-            analysis_result = enhanced_futures_analysis(
-                stock_symbol=contract.symbol,
-                expiry_date=contract.expiry,
-                contract=contract
-            )
+    try:
+        for contract in contracts:
+            try:
+                analysis_result = enhanced_futures_analysis(
+                    stock_symbol=contract.symbol,
+                    expiry_date=contract.expiry,
+                    contract=contract
+                )
 
-            composite_score = analysis_result.get('composite_score', 0)
-            verdict = analysis_result.get('verdict', 'FAIL')
-            direction = analysis_result.get('direction', 'NEUTRAL')
-            hard_reject = analysis_result.get('hard_reject', False)
-            metrics = analysis_result.get('metrics', {})
+                composite_score = analysis_result.get('composite_score', 0)
+                verdict = analysis_result.get('verdict', 'FAIL')
+                direction = analysis_result.get('direction', 'NEUTRAL')
+                hard_reject = analysis_result.get('hard_reject', False)
 
-            if verdict == 'PASS':
-                summary = {
-                    'symbol': contract.symbol,
-                    'expiry': str(contract.expiry),
-                    'score': composite_score,
-                    'verdict': verdict,
-                    'direction': direction,
-                    'hard_reject': hard_reject,
-                    'reject_reason': analysis_result.get('reject_reason'),
-                    'recommendation': analysis_result.get('recommendation', 'N/A'),
-                    'qualified': composite_score >= min_score and not hard_reject
-                }
-                passed_summary.append(summary)
+                if verdict == 'PASS':
+                    # Build summary for notification
+                    summary = {
+                        'symbol': contract.symbol,
+                        'expiry': str(contract.expiry),
+                        'score': composite_score,
+                        'verdict': verdict,
+                        'direction': direction,
+                        'hard_reject': hard_reject,
+                        'reject_reason': analysis_result.get('reject_reason'),
+                        'recommendation': analysis_result.get('recommendation', 'N/A'),
+                        'qualified': composite_score >= min_score and not hard_reject
+                    }
+                    passed_summary.append(summary)
 
-                # Build full result dict for saving
-                execution_log = analysis_result.get('execution_log', [])
-                explanation_parts = []
-                for log in execution_log:
-                    if log['action'] == 'Open Interest Analysis' and log['status'] != 'SKIP':
-                        explanation_parts.append(f"OI: {log['message']}")
-                    elif log['action'] == 'Sector Strength' and log['status'] != 'SKIP':
-                        explanation_parts.append(f"Sector: {log['message']}")
-                    elif log['action'] == 'Multi-Factor Technical Analysis' and log['status'] != 'SKIP':
-                        explanation_parts.append(f"Technical: {log['message']}")
-                    elif log['action'] == 'DMA Analysis' and log['status'] != 'SKIP':
-                        explanation_parts.append(f"DMA: {log['message']}")
-                    elif log['action'] == 'Composite Scoring & Verdict':
-                        explanation_parts.append(f"Final: {log['message']}")
+                    # Build full result dict using shared function (eliminates duplication)
+                    full_result = build_suggestion_result(contract, analysis_result)
+                    passed_full.append(full_result)
 
-                passed_full.append({
-                    'symbol': contract.symbol,
-                    'expiry_date': str(contract.expiry),
-                    'direction': direction,
-                    'spot_price': metrics.get('spot_price', 0),
-                    'futures_price': metrics.get('futures_price', 0),
-                    'composite_score': composite_score,
-                    'scores': analysis_result.get('scores', {}),
-                    'metrics': metrics,
-                    'execution_log': execution_log,
-                    'explanation': explanation_parts,
-                    'sr_data': metrics.get('sr_details', None),
-                    'breach_risks': analysis_result.get('breach_risks', None),
-                })
+                analyzed_count += 1
 
-        except Exception as e:
-            logger.error(f"Error analyzing {contract.symbol}: {e}")
-            errors.append({'symbol': contract.symbol, 'error': str(e)})
+            except SoftTimeLimitExceeded:
+                # Re-raise to outer handler — return partial results
+                raise
+            except Exception as e:
+                logger.error(f"Error analyzing {contract.symbol}: {e}")
+                errors.append({'symbol': contract.symbol, 'error': str(e)})
+                analyzed_count += 1
+
+    except SoftTimeLimitExceeded:
+        # Soft time limit hit — return partial results instead of crashing
+        timed_out = True
+        logger.warning(
+            f"analyze_futures_batch hit soft time limit after {analyzed_count}/{len(contract_ids)} contracts. "
+            f"Returning partial results."
+        )
 
     return {
         'passed_summary': passed_summary,
         'passed_full': passed_full,
         'errors': errors,
-        'batch_size': len(contract_ids)
+        'batch_size': len(contract_ids),
+        'analyzed_count': analyzed_count,
+        'timed_out': timed_out
     }
 
 
@@ -1432,18 +1433,27 @@ def aggregate_futures_results(self, batch_results, min_score=65, orchestrator_ta
     all_passed_full = []
     all_errors = []
     total_analyzed = 0
+    timed_out_batches = 0
+    partial_contracts = 0
 
     for batch in batch_results:
         if batch:  # Handle potential None from failed subtasks
             all_passed_summary.extend(batch.get('passed_summary', []))
             all_passed_full.extend(batch.get('passed_full', []))
             all_errors.extend(batch.get('errors', []))
-            total_analyzed += batch.get('batch_size', 0)
+            total_analyzed += batch.get('analyzed_count', batch.get('batch_size', 0))
+
+            # Track timed-out batches
+            if batch.get('timed_out', False):
+                timed_out_batches += 1
+                partial_contracts += batch.get('batch_size', 0) - batch.get('analyzed_count', 0)
 
     task_logger.info('merged', f"Merged {len(batch_results)} batches", context={
         'total_analyzed': total_analyzed,
         'passed': len(all_passed_summary),
-        'errors': len(all_errors)
+        'errors': len(all_errors),
+        'timed_out_batches': timed_out_batches,
+        'partial_contracts': partial_contracts
     })
 
     # Save all PASS candidates to database
@@ -1476,9 +1486,13 @@ def aggregate_futures_results(self, batch_results, min_score=65, orchestrator_ta
         message_lines = [
             "🎯 FUTURES ALGORITHM RESULTS\n",
             f"📅 {today.strftime('%d %b %Y')}",
-            f"📊 Analyzed: {total_analyzed} | Passed: {len(all_passed_summary)} | Qualified: {len(qualified_candidates)}\n",
-            "TOP CANDIDATES:"
+            f"📊 Analyzed: {total_analyzed} | Passed: {len(all_passed_summary)} | Qualified: {len(qualified_candidates)}"
         ]
+
+        if timed_out_batches > 0:
+            message_lines.append(f"\n⏱️ {timed_out_batches} batch(es) timed out ({partial_contracts} contracts skipped)")
+
+        message_lines.append("\nTOP CANDIDATES:")
 
         for i, candidate in enumerate(qualified_candidates[:5], 1):
             message_lines.append(
@@ -1496,11 +1510,32 @@ def aggregate_futures_results(self, batch_results, min_score=65, orchestrator_ta
             notification_type='SUCCESS'
         )
     else:
+        # Show top 3 highest-scoring stocks even if below threshold
+        all_passed_sorted = sorted(all_passed_summary, key=lambda x: x['score'], reverse=True)
+        top_3 = all_passed_sorted[:3]
+
+        message_lines = [
+            "📊 FUTURES ALGORITHM\n",
+            f"📅 {today.strftime('%d %b %Y')}",
+            f"Analyzed: {total_analyzed} | Passed: {len(all_passed_summary)} | Errors: {len(all_errors)}"
+        ]
+
+        if timed_out_batches > 0:
+            message_lines.append(f"\n⏱️ {timed_out_batches} batch(es) timed out ({partial_contracts} contracts skipped)")
+
+        message_lines.append(f"\n⚠️ No candidates above threshold (score >= {min_score})")
+
+        if top_3:
+            message_lines.append("\n\nTOP 3 BY SCORE:")
+            for i, candidate in enumerate(top_3, 1):
+                message_lines.append(
+                    f"\n{i}. {candidate['symbol']} ({candidate['direction']})"
+                    f"\n   Score: {candidate['score']}/100"
+                )
+            message_lines.append("\n\n💡 Consider manual review if scores are close to threshold")
+
         send_telegram_notification(
-            f"📊 FUTURES ALGORITHM\n\n"
-            f"📅 {today.strftime('%d %b %Y')}\n"
-            f"Analyzed: {total_analyzed} | Passed: {len(all_passed_summary)} | Errors: {len(all_errors)}\n\n"
-            f"❌ No qualified candidates (score >= {min_score})",
+            '\n'.join(message_lines),
             notification_type='INFO'
         )
 
@@ -1508,7 +1543,9 @@ def aggregate_futures_results(self, batch_results, min_score=65, orchestrator_ta
         'total_analyzed': total_analyzed,
         'passed': len(all_passed_summary),
         'qualified': len(qualified_candidates),
-        'saved': saved_count
+        'saved': saved_count,
+        'timed_out_batches': timed_out_batches,
+        'partial_contracts': partial_contracts
     })
 
     return {
@@ -1518,13 +1555,15 @@ def aggregate_futures_results(self, batch_results, min_score=65, orchestrator_ta
         'qualified': len(qualified_candidates),
         'saved': saved_count,
         'errors': len(all_errors),
+        'timed_out_batches': timed_out_batches,
+        'partial_contracts': partial_contracts,
         'qualified_candidates': qualified_candidates[:5]
     }
 
 
 @shared_task(name='apps.strategies.tasks.execute_futures_algorithm', bind=True)
 @task_enabled_guard('execute-futures-algorithm')
-def execute_futures_algorithm(self, this_month_volume=1000, next_month_volume=800, min_score=65, top_contracts=50, batch_size=5):
+def execute_futures_algorithm(self, this_month_volume=1000, next_month_volume=800, min_score=65, top_contracts=50, batch_size=3):
     """
     Execute Futures Algorithm - Scheduled Daily @ 8:30 AM (Parallelized)
 

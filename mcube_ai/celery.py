@@ -94,7 +94,7 @@ def get_static_schedule():
             'next_month_volume': 800,
             'min_score': 65,
             'top_contracts': 50,
-            'batch_size': 5,
+            'batch_size': 3,  # Smaller batches = faster completion, less timeout risk
         },
     },
 

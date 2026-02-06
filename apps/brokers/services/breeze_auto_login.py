@@ -44,6 +44,11 @@ OTP_FLAG_REQUEST = 'breeze_otp_request'
 OTP_FLAG_VALUE = 'breeze_otp_value'
 OTP_FLAG_TASK = 'breeze_otp_task'
 
+# Login lock flag - same as breeze_session.py for consistency
+# Prevents concurrent login attempts across processes
+LOGIN_LOCK_FLAG = 'breeze_auto_login_lock'
+LOGIN_LOCK_TIMEOUT = 300  # seconds - matches breeze_session.py
+
 # OTP request states
 OTP_STATE_PENDING = 'pending'
 OTP_STATE_FULFILLED = 'fulfilled'
@@ -53,9 +58,112 @@ TELEGRAM_OTP_TIMEOUT = 120   # seconds to wait for Telegram OTP reply
 TELEGRAM_OTP_POLL_INTERVAL = 2  # seconds between NseFlag checks
 
 
+def _is_login_locked() -> bool:
+    """
+    Check if a login is currently in progress (locked by another process).
+
+    Uses the same lock format as breeze_session.py for compatibility.
+
+    Returns:
+        True if login is locked, False otherwise
+    """
+    try:
+        from apps.core.models import NseFlag
+
+        lock_value = NseFlag.get(LOGIN_LOCK_FLAG, "")
+        if not lock_value:
+            return False
+
+        # Lock format: just a timestamp (same as breeze_session.py)
+        try:
+            lock_time = float(lock_value)
+            elapsed = time.time() - lock_time
+
+            # Check if lock has expired
+            if elapsed > LOGIN_LOCK_TIMEOUT:
+                logger.info(f"Login lock expired (held for {elapsed:.0f}s), releasing")
+                NseFlag.set(LOGIN_LOCK_FLAG, "", "Lock expired and released")
+                return False
+
+            return True
+        except ValueError:
+            return False
+
+    except Exception as e:
+        logger.warning(f"Error checking login lock: {e}")
+        return False
+
+
+def _acquire_login_lock() -> bool:
+    """
+    Attempt to acquire the login lock.
+
+    Uses the same lock format as breeze_session.py for compatibility.
+
+    Returns:
+        True if lock acquired, False if already locked by another process.
+    """
+    try:
+        from apps.core.models import NseFlag
+
+        if _is_login_locked():
+            logger.info("Login already in progress, cannot acquire lock")
+            return False
+
+        # Acquire the lock (same format as breeze_session.py)
+        NseFlag.set(LOGIN_LOCK_FLAG, str(time.time()), "Auto-login in progress")
+        logger.info("Login lock acquired")
+        return True
+
+    except Exception as e:
+        logger.warning(f"Error acquiring login lock: {e}")
+        return True  # Allow login to proceed if we can't check
+
+
+def _release_login_lock():
+    """Release the login lock."""
+    try:
+        from apps.core.models import NseFlag
+        NseFlag.set(LOGIN_LOCK_FLAG, "", "Login completed")
+        logger.info("Login lock released")
+    except Exception as e:
+        logger.warning(f"Error releasing login lock: {e}")
+
+
+def _wait_for_login_completion(max_wait: int = LOGIN_LOCK_TIMEOUT) -> Tuple[bool, str]:
+    """
+    Wait for another login process to complete, then recheck session.
+
+    Returns:
+        Tuple of (session_valid: bool, message: str)
+    """
+    start_time = time.time()
+
+    while time.time() - start_time < max_wait:
+        if not _is_login_locked():
+            # Lock released - check if session is now valid
+            logger.info("Login lock released, rechecking session...")
+            time.sleep(1)  # Brief pause for DB to sync
+
+            # Recheck session validity
+            creds = get_credentials('breeze')
+            if creds and is_session_valid_breeze(creds):
+                return True, "Session now valid (refreshed by another process)"
+            else:
+                return False, "Session still invalid after other login completed"
+
+        logger.debug("Waiting for login to complete...")
+        time.sleep(3)
+
+    return False, f"Timeout waiting for login to complete (waited {max_wait}s)"
+
+
 def validate_existing_token() -> Tuple[bool, str]:
     """
     Validate the existing Breeze session token by making an API call.
+
+    IMPORTANT: This creates the Breeze client directly without auto-refresh
+    to avoid triggering a recursive login attempt.
 
     Returns:
         Tuple of (is_valid: bool, message: str)
@@ -76,8 +184,17 @@ def validate_existing_token() -> Tuple[bool, str]:
         # Try to actually use the token with the API
         logger.info("Validating existing session token with API...")
 
-        from apps.brokers.integrations.breeze_module.client import get_breeze_client
-        breeze = get_breeze_client()
+        # Create Breeze client directly WITHOUT auto-refresh to avoid recursion
+        from breeze_connect import BreezeConnect
+        breeze = BreezeConnect(api_key=creds.api_key)
+        breeze.generate_session(
+            api_secret=creds.api_secret,
+            session_token=creds.session_token
+        )
+
+        # Workaround for breeze-connect v1.0.62 bug
+        if not hasattr(breeze, 'error_exception'):
+            breeze.error_exception = None
 
         # Make a simple API call to validate the token works
         # get_funds() is a lightweight call that validates authentication
@@ -770,11 +887,17 @@ class BreezeAutoLogin:
         finally:
             self._cleanup()
 
-    def run(self) -> Tuple[bool, str]:
+    def run(self, caller_holds_lock: bool = False) -> Tuple[bool, str]:
         """
         Execute the auto-login process.
 
         First validates existing token. Only opens browser if token is invalid.
+        Uses a lock to prevent concurrent login attempts across processes.
+
+        Args:
+            caller_holds_lock: If True, caller already holds the cross-process lock
+                               (e.g., when called from BreezeSessionManager).
+                               We skip lock acquisition to avoid deadlock.
 
         Returns:
             Tuple of (success: bool, message: str)
@@ -795,12 +918,58 @@ class BreezeAutoLogin:
                 logger.info(f"Token validation failed: {validation_msg}")
                 logger.info("Proceeding with browser-based login...")
 
-        # Step 3: Run browser-based login
-        return self._run_browser_login()
+        # Step 3: Handle locking (skip if caller already holds lock)
+        lock_acquired_here = False
+
+        if not caller_holds_lock:
+            # Check if lock is held by another process
+            if _is_login_locked():
+                # Another login is in progress - wait for it to complete
+                logger.info("Another login is in progress, waiting for it to complete...")
+                success, message = _wait_for_login_completion()
+
+                if success:
+                    logger.info("Session refreshed by another process - no login needed")
+                    return True, message
+                else:
+                    logger.warning(f"Other login failed: {message}, attempting our own...")
+
+            # Try to acquire lock for our login
+            if _acquire_login_lock():
+                lock_acquired_here = True
+                logger.info("Lock acquired for browser login")
+            else:
+                # Race condition - someone else just acquired it
+                # Wait for them to complete
+                success, message = _wait_for_login_completion()
+                if success:
+                    return True, message
+                # If failed, check session one more time
+                creds = get_credentials('breeze')
+                if creds and is_session_valid_breeze(creds):
+                    return True, "Session became valid during lock acquisition"
+                return False, "Could not acquire login lock and session is still invalid"
+
+            # One more check before opening browser
+            creds = get_credentials('breeze')
+            if creds and is_session_valid_breeze(creds):
+                logger.info("Session became valid while waiting - no login needed")
+                if lock_acquired_here:
+                    _release_login_lock()
+                return True, "Session was refreshed by another process"
+
+        # Step 4: Run browser-based login
+        try:
+            return self._run_browser_login()
+        finally:
+            # Only release lock if we acquired it here
+            if lock_acquired_here:
+                _release_login_lock()
 
 
 def auto_login_breeze(headless: bool = False, timeout: int = 300,
-                      skip_validation: bool = False, task_name: str = "") -> Tuple[bool, str]:
+                      skip_validation: bool = False, task_name: str = "",
+                      caller_holds_lock: bool = False) -> Tuple[bool, str]:
     """
     Convenience function to run Breeze auto-login.
 
@@ -813,6 +982,9 @@ def auto_login_breeze(headless: bool = False, timeout: int = 300,
         timeout: Max seconds to wait for OTP entry (default: 5 minutes)
         skip_validation: Skip token validation and force browser login
         task_name: Description of what triggered this login (shown in Telegram)
+        caller_holds_lock: If True, caller already holds the cross-process lock
+                           (e.g., when called from BreezeSessionManager).
+                           Prevents deadlock by skipping lock acquisition.
 
     Returns:
         Tuple of (success: bool, message: str)
@@ -828,4 +1000,4 @@ def auto_login_breeze(headless: bool = False, timeout: int = 300,
         headless=headless, timeout=timeout,
         skip_validation=skip_validation, task_name=task_name
     )
-    return login.run()
+    return login.run(caller_holds_lock=caller_holds_lock)

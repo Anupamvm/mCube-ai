@@ -58,9 +58,33 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# ============================================================================
+# DYNAMIC CELERY CONCURRENCY
+# ============================================================================
+# Calculate Celery worker concurrency based on available CPU cores
+# Uses half the cores to leave resources for other processes (Django, Redis, etc.)
+if [[ "$OSTYPE" == "darwin"* ]]; then
+    # macOS
+    CPU_CORES=$(sysctl -n hw.ncpu 2>/dev/null || echo 4)
+else
+    # Linux
+    CPU_CORES=$(nproc 2>/dev/null || grep -c ^processor /proc/cpuinfo 2>/dev/null || echo 4)
+fi
+
+# Use half the cores, minimum 2, maximum 32
+CELERY_CONCURRENCY=$((CPU_CORES / 2))
+if [ "$CELERY_CONCURRENCY" -lt 2 ]; then
+    CELERY_CONCURRENCY=2
+elif [ "$CELERY_CONCURRENCY" -gt 32 ]; then
+    CELERY_CONCURRENCY=32
+fi
+
+export CELERY_CONCURRENCY
+
 echo "============================================"
 echo "mCube-ai Complete Installation & Run"
 echo "============================================"
+echo "CPU Cores: $CPU_CORES | Celery Workers: $CELERY_CONCURRENCY"
 
 # ============================================================================
 # SYSTEM REQUIREMENTS CHECK (Always runs)
@@ -645,7 +669,7 @@ APPLESCRIPT
     osascript <<APPLESCRIPT
     tell application "Terminal"
         activate
-        do script "cd '$SCRIPT_DIR' && echo '============================================' && echo 'mCube Celery Worker' && echo '============================================' && echo 'Logs: logs/celery_worker.log' && echo '' && ./venv/bin/python -m celery -A mcube_ai worker -l info -Q data,strategies,monitoring,risk,reports,celery --concurrency=2 2>&1 | tee -a logs/celery_worker.log"
+        do script "cd '$SCRIPT_DIR' && echo '============================================' && echo 'mCube Celery Worker' && echo '============================================' && echo 'Logs: logs/celery_worker.log' && echo '' && ./venv/bin/python -m celery -A mcube_ai worker -l info -Q data,strategies,monitoring,risk,reports,celery --concurrency=$CELERY_CONCURRENCY 2>&1 | tee -a logs/celery_worker.log"
         set custom title of front window to "mCube - Celery Worker"
     end tell
 APPLESCRIPT
@@ -690,7 +714,7 @@ else
         sleep 1
 
         # Celery Worker (with tee to log file)
-        gnome-terminal --title="mCube - Celery Worker" -- bash -c "cd '$SCRIPT_DIR' && source venv/bin/activate && celery -A mcube_ai worker -l info -Q data,strategies,monitoring,risk,reports,celery --concurrency=2 2>&1 | tee -a logs/celery_worker.log; exec bash"
+        gnome-terminal --title="mCube - Celery Worker" -- bash -c "cd '$SCRIPT_DIR' && source venv/bin/activate && celery -A mcube_ai worker -l info -Q data,strategies,monitoring,risk,reports,celery --concurrency=$CELERY_CONCURRENCY 2>&1 | tee -a logs/celery_worker.log; exec bash"
         sleep 1
 
         # Celery Beat (with tee to log file)
@@ -705,7 +729,7 @@ else
         sleep 1
         konsole --new-tab -e bash -c "cd '$SCRIPT_DIR' && source venv/bin/activate && python manage.py run_telegram_bot" &
         sleep 1
-        konsole --new-tab -e bash -c "cd '$SCRIPT_DIR' && source venv/bin/activate && celery -A mcube_ai worker -l info -Q data,strategies,monitoring,risk,reports,celery --concurrency=2 2>&1 | tee -a logs/celery_worker.log" &
+        konsole --new-tab -e bash -c "cd '$SCRIPT_DIR' && source venv/bin/activate && celery -A mcube_ai worker -l info -Q data,strategies,monitoring,risk,reports,celery --concurrency=$CELERY_CONCURRENCY 2>&1 | tee -a logs/celery_worker.log" &
         sleep 1
         konsole --new-tab -e bash -c "cd '$SCRIPT_DIR' && source venv/bin/activate && celery -A mcube_ai beat -l info 2>&1 | tee -a logs/celery_beat.log" &
 
@@ -718,7 +742,7 @@ else
         sleep 1
         xterm -title "mCube - Telegram Bot" -e bash -c "cd '$SCRIPT_DIR' && source venv/bin/activate && python manage.py run_telegram_bot" &
         sleep 1
-        xterm -title "mCube - Celery Worker" -e bash -c "cd '$SCRIPT_DIR' && source venv/bin/activate && celery -A mcube_ai worker -l info -Q data,strategies,monitoring,risk,reports,celery --concurrency=2 2>&1 | tee -a logs/celery_worker.log" &
+        xterm -title "mCube - Celery Worker" -e bash -c "cd '$SCRIPT_DIR' && source venv/bin/activate && celery -A mcube_ai worker -l info -Q data,strategies,monitoring,risk,reports,celery --concurrency=$CELERY_CONCURRENCY 2>&1 | tee -a logs/celery_worker.log" &
         sleep 1
         xterm -title "mCube - Celery Beat" -e bash -c "cd '$SCRIPT_DIR' && source venv/bin/activate && celery -A mcube_ai beat -l info 2>&1 | tee -a logs/celery_beat.log" &
 
@@ -735,7 +759,7 @@ else
         nohup ./venv/bin/python manage.py run_telegram_bot > logs/telegram_bot.log 2>&1 &
         echo "  ✓ Telegram bot started (PID: $!) - log: logs/telegram_bot.log"
 
-        nohup ./venv/bin/python -m celery -A mcube_ai worker -l info -Q data,strategies,monitoring,risk,reports,celery --concurrency=2 > logs/celery_worker.log 2>&1 &
+        nohup ./venv/bin/python -m celery -A mcube_ai worker -l info -Q data,strategies,monitoring,risk,reports,celery --concurrency=$CELERY_CONCURRENCY > logs/celery_worker.log 2>&1 &
         echo "  ✓ Celery worker started (PID: $!) - log: logs/celery_worker.log"
 
         nohup ./venv/bin/python -m celery -A mcube_ai beat -l info > logs/celery_beat.log 2>&1 &
