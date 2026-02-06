@@ -1272,6 +1272,155 @@ def place_futures_order_with_security_master(
         }
 
 
+def place_futures_order_in_batches(
+    symbol: str,
+    expiry_date: str,
+    action: str,
+    total_lots: int,
+    batch_size: int = 10,
+    delay_seconds: int = 10,
+    order_type: str = 'market',
+    price: float = 0.0,
+    product: str = 'futures',
+    cancellation_check: callable = None,
+    progress_callback: callable = None,
+) -> Dict:
+    """
+    Place futures orders in batches with delays for large positions.
+
+    This function splits large orders into smaller batches to:
+    - Avoid slippage on large orders
+    - Manage execution risk
+    - Allow for cancellation mid-execution
+
+    Args:
+        symbol: Stock symbol (e.g., 'RELIANCE', 'SBIN')
+        expiry_date: Expiry date in 'DD-MMM-YYYY' format
+        action: 'buy' or 'sell'
+        total_lots: Total number of lots to trade
+        batch_size: Maximum lots per order (default: 10)
+        delay_seconds: Delay between orders in seconds (default: 5)
+        order_type: 'market' or 'limit' (default: 'market')
+        price: Price for limit orders (default: 0.0)
+        product: Product type (default: 'futures')
+        cancellation_check: Optional callable that returns True if execution should stop
+        progress_callback: Optional callable(batches_completed, total_batches, orders)
+
+    Returns:
+        dict: Batch execution results
+            {
+                'success': True/False,
+                'total_lots': int,
+                'lots_executed': int,
+                'batches_completed': int,
+                'total_batches': int,
+                'orders': [list of order results],
+                'cancelled': bool,
+                'average_price': float,
+                'error': str (if failed)
+            }
+
+    Example:
+        >>> result = place_futures_order_in_batches(
+        ...     symbol='RELIANCE',
+        ...     expiry_date='27-Feb-2026',
+        ...     action='buy',
+        ...     total_lots=25,
+        ...     batch_size=10,
+        ...     delay_seconds=5
+        ... )
+        >>> # Places 3 orders: 10 + 10 + 5 lots
+    """
+    import time
+    import math
+
+    logger.info(f"Starting batch futures order: {symbol} {action.upper()} {total_lots} lots in batches of {batch_size}")
+
+    # Calculate number of batches
+    num_batches = math.ceil(total_lots / batch_size)
+    remaining_lots = total_lots
+
+    orders = []
+    lots_executed = 0
+    total_value = 0
+    cancelled = False
+
+    for batch_num in range(num_batches):
+        # Check for cancellation
+        if cancellation_check and cancellation_check():
+            logger.warning(f"Batch execution cancelled at batch {batch_num + 1}/{num_batches}")
+            cancelled = True
+            break
+
+        # Calculate lots for this batch
+        batch_lots = min(batch_size, remaining_lots)
+
+        logger.info(f"Placing batch {batch_num + 1}/{num_batches}: {batch_lots} lots")
+
+        # Place order
+        order_result = place_futures_order_with_security_master(
+            symbol=symbol,
+            expiry_date=expiry_date,
+            action=action,
+            lots=batch_lots,
+            order_type=order_type,
+            price=price,
+            product=product
+        )
+
+        orders.append({
+            'batch': batch_num + 1,
+            'lots': batch_lots,
+            'result': order_result,
+            'success': order_result.get('Status') == 200
+        })
+
+        if order_result.get('Status') == 200:
+            lots_executed += batch_lots
+            # Get executed price for average calculation
+            executed_price = order_result.get('Success', {}).get('average_price', 0)
+            if executed_price:
+                total_value += executed_price * batch_lots
+
+        remaining_lots -= batch_lots
+
+        # Report progress
+        if progress_callback:
+            progress_callback(batch_num + 1, num_batches, orders)
+
+        # Delay before next batch (unless this is the last one)
+        if remaining_lots > 0 and delay_seconds > 0:
+            logger.info(f"Waiting {delay_seconds}s before next batch...")
+            time.sleep(delay_seconds)
+
+    # Calculate summary
+    successful_orders = [o for o in orders if o['success']]
+    failed_orders = [o for o in orders if not o['success']]
+
+    average_price = total_value / lots_executed if lots_executed > 0 else 0
+
+    result = {
+        'success': lots_executed > 0,
+        'total_lots': total_lots,
+        'lots_executed': lots_executed,
+        'lots_pending': total_lots - lots_executed,
+        'batches_completed': len(orders),
+        'total_batches': num_batches,
+        'successful_orders': len(successful_orders),
+        'failed_orders': len(failed_orders),
+        'orders': orders,
+        'cancelled': cancelled,
+        'average_price': average_price,
+    }
+
+    if failed_orders:
+        result['error'] = f"{len(failed_orders)} batch(es) failed"
+
+    logger.info(f"Batch execution complete: {lots_executed}/{total_lots} lots executed, {len(failed_orders)} failures")
+
+    return result
+
+
 def place_option_order_with_security_master(
     symbol: str,
     expiry_date: str,

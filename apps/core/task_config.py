@@ -138,16 +138,16 @@ TASK_DEFAULT_CONFIG = {
         'default_days': [0, 1, 2, 3, 4],  # Mon-Fri
     },
     'execute-futures-algorithm': {
-        'display_name': 'Futures Algorithm',
-        'description': 'Runs enhanced 12-component futures analysis on top contracts by volume. Sends Telegram alerts for qualified candidates.',
+        'display_name': 'Screen Futures Opportunities',
+        'description': 'Screens futures after market stabilizes (9:40 AM). Sends TOP 3 to Telegram for confirmation. On approval, executes immediately with batching.',
         'schedule_type': 'crontab',
         'category': 'strategies',
-        'default_hour': 8,
-        'default_minute': 30,
+        'default_hour': 9,
+        'default_minute': 40,
         'default_days': [0, 1, 2, 3, 4],  # Mon-Fri
         'default_task_params': {
             'top_contracts': 50,
-            'batch_size': 5,
+            'batch_size': 3,
             'this_month_volume': 1000,
             'next_month_volume': 800,
             'min_score': 65,

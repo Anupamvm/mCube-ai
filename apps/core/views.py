@@ -3469,6 +3469,60 @@ def broker_settings(request):
 
             settings_obj.save()
 
+            # ===== CORE TRADING CONFIG TAB =====
+            from apps.core.models import TradingCoreConfig
+            trading_config = TradingCoreConfig.get_instance()
+
+            # Trading Enable/Disable
+            trading_config.enable_futures_trading = request.POST.get('enable_futures_trading') == 'on'
+
+            # Strategy Selection
+            trading_config.options_strategy = request.POST.get('options_strategy', 'AUTO')
+            movement_threshold = request.POST.get('movement_threshold')
+            if movement_threshold:
+                trading_config.movement_threshold = Decimal(movement_threshold)
+
+            # Position Sizing
+            options_lots = request.POST.get('options_lots')
+            futures_lots = request.POST.get('futures_lots')
+            if options_lots:
+                trading_config.options_lots = int(options_lots)
+            if futures_lots:
+                trading_config.futures_lots = int(futures_lots)
+
+            # Risk Parameters
+            max_loss = request.POST.get('max_loss_per_trade')
+            profit_target = request.POST.get('options_profit_target')
+            if max_loss:
+                trading_config.max_loss_per_trade = Decimal(max_loss)
+            if profit_target:
+                trading_config.options_profit_target = Decimal(profit_target)
+
+            # VIX Thresholds
+            vix_low = request.POST.get('vix_low_threshold')
+            vix_high = request.POST.get('vix_high_threshold')
+            if vix_low:
+                trading_config.vix_low_threshold = Decimal(vix_low)
+            if vix_high:
+                trading_config.vix_high_threshold = Decimal(vix_high)
+
+            # Confirmation Settings
+            trading_config.require_telegram_confirmation = request.POST.get('require_telegram_confirmation') == 'on'
+            timeout = request.POST.get('confirmation_timeout_minutes')
+            if timeout:
+                trading_config.confirmation_timeout_minutes = int(timeout)
+
+            # Auto Close Settings
+            trading_config.auto_close_on_target = request.POST.get('auto_close_on_target') == 'on'
+            trading_config.auto_close_on_stoploss = request.POST.get('auto_close_on_stoploss') == 'on'
+
+            # Carry Forward
+            carry_threshold = request.POST.get('options_carry_forward_threshold')
+            if carry_threshold:
+                trading_config.options_carry_forward_threshold = Decimal(carry_threshold)
+
+            trading_config.save()
+
             messages.success(request, 'Configuration saved successfully!')
             logger.info(f"System configuration updated by {request.user.username}")
 
@@ -3477,6 +3531,10 @@ def broker_settings(request):
             logger.error(f"Error saving system configuration: {e}", exc_info=True)
 
         return redirect('core:broker_settings')
+
+    # Get TradingCoreConfig for display
+    from apps.core.models import TradingCoreConfig
+    trading_config = TradingCoreConfig.get_instance()
 
     context = {
         # Credentials
@@ -3489,6 +3547,8 @@ def broker_settings(request):
         'system_settings': settings_obj,
         # Trading Schedule
         'schedule': schedule,
+        # Core Trading Config
+        'trading_config': trading_config,
         # LLM Settings (from Django settings)
         'ollama_base_url': getattr(django_settings, 'OLLAMA_BASE_URL', 'http://localhost:11434'),
         'ollama_model': getattr(django_settings, 'OLLAMA_MODEL', 'deepseek-r1:7b'),
@@ -3892,6 +3952,14 @@ def celery_task_control(request):
     total_count = dynamic_total + static_total
     disabled_count = total_count - enabled_count
 
+    # Get TradingCoreConfig for UI controls
+    try:
+        from apps.core.models import TradingCoreConfig
+        trading_config = TradingCoreConfig.get_instance()
+    except Exception as e:
+        logger.warning(f"Could not load TradingCoreConfig: {e}")
+        trading_config = None
+
     context = {
         'dynamic_tasks': dynamic_tasks,
         'static_tasks': static_tasks,
@@ -3902,6 +3970,7 @@ def celery_task_control(request):
         'disabled_count': disabled_count,
         'total_count': total_count,
         'timestamp': datetime.now(),
+        'trading_config': trading_config,  # Core trading configuration
     }
 
     return render(request, 'core/celery_tasks.html', context)
@@ -4007,6 +4076,122 @@ def reload_celery_schedule(request):
     except Exception as e:
         logger.error(f"Error reloading schedule: {e}")
         return JsonResponse({'success': False, 'error': str(e)}, status=500)
+
+
+@login_required
+@user_passes_test(is_admin_user)
+def toggle_core_config(request):
+    """Toggle a boolean field in TradingCoreConfig."""
+    from apps.core.models import TradingCoreConfig
+    from django.contrib import messages
+
+    if request.method != 'POST':
+        return JsonResponse({'success': False, 'error': 'POST required'}, status=405)
+
+    field = request.POST.get('field')
+    redirect_to = request.POST.get('redirect', 'celery')
+
+    valid_fields = ['enable_futures_trading', 'require_telegram_confirmation',
+                    'auto_close_on_target', 'auto_close_on_stoploss']
+
+    if field not in valid_fields:
+        messages.error(request, f'Invalid field: {field}')
+        return redirect('core:celery_task_control')
+
+    try:
+        config = TradingCoreConfig.get_instance()
+        current_value = getattr(config, field)
+        setattr(config, field, not current_value)
+        config.save()
+
+        field_display = field.replace('_', ' ').title()
+        new_status = 'enabled' if not current_value else 'disabled'
+        messages.success(request, f'{field_display} {new_status}')
+
+    except Exception as e:
+        logger.error(f"Error toggling core config {field}: {e}")
+        messages.error(request, f'Error: {str(e)}')
+
+    if redirect_to == 'celery':
+        return redirect('core:celery_task_control')
+    return redirect('core:broker_settings')
+
+
+@login_required
+@user_passes_test(is_admin_user)
+def update_core_config(request):
+    """Update TradingCoreConfig fields."""
+    from apps.core.models import TradingCoreConfig
+    from django.contrib import messages
+    from decimal import Decimal
+
+    if request.method != 'POST':
+        return JsonResponse({'success': False, 'error': 'POST required'}, status=405)
+
+    redirect_to = request.POST.get('redirect', 'celery')
+
+    try:
+        config = TradingCoreConfig.get_instance()
+        updated_fields = []
+
+        # Options strategy
+        if 'options_strategy' in request.POST:
+            config.options_strategy = request.POST.get('options_strategy')
+            updated_fields.append('options_strategy')
+
+        # Position sizing mode
+        if 'position_sizing_mode' in request.POST:
+            config.position_sizing_mode = request.POST.get('position_sizing_mode')
+            updated_fields.append('position_sizing_mode')
+
+        # Manual lots
+        if 'manual_options_lots' in request.POST:
+            config.manual_options_lots = int(request.POST.get('manual_options_lots', 1))
+            updated_fields.append('manual_options_lots')
+        if 'manual_futures_lots' in request.POST:
+            config.manual_futures_lots = int(request.POST.get('manual_futures_lots', 1))
+            updated_fields.append('manual_futures_lots')
+
+        # Margin utilization percentage
+        if 'margin_utilization_pct' in request.POST:
+            config.margin_utilization_pct = Decimal(request.POST.get('margin_utilization_pct', '50'))
+            updated_fields.append('margin_utilization_pct')
+
+        # Simulated lots
+        if 'simulated_options_lots' in request.POST:
+            config.simulated_options_lots = int(request.POST.get('simulated_options_lots', 100))
+            updated_fields.append('simulated_options_lots')
+        if 'simulated_futures_lots' in request.POST:
+            config.simulated_futures_lots = int(request.POST.get('simulated_futures_lots', 30))
+            updated_fields.append('simulated_futures_lots')
+
+        # Notification level
+        if 'notification_level' in request.POST:
+            config.notification_level = request.POST.get('notification_level')
+            updated_fields.append('notification_level')
+
+        # Legacy lots fields (backward compatibility)
+        if 'options_lots' in request.POST:
+            config.options_lots = int(request.POST.get('options_lots', 1))
+            config.manual_options_lots = config.options_lots  # Sync to new field
+        if 'futures_lots' in request.POST:
+            config.futures_lots = int(request.POST.get('futures_lots', 1))
+            config.manual_futures_lots = config.futures_lots  # Sync to new field
+
+        config.save()
+
+        if updated_fields:
+            messages.success(request, f'Config updated: {", ".join(updated_fields)}')
+        else:
+            messages.success(request, 'Trading config updated')
+
+    except Exception as e:
+        logger.error(f"Error updating core config: {e}")
+        messages.error(request, f'Error: {str(e)}')
+
+    if redirect_to == 'celery':
+        return redirect('core:celery_task_control')
+    return redirect('core:broker_settings')
 
 
 # Task configuration - imported from task_config.py to avoid circular imports

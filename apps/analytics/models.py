@@ -251,6 +251,50 @@ class TradePerformance(TimeStampedModel):
         help_text="Success rate of this pattern"
     )
 
+    # Outcome tracking (for algorithm learning)
+    final_pnl = models.DecimalField(
+        max_digits=15,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Final realized P&L when position closed"
+    )
+    max_profit_during_trade = models.DecimalField(
+        max_digits=15,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Maximum unrealized profit during trade"
+    )
+    max_drawdown_during_trade = models.DecimalField(
+        max_digits=15,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Maximum unrealized loss during trade"
+    )
+    exit_reason = models.CharField(
+        max_length=30,
+        choices=[
+            ('STOP_LOSS_HIT', 'Stop Loss Hit'),
+            ('TARGET_HIT', 'Target Hit'),
+            ('TIME_EXIT', 'Time Exit'),
+            ('MANUAL', 'Manual Close'),
+            ('UNKNOWN', 'Unknown'),
+        ],
+        default='UNKNOWN',
+        help_text="Reason for exit"
+    )
+    was_averaged = models.BooleanField(
+        default=False,
+        help_text="Whether averaging was used on this position"
+    )
+    averaging_helped = models.BooleanField(
+        null=True,
+        blank=True,
+        help_text="Whether averaging improved the outcome"
+    )
+
     class Meta:
         db_table = 'trade_performance'
         ordering = ['-created_at']

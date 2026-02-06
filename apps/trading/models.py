@@ -31,6 +31,7 @@ class TradeSuggestion(models.Model):
 
     STATUS_CHOICES = [
         ('SUGGESTED', 'Suggested'),           # Initial state - algorithm generated suggestion
+        ('PENDING_CONFIRMATION', 'Pending Confirmation'),  # Awaiting user Telegram confirmation
         ('TAKEN', 'Taken'),                   # User accepted and executed the trade
         ('REJECTED', 'Rejected'),             # User rejected the suggestion
         ('ACTIVE', 'Active'),                 # Trade is currently running
@@ -132,6 +133,35 @@ class TradeSuggestion(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     expires_at = models.DateTimeField(null=True, blank=True)
+
+    # =========================================================================
+    # TELEGRAM CONFIRMATION FLOW FIELDS
+    # =========================================================================
+
+    telegram_message_id = models.CharField(
+        max_length=100,
+        null=True,
+        blank=True,
+        help_text="Telegram message ID for confirmation request"
+    )
+    user_modified_lots = models.IntegerField(
+        null=True,
+        blank=True,
+        help_text="User-modified lot count (if different from recommended)"
+    )
+    confirmation_requested_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When confirmation was requested via Telegram"
+    )
+    confirmation_timeout_minutes = models.IntegerField(
+        default=5,
+        help_text="Minutes to wait before revalidating the suggestion"
+    )
+    revalidation_sent = models.BooleanField(
+        default=False,
+        help_text="Whether a revalidation message was sent after timeout"
+    )
 
     class Meta:
         ordering = ['-created_at']

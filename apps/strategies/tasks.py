@@ -3,14 +3,43 @@ Strategy Celery Tasks
 
 Automated tasks for strategy evaluation and execution.
 
-DAILY WORKFLOW:
+=============================================================================
+DAILY TRADING WORKFLOW (IST Timezone)
+=============================================================================
+
+PRE-MARKET (8:00 - 9:15 AM):
+- 8:15 AM: refresh_breeze_session - Validate/refresh Breeze API token
 - 8:55 AM: setup_trading_day - Evaluate data, determine if day is tradable
+
+MARKET OPEN (9:15 AM):
 - 9:15 AM: start_trading_day - Validate market opening, check news/changes
+
+STRATEGY EVALUATION (9:30 - 9:45 AM):
 - 9:30 AM: evaluate_options_strategy - Decide strangle vs iron condor
 - 9:40 AM: start_options_trade - Begin implementing option trades
-- 9:40-10:15 AM: batch_options_averaging - Averaging entries
-- 9:45 AM: screen_futures_opportunities - Screen top futures
-- 3:25 PM: close_trading_day - Close positions with profit conditions
+- 9:40 AM: execute_futures_algorithm - Screen and present futures opportunities
+
+AVERAGING WINDOW (9:40 - 10:30 AM):
+- 9:40-10:30 AM: batch_options_averaging - Options averaging in batches
+
+MONITORING (10:30 AM - 3:00 PM):
+- Every 10 min: check_futures_averaging - Check if futures need averaging
+
+DAY CLOSE (3:22 - 3:30 PM):
+- 3:22 PM: close_trading_day - Close positions with profit conditions
+
+=============================================================================
+SHARED SERVICES
+=============================================================================
+
+This module uses shared services to avoid code duplication:
+- TradingContext: Unified context for account, config, position queries
+- TradeConfirmationService: Telegram confirmation flow
+- TradingCoreConfig: Position sizing, notification levels
+
+Both Celery tasks and web views use the SAME APIs via these services.
+
+=============================================================================
 """
 
 import logging
@@ -20,22 +49,30 @@ from celery import shared_task
 from django.utils import timezone
 from django.db.models import Sum
 
+# Models
 from apps.accounts.models import BrokerAccount
 from apps.positions.models import Position
+
+# Strategy entry functions
 from apps.strategies.strategies.kotak_strangle import execute_kotak_strangle_entry
 from apps.strategies.strategies.icici_futures import (
     screen_futures_opportunities,
     execute_icici_futures_entry
 )
+
+# Position services
 from apps.positions.services.delta_monitor import monitor_delta
 from apps.positions.services.averaging_manager import (
     should_average_position,
     get_averaging_recommendation
 )
 from apps.positions.services.exit_manager import should_exit_position
+
+# Core utilities (shared with web app)
 from apps.alerts.services.telegram_client import send_telegram_notification
 from apps.core.utils.task_logger import TaskLogger
 from apps.core.utils.decorators import task_enabled_guard
+from apps.core.services.trading_context import TradingContext, get_trading_context
 
 logger = logging.getLogger(__name__)
 
@@ -716,10 +753,12 @@ def start_options_trade(self):
     """
     Start Options Trade (9:40 AM Daily)
 
-    Implements the selected options strategy:
-    1. Check if strategy was selected
-    2. Execute entry based on strategy type
-    3. Mark trade as started
+    Implements the selected options strategy with Telegram confirmation:
+    1. Get strategy from TradingCoreConfig (or TradingDaySetup)
+    2. Check movement threshold
+    3. Generate trade suggestion
+    4. Send for Telegram confirmation (if enabled)
+    5. OR auto-execute (if confirmation disabled)
     """
     task_logger = TaskLogger(
         task_name='start_options_trade',
@@ -731,8 +770,24 @@ def start_options_trade(self):
 
     try:
         from apps.strategies.models import TradingDaySetup
+        from apps.core.models import TradingCoreConfig
+        from apps.trading.models import TradeSuggestion
+        from apps.trading.services.trade_confirmation import get_confirmation_service
+        from apps.data.models import ContractStockData
 
         today = date.today()
+
+        # Get core config
+        config = TradingCoreConfig.get_instance()
+
+        # Check if options trading is enabled
+        if not config.is_options_enabled():
+            task_logger.info('skipped', "Options trading disabled in Core Config")
+            send_telegram_notification(
+                "Options trade skipped - trading disabled in Core Config",
+                notification_type='INFO'
+            )
+            return {'success': True, 'skipped': True, 'reason': 'Options trading disabled'}
 
         try:
             setup = TradingDaySetup.objects.get(trading_date=today)
@@ -742,28 +797,158 @@ def start_options_trade(self):
         if not setup.is_tradable:
             return {'success': True, 'skipped': True, 'reason': 'Day not tradable'}
 
-        if not setup.options_strategy_evaluated:
-            return {'success': False, 'error': 'Options strategy not evaluated'}
+        # ====================================================================
+        # STEP 1: Check movement threshold
+        # ====================================================================
+        current_movement = _calculate_movement_since_open()
 
-        strategy = setup.options_strategy_selected
+        if abs(current_movement) > float(config.movement_threshold):
+            message = (
+                f"⚠️ OPTIONS ENTRY SKIPPED\n\n"
+                f"Movement since open: {current_movement:.2f}%\n"
+                f"Threshold: {config.movement_threshold}%\n\n"
+                f"Market too volatile for safe entry."
+            )
+            send_telegram_notification(message, notification_type='WARNING')
+            task_logger.info('movement_exceeded', f"Movement {current_movement:.2f}% exceeds threshold")
+            return {'success': False, 'reason': 'movement_exceeded', 'movement': current_movement}
 
-        if strategy == 'WAIT':
-            task_logger.info('waiting', "Strategy is WAIT, skipping trade start")
+        # ====================================================================
+        # STEP 2: Determine strategy
+        # ====================================================================
+        # Use TradingCoreConfig strategy if set to specific value
+        # Otherwise fall back to TradingDaySetup evaluated strategy
+        if config.options_strategy == 'AUTO':
+            # Use auto-selected strategy from config or setup
+            strategy = config.get_auto_strategy()
+            if not strategy or strategy == 'WAIT':
+                strategy = setup.options_strategy_selected if setup.options_strategy_evaluated else None
+        else:
+            strategy = config.options_strategy
+
+        if not strategy or strategy == 'WAIT':
+            task_logger.info('waiting', "Strategy is WAIT or not determined")
             return {'success': True, 'skipped': True, 'reason': 'Waiting for better conditions'}
 
-        task_logger.step('execute', f"Executing {strategy} strategy")
+        task_logger.step('strategy', f"Using strategy: {strategy}")
 
-        # Execute based on strategy
-        if strategy == 'STRANGLE':
-            # Execute strangle entry
-            result = execute_kotak_strangle_entry(
-                BrokerAccount.objects.filter(broker='KOTAK', is_active=True).first()
-            )
-        elif strategy == 'IRON_CONDOR':
-            # TODO: Implement iron condor entry
-            result = {'success': False, 'message': 'Iron condor not yet implemented'}
+        # ====================================================================
+        # STEP 3: Get account and generate suggestion
+        # ====================================================================
+        account = BrokerAccount.objects.filter(broker='KOTAK', is_active=True).first()
+        if not account:
+            return {'success': False, 'error': 'No active Kotak account'}
+
+        # Call existing entry functions which generate suggestions
+        # These functions return a dict with 'suggestion' if successful
+        if strategy == 'STRANGLE' or strategy == 'SHORT_STRANGLE':
+            # Use existing strangle entry function
+            result = execute_kotak_strangle_entry(account)
+
+            if not result.get('success'):
+                error_msg = result.get('message', result.get('error', 'Strangle entry failed'))
+                task_logger.warning('strangle_failed', error_msg)
+                return {'success': False, 'error': error_msg}
+
+            suggestion = result.get('suggestion')
+            if not suggestion:
+                return {'success': False, 'error': 'No suggestion returned from strangle entry'}
+
+        elif strategy == 'BROKEN_IRON_CONDOR' or strategy == 'IRON_CONDOR':
+            from apps.strategies.strategies.kotak_broken_iron_condor import execute_kotak_broken_iron_condor_entry
+
+            result = execute_kotak_broken_iron_condor_entry(account)
+
+            if not result.get('success'):
+                error_msg = result.get('message', result.get('error', 'Iron condor entry failed'))
+                task_logger.warning('iron_condor_failed', error_msg)
+                return {'success': False, 'error': error_msg}
+
+            suggestion = result.get('suggestion')
+            if not suggestion:
+                return {'success': False, 'error': 'No suggestion returned from iron condor entry'}
+
         else:
-            result = {'success': False, 'message': f'Unknown strategy: {strategy}'}
+            return {'success': False, 'error': f'Unknown strategy: {strategy}'}
+
+        # ====================================================================
+        # STEP 4: Calculate position size based on sizing mode
+        # ====================================================================
+        if config.is_simulated():
+            # Simulated mode - paper trade
+            lots = config.get_lots_for_trade('OPTIONS')
+            task_logger.info('simulated', f"SIMULATED MODE: Would trade {lots} lots (no real orders)")
+            suggestion.recommended_lots = lots
+            suggestion.algorithm_reasoning = f"[SIMULATED] VIX: {setup.vix_open}, Movement: {current_movement:.2f}%"
+            suggestion.status = 'SIMULATED'
+            suggestion.save()
+
+            send_telegram_notification(
+                f"📝 SIMULATED OPTIONS TRADE\n\n"
+                f"Strategy: {strategy}\n"
+                f"Lots: {lots}\n"
+                f"Movement: {current_movement:.2f}%\n\n"
+                f"This is a paper trade - no real orders placed.",
+                notification_type='INFO'
+            )
+            return {'success': True, 'simulated': True, 'lots': lots, 'strategy': strategy}
+
+        elif config.is_auto_sizing():
+            # Auto mode - calculate from broker margin
+            from apps.trading.services.margin_service import get_available_margin, get_margin_per_lot
+            try:
+                available_margin = get_available_margin()
+                margin_per_lot = get_margin_per_lot('OPTIONS', strategy)
+                lots = config.get_lots_for_trade('OPTIONS', available_margin, margin_per_lot)
+                task_logger.info('auto_sizing', f"Auto calculated lots: {lots} (margin: {available_margin}, per_lot: {margin_per_lot})")
+            except Exception as e:
+                task_logger.warning('margin_error', f"Error getting margin, defaulting to 1 lot: {e}")
+                lots = 1
+        else:
+            # Manual or Test mode
+            lots = config.get_lots_for_trade('OPTIONS')
+
+        # Update suggestion with config values
+        suggestion.recommended_lots = lots
+        suggestion.algorithm_reasoning = f"VIX: {setup.vix_open}, Movement: {current_movement:.2f}%, Mode: {config.position_sizing_mode}"
+        suggestion.status = 'PENDING_CONFIRMATION' if config.requires_confirmation('ENTRY') else 'APPROVED'
+        suggestion.save()
+
+        # ====================================================================
+        # STEP 5: Send for confirmation OR auto-execute
+        # ====================================================================
+        if config.requires_confirmation('ENTRY'):
+            # Send confirmation request to Telegram
+            confirmation_service = get_confirmation_service()
+            success, result = confirmation_service.request_options_confirmation(suggestion, config)
+
+            if success:
+                task_logger.success("Options confirmation request sent", context={
+                    'suggestion_id': suggestion.id,
+                    'strategy': strategy,
+                    'message_id': result
+                })
+                return {
+                    'success': True,
+                    'awaiting_confirmation': True,
+                    'suggestion_id': suggestion.id,
+                    'strategy': strategy
+                }
+            else:
+                task_logger.warning('telegram_failed', f"Failed to send Telegram: {result}")
+                # Fall through to auto-execute if Telegram fails
+                send_telegram_notification(
+                    f"⚠️ Could not send confirmation request.\n"
+                    f"Auto-executing {strategy}...",
+                    notification_type='WARNING'
+                )
+
+        # Auto-execute (SUPERVISED or AUTONOMOUS mode for non-entry actions, or confirmation disabled)
+        mode_label = config.get_notification_level_display_short()
+        task_logger.step('execute', f"Auto-executing {strategy} strategy ({mode_label})")
+
+        confirmation_service = get_confirmation_service()
+        result = confirmation_service.execute_options_trade(suggestion, lots)
 
         # Update setup
         setup.options_trade_started = result.get('success', False)
@@ -772,26 +957,54 @@ def start_options_trade(self):
 
         if result.get('success'):
             send_telegram_notification(
-                f"✅ OPTIONS TRADE STARTED\n\n"
+                f"✅ OPTIONS TRADE EXECUTED ({mode_label})\n\n"
                 f"Strategy: {strategy}\n"
-                f"Position: #{result.get('position', {}).id if result.get('position') else 'N/A'}\n\n"
-                f"Averaging will continue until 10:15 AM.",
+                f"Lots: {lots}\n"
+                f"Sizing: {config.get_position_sizing_display_short()}\n\n"
+                f"Averaging will continue until 10:30 AM.",
                 notification_type='SUCCESS'
             )
         else:
             send_telegram_notification(
                 f"❌ OPTIONS TRADE FAILED\n\n"
                 f"Strategy: {strategy}\n"
-                f"Reason: {result.get('message', 'Unknown error')}",
+                f"Reason: {result.get('error', 'Unknown error')}",
                 notification_type='ERROR'
             )
 
-        task_logger.success("Options trade start completed", context=result)
+        task_logger.success("Options trade completed", context=result)
         return result
 
     except Exception as e:
         task_logger.failure("Error in start_options_trade", error=e)
         return {'success': False, 'error': str(e)}
+
+
+def _calculate_movement_since_open() -> float:
+    """
+    Calculate NIFTY % movement from 9:15 open to current.
+
+    Returns:
+        float: Movement percentage (positive or negative)
+    """
+    try:
+        from apps.data.models import ContractStockData
+
+        nifty = ContractStockData.objects.filter(symbol='NIFTY').first()
+        if not nifty:
+            return 0.0
+
+        day_open = float(nifty.day_open) if nifty.day_open else 0
+        current = float(nifty.close_price) if nifty.close_price else 0
+
+        if day_open <= 0:
+            return 0.0
+
+        movement = ((current - day_open) / day_open) * 100
+        return movement
+
+    except Exception:
+        return 0.0
 
 
 @shared_task(name='apps.strategies.tasks.batch_options_averaging', bind=True)
@@ -837,6 +1050,10 @@ def batch_options_averaging(self):
 
         task_logger.step('check_positions', "Checking positions for averaging")
 
+        # Get core config for confirmation settings
+        from apps.core.models import TradingCoreConfig
+        config = TradingCoreConfig.get_instance()
+
         # Get active options positions
         options_positions = Position.objects.filter(
             status='ACTIVE',
@@ -844,15 +1061,42 @@ def batch_options_averaging(self):
         )
 
         averaged_count = 0
+        skipped_count = 0
 
         for position in options_positions:
             # Check if averaging needed
             recommendation = get_averaging_recommendation(position, position.current_price)
 
             if recommendation.get('should_average'):
-                # TODO: Execute averaging
-                task_logger.info('averaging', f"Averaging recommended for position {position.id}")
-                averaged_count += 1
+                # Determine lots based on sizing mode
+                if config.is_simulated():
+                    task_logger.info('simulated_averaging', f"SIMULATED: Would average position {position.id}")
+                    averaged_count += 1
+                    continue
+
+                lots = config.get_lots_for_trade('OPTIONS')
+
+                # Check if confirmation required
+                if config.requires_confirmation('AVERAGING'):
+                    # Send confirmation request
+                    from apps.trading.services.trade_confirmation import get_confirmation_service
+                    confirmation_service = get_confirmation_service()
+                    success, result = confirmation_service.request_averaging_confirmation(position, lots)
+                    if success:
+                        task_logger.info('averaging_confirmation', f"Confirmation sent for position {position.id}")
+                    else:
+                        task_logger.warning('averaging_confirm_failed', f"Failed to send confirmation: {result}")
+                    skipped_count += 1
+                else:
+                    # Auto-execute averaging (SUPERVISED with AVERAGING or AUTONOMOUS mode)
+                    from apps.trading.services.trade_confirmation import get_confirmation_service
+                    confirmation_service = get_confirmation_service()
+                    result = confirmation_service.execute_averaging(position, lots)
+                    if result.get('success'):
+                        task_logger.info('averaging_executed', f"Averaging executed for position {position.id}")
+                        averaged_count += 1
+                    else:
+                        task_logger.warning('averaging_failed', f"Averaging failed: {result.get('error')}")
 
         # Check if averaging window complete
         if now >= averaging_end:
@@ -862,13 +1106,17 @@ def batch_options_averaging(self):
 
         task_logger.success("Batch averaging completed", context={
             'positions_checked': options_positions.count(),
-            'averaged': averaged_count
+            'averaged': averaged_count,
+            'awaiting_confirmation': skipped_count,
+            'mode': config.notification_level
         })
 
         return {
             'success': True,
             'positions_checked': options_positions.count(),
-            'averaged': averaged_count
+            'averaged': averaged_count,
+            'awaiting_confirmation': skipped_count,
+            'simulated': config.is_simulated()
         }
 
     except Exception as e:
@@ -1017,6 +1265,10 @@ def close_trading_day(self):
         except TradingDaySetup.DoesNotExist:
             setup = None
 
+        # Get core config for confirmation settings
+        from apps.core.models import TradingCoreConfig
+        config = TradingCoreConfig.get_instance()
+
         task_logger.step('get_positions', "Getting open option positions")
 
         # Get active Nifty option positions
@@ -1037,7 +1289,21 @@ def close_trading_day(self):
 
             return {'success': True, 'positions_closed': 0, 'reason': 'No positions'}
 
-        task_logger.step('close_positions', f"Processing {option_positions.count()} positions")
+        # Check for simulated mode
+        if config.is_simulated():
+            total_pnl = sum(p.unrealized_pnl or Decimal('0') for p in option_positions)
+            task_logger.info('simulated', f"SIMULATED: Would close {option_positions.count()} positions, P&L: {total_pnl}")
+            send_telegram_notification(
+                f"📝 SIMULATED DAY CLOSE\n\n"
+                f"Positions: {option_positions.count()}\n"
+                f"Hypothetical P&L: ₹{total_pnl:,.0f}\n\n"
+                f"Paper trade mode - no real closes.",
+                notification_type='INFO'
+            )
+            return {'success': True, 'simulated': True, 'positions': option_positions.count()}
+
+        mode_label = config.get_notification_level_display_short()
+        task_logger.step('close_positions', f"Processing {option_positions.count()} positions ({mode_label})")
 
         MIN_PROFIT = Decimal('5000')
         close_results = {
@@ -1086,8 +1352,25 @@ def close_trading_day(self):
                 })
                 continue
 
-            # Close the position
+            # Close the position - check if confirmation required (unless force close)
             task_logger.info('closing', f"Closing position {position.id}: {close_reason}")
+
+            # Force close always auto-executes; otherwise check confirmation
+            if not is_force_close and config.requires_confirmation('EXIT'):
+                # Send confirmation request
+                from apps.trading.services.trade_confirmation import get_confirmation_service
+                confirmation_service = get_confirmation_service()
+                success, result = confirmation_service.request_exit_confirmation(position, close_reason)
+                if success:
+                    task_logger.info('exit_confirmation', f"Exit confirmation sent for position {position.id}")
+                close_results['details'].append({
+                    'position_id': position.id,
+                    'symbol': position.instrument,
+                    'pnl': float(position_pnl),
+                    'action': 'pending_confirmation',
+                    'reason': close_reason
+                })
+                continue  # Don't close yet - wait for confirmation
 
             try:
                 success, closed_pos, msg = close_position(
@@ -1135,13 +1418,15 @@ def close_trading_day(self):
             setup.save()
 
         # Send notification
+        pending_count = len([d for d in close_results['details'] if d.get('action') == 'pending_confirmation'])
         send_telegram_notification(
-            f"📊 TRADING DAY CLOSED\n\n"
+            f"📊 TRADING DAY CLOSED ({mode_label})\n\n"
             f"Positions: {close_results['total']}\n"
             f"Closed: {close_results['closed']}\n"
             f"Skipped (low profit): {close_results['skipped']}\n"
-            f"Force Closed: {close_results['forced']}\n\n"
-            f"Total P&L: ₹{close_results['total_pnl']:,.0f}",
+            f"Force Closed: {close_results['forced']}\n"
+            f"{'Pending Confirmation: ' + str(pending_count) + chr(10) if pending_count > 0 else ''}"
+            f"\nTotal P&L: ₹{close_results['total_pnl']:,.0f}",
             notification_type='SUCCESS' if close_results['total_pnl'] >= 0 else 'WARNING'
         )
 
@@ -1162,71 +1447,119 @@ def close_trading_day(self):
 
 
 # =============================================================================
-# FUTURES AVERAGING TASK (existing, updated)
+# FUTURES AVERAGING TASK
 # =============================================================================
 
 @shared_task(name='apps.strategies.tasks.check_futures_averaging')
 @task_enabled_guard('check-futures-averaging')
 def check_futures_averaging():
     """
-    Check if active futures positions need averaging
+    Check if active futures positions need averaging.
 
-    Scheduled: Every 10 minutes during market hours
+    SCHEDULE: Every 10 minutes during market hours (9:00 AM - 3:00 PM)
 
-    Workflow:
-    1. Get all active futures positions
-    2. Check if averaging needed (1% loss trigger)
-    3. Send recommendation via Telegram
-    4. Wait for manual approval to execute averaging
+    WORKFLOW:
+    1. Create TradingContext (shared with web app)
+    2. Skip if simulated mode (paper trading)
+    3. Get all active futures positions
+    4. For each position, check if averaging needed (1% loss trigger)
+    5. Based on notification level:
+       - FULL_CONTROL/SUPERVISED: Send Telegram confirmation request
+       - AUTONOMOUS: Auto-execute averaging immediately
+
+    USES SHARED SERVICES:
+    - TradingContext: Config access, position queries
+    - TradeConfirmationService: Telegram confirmation flow
+    - get_averaging_recommendation: Position averaging logic
     """
     logger.info("CELERY TASK: Futures Averaging Check")
 
+    # -------------------------------------------------------------------------
+    # STEP 1: Create unified trading context (same API as web app)
+    # -------------------------------------------------------------------------
+    ctx = get_trading_context(task_name='check_futures_averaging')
+
     try:
-        # Get all active futures positions
-        futures_positions = Position.objects.filter(
-            status='ACTIVE',
-            strategy_type='LLM_VALIDATED_FUTURES'
-        )
+        # -------------------------------------------------------------------------
+        # STEP 2: Check simulated mode (paper trading - no real orders)
+        # -------------------------------------------------------------------------
+        if ctx.is_simulated():
+            positions = ctx.get_active_futures_positions()
+            logger.info(f"📝 SIMULATED: Would check {positions.count()} positions for averaging")
+            return ctx.success_result(simulated=True, positions=positions.count())
+
+        # -------------------------------------------------------------------------
+        # STEP 3: Get active futures positions
+        # -------------------------------------------------------------------------
+        futures_positions = ctx.get_active_futures_positions()
 
         if not futures_positions.exists():
             logger.info("ℹ️ No active futures positions to check")
-            return {'success': True, 'positions_checked': 0}
+            return ctx.success_result(positions_checked=0)
 
+        # -------------------------------------------------------------------------
+        # STEP 4: Process each position for averaging
+        # -------------------------------------------------------------------------
+        mode_label = ctx.config.get_notification_level_display_short()
         checked_count = 0
         averaging_recommendations = 0
+        auto_executed = 0
 
         for position in futures_positions:
             try:
-                # Get current price
-                # TODO: Fetch actual current price from broker
-                current_price = position.current_price
-
-                # Check if averaging needed
-                recommendation = get_averaging_recommendation(position, current_price)
+                # Check if averaging needed using shared service
+                recommendation = get_averaging_recommendation(position, position.current_price)
 
                 if recommendation['should_average']:
-                    # Send recommendation
                     preview = recommendation['preview']
+                    lots = ctx.get_lots_for_trade('FUTURES')  # Uses TradingContext helper
 
-                    message = (
-                        f"⚠️ AVERAGING RECOMMENDATION\n\n"
-                        f"Position: #{position.id}\n"
-                        f"Symbol: {position.instrument}\n"
-                        f"Direction: {position.direction}\n\n"
-                        f"Current Entry: ₹{preview['current_entry']:,.2f}\n"
-                        f"Current Price: ₹{preview['averaging_price']:,.2f}\n"
-                        f"Loss: {recommendation['details']['loss_pct']:.2f}%\n\n"
-                        f"RECOMMENDATION:\n"
-                        f"Add {preview['quantity_to_add']} quantity\n"
-                        f"New Avg Entry: ₹{preview['new_average_entry']:,.2f}\n"
-                        f"New Stop-Loss: ₹{preview['new_stop_loss']:,.2f}\n"
-                        f"Additional Margin: ₹{preview['additional_margin_needed']:,.0f}\n\n"
-                        f"Averaging Count: {preview['averaging_count_after']}/3\n\n"
-                        f"ℹ️ Manual approval required"
-                    )
+                    # ---------------------------------------------------------
+                    # STEP 5: Handle based on notification level
+                    # ---------------------------------------------------------
+                    if ctx.requires_confirmation('AVERAGING'):
+                        # FULL_CONTROL or SUPERVISED: Send confirmation request
+                        from apps.trading.services.trade_confirmation import get_confirmation_service
+                        confirmation_service = get_confirmation_service()
+                        success, result = confirmation_service.request_averaging_confirmation(
+                            position, lots, preview
+                        )
 
-                    send_telegram_notification(message, notification_type='WARNING')
-                    averaging_recommendations += 1
+                        if success:
+                            averaging_recommendations += 1
+                        else:
+                            # Fallback to simple notification
+                            ctx.notify_warning(
+                                f"⚠️ AVERAGING RECOMMENDATION ({mode_label})\n\n"
+                                f"Position: #{position.id}\n"
+                                f"Symbol: {position.instrument}\n"
+                                f"Direction: {position.direction}\n\n"
+                                f"Current Entry: ₹{preview['current_entry']:,.2f}\n"
+                                f"Current Price: ₹{preview['averaging_price']:,.2f}\n"
+                                f"Loss: {recommendation['details']['loss_pct']:.2f}%\n\n"
+                                f"RECOMMENDATION:\n"
+                                f"Add {preview['quantity_to_add']} quantity\n"
+                                f"New Avg Entry: ₹{preview['new_average_entry']:,.2f}\n\n"
+                                f"ℹ️ Confirmation required"
+                            )
+                            averaging_recommendations += 1
+                    else:
+                        # AUTONOMOUS mode: Auto-execute averaging
+                        from apps.trading.services.trade_confirmation import get_confirmation_service
+                        confirmation_service = get_confirmation_service()
+                        result = confirmation_service.execute_averaging(position, lots)
+
+                        if result.get('success'):
+                            auto_executed += 1
+                            ctx.notify(
+                                f"🤖 AUTO-AVERAGED ({mode_label})\n\n"
+                                f"Position: {position.instrument}\n"
+                                f"Added: {lots} lots\n"
+                                f"New Avg: ₹{result.get('new_avg', 0):,.2f}",
+                                notification_type='INFO'
+                            )
+                        else:
+                            logger.warning(f"Auto-averaging failed for {position.id}: {result.get('error')}")
 
                 checked_count += 1
 
@@ -1235,18 +1568,19 @@ def check_futures_averaging():
 
         logger.info(
             f"✅ Checked {checked_count} positions, "
-            f"{averaging_recommendations} averaging recommendations"
+            f"{averaging_recommendations} recommendations, {auto_executed} auto-executed"
         )
 
-        return {
-            'success': True,
-            'positions_checked': checked_count,
-            'averaging_recommendations': averaging_recommendations
-        }
+        return ctx.success_result(
+            positions_checked=checked_count,
+            averaging_recommendations=averaging_recommendations,
+            auto_executed=auto_executed,
+            mode=ctx.config.notification_level
+        )
 
     except Exception as e:
         logger.error(f"Error in averaging check: {e}", exc_info=True)
-        return {'success': False, 'message': str(e)}
+        return ctx.error_result(str(e))
 
 
 # =============================================================================
@@ -1478,15 +1812,96 @@ def aggregate_futures_results(self, batch_results, min_score=65, orchestrator_ta
     qualified_candidates = [s for s in all_passed_summary if s.get('qualified', False)]
     qualified_candidates.sort(key=lambda x: x['score'], reverse=True)
 
-    # Send single Telegram notification
-    task_logger.step('notify', "Sending Telegram notification")
+    # Check TradingCoreConfig for confirmation settings
+    from apps.core.models import TradingCoreConfig
+    from apps.trading.models import TradeSuggestion
+
+    config = TradingCoreConfig.get_instance()
     today = date.today()
 
-    if qualified_candidates:
+    # Check for simulated mode - no real order confirmations
+    if config.is_simulated():
+        task_logger.info('simulated', f"SIMULATED MODE: {len(qualified_candidates)} qualified candidates (no real orders)")
         message_lines = [
-            "🎯 FUTURES ALGORITHM RESULTS\n",
+            "📝 SIMULATED FUTURES RESULTS\n",
             f"📅 {today.strftime('%d %b %Y')}",
-            f"📊 Analyzed: {total_analyzed} | Passed: {len(all_passed_summary)} | Qualified: {len(qualified_candidates)}"
+            f"📊 Analyzed: {total_analyzed} | Passed: {len(all_passed_summary)} | Qualified: {len(qualified_candidates)}\n",
+            f"🧪 Simulated Lots: {config.simulated_futures_lots}"
+        ]
+        for i, candidate in enumerate(qualified_candidates[:5], 1):
+            message_lines.append(
+                f"\n{i}. {candidate['symbol']} ({candidate['direction']})"
+                f"\n   Score: {candidate['score']}/100"
+            )
+        message_lines.append("\n\n📝 Paper trade mode - no real orders")
+        send_telegram_notification('\n'.join(message_lines), notification_type='INFO')
+
+        task_logger.success("Simulated aggregation completed", context={
+            'total_analyzed': total_analyzed, 'qualified': len(qualified_candidates)
+        })
+        return {
+            'success': True, 'simulated': True,
+            'candidates_found': total_analyzed, 'qualified': len(qualified_candidates)
+        }
+
+    # Send Telegram notification and optionally confirmation request
+    task_logger.step('notify', "Processing results and sending notification")
+
+    if qualified_candidates and config.requires_confirmation('ENTRY'):
+        # Get TOP 3 for confirmation flow
+        top_3_candidates = qualified_candidates[:3]
+
+        # Find corresponding TradeSuggestion records
+        top_3_suggestions = []
+        for candidate in top_3_candidates:
+            try:
+                suggestion = TradeSuggestion.objects.filter(
+                    instrument=candidate['symbol'],
+                    suggestion_date=today,
+                    suggestion_type='FUTURES'
+                ).order_by('-created_at').first()
+
+                if suggestion:
+                    # Update status to pending confirmation
+                    suggestion.status = 'PENDING_CONFIRMATION'
+                    suggestion.save()
+                    top_3_suggestions.append(suggestion)
+            except Exception as e:
+                logger.warning(f"Could not find suggestion for {candidate['symbol']}: {e}")
+
+        if top_3_suggestions:
+            # Send confirmation request with buttons
+            from apps.trading.services.trade_confirmation import get_confirmation_service
+            confirmation_service = get_confirmation_service()
+
+            success, result = confirmation_service.request_futures_confirmation(top_3_suggestions)
+
+            if success:
+                task_logger.info('confirmation_sent', f"Futures confirmation sent for {len(top_3_suggestions)} candidates")
+            else:
+                task_logger.warning('confirmation_failed', f"Failed to send confirmation: {result}")
+                # Fall back to regular notification
+                _send_futures_summary_notification(
+                    today, total_analyzed, all_passed_summary, qualified_candidates,
+                    all_errors, timed_out_batches, partial_contracts, min_score
+                )
+        else:
+            # No suggestions found, send regular notification
+            _send_futures_summary_notification(
+                today, total_analyzed, all_passed_summary, qualified_candidates,
+                all_errors, timed_out_batches, partial_contracts, min_score
+            )
+
+    elif qualified_candidates:
+        # SUPERVISED or AUTONOMOUS mode - send notification (no confirmation required)
+        mode_label = config.get_notification_level_display_short()
+        sizing_label = config.get_position_sizing_display_short()
+
+        message_lines = [
+            f"🎯 FUTURES ALGORITHM ({mode_label})\n",
+            f"📅 {today.strftime('%d %b %Y')}",
+            f"📊 Analyzed: {total_analyzed} | Passed: {len(all_passed_summary)} | Qualified: {len(qualified_candidates)}",
+            f"📏 Sizing: {sizing_label}"
         ]
 
         if timed_out_batches > 0:
@@ -1503,14 +1918,17 @@ def aggregate_futures_results(self, batch_results, min_score=65, orchestrator_ta
         if len(qualified_candidates) > 5:
             message_lines.append(f"\n\n... and {len(qualified_candidates) - 5} more")
 
-        message_lines.append("\n\n✅ Ready for manual verification")
+        if config.is_autonomous():
+            message_lines.append("\n\n🤖 Autonomous mode - no confirmation needed")
+        else:
+            message_lines.append("\n\n✅ Ready for manual verification")
 
         send_telegram_notification(
             '\n'.join(message_lines),
             notification_type='SUCCESS'
         )
     else:
-        # Show top 3 highest-scoring stocks even if below threshold
+        # No qualified candidates - show top 3 highest-scoring stocks
         all_passed_sorted = sorted(all_passed_summary, key=lambda x: x['score'], reverse=True)
         top_3 = all_passed_sorted[:3]
 
@@ -1561,32 +1979,102 @@ def aggregate_futures_results(self, batch_results, min_score=65, orchestrator_ta
     }
 
 
+def _send_futures_summary_notification(
+    today, total_analyzed, all_passed_summary, qualified_candidates,
+    all_errors, timed_out_batches, partial_contracts, min_score
+):
+    """
+    Send summary notification for futures algorithm results.
+
+    Called when confirmation flow fails or as fallback.
+    """
+    message_lines = [
+        "🎯 FUTURES ALGORITHM RESULTS\n",
+        f"📅 {today.strftime('%d %b %Y')}",
+        f"📊 Analyzed: {total_analyzed} | Passed: {len(all_passed_summary)} | Qualified: {len(qualified_candidates)}"
+    ]
+
+    if timed_out_batches > 0:
+        message_lines.append(f"\n⏱️ {timed_out_batches} batch(es) timed out ({partial_contracts} contracts skipped)")
+
+    message_lines.append("\nTOP CANDIDATES:")
+
+    for i, candidate in enumerate(qualified_candidates[:5], 1):
+        message_lines.append(
+            f"\n{i}. {candidate['symbol']} ({candidate['direction']})"
+            f"\n   Score: {candidate['score']}/100 | {candidate['recommendation']}"
+        )
+
+    if len(qualified_candidates) > 5:
+        message_lines.append(f"\n\n... and {len(qualified_candidates) - 5} more")
+
+    message_lines.append("\n\n✅ Ready for manual verification")
+
+    send_telegram_notification(
+        '\n'.join(message_lines),
+        notification_type='SUCCESS'
+    )
+
+
 @shared_task(name='apps.strategies.tasks.execute_futures_algorithm', bind=True)
 @task_enabled_guard('execute-futures-algorithm')
 def execute_futures_algorithm(self, this_month_volume=1000, next_month_volume=800, min_score=65, top_contracts=50, batch_size=3):
     """
-    Execute Futures Algorithm - Scheduled Daily @ 8:30 AM (Parallelized)
+    Screen Futures Opportunities - Scheduled Daily @ 9:40 AM (Parallelized)
 
-    This task orchestrates parallel futures analysis using Celery chord.
-    Contracts are split into batches and analyzed concurrently.
+    This is the main futures trading algorithm. It screens high-volume futures contracts,
+    scores them using a 12-component analysis framework, and presents TOP 3 candidates
+    to the user via Telegram for confirmation.
 
-    Workflow:
-    1. Check if trading day is valid (not holiday, market is open)
-    2. Load task_params from CeleryTaskState (if configured)
-    3. Get active ICICI account for futures trading
-    4. Screen futures contracts using volume filters
-    5. Split contracts into batches and dispatch parallel subtasks
-    6. Chord callback aggregates results, saves to DB, sends notification
+    ==========================================================================
+    SCHEDULE: 9:40 AM IST (after market stabilizes post-open)
+    ==========================================================================
+
+    WORKFLOW:
+    1. PRE-CHECKS: Validate trading day (not holiday/weekend), check Core Config
+    2. SCREENING: Get top 50 futures contracts by trading volume
+    3. PARALLEL ANALYSIS: Split into batches, analyze concurrently using Celery chord
+    4. SCORING: 12-component analysis (OI, DMA, technical, sector, etc.)
+    5. FILTERING: Qualify contracts with score >= 65 (configurable)
+    6. CALLBACK: Aggregate results, save to DB, send Telegram notification
+    7. CONFIRMATION: Present TOP 3 to user with Approve/Reject buttons
+    8. EXECUTION: On user confirmation, execute trade with batching
+
+    12-COMPONENT SCORING SYSTEM:
+    - Open Interest Buildup & Change
+    - DMA Position (20/50/200) & Crossovers
+    - Volume Pattern & Liquidity
+    - RSI, MACD, Bollinger Bands
+    - Sector Strength
+    - Basis Premium & Cost of Carry
+    - Support/Resistance Levels
+
+    NOTIFICATION LEVELS (from TradingCoreConfig):
+    - FULL_CONTROL: Sends TOP 3 for confirmation, waits for user
+    - SUPERVISED: Same as FULL_CONTROL (entries require confirmation)
+    - AUTONOMOUS: Auto-executes top candidate (no confirmation)
+    - SIMULATED: Paper trade only, no real orders
+
+    POSITION SIZING (from TradingCoreConfig):
+    - TEST: 1 lot each
+    - MANUAL: Fixed lots from config
+    - AUTO: Calculated from broker margin
+    - SIMULATED: Hypothetical large positions
 
     Args:
         this_month_volume: Min volume for current month contracts (default: 1000)
         next_month_volume: Min volume for next month contracts (default: 800)
         min_score: Minimum composite score to qualify (default: 65)
         top_contracts: Number of top contracts to analyze (default: 50)
-        batch_size: Contracts per parallel task (default: 5)
+        batch_size: Contracts per parallel task (default: 3)
 
     Returns:
-        dict: Chord dispatch info (results come via callback)
+        dict: Chord dispatch info with batch_count and total_contracts
+
+    RELATED TASKS:
+    - analyze_futures_batch: Subtask for parallel contract analysis
+    - aggregate_futures_results: Callback that handles scoring and notification
+    - refresh_breeze_session: Runs at 8:15 AM to ensure valid Breeze token
     """
     from celery import chord
     from apps.core.models import CeleryTaskState
@@ -1637,6 +2125,17 @@ def execute_futures_algorithm(self, this_month_volume=1000, next_month_volume=80
         if today.weekday() >= 5:  # Saturday=5, Sunday=6
             task_logger.info('skipped', "Weekend - markets closed", context={'day': today.strftime('%A')})
             return {'success': True, 'skipped': True, 'reason': 'Weekend'}
+
+        # Check if futures trading is enabled in core config
+        from apps.core.models import TradingCoreConfig
+        core_config = TradingCoreConfig.get_instance()
+        if not core_config.is_futures_enabled():
+            task_logger.info('skipped', "Futures trading disabled in Core Config")
+            send_telegram_notification(
+                "Futures algorithm skipped - trading disabled in Core Config",
+                notification_type='INFO'
+            )
+            return {'success': True, 'skipped': True, 'reason': 'Futures trading disabled'}
 
         # ===== STEP 2: Get ICICI account =====
         task_logger.step('get_account', "Getting active ICICI futures account")

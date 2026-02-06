@@ -1059,3 +1059,367 @@ class CeleryTaskState(TimeStampedModel):
     def get_enabled_task_keys(cls) -> set:
         """Get set of task keys that are enabled"""
         return set(cls.objects.filter(is_enabled=True).values_list('task_key', flat=True))
+
+
+class TradingCoreConfig(TimeStampedModel):
+    """
+    Core trading configuration - singleton model for strategy selection and risk parameters.
+
+    This is set before market opens and controls:
+    - Which options strategy to use (Strangle vs Broken Iron Condor)
+    - Position sizing mode (Test, Manual, Auto margin-based, Simulated)
+    - Notification level (Full Control, Supervised, Autonomous)
+    - Risk parameters and thresholds
+    - Carry forward rules for overnight positions
+    """
+
+    STRATEGY_CHOICES = [
+        ('STRANGLE', 'Short Strangle'),
+        ('BROKEN_IRON_CONDOR', 'Broken Iron Condor'),
+        ('AUTO', 'Auto (VIX-based decision)'),
+        ('NONE', 'Disabled - No Options Trading'),
+    ]
+
+    POSITION_SIZING_CHOICES = [
+        ('TEST', 'Test Mode (1 Lot Each)'),
+        ('MANUAL', 'Manual (Fixed Lots)'),
+        ('AUTO', 'Auto (Margin-Based)'),
+        ('SIMULATED', 'Simulated (Paper Trade)'),
+    ]
+
+    NOTIFICATION_LEVEL_CHOICES = [
+        ('FULL_CONTROL', 'Full Control - Confirm Everything'),
+        ('SUPERVISED', 'Supervised - Confirm Major Actions'),
+        ('AUTONOMOUS', 'Autonomous - Notifications Only'),
+    ]
+
+    # Singleton pattern - only one config record
+    singleton_id = models.IntegerField(default=1, unique=True)
+
+    # =========================================================================
+    # TRADING ENABLE/DISABLE
+    # =========================================================================
+
+    enable_futures_trading = models.BooleanField(
+        default=True,
+        help_text="Enable futures trading algorithm"
+    )
+
+    # =========================================================================
+    # STRATEGY SELECTION
+    # =========================================================================
+
+    options_strategy = models.CharField(
+        max_length=50,
+        choices=STRATEGY_CHOICES,
+        default='AUTO',
+        help_text="Options strategy: Strangle, Iron Condor, Auto, or None (disabled)"
+    )
+
+    # =========================================================================
+    # POSITION SIZING MODE
+    # =========================================================================
+
+    position_sizing_mode = models.CharField(
+        max_length=20,
+        choices=POSITION_SIZING_CHOICES,
+        default='TEST',
+        help_text="How to determine position sizes"
+    )
+
+    # Manual mode - fixed lots
+    manual_options_lots = models.IntegerField(
+        default=1,
+        validators=[MinValueValidator(1), MaxValueValidator(50)],
+        help_text="Fixed lots for options (Manual mode)"
+    )
+    manual_futures_lots = models.IntegerField(
+        default=1,
+        validators=[MinValueValidator(1), MaxValueValidator(20)],
+        help_text="Fixed lots for futures (Manual mode)"
+    )
+
+    # Auto mode - margin utilization percentage
+    margin_utilization_pct = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        default=50.00,
+        validators=[MinValueValidator(10), MaxValueValidator(90)],
+        help_text="% of available margin to use (Auto mode)"
+    )
+
+    # Simulated mode - paper trade with hypothetical positions
+    simulated_options_lots = models.IntegerField(
+        default=100,
+        validators=[MinValueValidator(1), MaxValueValidator(500)],
+        help_text="Hypothetical lots for options (Simulated mode)"
+    )
+    simulated_futures_lots = models.IntegerField(
+        default=30,
+        validators=[MinValueValidator(1), MaxValueValidator(100)],
+        help_text="Hypothetical lots for futures (Simulated mode)"
+    )
+
+    # Legacy fields for backward compatibility (deprecated)
+    options_lots = models.IntegerField(
+        default=1,
+        validators=[MinValueValidator(1), MaxValueValidator(50)],
+        help_text="DEPRECATED: Use manual_options_lots instead"
+    )
+    futures_lots = models.IntegerField(
+        default=1,
+        validators=[MinValueValidator(1), MaxValueValidator(20)],
+        help_text="DEPRECATED: Use manual_futures_lots instead"
+    )
+
+    # =========================================================================
+    # RISK PARAMETERS
+    # =========================================================================
+
+    max_loss_per_trade = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        default=10000,
+        help_text="Maximum loss allowed per trade in INR"
+    )
+    options_profit_target = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        default=5000,
+        help_text="Target profit for options positions in INR"
+    )
+    movement_threshold = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        default=0.5,
+        validators=[MinValueValidator(0.1), MaxValueValidator(3.0)],
+        help_text="Max % movement since market open to allow entry (e.g., 0.5%)"
+    )
+
+    # =========================================================================
+    # NOTIFICATION & CONTROL LEVEL
+    # =========================================================================
+
+    notification_level = models.CharField(
+        max_length=20,
+        choices=NOTIFICATION_LEVEL_CHOICES,
+        default='FULL_CONTROL',
+        help_text="Level of user control: Full Control (confirm all), Supervised (confirm major), Autonomous (auto-execute)"
+    )
+
+    confirmation_timeout_minutes = models.IntegerField(
+        default=5,
+        validators=[MinValueValidator(1), MaxValueValidator(30)],
+        help_text="Minutes to wait for user confirmation before revalidating"
+    )
+
+    # Legacy fields for backward compatibility (deprecated)
+    require_telegram_confirmation = models.BooleanField(
+        default=True,
+        help_text="DEPRECATED: Use notification_level instead"
+    )
+    auto_close_on_target = models.BooleanField(
+        default=False,
+        help_text="DEPRECATED: Use notification_level=AUTONOMOUS instead"
+    )
+    auto_close_on_stoploss = models.BooleanField(
+        default=False,
+        help_text="DEPRECATED: Use notification_level=AUTONOMOUS instead"
+    )
+
+    # =========================================================================
+    # CARRY FORWARD RULES (for overnight options positions)
+    # =========================================================================
+
+    options_carry_forward_threshold = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        default=5000,
+        help_text="Close same day if profit >= this amount, else carry forward"
+    )
+
+    # =========================================================================
+    # VIX-BASED AUTO STRATEGY THRESHOLDS
+    # =========================================================================
+
+    vix_high_threshold = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        default=18.0,
+        help_text="VIX above this = prefer Iron Condor (more protection)"
+    )
+    vix_low_threshold = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        default=14.0,
+        help_text="VIX below this = prefer Strangle (more premium)"
+    )
+
+    class Meta:
+        db_table = 'trading_core_config'
+        verbose_name = 'Trading Core Configuration'
+        verbose_name_plural = 'Trading Core Configuration'
+
+    def __str__(self):
+        return f"Trading Config: {self.get_options_strategy_display()} | {self.options_lots} lots"
+
+    def save(self, *args, **kwargs):
+        """Override save to ensure singleton pattern"""
+        self.singleton_id = 1
+        super().save(*args, **kwargs)
+
+    @classmethod
+    def get_instance(cls):
+        """
+        Get or create the singleton config instance.
+
+        Returns:
+            TradingCoreConfig: The singleton config object
+        """
+        config, created = cls.objects.get_or_create(
+            singleton_id=1,
+            defaults={}
+        )
+        return config
+
+    def get_auto_strategy(self, current_vix: float = None) -> str:
+        """
+        Determine strategy automatically based on VIX.
+
+        Args:
+            current_vix: Current VIX value. If None, returns STRANGLE as default.
+
+        Returns:
+            str: 'STRANGLE', 'BROKEN_IRON_CONDOR', or 'NONE'
+        """
+        # If explicitly set to NONE or a specific strategy, use it
+        if self.options_strategy == 'NONE':
+            return 'NONE'
+
+        if self.options_strategy != 'AUTO':
+            return self.options_strategy
+
+        # Auto mode - decide based on VIX
+        if current_vix is None:
+            return 'STRANGLE'
+
+        if current_vix >= float(self.vix_high_threshold):
+            return 'BROKEN_IRON_CONDOR'
+        else:
+            return 'STRANGLE'
+
+    def is_options_enabled(self) -> bool:
+        """Check if options trading is enabled."""
+        return self.options_strategy != 'NONE'
+
+    def is_futures_enabled(self) -> bool:
+        """Check if futures trading is enabled."""
+        return self.enable_futures_trading
+
+    # =========================================================================
+    # POSITION SIZING HELPERS
+    # =========================================================================
+
+    def get_lots_for_trade(self, trade_type: str, available_margin=None, margin_per_lot=None) -> int:
+        """
+        Calculate lots based on position sizing mode.
+
+        Args:
+            trade_type: 'OPTIONS' or 'FUTURES'
+            available_margin: Current available margin from broker API (Decimal)
+            margin_per_lot: Margin required per lot for this instrument (Decimal)
+
+        Returns:
+            int: Number of lots to trade
+        """
+        from decimal import Decimal
+
+        if self.position_sizing_mode == 'TEST':
+            return 1
+
+        if self.position_sizing_mode == 'SIMULATED':
+            return self.simulated_options_lots if trade_type == 'OPTIONS' else self.simulated_futures_lots
+
+        if self.position_sizing_mode == 'MANUAL':
+            return self.manual_options_lots if trade_type == 'OPTIONS' else self.manual_futures_lots
+
+        if self.position_sizing_mode == 'AUTO':
+            if not available_margin or not margin_per_lot or margin_per_lot <= 0:
+                return 1  # Fallback to 1 lot if margin data unavailable
+
+            available_margin = Decimal(str(available_margin))
+            margin_per_lot = Decimal(str(margin_per_lot))
+            usable_margin = available_margin * (self.margin_utilization_pct / Decimal('100'))
+            calculated_lots = int(usable_margin / margin_per_lot)
+            return max(1, calculated_lots)  # At least 1 lot
+
+        return 1
+
+    def is_test_mode(self) -> bool:
+        """Check if in test mode (1 lot trades)."""
+        return self.position_sizing_mode == 'TEST'
+
+    def is_simulated(self) -> bool:
+        """Check if in simulated mode (paper trading - no real orders)."""
+        return self.position_sizing_mode == 'SIMULATED'
+
+    def is_auto_sizing(self) -> bool:
+        """Check if using automatic margin-based sizing."""
+        return self.position_sizing_mode == 'AUTO'
+
+    # =========================================================================
+    # NOTIFICATION LEVEL HELPERS
+    # =========================================================================
+
+    def requires_confirmation(self, action_type: str) -> bool:
+        """
+        Check if an action requires user confirmation based on notification level.
+
+        Args:
+            action_type: 'ENTRY', 'EXIT', 'AVERAGING', 'INFO'
+
+        Returns:
+            bool: True if confirmation required
+        """
+        if self.notification_level == 'FULL_CONTROL':
+            return True  # Confirm everything
+
+        if self.notification_level == 'SUPERVISED':
+            # Only confirm major actions (entry and exit)
+            return action_type in ['ENTRY', 'EXIT']
+
+        if self.notification_level == 'AUTONOMOUS':
+            return False  # No confirmations, just notify
+
+        return True  # Default to safe behavior
+
+    def is_full_control(self) -> bool:
+        """Check if in full control mode (confirm everything)."""
+        return self.notification_level == 'FULL_CONTROL'
+
+    def is_supervised(self) -> bool:
+        """Check if in supervised mode (confirm major actions only)."""
+        return self.notification_level == 'SUPERVISED'
+
+    def is_autonomous(self) -> bool:
+        """Check if in autonomous mode (no confirmations)."""
+        return self.notification_level == 'AUTONOMOUS'
+
+    def get_notification_level_display_short(self) -> str:
+        """Get short display name for notification level."""
+        level_names = {
+            'FULL_CONTROL': '🔒 Full Control',
+            'SUPERVISED': '👁️ Supervised',
+            'AUTONOMOUS': '🤖 Autonomous',
+        }
+        return level_names.get(self.notification_level, self.notification_level)
+
+    def get_position_sizing_display_short(self) -> str:
+        """Get short display name for position sizing mode."""
+        mode_names = {
+            'TEST': '🧪 Test (1 lot)',
+            'MANUAL': '✋ Manual',
+            'AUTO': '📊 Auto (Margin)',
+            'SIMULATED': '📝 Simulated',
+        }
+        return mode_names.get(self.position_sizing_mode, self.position_sizing_mode)

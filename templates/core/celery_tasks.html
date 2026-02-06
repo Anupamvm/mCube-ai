@@ -1602,6 +1602,235 @@
         </div>
     </div>
 
+    <!-- Core Trading Config Section -->
+    <div class="task-section" style="border-top: 4px solid #667eea; margin-bottom: 30px;">
+        <div class="section-header" style="display: flex; justify-content: space-between; align-items: center;">
+            <div>
+                <span class="section-icon">🎯</span>
+                <span class="section-title">Core Trading Config</span>
+                <span class="task-count">
+                    {{ trading_config.get_position_sizing_display_short }} | {{ trading_config.get_notification_level_display_short }}
+                </span>
+            </div>
+        </div>
+
+        <div class="task-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 15px; padding: 20px;">
+            <!-- Futures Trading Toggle -->
+            <div class="task-card" style="background: {% if trading_config.enable_futures_trading %}#f0fff4{% else %}#fff5f5{% endif %}; border-left: 4px solid {% if trading_config.enable_futures_trading %}#48bb78{% else %}#f56565{% endif %};">
+                <div class="task-header">
+                    <div class="task-name">
+                        <span class="task-icon">📈</span>
+                        Futures Trading
+                    </div>
+                    <form method="post" action="{% url 'core:toggle_core_config' %}" style="display: inline;">
+                        {% csrf_token %}
+                        <input type="hidden" name="field" value="enable_futures_trading">
+                        <input type="hidden" name="redirect" value="celery">
+                        <label class="toggle">
+                            <input type="checkbox" name="toggle" onchange="this.form.submit()" {% if trading_config.enable_futures_trading %}checked{% endif %}>
+                            <span class="slider"></span>
+                        </label>
+                    </form>
+                </div>
+                <div class="task-schedule" style="font-size: 12px; color: #718096;">
+                    {% if trading_config.enable_futures_trading %}Futures algorithm will run{% else %}Futures algorithm disabled{% endif %}
+                </div>
+            </div>
+
+            <!-- Options Strategy -->
+            <div class="task-card" style="background: {% if trading_config.options_strategy != 'NONE' %}#f0fff4{% else %}#fff5f5{% endif %}; border-left: 4px solid {% if trading_config.options_strategy != 'NONE' %}#48bb78{% else %}#f56565{% endif %};">
+                <div class="task-header">
+                    <div class="task-name">
+                        <span class="task-icon">📊</span>
+                        Options Strategy
+                    </div>
+                </div>
+                <form method="post" action="{% url 'core:update_core_config' %}" style="margin-top: 10px;">
+                    {% csrf_token %}
+                    <input type="hidden" name="redirect" value="celery">
+                    <select name="options_strategy" class="form-control" style="width: 100%; padding: 8px; border-radius: 5px; border: 1px solid #e2e8f0;" onchange="this.form.submit()">
+                        <option value="NONE" {% if trading_config.options_strategy == 'NONE' %}selected{% endif %}>Disabled</option>
+                        <option value="AUTO" {% if trading_config.options_strategy == 'AUTO' %}selected{% endif %}>Auto (VIX)</option>
+                        <option value="STRANGLE" {% if trading_config.options_strategy == 'STRANGLE' %}selected{% endif %}>Strangle</option>
+                        <option value="BROKEN_IRON_CONDOR" {% if trading_config.options_strategy == 'BROKEN_IRON_CONDOR' %}selected{% endif %}>Iron Condor</option>
+                    </select>
+                </form>
+            </div>
+
+            <!-- Position Sizing Mode -->
+            <div class="task-card" style="background: {% if trading_config.position_sizing_mode == 'TEST' %}#fefcbf{% elif trading_config.position_sizing_mode == 'SIMULATED' %}#e9d8fd{% elif trading_config.position_sizing_mode == 'AUTO' %}#c6f6d5{% else %}#f7fafc{% endif %}; border-left: 4px solid {% if trading_config.position_sizing_mode == 'TEST' %}#d69e2e{% elif trading_config.position_sizing_mode == 'SIMULATED' %}#805ad5{% elif trading_config.position_sizing_mode == 'AUTO' %}#38a169{% else %}#667eea{% endif %};">
+                <div class="task-header">
+                    <div class="task-name">
+                        <span class="task-icon">🎚️</span>
+                        Position Sizing
+                    </div>
+                </div>
+                <form method="post" action="{% url 'core:update_core_config' %}" style="margin-top: 10px;">
+                    {% csrf_token %}
+                    <input type="hidden" name="redirect" value="celery">
+                    <select name="position_sizing_mode" class="form-control" style="width: 100%; padding: 8px; border-radius: 5px; border: 1px solid #e2e8f0; margin-bottom: 10px;" onchange="this.form.submit()">
+                        <option value="TEST" {% if trading_config.position_sizing_mode == 'TEST' %}selected{% endif %}>🧪 Test Mode (1 Lot)</option>
+                        <option value="MANUAL" {% if trading_config.position_sizing_mode == 'MANUAL' %}selected{% endif %}>✋ Manual (Fixed Lots)</option>
+                        <option value="AUTO" {% if trading_config.position_sizing_mode == 'AUTO' %}selected{% endif %}>📊 Auto (Margin-Based)</option>
+                        <option value="SIMULATED" {% if trading_config.position_sizing_mode == 'SIMULATED' %}selected{% endif %}>📝 Simulated (Paper)</option>
+                    </select>
+                </form>
+                <div class="task-schedule" style="font-size: 11px; color: #718096;">
+                    {% if trading_config.position_sizing_mode == 'TEST' %}Safe testing with 1 lot per trade
+                    {% elif trading_config.position_sizing_mode == 'MANUAL' %}Using {{ trading_config.manual_options_lots }}/{{ trading_config.manual_futures_lots }} lots (Opt/Fut)
+                    {% elif trading_config.position_sizing_mode == 'AUTO' %}{{ trading_config.margin_utilization_pct }}% of available margin
+                    {% elif trading_config.position_sizing_mode == 'SIMULATED' %}Paper trade: {{ trading_config.simulated_options_lots }}/{{ trading_config.simulated_futures_lots }} lots
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- Position Sizing Parameters (conditional) -->
+            {% if trading_config.position_sizing_mode == 'MANUAL' %}
+            <div class="task-card" style="background: #f7fafc; border-left: 4px solid #667eea;">
+                <div class="task-header">
+                    <div class="task-name">
+                        <span class="task-icon">✋</span>
+                        Manual Lots
+                    </div>
+                </div>
+                <form method="post" action="{% url 'core:update_core_config' %}" style="margin-top: 10px;">
+                    {% csrf_token %}
+                    <input type="hidden" name="redirect" value="celery">
+                    <div style="display: flex; gap: 10px;">
+                        <div style="flex: 1;">
+                            <label style="font-size: 11px; color: #718096;">Options</label>
+                            <input type="number" name="manual_options_lots" value="{{ trading_config.manual_options_lots }}" min="1" max="50" style="width: 100%; padding: 6px; border-radius: 5px; border: 1px solid #e2e8f0;" onchange="this.form.submit()">
+                        </div>
+                        <div style="flex: 1;">
+                            <label style="font-size: 11px; color: #718096;">Futures</label>
+                            <input type="number" name="manual_futures_lots" value="{{ trading_config.manual_futures_lots }}" min="1" max="20" style="width: 100%; padding: 6px; border-radius: 5px; border: 1px solid #e2e8f0;" onchange="this.form.submit()">
+                        </div>
+                    </div>
+                </form>
+            </div>
+            {% elif trading_config.position_sizing_mode == 'AUTO' %}
+            <div class="task-card" style="background: #c6f6d5; border-left: 4px solid #38a169;">
+                <div class="task-header">
+                    <div class="task-name">
+                        <span class="task-icon">📊</span>
+                        Margin Utilization
+                    </div>
+                </div>
+                <form method="post" action="{% url 'core:update_core_config' %}" style="margin-top: 10px;">
+                    {% csrf_token %}
+                    <input type="hidden" name="redirect" value="celery">
+                    <div style="display: flex; align-items: center; gap: 10px;">
+                        <input type="range" name="margin_utilization_pct" value="{{ trading_config.margin_utilization_pct }}" min="10" max="90" step="5" style="flex: 1;" onchange="document.getElementById('margin-pct-display').innerText = this.value + '%'; this.form.submit()">
+                        <span id="margin-pct-display" style="font-weight: bold; min-width: 40px;">{{ trading_config.margin_utilization_pct }}%</span>
+                    </div>
+                    <div class="task-schedule" style="font-size: 11px; color: #718096; margin-top: 5px;">
+                        System calculates lots from broker margin
+                    </div>
+                </form>
+            </div>
+            {% elif trading_config.position_sizing_mode == 'SIMULATED' %}
+            <div class="task-card" style="background: #e9d8fd; border-left: 4px solid #805ad5;">
+                <div class="task-header">
+                    <div class="task-name">
+                        <span class="task-icon">📝</span>
+                        Simulated Lots
+                    </div>
+                </div>
+                <form method="post" action="{% url 'core:update_core_config' %}" style="margin-top: 10px;">
+                    {% csrf_token %}
+                    <input type="hidden" name="redirect" value="celery">
+                    <div style="display: flex; gap: 10px;">
+                        <div style="flex: 1;">
+                            <label style="font-size: 11px; color: #718096;">Options</label>
+                            <input type="number" name="simulated_options_lots" value="{{ trading_config.simulated_options_lots }}" min="1" max="500" style="width: 100%; padding: 6px; border-radius: 5px; border: 1px solid #e2e8f0;" onchange="this.form.submit()">
+                        </div>
+                        <div style="flex: 1;">
+                            <label style="font-size: 11px; color: #718096;">Futures</label>
+                            <input type="number" name="simulated_futures_lots" value="{{ trading_config.simulated_futures_lots }}" min="1" max="100" style="width: 100%; padding: 6px; border-radius: 5px; border: 1px solid #e2e8f0;" onchange="this.form.submit()">
+                        </div>
+                    </div>
+                    <div class="task-schedule" style="font-size: 11px; color: #805ad5; margin-top: 5px;">
+                        No real orders placed - paper trading
+                    </div>
+                </form>
+            </div>
+            {% endif %}
+
+            <!-- Notification Level -->
+            <div class="task-card" style="background: {% if trading_config.notification_level == 'FULL_CONTROL' %}#ebf8ff{% elif trading_config.notification_level == 'SUPERVISED' %}#fefcbf{% else %}#fed7d7{% endif %}; border-left: 4px solid {% if trading_config.notification_level == 'FULL_CONTROL' %}#4299e1{% elif trading_config.notification_level == 'SUPERVISED' %}#d69e2e{% else %}#e53e3e{% endif %};">
+                <div class="task-header">
+                    <div class="task-name">
+                        <span class="task-icon">📱</span>
+                        Notification Level
+                    </div>
+                </div>
+                <form method="post" action="{% url 'core:update_core_config' %}" id="notification-form" style="margin-top: 10px;">
+                    {% csrf_token %}
+                    <input type="hidden" name="redirect" value="celery">
+                    <select name="notification_level" class="form-control" style="width: 100%; padding: 8px; border-radius: 5px; border: 1px solid #e2e8f0;" onchange="handleNotificationChange(this)">
+                        <option value="FULL_CONTROL" {% if trading_config.notification_level == 'FULL_CONTROL' %}selected{% endif %}>🔒 Full Control</option>
+                        <option value="SUPERVISED" {% if trading_config.notification_level == 'SUPERVISED' %}selected{% endif %}>👁️ Supervised</option>
+                        <option value="AUTONOMOUS" {% if trading_config.notification_level == 'AUTONOMOUS' %}selected{% endif %}>🤖 Autonomous</option>
+                    </select>
+                </form>
+                <div class="task-schedule" style="font-size: 11px; color: #718096; margin-top: 5px;">
+                    {% if trading_config.notification_level == 'FULL_CONTROL' %}Confirm every action via Telegram
+                    {% elif trading_config.notification_level == 'SUPERVISED' %}Confirm entries & exits only
+                    {% else %}Auto-execute, notifications only
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Autonomous Mode Warning Modal -->
+    <div id="autonomous-warning-modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; justify-content: center; align-items: center;">
+        <div style="background: white; padding: 30px; border-radius: 10px; max-width: 500px; text-align: center; box-shadow: 0 10px 40px rgba(0,0,0,0.3);">
+            <div style="font-size: 48px; margin-bottom: 15px;">⚠️</div>
+            <h3 style="color: #e53e3e; margin-bottom: 15px;">Enable Autonomous Mode?</h3>
+            <p style="color: #4a5568; margin-bottom: 20px;">
+                In <strong>Autonomous Mode</strong>, the system will automatically execute trades without waiting for your confirmation.
+                <br><br>
+                <strong>This means:</strong><br>
+                - Trades execute immediately when signals trigger<br>
+                - Stop-loss and targets auto-close positions<br>
+                - You receive notifications but no approval is required
+            </p>
+            <div style="display: flex; gap: 15px; justify-content: center;">
+                <button onclick="confirmAutonomous()" style="background: #e53e3e; color: white; padding: 12px 24px; border: none; border-radius: 5px; cursor: pointer; font-weight: bold;">
+                    Yes, Enable Autonomous
+                </button>
+                <button onclick="cancelAutonomous()" style="background: #e2e8f0; color: #4a5568; padding: 12px 24px; border: none; border-radius: 5px; cursor: pointer;">
+                    Cancel
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+    var previousNotificationLevel = '{{ trading_config.notification_level }}';
+
+    function handleNotificationChange(select) {
+        if (select.value === 'AUTONOMOUS' && previousNotificationLevel !== 'AUTONOMOUS') {
+            document.getElementById('autonomous-warning-modal').style.display = 'flex';
+        } else {
+            select.form.submit();
+        }
+    }
+
+    function confirmAutonomous() {
+        document.getElementById('autonomous-warning-modal').style.display = 'none';
+        document.getElementById('notification-form').submit();
+    }
+
+    function cancelAutonomous() {
+        document.getElementById('autonomous-warning-modal').style.display = 'none';
+        // Reset to previous value
+        var select = document.querySelector('select[name="notification_level"]');
+        select.value = previousNotificationLevel;
+    }
+    </script>
+
     <div class="action-bar">
         <div>
             <strong>Quick Actions:</strong>

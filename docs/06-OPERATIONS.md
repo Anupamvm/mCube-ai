@@ -175,43 +175,86 @@ python manage.py populate_trendlyne --file trendlyne_data/fno_data_2026-01-23.xl
 
 ## Background Tasks (Celery)
 
-### Task Categories
+### Task Categories (6 Categories)
 
 | Category | Tasks | Frequency |
 |----------|-------|-----------|
-| **Position Monitoring** | monitor_positions, update_pnl | Every 10-30 sec |
-| **Risk Management** | check_risk_limits, circuit_breakers | Every 30-60 sec |
-| **Market Data** | update_market_data | Every 5 min |
-| **Strategy** | evaluate_entry, evaluate_exit | Scheduled times |
-| **Reports** | daily_pnl_report, weekly_summary | EOD/EOW |
-| **Trendlyne** | fetch_data, import_data | Daily 8:30 AM |
+| **Data** | market_data, news, pre/post market | Scheduled |
+| **Strategies** | setup_day, evaluate_options, futures_algo | Scheduled |
+| **Transactions** | options_trade, averaging, close_day | Scheduled |
+| **Monitoring** | positions, breeze_session | Every 10-30 sec |
+| **Risk** | risk_limits, circuit_breakers | Every 30-60 sec |
+| **Reports** | daily_pnl, weekly_summary | EOD/EOW |
 
-### Task Schedule
+### Daily Trading Schedule (IST)
 
-**Position Monitoring:**
-- `monitor_all_positions` - Every 10 seconds
-- `update_position_pnl` - Every 15 seconds
-- `check_exit_conditions` - Every 30 seconds
+**Pre-Market (8:00 - 9:15 AM):**
+| Time | Task | Description |
+|------|------|-------------|
+| 7:00 AM | `morning-data-sync` | Full morning data synchronization |
+| 8:15 AM | `refresh-breeze-session` | Validate/refresh Breeze API token |
+| 8:50 AM | `update-pre-market-data` | Fetch pre-market data |
+| 8:55 AM | `setup-trading-day` | Evaluate data, determine tradability |
 
-**Risk Management:**
-- `check_risk_limits_all_accounts` - Every 1 minute
-- `monitor_circuit_breakers` - Every 30 seconds
+**Market Open (9:15 - 9:45 AM):**
+| Time | Task | Description |
+|------|------|-------------|
+| 9:15 AM | `start-trading-day` | Validate market opening, check news |
+| 9:15-15:30 | `update-live-market-data` | Every 5 minutes during market hours |
+| 9:30 AM | `evaluate-options-strategy` | Decide strangle vs iron condor |
+| 9:40 AM | `start-options-trade` | Begin options trade (with confirmation) |
+| 9:40 AM | `execute-futures-algorithm` | **Screen Futures Opportunities** |
 
-**Market Data (9 AM - 3:30 PM, Mon-Fri):**
-- `update_live_market_data` - Every 5 minutes
-- `update_pre_market_data` - 8:30 AM
-- `update_post_market_data` - 3:30 PM
-- `fetch_trendlyne_data` - 8:30 AM daily
+**Averaging Window (9:40 - 10:30 AM):**
+| Time | Task | Description |
+|------|------|-------------|
+| 9:40-10:15 | `batch-options-averaging` | Options averaging every 5 min |
+| 10:00-10:30 | `batch-options-averaging-10am` | Extended averaging window |
+| Every 10 min | `check-futures-averaging` | Futures averaging check |
 
-**Strategy Evaluation:**
-- `evaluate_kotak_strangle_entry` - 10:00 AM (Mon, Tue)
-- `evaluate_kotak_strangle_exit` - 3:15 PM (Thu, Fri)
-- `screen_futures_opportunities` - Every 30 min (9 AM - 2:30 PM)
-- `monitor_strangle_delta` - Every 5 min (9 AM - 3:30 PM)
+**Day Close (3:22 - 4:00 PM):**
+| Time | Task | Description |
+|------|------|-------------|
+| 3:22 PM | `close-trading-day` | Close positions with profit conditions |
+| 3:35 PM | `update-post-market-data` | Post-market data update |
+| 4:00 PM | `generate-daily-pnl-report` | Daily P&L report |
 
-**Reports:**
-- `generate_daily_pnl_report` - 4:00 PM (Mon-Fri)
-- `send_weekly_summary` - 6:00 PM (Friday)
+### Core Trading Configuration (TradingCoreConfig)
+
+The system uses `TradingCoreConfig` to control trading behavior:
+
+**Position Sizing Modes:**
+| Mode | Description |
+|------|-------------|
+| `TEST` | 1 lot each (safe testing) |
+| `MANUAL` | Fixed lots specified by user |
+| `AUTO` | System-calculated from broker margin |
+| `SIMULATED` | Paper trading (no real orders) |
+
+**Notification Levels:**
+| Level | Description |
+|-------|-------------|
+| `FULL_CONTROL` | Confirm everything via Telegram |
+| `SUPERVISED` | Confirm entries/exits only |
+| `AUTONOMOUS` | Auto-execute, notifications only |
+
+Access via: http://localhost:8000/system/celery-tasks/ → Core Trading Config tab
+
+### Starting Celery (IMPORTANT)
+
+**CRITICAL**: Always use the custom scheduler to ensure tasks respect enabled/disabled state:
+
+```bash
+# Start Celery worker
+celery -A mcube_ai worker --loglevel=info
+
+# Start Celery Beat with DB scheduler (REQUIRED)
+python -m celery -A mcube_ai beat --scheduler=mcube_ai.celery:DBReloadScheduler --loglevel=info
+```
+
+**WARNING**: Never run multiple Beat instances simultaneously! This causes duplicate task execution.
+
+The system function `ensure_celery_running()` handles this automatically in the UI.
 
 ### Managing Celery
 
@@ -240,6 +283,17 @@ celery -A mcube_ai flower
 ```
 
 Open: http://localhost:5555
+
+### Task Control UI
+
+Access: http://localhost:8000/system/celery-tasks/
+
+Features:
+- Enable/disable individual tasks
+- Configure custom schedules
+- View task logs by category
+- Run tasks manually (bypasses enabled check)
+- Configure Core Trading settings
 
 ---
 

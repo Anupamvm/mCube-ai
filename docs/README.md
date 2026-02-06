@@ -267,11 +267,37 @@ tail -f logs/mcube_ai.log
 | http://localhost:8000/ | Home page |
 | http://localhost:8000/admin/ | Django Admin |
 | http://localhost:8000/system/test/ | System Health Check |
+| http://localhost:8000/system/celery-tasks/ | **Celery Task Control & Core Trading Config** |
+| http://localhost:8000/docs/ | Documentation dashboard |
 | http://localhost:8000/brokers/ | Broker dashboard |
 | http://localhost:8000/trading/ | Trading interface |
+| http://localhost:8000/trading/futures/ | **Futures Algorithm Results** |
 | http://localhost:8000/positions/ | Positions management |
 | http://localhost:8000/analytics/ | Analytics dashboard |
 | http://localhost:8000/llm/ | LLM interface |
+
+---
+
+## Core Trading Configuration
+
+The system uses `TradingCoreConfig` (singleton model) for centralized trading control:
+
+### Position Sizing Modes
+| Mode | Description |
+|------|-------------|
+| **TEST** | 1 lot each (safe testing) |
+| **MANUAL** | Fixed lots from config |
+| **AUTO** | System-calculated from broker margin |
+| **SIMULATED** | Paper trading, no real orders |
+
+### Notification Levels
+| Level | Description |
+|-------|-------------|
+| **FULL_CONTROL** | Telegram confirmation for everything |
+| **SUPERVISED** | Confirmation for entries/exits only |
+| **AUTONOMOUS** | Auto-execute, notifications only |
+
+Access: http://localhost:8000/system/celery-tasks/ → Core Trading Config tab
 
 ---
 
@@ -297,4 +323,4 @@ For complete system design with all formulas and implementation details:
 
 ---
 
-*Last Updated: January 2026*
+*Last Updated: February 2026*

@@ -789,6 +789,14 @@
                     <span class="docs-nav-icon">📈</span>
                     Position Management
                 </a>
+                <a href="#telegram-bot" class="docs-nav-link">
+                    <span class="docs-nav-icon">📱</span>
+                    Telegram Bot
+                </a>
+                <a href="#background-tasks" class="docs-nav-link">
+                    <span class="docs-nav-icon">⏱️</span>
+                    Background Tasks
+                </a>
                 <a href="#alerts" class="docs-nav-link">
                     <span class="docs-nav-icon">🔔</span>
                     Alerts & Notifications
@@ -2765,17 +2773,330 @@ Response: { call_premium, put_premium, total_premium, spot_price }
             </div>
         </section>
 
+        <!-- Telegram Bot Section -->
+        <section id="telegram-bot" class="docs-section">
+            <div class="docs-section-header">
+                <h1>📱 Telegram Bot</h1>
+                <p>Interactive trading control from your phone</p>
+                <p style="font-size: 0.85rem; color: #6b7280; margin-top: 8px;">📁 <code>apps/alerts/services/telegram_bot.py</code> | <code>telegram_bot_menus.py</code> | <code>telegram_bot_data.py</code></p>
+            </div>
+
+            <div class="docs-card">
+                <h3>🚀 Getting Started</h3>
+                <p>The Telegram bot provides a rich interactive menu for managing trades, monitoring positions, and controlling background tasks - all from your phone.</p>
+                <div class="code-block">
+                    <code>
+<span class="comment"># Start the bot (only ONE instance at a time)</span>
+python manage.py run_telegram_bot --force
+
+<span class="comment"># In Telegram, send:</span>
+/start    <span class="comment"># Interactive main menu</span>
+/positions <span class="comment"># Quick jump to positions</span>
+/core     <span class="comment"># Quick jump to settings</span>
+/test     <span class="comment"># Connectivity check</span>
+                    </code>
+                </div>
+                <p style="margin-top: 12px;"><strong>Security:</strong> Only authorized chat IDs (from <code>CredentialStore</code>) can interact with the bot. A file lock (<code>/tmp/mcube_telegram_bot.lock</code>) prevents duplicate instances.</p>
+            </div>
+
+            <div class="docs-card">
+                <h3>🏠 Main Menu (<code>/start</code>)</h3>
+                <p>The main menu shows a live header with key trading metrics and a 9-button navigation grid:</p>
+
+                <div class="code-block">
+                    <code>
+<strong>mCube Trading Bot</strong>
+Thu 06 Feb | 10:32 AM
+============================
+VIX: 14.2 (Normal) | Tradable: Yes
+P&amp;L: +12,450 | Positions: 3 open
+
+[📊 Positions]    [💰 P&amp;L Today]
+[📈 Market]       [🛡 Risk]
+[⚙️ Tasks]        [🎛 Settings]
+[🏥 System]       [⚡ Quick Actions]
+[🔄 Refresh]
+                    </code>
+                </div>
+                <p style="margin-top: 12px;">Header data is fetched live from <code>NseFlag</code> (VIX, tradability, P&amp;L, positions).</p>
+            </div>
+
+            <div class="docs-card">
+                <h3>📋 Sub-Menus (8 total)</h3>
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>Menu</th>
+                            <th>Data Source</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>📊 Positions</strong></td>
+                            <td>ICICI Breeze &amp; Kotak Neo APIs</td>
+                            <td>View, close (batched %), average positions</td>
+                        </tr>
+                        <tr>
+                            <td><strong>💰 P&amp;L Today</strong></td>
+                            <td><code>DailyPnL</code> model, <code>NseFlag</code> fallback</td>
+                            <td>View realized/unrealized/total, win rate</td>
+                        </tr>
+                        <tr>
+                            <td><strong>📈 Market</strong></td>
+                            <td><code>NseFlag</code> (VIX, delta, tradability)</td>
+                            <td>View market snapshot</td>
+                        </tr>
+                        <tr>
+                            <td><strong>🛡 Risk</strong></td>
+                            <td><code>RiskLimit</code>, <code>CircuitBreaker</code></td>
+                            <td>View limits utilization, active breakers</td>
+                        </tr>
+                        <tr>
+                            <td><strong>⚙️ Tasks</strong></td>
+                            <td><code>CeleryTaskState</code>, <code>TASK_DEFAULT_CONFIG</code></td>
+                            <td>Toggle on/off, run now, start/stop all</td>
+                        </tr>
+                        <tr>
+                            <td><strong>🎛 Settings</strong></td>
+                            <td><code>TradingCoreConfig</code></td>
+                            <td>Toggle futures, options strategy, lot counts</td>
+                        </tr>
+                        <tr>
+                            <td><strong>🏥 System</strong></td>
+                            <td>Process checks, Redis, <code>BkLog</code></td>
+                            <td>View Celery/Redis/broker health, error count</td>
+                        </tr>
+                        <tr>
+                            <td><strong>⚡ Quick Actions</strong></td>
+                            <td>Various tasks &amp; <code>NseFlag</code></td>
+                            <td>Pause/resume, close all, refresh Breeze, run algo</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="docs-card">
+                <h3>⚙️ Tasks Control</h3>
+                <p>The Tasks sub-menu provides full control over all 20+ background tasks organized by category:</p>
+                <ol>
+                    <li><strong>Category Overview</strong> &mdash; Shows active/total counts per category (Data, Strategies, Transactions, Monitoring, Risk, Reports)</li>
+                    <li><strong>Category Detail</strong> &mdash; Lists each task with its schedule, toggle (enable/disable) and "Run Now" buttons</li>
+                    <li><strong>Bulk Actions</strong> &mdash; Start All / Stop All toggles every task at once</li>
+                </ol>
+                <p>Toggling a task updates <code>CeleryTaskState</code> and automatically restarts Celery Beat via <code>ensure_celery_running()</code>. "Run Now" sends the task to Celery with <code>_bypass_guard=True</code>.</p>
+            </div>
+
+            <div class="docs-card">
+                <h3>⚡ Quick Actions &amp; Safety</h3>
+                <p>Quick actions execute immediately. <strong>Dangerous actions</strong> (Pause Trading, Close All Positions) require a confirmation step:</p>
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>Action</th>
+                            <th>What it does</th>
+                            <th>Confirmation?</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>Pause Trading</td>
+                            <td>Sets <code>isDayTradable=No</code> in NseFlag</td>
+                            <td><span class="badge badge-orange">Yes</span></td>
+                        </tr>
+                        <tr>
+                            <td>Resume Trading</td>
+                            <td>Sets <code>isDayTradable=Yes</code> in NseFlag</td>
+                            <td>No</td>
+                        </tr>
+                        <tr>
+                            <td>Close All Positions</td>
+                            <td>Triggers <code>close-trading-day</code> task</td>
+                            <td><span class="badge badge-orange">Yes</span></td>
+                        </tr>
+                        <tr>
+                            <td>Refresh Breeze</td>
+                            <td>Triggers <code>refresh-breeze-session</code> task</td>
+                            <td>No</td>
+                        </tr>
+                        <tr>
+                            <td>Run Futures Algo</td>
+                            <td>Triggers <code>execute-futures-algorithm</code> task</td>
+                            <td>No</td>
+                        </tr>
+                        <tr>
+                            <td>Force Data Sync</td>
+                            <td>Triggers <code>morning-data-sync</code> task</td>
+                            <td>No</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="docs-card">
+                <h3>🏗️ Architecture (Mixin Pattern)</h3>
+                <p>The bot is split into three files using Python mixins for clean separation of concerns:</p>
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>File</th>
+                            <th>Class</th>
+                            <th>Responsibility</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>telegram_bot.py</code></td>
+                            <td><code>TelegramBotHandler</code></td>
+                            <td>Main class, callback router, position/trade handlers, OTP relay</td>
+                        </tr>
+                        <tr>
+                            <td><code>telegram_bot_menus.py</code></td>
+                            <td><code>MenuMixin</code></td>
+                            <td>All menu rendering, button layouts, callback handler methods</td>
+                        </tr>
+                        <tr>
+                            <td><code>telegram_bot_data.py</code></td>
+                            <td><code>DataMixin</code></td>
+                            <td>All <code>@sync_to_async</code> data fetchers (DB queries, system checks)</td>
+                        </tr>
+                    </tbody>
+                </table>
+                <p style="margin-top: 12px;"><strong>MRO:</strong> <code>TelegramBotHandler(MenuMixin, DataMixin)</code> &mdash; all methods accessible on <code>self</code>.</p>
+                <p><strong>Callback Routing:</strong> Prefix-based dispatch in <code>_route_callback()</code>. Key prefixes: <code>menu_</code>, <code>task_cat_</code>, <code>tt_</code> (toggle), <code>tr_</code> (run), <code>qa_</code> (quick action), <code>broker_</code>, <code>core_</code>, <code>confirm_</code>.</p>
+                <p><strong>Thread Safety:</strong> All data fetchers use <code>@sync_to_async(thread_sensitive=False)</code> with <code>close_old_connections()</code> before every DB access.</p>
+            </div>
+
+            <div class="docs-card">
+                <h3>🔑 OTP Relay (Breeze Auto-Login)</h3>
+                <p>When the Breeze auto-login process needs an OTP, it sets <code>breeze_otp_request=pending</code> in NseFlag. The bot watches for 4-6 digit plain text messages and stores the OTP via NseFlag cross-process communication.</p>
+            </div>
+        </section>
+
+        <!-- Background Tasks Section -->
+        <section id="background-tasks" class="docs-section">
+            <div class="docs-section-header">
+                <h1>⏱️ Background Tasks</h1>
+                <p>Celery Beat scheduled task management</p>
+                <p style="font-size: 0.85rem; color: #6b7280; margin-top: 8px;">📁 <code>mcube_ai/celery.py</code> | <code>apps/core/task_config.py</code> | <code>apps/core/models.py</code></p>
+            </div>
+
+            <div class="docs-card">
+                <h3>📋 Task Categories (6)</h3>
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>Category</th>
+                            <th>Tasks</th>
+                            <th>Schedule Type</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>📊 Data</strong></td>
+                            <td>Morning Sync, Pre-Market, Live Market, Post-Market</td>
+                            <td>Crontab &amp; Recurring</td>
+                        </tr>
+                        <tr>
+                            <td><strong>🎯 Strategies</strong></td>
+                            <td>Setup Day, Start Day, Evaluate Options, Futures Screening, Futures Algorithm</td>
+                            <td>Crontab</td>
+                        </tr>
+                        <tr>
+                            <td><strong>💳 Transactions</strong></td>
+                            <td>Start Options, Options Averaging (2), Futures Averaging, Close Day</td>
+                            <td>Crontab &amp; Recurring</td>
+                        </tr>
+                        <tr>
+                            <td><strong>👁 Monitoring</strong></td>
+                            <td>Position Monitor, P&amp;L Update, Exit Conditions, Breeze Refresh</td>
+                            <td>Interval (10-30s)</td>
+                        </tr>
+                        <tr>
+                            <td><strong>🛡 Risk</strong></td>
+                            <td>Risk Limits Check, Circuit Breaker Monitor</td>
+                            <td>Interval (30-60s)</td>
+                        </tr>
+                        <tr>
+                            <td><strong>📋 Reports</strong></td>
+                            <td>Daily P&amp;L, Benchmark Sync, Data Aggregation, Equity Curves</td>
+                            <td>Crontab</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="docs-card">
+                <h3>🔄 Task Lifecycle</h3>
+                <ol>
+                    <li><strong>Definition:</strong> All tasks defined in <code>TASK_DEFAULT_CONFIG</code> (<code>apps/core/task_config.py</code>) with schedule defaults</li>
+                    <li><strong>State:</strong> <code>CeleryTaskState</code> model tracks enabled/disabled + optional custom schedules per task</li>
+                    <li><strong>Loading:</strong> <code>load_beat_schedule()</code> in <code>celery.py</code> reads DB state, applies custom schedules via <code>_build_custom_schedule()</code></li>
+                    <li><strong>Runtime Guard:</strong> <code>@task_enabled_guard</code> decorator on every task provides secondary safety check</li>
+                    <li><strong>Logging:</strong> <code>TaskLogger</code> logs execution to <code>BkLog</code> model with category, duration, success/failure</li>
+                </ol>
+            </div>
+
+            <div class="docs-card">
+                <h3>⚙️ Task Control (3 ways)</h3>
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>Method</th>
+                            <th>Where</th>
+                            <th>How</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>Web UI</strong></td>
+                            <td>System Configuration page</td>
+                            <td>Toggle, configure schedule, view logs, run now</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Telegram Bot</strong></td>
+                            <td><code>/start</code> &rarr; Tasks menu</td>
+                            <td>Toggle, run now, start/stop all by category</td>
+                        </tr>
+                        <tr>
+                            <td><strong>API</strong></td>
+                            <td><code>POST /toggle-static-task/</code>, <code>POST /run-task-now/</code></td>
+                            <td>Programmatic control with JSON responses</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="docs-card">
+                <h3>🔧 Celery Beat Scheduler</h3>
+                <p>Uses a custom <code>DBReloadScheduler</code> (subclass of <code>PersistentScheduler</code>) that loads the schedule from the database on startup.</p>
+                <div class="code-block">
+                    <code>
+<span class="comment"># CRITICAL: Always use the custom scheduler</span>
+python -m celery -A mcube_ai beat \
+  --scheduler=mcube_ai.celery:DBReloadScheduler \
+  --loglevel=info
+
+<span class="comment"># Or use the helper function (recommended)</span>
+from apps.core.views import ensure_celery_running
+ensure_celery_running()  <span class="comment"># Starts worker + restarts beat</span>
+                    </code>
+                </div>
+                <p style="margin-top: 12px;"><strong>Warning:</strong> Never run two beat processes simultaneously &mdash; tasks will execute twice (duplicate Telegram messages, duplicate trades).</p>
+            </div>
+        </section>
+
         <!-- Alerts Section -->
         <section id="alerts" class="docs-section">
             <div class="docs-section-header">
                 <h1>🔔 Alerts & Notifications</h1>
-                <p>Stay informed with real-time alerts</p>
-                <p style="font-size: 0.85rem; color: #6b7280; margin-top: 8px;">📁 <code>apps/alerts/</code> | <code>tools/telegram.py</code></p>
+                <p>Automated real-time alerts via Telegram</p>
+                <p style="font-size: 0.85rem; color: #6b7280; margin-top: 8px;">📁 <code>apps/alerts/</code></p>
             </div>
 
             <div class="docs-card">
-                <h3>📱 Telegram Integration</h3>
-                <p>mCube sends real-time notifications to your Telegram for important events:</p>
+                <h3>📨 Alert Types</h3>
+                <p>mCube sends notifications to Telegram for important events. These are <em>push notifications</em> (sent by background tasks), separate from the interactive bot menu:</p>
 
                 <table class="docs-table">
                     <thead>
@@ -2787,28 +3108,48 @@ Response: { call_premium, put_premium, total_premium, spot_price }
                     </thead>
                     <tbody>
                         <tr>
+                            <td><strong>Trade Confirmation</strong></td>
+                            <td>Options/futures suggestion ready for approval</td>
+                            <td><span class="badge badge-blue">Normal</span></td>
+                        </tr>
+                        <tr>
                             <td><strong>Trade Executed</strong></td>
                             <td>When an order is filled</td>
                             <td><span class="badge badge-blue">Normal</span></td>
                         </tr>
                         <tr>
                             <td><strong>Stop Loss Hit</strong></td>
-                            <td>When SL is triggered</td>
+                            <td>When SL is triggered (confirm close/hold)</td>
                             <td><span class="badge badge-orange">High</span></td>
                         </tr>
                         <tr>
                             <td><strong>Target Reached</strong></td>
-                            <td>When target is achieved</td>
+                            <td>When profit target is achieved</td>
                             <td><span class="badge badge-green">Normal</span></td>
                         </tr>
                         <tr>
+                            <td><strong>Averaging Opportunity</strong></td>
+                            <td>When position qualifies for averaging</td>
+                            <td><span class="badge badge-blue">Normal</span></td>
+                        </tr>
+                        <tr>
                             <td><strong>Circuit Breaker</strong></td>
-                            <td>When trading is paused</td>
+                            <td>Risk limit breached, trading paused</td>
                             <td><span class="badge badge-orange">Critical</span></td>
                         </tr>
                         <tr>
+                            <td><strong>Futures Algorithm</strong></td>
+                            <td>Scan complete with qualified candidates</td>
+                            <td><span class="badge badge-blue">Normal</span></td>
+                        </tr>
+                        <tr>
+                            <td><strong>OTP Request</strong></td>
+                            <td>Breeze auto-login needs OTP</td>
+                            <td><span class="badge badge-orange">High</span></td>
+                        </tr>
+                        <tr>
                             <td><strong>Daily Summary</strong></td>
-                            <td>End of trading day</td>
+                            <td>End of trading day report</td>
                             <td><span class="badge badge-blue">Normal</span></td>
                         </tr>
                     </tbody>

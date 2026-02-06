@@ -84,10 +84,11 @@ def get_static_schedule():
         'options': {'queue': 'monitoring'},
     },
 
-    # Pre-market futures screening (8:30 AM) - parallelized
+    # Futures screening (9:40 AM) - after market stabilizes
+    # Flow: Screen → Telegram confirmation → User confirms → Immediate execution
     'execute-futures-algorithm': {
         'task': 'apps.strategies.tasks.execute_futures_algorithm',
-        'schedule': crontab(hour=8, minute=30, day_of_week='1-5'),  # 8:30 AM Mon-Fri
+        'schedule': crontab(hour=9, minute=40, day_of_week='1-5'),  # 9:40 AM Mon-Fri
         'options': {'queue': 'strategies'},
         'kwargs': {
             'this_month_volume': 1000,
@@ -136,9 +137,9 @@ def get_static_schedule():
         'task': 'apps.strategies.tasks.batch_options_averaging',
         'schedule': crontab(
             hour=10,
-            minute='0,5,10,15',
+            minute='0,5,10,15,20,25,30',
             day_of_week='1-5'
-        ),  # Continue until 10:15 AM
+        ),  # Extended window until 10:30 AM
         'options': {'queue': 'strategies'},
     },
 
@@ -160,8 +161,22 @@ def get_static_schedule():
 
     'close-trading-day': {
         'task': 'apps.strategies.tasks.close_trading_day',
-        'schedule': crontab(hour=15, minute=25, day_of_week='1-5'),  # 3:25 PM Mon-Fri
+        'schedule': crontab(hour=15, minute=22, day_of_week='1-5'),  # 3:22 PM Mon-Fri (8 min buffer before close)
         'options': {'queue': 'strategies'},
+    },
+
+    # =========================================================================
+    # TRADE CONFIRMATION TASKS
+    # =========================================================================
+
+    'check-confirmation-timeouts': {
+        'task': 'apps.trading.tasks.check_confirmation_timeouts',
+        'schedule': crontab(
+            hour='9-15',
+            minute='*',
+            day_of_week='1-5'
+        ),  # Every minute 9 AM - 3 PM Mon-Fri
+        'options': {'queue': 'monitoring'},
     },
 
     # =========================================================================

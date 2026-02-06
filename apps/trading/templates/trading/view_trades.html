@@ -24,6 +24,124 @@
         margin: 0;
     }
 
+    .page-header-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+    .header-stats {
+        display: flex;
+        gap: 1rem;
+        align-items: center;
+    }
+
+    .header-stat-badge {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        background: var(--primary);
+        color: white;
+        padding: 0.5rem 1rem;
+        border-radius: var(--radius-md);
+        font-size: 0.875rem;
+        font-weight: 600;
+    }
+
+    .header-stat-badge.neo {
+        background: #7c3aed;
+    }
+
+    .header-stat-badge .stat-count {
+        background: rgba(255,255,255,0.25);
+        padding: 0.15rem 0.5rem;
+        border-radius: var(--radius-sm);
+        font-weight: 700;
+    }
+
+    .auto-refresh-indicator {
+        display: flex;
+        align-items: center;
+        gap: 0.4rem;
+        color: var(--gray);
+        font-size: 0.75rem;
+    }
+
+    .auto-refresh-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: #10b981;
+        animation: pulse-dot 2s infinite;
+    }
+
+    @keyframes pulse-dot {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.3; }
+    }
+
+    .positions-summary-bar {
+        display: flex;
+        gap: 1rem;
+        margin-bottom: 1.5rem;
+    }
+
+    .summary-card {
+        flex: 1;
+        background: var(--white);
+        border-radius: var(--radius-lg);
+        padding: 1.25rem 1.5rem;
+        box-shadow: var(--shadow-md);
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+    }
+
+    .summary-card-icon {
+        font-size: 2rem;
+        width: 50px;
+        height: 50px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: var(--radius-md);
+        background: #eff6ff;
+    }
+
+    .summary-card-icon.neo {
+        background: #f5f3ff;
+    }
+
+    .summary-card-icon.total {
+        background: #f0fdf4;
+    }
+
+    .summary-card-info {
+        flex: 1;
+    }
+
+    .summary-card-label {
+        font-size: 0.75rem;
+        color: var(--gray);
+        text-transform: uppercase;
+        font-weight: 600;
+        letter-spacing: 0.05em;
+    }
+
+    .summary-card-value {
+        font-size: 1.5rem;
+        font-weight: 700;
+        color: var(--dark);
+    }
+
+    .summary-card-pnl {
+        font-size: 0.875rem;
+        font-weight: 600;
+    }
+
+    .summary-card-pnl.positive { color: #10b981; }
+    .summary-card-pnl.negative { color: #ef4444; }
+
     .broker-section {
         background: var(--white);
         border-radius: var(--radius-lg);
@@ -567,12 +685,56 @@
 {% csrf_token %}
 <div class="page-header">
     <div class="container">
-        <h1 class="page-title">Open Trades</h1>
-        <p class="page-subtitle">Monitor and manage your open positions across all broker accounts</p>
+        <div class="page-header-row">
+            <div>
+                <h1 class="page-title">Open Trades</h1>
+                <p class="page-subtitle">Monitor and manage your open positions across all broker accounts</p>
+            </div>
+            <div class="header-stats">
+                <div class="header-stat-badge">
+                    🌊 Breeze <span class="stat-count" id="headerBreezeCount">-</span>
+                </div>
+                <div class="header-stat-badge neo">
+                    🚀 Neo <span class="stat-count" id="headerNeoCount">-</span>
+                </div>
+                <div class="auto-refresh-indicator">
+                    <span class="auto-refresh-dot"></span>
+                    Auto-refresh <span id="autoRefreshCountdown">2:00</span>
+                </div>
+            </div>
+        </div>
     </div>
 </div>
 
 <div class="container">
+    <!-- Positions Summary Bar -->
+    <div class="positions-summary-bar" id="positionsSummaryBar">
+        <div class="summary-card">
+            <div class="summary-card-icon">🌊</div>
+            <div class="summary-card-info">
+                <div class="summary-card-label">Breeze Positions</div>
+                <div class="summary-card-value" id="summaryBreezeCount">--</div>
+                <div class="summary-card-pnl" id="summaryBreezePnl">--</div>
+            </div>
+        </div>
+        <div class="summary-card">
+            <div class="summary-card-icon neo">🚀</div>
+            <div class="summary-card-info">
+                <div class="summary-card-label">Neo Positions</div>
+                <div class="summary-card-value" id="summaryNeoCount">--</div>
+                <div class="summary-card-pnl" id="summaryNeoPnl">--</div>
+            </div>
+        </div>
+        <div class="summary-card">
+            <div class="summary-card-icon total">📊</div>
+            <div class="summary-card-info">
+                <div class="summary-card-label">Total Positions</div>
+                <div class="summary-card-value" id="summaryTotalCount">--</div>
+                <div class="summary-card-pnl" id="summaryTotalPnl">--</div>
+            </div>
+        </div>
+    </div>
+
     <!-- Breeze Positions -->
     <div class="broker-section" id="breezeSection">
         <div class="broker-header">
@@ -706,11 +868,17 @@ let closeExecutionState = {
     broker: null,
     symbol: null
 };
+let autoRefreshInterval = null;
+let countdownInterval = null;
+let countdownSeconds = 120;  // 2 minutes
 
 // Load positions on page load
 document.addEventListener('DOMContentLoaded', function() {
     loadPositions('breeze');
     loadPositions('neo');
+
+    // Start auto-refresh every 2 minutes
+    startAutoRefresh();
 
     // Add ESC key handler to close modal
     document.addEventListener('keydown', function(e) {
@@ -722,6 +890,80 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
 });
+
+// Auto-refresh logic
+function startAutoRefresh() {
+    countdownSeconds = 120;
+    updateCountdownDisplay();
+
+    if (countdownInterval) clearInterval(countdownInterval);
+    countdownInterval = setInterval(() => {
+        countdownSeconds--;
+        if (countdownSeconds <= 0) {
+            countdownSeconds = 120;
+            autoRefreshAll();
+        }
+        updateCountdownDisplay();
+    }, 1000);
+}
+
+function updateCountdownDisplay() {
+    const el = document.getElementById('autoRefreshCountdown');
+    if (el) {
+        const mins = Math.floor(countdownSeconds / 60);
+        const secs = countdownSeconds % 60;
+        el.textContent = `${mins}:${secs.toString().padStart(2, '0')}`;
+    }
+}
+
+function autoRefreshAll() {
+    // Don't auto-refresh if a modal is open or order is processing
+    if (isOrderProcessing) return;
+    const closeModal = document.getElementById('closePositionModal');
+    const avgModal = document.getElementById('averagePositionModal');
+    if ((closeModal && closeModal.classList.contains('active')) ||
+        (avgModal && avgModal.classList.contains('active'))) return;
+
+    loadPositions('breeze');
+    loadPositions('neo');
+}
+
+// Update the summary bar with current position data
+function updatePositionsSummary() {
+    const breezePositions = positionsCache['breeze'] || [];
+    const neoPositions = positionsCache['neo'] || [];
+    const breezeCount = breezePositions.length;
+    const neoCount = neoPositions.length;
+    const totalCount = breezeCount + neoCount;
+
+    const breezePnl = breezePositions.reduce((sum, pos) => sum + parseFloat(pos.unrealized_pnl || 0), 0);
+    const neoPnl = neoPositions.reduce((sum, pos) => sum + parseFloat(pos.unrealized_pnl || 0), 0);
+    const totalPnl = breezePnl + neoPnl;
+
+    // Header badges
+    document.getElementById('headerBreezeCount').textContent = breezeCount;
+    document.getElementById('headerNeoCount').textContent = neoCount;
+
+    // Summary cards
+    document.getElementById('summaryBreezeCount').textContent = breezeCount;
+    document.getElementById('summaryNeoCount').textContent = neoCount;
+    document.getElementById('summaryTotalCount').textContent = totalCount;
+
+    const formatPnl = (pnl) => {
+        const sign = pnl >= 0 ? '+' : '-';
+        return `${sign}₹${formatIndianNumber(Math.abs(pnl).toFixed(0))}`;
+    };
+
+    const setPnlEl = (id, pnl) => {
+        const el = document.getElementById(id);
+        el.textContent = formatPnl(pnl);
+        el.className = 'summary-card-pnl ' + (pnl >= 0 ? 'positive' : 'negative');
+    };
+
+    setPnlEl('summaryBreezePnl', breezePnl);
+    setPnlEl('summaryNeoPnl', neoPnl);
+    setPnlEl('summaryTotalPnl', totalPnl);
+}
 
 // Load positions for a broker
 async function loadPositions(broker) {
@@ -741,6 +983,7 @@ async function loadPositions(broker) {
             console.log(`[${broker}] raw_positions_api:`, data.raw_positions_api ? (Array.isArray(data.raw_positions_api) ? `array(${data.raw_positions_api.length})` : `object(${Object.keys(data.raw_positions_api)})`) : 'missing');
             console.log(`[${broker}] raw_trade_report_api:`, data.raw_trade_report_api ? (Array.isArray(data.raw_trade_report_api) ? `array(${data.raw_trade_report_api.length})` : `object(${Object.keys(data.raw_trade_report_api)})`) : 'missing');
             displayPositions(broker, data.positions);
+            updatePositionsSummary();
         } else if (data.auth_required) {
             // Session expired - show login link
             const loginUrl = data.login_url + '?next=' + encodeURIComponent(window.location.pathname);
@@ -766,6 +1009,10 @@ function refreshPositions(broker) {
     const btn = document.getElementById(`refresh${broker.charAt(0).toUpperCase() + broker.slice(1)}Btn`);
     btn.disabled = true;
     btn.textContent = '⏳ Loading...';
+
+    // Reset auto-refresh countdown on manual refresh
+    countdownSeconds = 120;
+    updateCountdownDisplay();
 
     loadPositions(broker).finally(() => {
         btn.disabled = false;

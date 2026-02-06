@@ -159,17 +159,29 @@ def check_exit_conditions():
     Workflow:
     1. Get all active positions
     2. Check stop-loss and target conditions
-    3. Execute exit if conditions met
-    4. Send notifications
+    3. Based on notification level:
+       - FULL_CONTROL: Send confirmation request
+       - SUPERVISED: Send confirmation for exits
+       - AUTONOMOUS: Auto-execute exit
     """
     try:
+        # Get core config for confirmation settings
+        from apps.core.models import TradingCoreConfig
+        config = TradingCoreConfig.get_instance()
+
         active_positions = Position.objects.filter(status='ACTIVE')
 
         if not active_positions.exists():
             return {'success': True, 'positions_checked': 0}
 
+        # Check for simulated mode
+        if config.is_simulated():
+            return {'success': True, 'simulated': True, 'positions': active_positions.count()}
+
+        mode_label = config.get_notification_level_display_short()
         checked_count = 0
         exits_executed = 0
+        confirmations_sent = 0
 
         for position in active_positions:
             try:
@@ -181,32 +193,55 @@ def check_exit_conditions():
                 if should_exit:
                     logger.warning(f"⚠️ Exit condition triggered for position {position.id}: {reason}")
 
-                    # Close position
-                    success, closed_position, message = close_position(
-                        position=position,
-                        exit_price=position.current_price,
-                        exit_reason=reason
-                    )
+                    # Check if confirmation required for exits
+                    if config.requires_confirmation('EXIT'):
+                        # Send confirmation request
+                        from apps.trading.services.trade_confirmation import get_confirmation_service
+                        confirmation_service = get_confirmation_service()
+                        success, result = confirmation_service.request_exit_confirmation(position, reason)
 
-                    if success:
-                        send_telegram_notification(
-                            f"✅ AUTO-EXIT EXECUTED\n\n"
-                            f"Position: #{position.id}\n"
-                            f"Instrument: {position.instrument}\n"
-                            f"Reason: {reason}\n"
-                            f"Exit Type: {exit_type}\n"
-                            f"P&L: ₹{closed_position.realized_pnl:,.0f}",
-                            notification_type='SUCCESS' if closed_position.realized_pnl > 0 else 'WARNING'
-                        )
-                        exits_executed += 1
+                        if success:
+                            confirmations_sent += 1
+                        else:
+                            # Fallback to notification
+                            send_telegram_notification(
+                                f"⚠️ EXIT TRIGGERED ({mode_label})\n\n"
+                                f"Position: #{position.id}\n"
+                                f"Instrument: {position.instrument}\n"
+                                f"Reason: {reason}\n"
+                                f"Exit Type: {exit_type}\n"
+                                f"Current P&L: ₹{position.unrealized_pnl:,.0f}\n\n"
+                                f"ℹ️ Confirmation required",
+                                notification_type='WARNING'
+                            )
+                            confirmations_sent += 1
                     else:
-                        send_telegram_notification(
-                            f"❌ AUTO-EXIT FAILED\n\n"
-                            f"Position: #{position.id}\n"
-                            f"Reason: {reason}\n"
-                            f"Error: {message}",
-                            notification_type='ERROR'
+                        # AUTONOMOUS mode - auto-execute exit
+                        success, closed_position, message = close_position(
+                            position=position,
+                            exit_price=position.current_price,
+                            exit_reason=reason
                         )
+
+                        if success:
+                            send_telegram_notification(
+                                f"🤖 AUTO-EXIT ({mode_label})\n\n"
+                                f"Position: #{position.id}\n"
+                                f"Instrument: {position.instrument}\n"
+                                f"Reason: {reason}\n"
+                                f"Exit Type: {exit_type}\n"
+                                f"P&L: ₹{closed_position.realized_pnl:,.0f}",
+                                notification_type='SUCCESS' if closed_position.realized_pnl > 0 else 'WARNING'
+                            )
+                            exits_executed += 1
+                        else:
+                            send_telegram_notification(
+                                f"❌ AUTO-EXIT FAILED\n\n"
+                                f"Position: #{position.id}\n"
+                                f"Reason: {reason}\n"
+                                f"Error: {message}",
+                                notification_type='ERROR'
+                            )
 
                 checked_count += 1
 
@@ -216,7 +251,9 @@ def check_exit_conditions():
         return {
             'success': True,
             'positions_checked': checked_count,
-            'exits_executed': exits_executed
+            'exits_executed': exits_executed,
+            'confirmations_sent': confirmations_sent,
+            'mode': config.notification_level
         }
 
     except Exception as e:

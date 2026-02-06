@@ -290,6 +290,187 @@ If position goes against you:
 
 ---
 
+## Screen Futures Algorithm (Automated Task)
+
+**Task**: `execute_futures_algorithm` (9:40 AM daily)
+**File**: `apps/strategies/tasks.py`
+
+### Overview
+
+The Screen Futures Algorithm is an automated opportunity scanner that:
+1. Screens high-volume futures contracts
+2. Analyzes using a 12-component scoring system
+3. Presents TOP 3 candidates for user confirmation via Telegram
+4. Executes trades with intelligent batching on approval
+
+### Workflow
+
+```
+9:40 AM: execute_futures_algorithm triggers
+    │
+    ├─> Pre-checks (holiday, weekend, config)
+    │
+    ├─> Get TOP 50 contracts by volume
+    │
+    ├─> Split into batches of 3, dispatch parallel analysis
+    │       (Celery chord: 17 parallel tasks)
+    │
+    ├─> Each batch runs 9-step analysis:
+    │     0. Symbol Resolution (NSE → Breeze code)
+    │     1. Real-Time Prices (Breeze API / DB fallback)
+    │     2. Basis & Cost of Carry
+    │     3. Open Interest Analysis
+    │     4. DMA Analysis (20/50/200)
+    │     5. Sector Strength
+    │     6. Volume & Liquidity
+    │     7. Technical Indicators (RSI, MACD, BB)
+    │     8. Support/Resistance Levels
+    │     9. Composite Scoring (12 components)
+    │
+    ├─> aggregate_futures_results callback:
+    │     - Filter: score >= 65
+    │     - Sort by score descending
+    │     - Save to TradeSuggestion
+    │
+    └─> TWO-STEP TELEGRAM APPROVAL FLOW:
+
+        STEP 1: SELECTION SCREEN
+        ┌─────────────────────────────────────┐
+        │ 📈 FUTURES OPPORTUNITIES            │
+        │ 💰 Available Margin: ₹12,00,000     │
+        │                                     │
+        │ 1️⃣ RELIANCE 🟢 LONG                │
+        │    Score: 82/100 | Entry: ₹2,450   │
+        │    [📊 View RELIANCE]              │
+        │                                     │
+        │ 2️⃣ TATASTEEL 🟢 LONG               │
+        │    Score: 78/100 | Entry: ₹142     │
+        │    [📊 View TATASTEEL]             │
+        │                                     │
+        │ [❌ Skip All]                       │
+        └─────────────────────────────────────┘
+
+        STEP 2: DETAIL VIEW (on View click)
+        ┌─────────────────────────────────────┐
+        │ 📊 TRADE CONFIRMATION               │
+        │                                     │
+        │ Symbol: RELIANCE                    │
+        │ Direction: 🟢 LONG                  │
+        │ Score: 82/100                       │
+        │                                     │
+        │ 📍 PRICE LEVELS                     │
+        │   Entry: ₹2,450.00                  │
+        │   Stop-Loss: ₹2,425.00              │
+        │   Target: ₹2,525.00                 │
+        │                                     │
+        │ 📐 POSITION SIZE                    │
+        │   Lots: 2 | Margin: ₹1,20,000       │
+        │                                     │
+        │ ⚖️ RISK/REWARD = 1:3                │
+        │                                     │
+        │ [✅ Confirm Trade (2L)]             │
+        │ [📊 Change Lots]                    │
+        │ [◀️ Back] [❌ Skip]                  │
+        └─────────────────────────────────────┘
+
+        STEP 3: EXECUTION (on Confirm click)
+        - Spawns background thread
+        - Executes trade via Breeze API
+        - Progress updates in same message
+        - Uses batching for large orders
+```
+
+### 12-Component Scoring System
+
+| Component | Weight | Description |
+|-----------|--------|-------------|
+| OI Buildup | High | Long/short buildup patterns |
+| OI Change % | High | Open interest change vs previous |
+| DMA Position | Medium | Price vs 20/50/200 DMA |
+| DMA Crossover | Medium | Golden/death cross signals |
+| Volume Pattern | Medium | Volume vs average |
+| RSI | Low | Relative Strength Index |
+| MACD | Low | MACD histogram direction |
+| Bollinger Bands | Low | Position within bands |
+| Sector Strength | Medium | Sector relative strength |
+| Basis Premium | Low | Futures-spot premium |
+| Cost of Carry | Low | Annualized carry cost |
+| Support/Resistance | Medium | Proximity to key levels |
+
+### 7 Hard Reject Filters
+
+Even with a high score, these conditions cause automatic rejection:
+
+1. **MWPL Breach**: Market-Wide Position Limit exceeded
+2. **Extreme Volatility**: Intraday swing > 5%
+3. **Low Piotroski Score**: F-Score < 3 (poor fundamentals)
+4. **Negative Sector**: Sector in strong downtrend
+5. **Poor Liquidity**: Volume < 1000 contracts
+6. **Corporate Action**: Recent bonus/split/dividend
+7. **Ban Period**: Stock in F&O ban
+
+### Configuration (TradingCoreConfig)
+
+**Notification Level Impact:**
+| Level | Behavior |
+|-------|----------|
+| FULL_CONTROL | TOP 3 sent for confirmation, waits for user |
+| SUPERVISED | Same (entries require confirmation) |
+| AUTONOMOUS | Auto-executes top candidate |
+| SIMULATED | Paper trade, no real orders |
+
+**Position Sizing Impact:**
+| Mode | Lots |
+|------|------|
+| TEST | 1 lot always |
+| MANUAL | Fixed from config |
+| AUTO | Calculated from margin |
+| SIMULATED | Hypothetical large positions |
+
+### Task Parameters (Configurable via UI)
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `top_contracts` | 50 | Contracts to analyze |
+| `batch_size` | 3 | Contracts per parallel task |
+| `this_month_volume` | 1000 | Min volume (current month) |
+| `next_month_volume` | 800 | Min volume (next month) |
+| `min_score` | 65 | Minimum qualifying score |
+
+Configure at: http://localhost:8000/system/celery-tasks/ → execute-futures-algorithm → Task Parameters
+
+### Order Batching
+
+For large positions (> 10 lots):
+- Split into batches of 10 lots each
+- 10-second delay between batches
+- Progress updates via Telegram with **Stop Execution** button
+- User can cancel remaining batches mid-execution
+
+**During Execution:**
+```
+🔄 EXECUTING TRADE
+
+Symbol: RELIANCE
+Direction: LONG
+
+📊 Progress: Batch 2/5
+✅ Lots executed: 20/50
+
+Waiting 10 seconds before next batch...
+Click 'Stop' to cancel remaining batches.
+
+[🛑 Stop Execution]
+```
+
+**On Stop Click:**
+- Sets `is_cancelled=True` in `OrderExecutionControl`
+- Background thread checks before each batch
+- Already-placed orders are NOT reversed
+- User sees summary of completed batches
+
+---
+
 ## Support and Resistance System
 
 All strategies use a **Consolidated Conservative S/R** system that combines multiple calculation methods.

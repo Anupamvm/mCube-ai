@@ -4,9 +4,10 @@ Telegram Bot Command Handler
 Interactive Telegram bot for managing trading positions across brokers.
 
 Available Commands:
-- /start - Welcome message and command list
+- /start - Interactive main menu with inline keyboards
 - /test - Test bot connectivity
 - /positions - View live positions from all brokers
+- /core - Core trading settings
 
 IMPORTANT: Only ONE instance of this bot should run at a time.
 The bot uses a file lock to prevent multiple instances from polling.
@@ -33,6 +34,9 @@ from telegram.ext import (
 from django.conf import settings
 from asgiref.sync import sync_to_async
 
+from apps.alerts.services.telegram_bot_data import DataMixin
+from apps.alerts.services.telegram_bot_menus import MenuMixin
+
 logger = logging.getLogger(__name__)
 
 # Singleton lock file path
@@ -40,7 +44,7 @@ BOT_LOCK_FILE = '/tmp/mcube_telegram_bot.lock'
 _lock_file_handle = None
 
 
-class TelegramBotHandler:
+class TelegramBotHandler(MenuMixin, DataMixin):
     """
     Telegram bot command handler for position management
     """
@@ -87,18 +91,12 @@ class TelegramBotHandler:
         return chat_id in self.authorized_chat_ids
 
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle /start command"""
+        """Handle /start command - show interactive main menu"""
         if not self.is_authorized(update):
             await update.message.reply_text("Unauthorized access")
             return
 
-        welcome_message = (
-            "<b>mCube Trading Bot</b>\n\n"
-            "Commands:\n"
-            "/test - Test bot connectivity\n"
-            "/positions - View live positions\n"
-        )
-        await update.message.reply_text(welcome_message, parse_mode='HTML')
+        await self._show_main_menu(update.message, is_command=True)
 
     async def test_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /test command - simple connectivity test"""
@@ -130,8 +128,76 @@ class TelegramBotHandler:
             reply_markup=reply_markup
         )
 
+    async def core_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /core command - show and manage core trading settings"""
+        if not self.is_authorized(update):
+            await update.message.reply_text("Unauthorized access")
+            return
+
+        # Get current config
+        config = await self._get_core_config()
+
+        # Format current settings
+        futures_status = "ON" if config['enable_futures_trading'] else "OFF"
+        options_status = config['options_strategy']
+
+        options_display = {
+            'NONE': 'Disabled',
+            'AUTO': 'Auto (VIX)',
+            'STRANGLE': 'Strangle',
+            'BROKEN_IRON_CONDOR': 'Iron Condor'
+        }.get(options_status, options_status)
+
+        message = (
+            "<b>Core Trading Settings</b>\n\n"
+            f"<b>Futures:</b> {futures_status}\n"
+            f"<b>Options:</b> {options_display}\n"
+            f"<b>Options Lots:</b> {config['options_lots']}\n"
+            f"<b>Futures Lots:</b> {config['futures_lots']}\n"
+            f"<b>Telegram Confirm:</b> {'ON' if config['require_confirmation'] else 'OFF'}\n\n"
+            "<i>Tap to change:</i>"
+        )
+
+        keyboard = [
+            [
+                InlineKeyboardButton(
+                    f"Futures: {futures_status}",
+                    callback_data="core_toggle_futures"
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    f"Options: {options_display}",
+                    callback_data="core_options_menu"
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    f"Opt Lots: {config['options_lots']}",
+                    callback_data="core_options_lots"
+                ),
+                InlineKeyboardButton(
+                    f"Fut Lots: {config['futures_lots']}",
+                    callback_data="core_futures_lots"
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    f"Confirm: {'ON' if config['require_confirmation'] else 'OFF'}",
+                    callback_data="core_toggle_confirm"
+                ),
+            ],
+            [InlineKeyboardButton("Refresh", callback_data="core_refresh")],
+        ]
+
+        await update.message.reply_text(
+            message,
+            parse_mode='HTML',
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
     async def button_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle button callbacks"""
+        """Handle button callbacks using prefix-based routing."""
         query = update.callback_query
         await query.answer()
 
@@ -141,7 +207,79 @@ class TelegramBotHandler:
 
         data = query.data
 
-        # Broker selection
+        try:
+            await self._route_callback(query, data)
+        except Exception as e:
+            logger.error(f"Callback error for '{data}': {e}", exc_info=True)
+            try:
+                await query.edit_message_text(f"Error: {str(e)[:200]}")
+            except Exception:
+                pass
+
+    async def _route_callback(self, query, data: str):
+        """Route callback data to the appropriate handler."""
+
+        # =====================================================================
+        # MAIN MENU NAVIGATION (new)
+        # =====================================================================
+        if data == "back_main":
+            await self._show_main_menu(query)
+            return
+
+        if data.startswith("menu_"):
+            await self._handle_menu_nav(query, data)
+            return
+
+        # P&L sub-menu
+        if data == "pnl_refresh":
+            await self._show_pnl_menu(query)
+            return
+
+        # Market sub-menu
+        if data == "mkt_refresh":
+            await self._show_market_menu(query)
+            return
+
+        # Risk sub-menu
+        if data == "risk_refresh":
+            await self._show_risk_menu(query)
+            return
+
+        # System sub-menu
+        if data == "sys_refresh":
+            await self._show_system_menu(query)
+            return
+
+        # Tasks sub-menu
+        if data.startswith("task_cat_"):
+            category = data.replace("task_cat_", "")
+            await self._show_task_category(query, category)
+            return
+
+        if data.startswith("task_all_"):
+            await self._handle_task_bulk(query, data)
+            return
+
+        if data == "back_tasks":
+            await self._show_tasks_menu(query)
+            return
+
+        if data.startswith("tt_"):
+            await self._handle_task_toggle(query, data)
+            return
+
+        if data.startswith("tr_"):
+            await self._handle_task_run(query, data)
+            return
+
+        # Quick actions
+        if data.startswith("qa_"):
+            await self._handle_quick_action(query, data)
+            return
+
+        # =====================================================================
+        # BROKER / POSITION CALLBACKS (existing)
+        # =====================================================================
         if data == "broker_icici":
             await self._show_icici_positions(query)
         elif data == "broker_kotak":
@@ -149,18 +287,17 @@ class TelegramBotHandler:
         elif data == "broker_all":
             await self._show_all_positions(query)
 
-        # Back to broker menu
         elif data == "back_to_brokers":
             keyboard = [
                 [InlineKeyboardButton("ICICI Breeze", callback_data="broker_icici")],
                 [InlineKeyboardButton("Kotak Neo", callback_data="broker_kotak")],
                 [InlineKeyboardButton("All Brokers", callback_data="broker_all")],
+                [InlineKeyboardButton("\u00ab Main Menu", callback_data="back_main")],
             ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
             await query.edit_message_text(
                 "<b>Select Broker</b>\n\nChoose a broker to view positions:",
                 parse_mode='HTML',
-                reply_markup=reply_markup
+                reply_markup=InlineKeyboardMarkup(keyboard)
             )
 
         # ICICI Position actions
@@ -169,14 +306,12 @@ class TelegramBotHandler:
             await self._show_icici_position_actions(query, pos_index)
 
         elif data.startswith("icici_close_pct_"):
-            # New: icici_close_pct_{pos_index}_{percentage}
             parts = data.split("_")
             pos_index = int(parts[3])
             percentage = int(parts[4])
             await self._confirm_icici_close_percentage(query, pos_index, percentage)
 
         elif data.startswith("icici_exec_close_"):
-            # New: icici_exec_close_{pos_index}_{percentage}
             parts = data.split("_")
             pos_index = int(parts[3])
             percentage = int(parts[4])
@@ -206,14 +341,12 @@ class TelegramBotHandler:
             await self._show_kotak_position_actions(query, pos_index)
 
         elif data.startswith("kotak_close_pct_"):
-            # New: kotak_close_pct_{pos_index}_{percentage}
             parts = data.split("_")
             pos_index = int(parts[3])
             percentage = int(parts[4])
             await self._confirm_kotak_close_percentage(query, pos_index, percentage)
 
         elif data.startswith("kotak_exec_close_"):
-            # New: kotak_exec_close_{pos_index}_{percentage}
             parts = data.split("_")
             pos_index = int(parts[3])
             percentage = int(parts[4])
@@ -236,6 +369,146 @@ class TelegramBotHandler:
             pos_index = int(parts[3])
             lots = int(parts[4])
             await self._execute_kotak_average(query, pos_index, lots)
+
+        # =================================================================
+        # CORE SETTINGS CALLBACKS (/core command)
+        # =================================================================
+
+        elif data == "core_toggle_futures":
+            await self._toggle_futures_trading(query)
+
+        elif data == "core_toggle_confirm":
+            await self._toggle_telegram_confirmation(query)
+
+        elif data == "core_options_menu":
+            await self._show_options_strategy_menu(query)
+
+        elif data.startswith("core_set_options_"):
+            strategy = data.replace("core_set_options_", "")
+            await self._set_options_strategy(query, strategy)
+
+        elif data == "core_options_lots":
+            await self._show_lots_menu(query, "options")
+
+        elif data == "core_futures_lots":
+            await self._show_lots_menu(query, "futures")
+
+        elif data.startswith("core_set_lots_"):
+            parts = data.split("_")
+            trade_type = parts[3]  # options or futures
+            lots = int(parts[4])
+            await self._set_lots(query, trade_type, lots)
+
+        elif data == "core_refresh":
+            await self._show_core_settings(query)
+
+        # Position Sizing Mode
+        elif data == "core_sizing_menu":
+            await self._show_sizing_mode_menu(query)
+
+        elif data.startswith("core_set_sizing_"):
+            mode = data.replace("core_set_sizing_", "")
+            await self._set_sizing_mode(query, mode)
+
+        # Notification Level
+        elif data == "core_notification_menu":
+            await self._show_notification_level_menu(query)
+
+        elif data.startswith("core_set_notification_"):
+            level = data.replace("core_set_notification_", "")
+            await self._set_notification_level(query, level)
+
+        elif data == "core_confirm_autonomous":
+            result = await self._update_config_field('notification_level', 'AUTONOMOUS')
+            if result['success']:
+                await self._show_core_settings(query)
+            else:
+                await query.edit_message_text(f"Error: {result['error']}")
+
+        # =================================================================
+        # TRADE CONFIRMATION CALLBACKS (from trade_confirmation.py)
+        # =================================================================
+
+        elif data.startswith("confirm_options_"):
+            suggestion_id = int(data.split("_")[2])
+            await self._handle_options_confirm(query, suggestion_id)
+
+        elif data.startswith("resize_options_"):
+            suggestion_id = int(data.split("_")[2])
+            await self._show_options_resize(query, suggestion_id)
+
+        elif data.startswith("options_lots_"):
+            parts = data.split("_")
+            suggestion_id = int(parts[2])
+            lots = int(parts[3])
+            await self._handle_options_resize_confirm(query, suggestion_id, lots)
+
+        elif data.startswith("reject_options_"):
+            suggestion_id = int(data.split("_")[2])
+            await self._handle_options_reject(query, suggestion_id)
+
+        # =====================================================================
+        # TWO-STEP FUTURES APPROVAL FLOW
+        # Step 1: select_futures_{id} → Shows detailed view
+        # Step 2: confirm_futures_{id} → Spawns background thread for execution
+        # =====================================================================
+
+        elif data.startswith("select_futures_"):
+            # STEP 1: User selected a suggestion - show detailed view
+            suggestion_id = int(data.split("_")[2])
+            await self._show_futures_detail(query, suggestion_id)
+
+        elif data.startswith("confirm_futures_"):
+            # STEP 2: User confirmed - spawn background thread for execution
+            suggestion_id = int(data.split("_")[2])
+            await self._handle_futures_confirm_with_thread(query, suggestion_id)
+
+        elif data.startswith("resize_futures_"):
+            suggestion_id = int(data.split("_")[2])
+            await self._show_futures_resize(query, suggestion_id)
+
+        elif data.startswith("futures_lots_"):
+            parts = data.split("_")
+            suggestion_id = int(parts[2])
+            lots = int(parts[3])
+            await self._handle_futures_resize_confirm_with_thread(query, suggestion_id, lots)
+
+        elif data.startswith("reject_futures_"):
+            suggestion_id = int(data.split("_")[2])
+            await self._handle_futures_reject(query, suggestion_id)
+
+        elif data == "back_futures_list":
+            # Go back to selection screen
+            await self._show_futures_selection_list(query)
+
+        elif data == "futures_skip_all":
+            # Skip all pending futures suggestions
+            await self._handle_futures_skip_all(query)
+
+        elif data.startswith("cancel_futures_exec_"):
+            # User wants to stop ongoing batch execution
+            suggestion_id = int(data.split("_")[3])
+            await self._handle_cancel_futures_execution(query, suggestion_id)
+
+        # Exit confirmation (SL/Target hit)
+        elif data.startswith("confirm_exit_"):
+            position_id = int(data.split("_")[2])
+            await self._handle_exit_confirm(query, position_id)
+
+        elif data.startswith("hold_exit_"):
+            position_id = int(data.split("_")[2])
+            await self._handle_exit_hold(query, position_id)
+
+        # Averaging confirmation
+        elif data.startswith("confirm_avg_"):
+            parts = data.split("_")
+            position_id = int(parts[2])
+            lots = int(parts[3])
+            await self._handle_averaging_confirm(query, position_id, lots)
+
+        elif data.startswith("skip_avg_"):
+            position_id = int(data.split("_")[2])
+            await self._handle_averaging_skip(query, position_id)
 
         # Refresh actions
         elif data == "refresh_icici":
@@ -311,6 +584,1180 @@ class TelegramBotHandler:
         close_old_connections()
         from apps.core.models import NseFlag
         return NseFlag.get('breeze_otp_task', 'Breeze login')
+
+    # =========================================================================
+    # TRADE CONFIRMATION HANDLERS
+    # =========================================================================
+
+    async def _handle_options_confirm(self, query, suggestion_id: int):
+        """Handle options trade confirmation"""
+        await query.edit_message_text("Executing options trade...")
+
+        try:
+            result = await self._execute_options_trade(suggestion_id)
+
+            if result.get('success'):
+                message = (
+                    f"<b>Options Trade Executed</b>\n\n"
+                    f"Strategy: {result.get('strategy', 'N/A')}\n"
+                    f"Lots: {result.get('lots', 'N/A')}\n"
+                    f"Order IDs: {result.get('order_ids', 'N/A')}"
+                )
+            else:
+                message = (
+                    f"<b>Trade Failed</b>\n\n"
+                    f"Error: {result.get('error', 'Unknown error')}"
+                )
+
+            await query.edit_message_text(message, parse_mode='HTML')
+
+        except Exception as e:
+            logger.error(f"Error confirming options trade: {e}")
+            await query.edit_message_text(f"Error: {str(e)[:200]}")
+
+    async def _show_options_resize(self, query, suggestion_id: int):
+        """Show options lot resize options"""
+        try:
+            suggestion = await self._get_suggestion(suggestion_id)
+            if not suggestion:
+                await query.edit_message_text("Suggestion not found.")
+                return
+
+            max_lots = suggestion.get('max_lots', 5)
+            recommended = suggestion.get('recommended_lots', 1)
+
+            message = (
+                f"<b>Resize Options Trade</b>\n\n"
+                f"Strategy: {suggestion.get('strategy', 'N/A')}\n"
+                f"Recommended: {recommended} lots\n"
+                f"Max Available: {max_lots} lots\n\n"
+                f"<b>Select lot count:</b>"
+            )
+
+            keyboard = []
+            lot_options = [1, 2, 3, 5] if max_lots >= 5 else list(range(1, max_lots + 1))
+            row = []
+            for lots in lot_options:
+                if lots <= max_lots:
+                    label = f"{lots} Lot{'s' if lots > 1 else ''}"
+                    if lots == recommended:
+                        label += " (Rec)"
+                    row.append(InlineKeyboardButton(label, callback_data=f"options_lots_{suggestion_id}_{lots}"))
+                    if len(row) == 3:
+                        keyboard.append(row)
+                        row = []
+            if row:
+                keyboard.append(row)
+
+            keyboard.append([InlineKeyboardButton("Cancel", callback_data=f"reject_options_{suggestion_id}")])
+
+            await query.edit_message_text(
+                message,
+                parse_mode='HTML',
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+
+        except Exception as e:
+            logger.error(f"Error showing options resize: {e}")
+            await query.edit_message_text(f"Error: {str(e)[:200]}")
+
+    async def _handle_options_resize_confirm(self, query, suggestion_id: int, lots: int):
+        """Handle options trade with custom lot size"""
+        await query.edit_message_text(f"Executing options trade with {lots} lots...")
+
+        try:
+            result = await self._execute_options_trade(suggestion_id, custom_lots=lots)
+
+            if result.get('success'):
+                message = (
+                    f"<b>Options Trade Executed</b>\n\n"
+                    f"Strategy: {result.get('strategy', 'N/A')}\n"
+                    f"Lots: {lots}\n"
+                    f"Order IDs: {result.get('order_ids', 'N/A')}"
+                )
+            else:
+                message = (
+                    f"<b>Trade Failed</b>\n\n"
+                    f"Error: {result.get('error', 'Unknown error')}"
+                )
+
+            await query.edit_message_text(message, parse_mode='HTML')
+
+        except Exception as e:
+            logger.error(f"Error executing options with custom lots: {e}")
+            await query.edit_message_text(f"Error: {str(e)[:200]}")
+
+    async def _handle_options_reject(self, query, suggestion_id: int):
+        """Handle options trade rejection"""
+        try:
+            await self._reject_suggestion(suggestion_id)
+            await query.edit_message_text("Trade rejected. Will try again tomorrow.")
+        except Exception as e:
+            logger.error(f"Error rejecting options trade: {e}")
+            await query.edit_message_text(f"Error: {str(e)[:200]}")
+
+    async def _handle_futures_confirm(self, query, suggestion_id: int):
+        """Handle futures trade confirmation"""
+        await query.edit_message_text("Executing futures trade...")
+
+        try:
+            result = await self._execute_futures_trade(suggestion_id)
+
+            if result.get('success'):
+                message = (
+                    f"<b>Futures Trade Executed</b>\n\n"
+                    f"Symbol: {result.get('symbol', 'N/A')}\n"
+                    f"Direction: {result.get('direction', 'N/A')}\n"
+                    f"Lots: {result.get('lots', 'N/A')}\n"
+                    f"Entry Price: {result.get('entry_price', 'N/A')}\n"
+                    f"Order ID: {result.get('order_id', 'N/A')}"
+                )
+            else:
+                message = (
+                    f"<b>Trade Failed</b>\n\n"
+                    f"Error: {result.get('error', 'Unknown error')}"
+                )
+
+            await query.edit_message_text(message, parse_mode='HTML')
+
+        except Exception as e:
+            logger.error(f"Error confirming futures trade: {e}")
+            await query.edit_message_text(f"Error: {str(e)[:200]}")
+
+    async def _show_futures_resize(self, query, suggestion_id: int):
+        """Show futures lot resize options"""
+        try:
+            suggestion = await self._get_suggestion(suggestion_id)
+            if not suggestion:
+                await query.edit_message_text("Suggestion not found.")
+                return
+
+            max_lots = suggestion.get('max_lots', 5)
+            recommended = suggestion.get('recommended_lots', 1)
+
+            message = (
+                f"<b>Resize Futures Trade</b>\n\n"
+                f"Symbol: {suggestion.get('symbol', 'N/A')}\n"
+                f"Direction: {suggestion.get('direction', 'N/A')}\n"
+                f"Recommended: {recommended} lots\n"
+                f"Max Available: {max_lots} lots\n\n"
+                f"<b>Select lot count:</b>"
+            )
+
+            keyboard = []
+            lot_options = [1, 2, 3, 5, 10] if max_lots >= 10 else list(range(1, min(max_lots + 1, 6)))
+            row = []
+            for lots in lot_options:
+                if lots <= max_lots:
+                    label = f"{lots} Lot{'s' if lots > 1 else ''}"
+                    if lots == recommended:
+                        label += " (Rec)"
+                    row.append(InlineKeyboardButton(label, callback_data=f"futures_lots_{suggestion_id}_{lots}"))
+                    if len(row) == 3:
+                        keyboard.append(row)
+                        row = []
+            if row:
+                keyboard.append(row)
+
+            keyboard.append([InlineKeyboardButton("Skip", callback_data=f"reject_futures_{suggestion_id}")])
+
+            await query.edit_message_text(
+                message,
+                parse_mode='HTML',
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+
+        except Exception as e:
+            logger.error(f"Error showing futures resize: {e}")
+            await query.edit_message_text(f"Error: {str(e)[:200]}")
+
+    async def _handle_futures_resize_confirm(self, query, suggestion_id: int, lots: int):
+        """Handle futures trade with custom lot size"""
+        await query.edit_message_text(f"Executing futures trade with {lots} lots...")
+
+        try:
+            result = await self._execute_futures_trade(suggestion_id, custom_lots=lots)
+
+            if result.get('success'):
+                message = (
+                    f"<b>Futures Trade Executed</b>\n\n"
+                    f"Symbol: {result.get('symbol', 'N/A')}\n"
+                    f"Direction: {result.get('direction', 'N/A')}\n"
+                    f"Lots: {lots}\n"
+                    f"Entry Price: {result.get('entry_price', 'N/A')}\n"
+                    f"Order ID: {result.get('order_id', 'N/A')}"
+                )
+            else:
+                message = (
+                    f"<b>Trade Failed</b>\n\n"
+                    f"Error: {result.get('error', 'Unknown error')}"
+                )
+
+            await query.edit_message_text(message, parse_mode='HTML')
+
+        except Exception as e:
+            logger.error(f"Error executing futures with custom lots: {e}")
+            await query.edit_message_text(f"Error: {str(e)[:200]}")
+
+    async def _handle_futures_reject(self, query, suggestion_id: int):
+        """Handle futures trade rejection"""
+        try:
+            await self._reject_suggestion(suggestion_id)
+            await query.edit_message_text("Futures suggestion skipped.")
+        except Exception as e:
+            logger.error(f"Error rejecting futures trade: {e}")
+            await query.edit_message_text(f"Error: {str(e)[:200]}")
+
+    # =========================================================================
+    # TWO-STEP FUTURES APPROVAL HANDLERS
+    # =========================================================================
+
+    async def _show_futures_detail(self, query, suggestion_id: int):
+        """
+        STEP 1 → STEP 2: Show detailed view for a selected futures suggestion.
+
+        User clicked "View Details" - now show full analysis with Confirm button.
+        """
+        try:
+            suggestion = await self._get_suggestion_obj(suggestion_id)
+            if not suggestion:
+                await query.edit_message_text("Suggestion not found or expired.")
+                return
+
+            # Build detailed message using TradeConfirmationService
+            from apps.trading.services.trade_confirmation import get_confirmation_service
+            confirmation_service = get_confirmation_service()
+            message, keyboard_dict = confirmation_service.build_futures_detail_message(suggestion)
+
+            # Convert to Telegram keyboard format
+            keyboard = []
+            for row in keyboard_dict['inline_keyboard']:
+                btn_row = []
+                for btn in row:
+                    btn_row.append(InlineKeyboardButton(btn['text'], callback_data=btn['callback_data']))
+                keyboard.append(btn_row)
+
+            await query.edit_message_text(
+                message,
+                parse_mode='HTML',
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+
+        except Exception as e:
+            logger.error(f"Error showing futures detail: {e}")
+            await query.edit_message_text(f"Error: {str(e)[:200]}")
+
+    async def _handle_futures_confirm_with_thread(self, query, suggestion_id: int, lots: int = None):
+        """
+        STEP 2 → EXECUTION: User confirmed trade - spawn background thread.
+
+        The trade execution runs in a separate thread to avoid blocking the bot.
+        User sees immediate feedback, then progress updates.
+        """
+        try:
+            suggestion = await self._get_suggestion_obj(suggestion_id)
+            if not suggestion:
+                await query.edit_message_text("Suggestion not found or expired.")
+                return
+
+            symbol = suggestion.instrument
+            direction = suggestion.direction
+            final_lots = lots or suggestion.recommended_lots or 1
+
+            # Show immediate confirmation that execution is starting
+            await query.edit_message_text(
+                f"🚀 <b>EXECUTING TRADE</b>\n\n"
+                f"Symbol: {symbol}\n"
+                f"Direction: {direction}\n"
+                f"Lots: {final_lots}\n\n"
+                f"<i>Trade executing in background...</i>\n"
+                f"<i>You'll receive progress updates.</i>",
+                parse_mode='HTML'
+            )
+
+            # Spawn background thread for execution
+            import threading
+            execution_thread = threading.Thread(
+                target=self._execute_futures_in_background,
+                args=(suggestion_id, final_lots, str(query.message.chat_id), query.message.message_id),
+                daemon=True
+            )
+            execution_thread.start()
+
+            logger.info(f"Spawned background thread for futures execution: {symbol} ({final_lots} lots)")
+
+        except Exception as e:
+            logger.error(f"Error starting futures execution: {e}")
+            await query.edit_message_text(f"Error: {str(e)[:200]}")
+
+    def _execute_futures_in_background(self, suggestion_id: int, lots: int, chat_id: str, message_id: int):
+        """
+        Background thread execution for futures trade.
+
+        This runs in a separate thread and sends Telegram updates for progress.
+        Uses batching for large orders (10 lots per batch, 10 seconds between).
+        User can click "Stop Execution" button to cancel remaining batches.
+        """
+        import requests
+        import os
+        from django.db import close_old_connections
+
+        # Close stale DB connections for thread safety
+        close_old_connections()
+
+        try:
+            from apps.trading.services.trade_confirmation import get_confirmation_service
+            from apps.trading.models import TradeSuggestion, OrderExecutionControl
+            from apps.core.models import NseFlag
+
+            # Get suggestion
+            suggestion = TradeSuggestion.objects.get(id=suggestion_id)
+
+            # Store execution info in NseFlag for cancel button lookup
+            NseFlag.set(f'futures_exec_{suggestion_id}', f'{chat_id}:{message_id}')
+
+            # Progress callback for batched execution
+            def progress_callback(batch_num, total_batches, batch_result):
+                """Send progress update via Telegram with Stop button"""
+                try:
+                    bot_token = self._get_bot_token()
+                    url = f"https://api.telegram.org/bot{bot_token}/editMessageText"
+
+                    lots_done = batch_result.get('lots_executed', 0)
+
+                    if batch_result.get('success'):
+                        progress_text = (
+                            f"🔄 <b>EXECUTING TRADE</b>\n\n"
+                            f"Symbol: {suggestion.instrument}\n"
+                            f"Direction: {suggestion.direction}\n\n"
+                            f"📊 Progress: Batch {batch_num}/{total_batches}\n"
+                            f"✅ Lots executed: {lots_done}/{lots}\n\n"
+                            f"<i>Waiting 10 seconds before next batch...</i>\n"
+                            f"<i>Click 'Stop' to cancel remaining batches.</i>"
+                        )
+                    else:
+                        progress_text = (
+                            f"⚠️ <b>BATCH {batch_num} ISSUE</b>\n\n"
+                            f"Symbol: {suggestion.instrument}\n"
+                            f"Error: {batch_result.get('error', 'Unknown')}\n\n"
+                            f"Continuing with remaining batches...\n"
+                            f"<i>Click 'Stop' to cancel.</i>"
+                        )
+
+                    # Include Stop button for cancellation
+                    keyboard = {
+                        'inline_keyboard': [[
+                            {'text': '🛑 Stop Execution', 'callback_data': f'cancel_futures_exec_{suggestion_id}'}
+                        ]]
+                    }
+
+                    requests.post(url, json={
+                        'chat_id': chat_id,
+                        'message_id': message_id,
+                        'text': progress_text,
+                        'parse_mode': 'HTML',
+                        'reply_markup': keyboard
+                    }, timeout=5)
+                except Exception as e:
+                    logger.warning(f"Failed to send progress update: {e}")
+
+            # Execute trade
+            confirmation_service = get_confirmation_service()
+            result = confirmation_service.execute_futures_trade(
+                suggestion,
+                custom_lots=lots,
+                progress_callback=progress_callback
+            )
+
+            # Send final result
+            bot_token = self._get_bot_token()
+            url = f"https://api.telegram.org/bot{bot_token}/editMessageText"
+
+            if result.get('success'):
+                final_text = (
+                    f"✅ <b>TRADE EXECUTED</b>\n\n"
+                    f"Symbol: {result.get('symbol', suggestion.instrument)}\n"
+                    f"Direction: {result.get('direction', suggestion.direction)}\n"
+                    f"Lots: {lots}\n"
+                    f"Avg Price: ₹{result.get('average_price', 0):,.2f}\n"
+                    f"Order ID: {result.get('order_id', 'N/A')}\n\n"
+                )
+                if result.get('batches_executed'):
+                    final_text += f"Batches: {result.get('batches_executed')}/{result.get('total_batches', 1)}\n"
+                if result.get('simulated'):
+                    final_text += "📝 <i>Paper trade - no real order</i>"
+            else:
+                final_text = (
+                    f"❌ <b>TRADE FAILED</b>\n\n"
+                    f"Symbol: {suggestion.instrument}\n"
+                    f"Error: {result.get('error', 'Unknown error')}"
+                )
+
+            requests.post(url, json={
+                'chat_id': chat_id,
+                'message_id': message_id,
+                'text': final_text,
+                'parse_mode': 'HTML'
+            }, timeout=10)
+
+            # Update suggestion status
+            suggestion.status = 'EXECUTED' if result.get('success') else 'FAILED'
+            suggestion.save()
+
+        except Exception as e:
+            logger.error(f"Background futures execution failed: {e}")
+            try:
+                bot_token = self._get_bot_token()
+                url = f"https://api.telegram.org/bot{bot_token}/editMessageText"
+                requests.post(url, json={
+                    'chat_id': chat_id,
+                    'message_id': message_id,
+                    'text': f"❌ <b>EXECUTION ERROR</b>\n\n{str(e)[:200]}",
+                    'parse_mode': 'HTML'
+                }, timeout=10)
+            except:
+                pass
+        finally:
+            close_old_connections()
+
+    async def _handle_futures_resize_confirm_with_thread(self, query, suggestion_id: int, lots: int):
+        """Handle futures trade with custom lots - spawn background thread"""
+        await self._handle_futures_confirm_with_thread(query, suggestion_id, lots)
+
+    async def _show_futures_selection_list(self, query):
+        """
+        Go back to the futures selection list.
+
+        Reads pending suggestion IDs from NseFlag and rebuilds the list.
+        """
+        try:
+            from apps.core.models import NseFlag
+            from apps.trading.models import TradeSuggestion
+
+            # Get pending suggestion IDs
+            suggestion_ids_str = await sync_to_async(NseFlag.get)('pending_futures_suggestions', '')
+            if not suggestion_ids_str:
+                await query.edit_message_text("No pending futures suggestions.")
+                return
+
+            suggestion_ids = [int(x) for x in suggestion_ids_str.split(',') if x]
+
+            # Get suggestions that are still pending
+            suggestions = await sync_to_async(list)(
+                TradeSuggestion.objects.filter(
+                    id__in=suggestion_ids,
+                    status='PENDING_CONFIRMATION'
+                )
+            )
+
+            if not suggestions:
+                await query.edit_message_text("No more pending futures suggestions.")
+                return
+
+            # Rebuild the selection screen
+            from apps.trading.services.trade_confirmation import get_confirmation_service
+            confirmation_service = get_confirmation_service()
+            success, result = confirmation_service.request_futures_confirmation(suggestions)
+
+            if not success:
+                await query.edit_message_text(f"Error rebuilding list: {result}")
+
+        except Exception as e:
+            logger.error(f"Error showing futures list: {e}")
+            await query.edit_message_text(f"Error: {str(e)[:200]}")
+
+    async def _handle_futures_skip_all(self, query):
+        """Skip all pending futures suggestions"""
+        try:
+            from apps.core.models import NseFlag
+            from apps.trading.models import TradeSuggestion
+
+            # Get pending suggestion IDs
+            suggestion_ids_str = await sync_to_async(NseFlag.get)('pending_futures_suggestions', '')
+            if suggestion_ids_str:
+                suggestion_ids = [int(x) for x in suggestion_ids_str.split(',') if x]
+
+                # Mark all as rejected
+                for sid in suggestion_ids:
+                    try:
+                        await self._reject_suggestion(sid)
+                    except:
+                        pass
+
+                # Clear the pending list
+                await sync_to_async(NseFlag.set)('pending_futures_suggestions', '')
+
+            await query.edit_message_text(
+                "❌ <b>All Futures Suggestions Skipped</b>\n\n"
+                "Will try again tomorrow.",
+                parse_mode='HTML'
+            )
+
+        except Exception as e:
+            logger.error(f"Error skipping all futures: {e}")
+            await query.edit_message_text(f"Error: {str(e)[:200]}")
+
+    async def _handle_cancel_futures_execution(self, query, suggestion_id: int):
+        """
+        Cancel ongoing batch execution for a futures trade.
+
+        Sets is_cancelled=True in OrderExecutionControl, which the
+        background thread checks between batches.
+        """
+        try:
+            from apps.trading.models import OrderExecutionControl, TradeSuggestion
+            from apps.core.models import NseFlag
+
+            # Find and cancel the execution control
+            @sync_to_async
+            def cancel_execution():
+                try:
+                    exec_control = OrderExecutionControl.objects.get(suggestion_id=suggestion_id)
+                    batches_done = exec_control.batches_completed
+                    total = exec_control.total_batches
+                    exec_control.cancel(reason='User cancelled from Telegram')
+                    return True, batches_done, total
+                except OrderExecutionControl.DoesNotExist:
+                    # No execution control - try using NseFlag as fallback
+                    NseFlag.set(f'cancel_futures_{suggestion_id}', 'true')
+                    return True, 0, 0
+
+            success, batches_done, total = await cancel_execution()
+
+            if success:
+                await query.edit_message_text(
+                    f"🛑 <b>EXECUTION STOPPED</b>\n\n"
+                    f"Remaining batches cancelled.\n"
+                    f"Completed: {batches_done}/{total} batches\n\n"
+                    f"<i>Orders already placed will not be reversed.</i>\n"
+                    f"<i>Check positions for partial execution.</i>",
+                    parse_mode='HTML'
+                )
+
+                # Update suggestion status
+                @sync_to_async
+                def update_suggestion():
+                    try:
+                        suggestion = TradeSuggestion.objects.get(id=suggestion_id)
+                        suggestion.status = 'CANCELLED'
+                        suggestion.user_notes = f'User cancelled after {batches_done} batches'
+                        suggestion.save()
+                    except:
+                        pass
+
+                await update_suggestion()
+            else:
+                await query.edit_message_text(
+                    "⚠️ Could not find execution to cancel.\n"
+                    "It may have already completed.",
+                    parse_mode='HTML'
+                )
+
+        except Exception as e:
+            logger.error(f"Error cancelling futures execution: {e}")
+            await query.edit_message_text(f"Error: {str(e)[:200]}")
+
+    @sync_to_async
+    def _get_suggestion_obj(self, suggestion_id: int):
+        """Get TradeSuggestion object by ID"""
+        from django.db import close_old_connections
+        close_old_connections()
+        try:
+            from apps.trading.models import TradeSuggestion
+            return TradeSuggestion.objects.get(id=suggestion_id)
+        except TradeSuggestion.DoesNotExist:
+            return None
+
+    async def _handle_exit_confirm(self, query, position_id: int):
+        """Handle exit confirmation (close position)"""
+        await query.edit_message_text("Closing position...")
+
+        try:
+            result = await self._close_position_by_id(position_id)
+
+            if result.get('success'):
+                message = (
+                    f"<b>Position Closed</b>\n\n"
+                    f"Symbol: {result.get('symbol', 'N/A')}\n"
+                    f"P&L: {result.get('pnl', 'N/A')}\n"
+                    f"Reason: {result.get('reason', 'User confirmed')}"
+                )
+            else:
+                message = (
+                    f"<b>Close Failed</b>\n\n"
+                    f"Error: {result.get('error', 'Unknown error')}"
+                )
+
+            await query.edit_message_text(message, parse_mode='HTML')
+
+        except Exception as e:
+            logger.error(f"Error closing position: {e}")
+            await query.edit_message_text(f"Error: {str(e)[:200]}")
+
+    async def _handle_exit_hold(self, query, position_id: int):
+        """Handle hold decision (don't close on SL/Target alert)"""
+        try:
+            await self._mark_position_hold(position_id)
+            await query.edit_message_text(
+                "Position will be held.\n\n"
+                "You will not receive another alert for this trigger level."
+            )
+        except Exception as e:
+            logger.error(f"Error marking position hold: {e}")
+            await query.edit_message_text(f"Error: {str(e)[:200]}")
+
+    async def _handle_averaging_confirm(self, query, position_id: int, lots: int):
+        """Handle averaging confirmation"""
+        await query.edit_message_text(f"Adding {lots} lots to position...")
+
+        try:
+            result = await self._execute_averaging(position_id, lots)
+
+            if result.get('success'):
+                message = (
+                    f"<b>Position Averaged</b>\n\n"
+                    f"Symbol: {result.get('symbol', 'N/A')}\n"
+                    f"Lots Added: {lots}\n"
+                    f"New Avg Price: {result.get('new_avg_price', 'N/A')}\n"
+                    f"Order ID: {result.get('order_id', 'N/A')}"
+                )
+            else:
+                message = (
+                    f"<b>Averaging Failed</b>\n\n"
+                    f"Error: {result.get('error', 'Unknown error')}"
+                )
+
+            await query.edit_message_text(message, parse_mode='HTML')
+
+        except Exception as e:
+            logger.error(f"Error executing averaging: {e}")
+            await query.edit_message_text(f"Error: {str(e)[:200]}")
+
+    async def _handle_averaging_skip(self, query, position_id: int):
+        """Handle averaging skip decision"""
+        try:
+            await query.edit_message_text("Averaging skipped for this position.")
+        except Exception as e:
+            logger.error(f"Error skipping averaging: {e}")
+            await query.edit_message_text(f"Error: {str(e)[:200]}")
+
+    # =========================================================================
+    # TRADE EXECUTION HELPER METHODS
+    # =========================================================================
+
+    @sync_to_async(thread_sensitive=False)
+    def _get_suggestion(self, suggestion_id: int) -> dict:
+        """Get suggestion details by ID"""
+        from django.db import close_old_connections
+        close_old_connections()
+
+        try:
+            from apps.trading.models import TradeSuggestion
+            from apps.trading.services.margin_service import get_available_margin, get_margin_per_lot
+
+            suggestion = TradeSuggestion.objects.get(id=suggestion_id)
+
+            # Calculate max lots based on available margin
+            available_margin = get_available_margin()
+            margin_per_lot = suggestion.margin_per_lot or 100000  # Default if not set
+
+            max_lots = int(available_margin / margin_per_lot) if margin_per_lot > 0 else 5
+
+            return {
+                'id': suggestion.id,
+                'symbol': suggestion.symbol,
+                'strategy': suggestion.strategy_type,
+                'direction': suggestion.direction,
+                'recommended_lots': suggestion.recommended_lots or 1,
+                'max_lots': max(1, min(max_lots, 10)),  # Cap at 10 for safety
+                'margin_per_lot': margin_per_lot,
+            }
+        except Exception as e:
+            logger.error(f"Error getting suggestion {suggestion_id}: {e}")
+            return None
+
+    @sync_to_async(thread_sensitive=False)
+    def _execute_options_trade(self, suggestion_id: int, custom_lots: int = None) -> dict:
+        """Execute options trade for a suggestion"""
+        from django.db import close_old_connections
+        close_old_connections()
+
+        try:
+            from apps.trading.models import TradeSuggestion
+            from apps.trading.services.trade_confirmation import get_confirmation_service
+
+            suggestion = TradeSuggestion.objects.get(id=suggestion_id)
+
+            # Update lots if custom specified
+            if custom_lots:
+                suggestion.user_modified_lots = custom_lots
+                suggestion.save()
+
+            # Use the confirmation service to execute
+            service = get_confirmation_service()
+            result = service.execute_options_trade(suggestion, lots=custom_lots)
+
+            return result
+
+        except Exception as e:
+            logger.error(f"Error executing options trade: {e}")
+            return {'success': False, 'error': str(e)}
+
+    @sync_to_async(thread_sensitive=False)
+    def _execute_futures_trade(self, suggestion_id: int, custom_lots: int = None) -> dict:
+        """Execute futures trade for a suggestion"""
+        from django.db import close_old_connections
+        close_old_connections()
+
+        try:
+            from apps.trading.models import TradeSuggestion
+            from apps.trading.services.trade_confirmation import get_confirmation_service
+
+            suggestion = TradeSuggestion.objects.get(id=suggestion_id)
+
+            # Update lots if custom specified
+            if custom_lots:
+                suggestion.user_modified_lots = custom_lots
+                suggestion.save()
+
+            # Use the confirmation service to execute
+            service = get_confirmation_service()
+            result = service.execute_futures_trade(suggestion, lots=custom_lots)
+
+            return result
+
+        except Exception as e:
+            logger.error(f"Error executing futures trade: {e}")
+            return {'success': False, 'error': str(e)}
+
+    @sync_to_async(thread_sensitive=False)
+    def _reject_suggestion(self, suggestion_id: int):
+        """Reject a trade suggestion"""
+        from django.db import close_old_connections
+        close_old_connections()
+
+        try:
+            from apps.trading.models import TradeSuggestion
+
+            suggestion = TradeSuggestion.objects.get(id=suggestion_id)
+            suggestion.status = 'REJECTED'
+            suggestion.save()
+
+        except Exception as e:
+            logger.error(f"Error rejecting suggestion: {e}")
+            raise
+
+    @sync_to_async(thread_sensitive=False)
+    def _close_position_by_id(self, position_id: int) -> dict:
+        """Close a position by its ID"""
+        from django.db import close_old_connections
+        close_old_connections()
+
+        try:
+            from apps.positions.models import Position
+            from apps.trading.services.trade_confirmation import get_confirmation_service
+
+            position = Position.objects.get(id=position_id)
+            service = get_confirmation_service()
+            result = service.close_position(position)
+
+            return result
+
+        except Exception as e:
+            logger.error(f"Error closing position: {e}")
+            return {'success': False, 'error': str(e)}
+
+    @sync_to_async(thread_sensitive=False)
+    def _mark_position_hold(self, position_id: int):
+        """Mark a position to be held (ignore SL/Target alert)"""
+        from django.db import close_old_connections
+        close_old_connections()
+
+        try:
+            from apps.core.models import NseFlag
+
+            # Use NseFlag to track that user chose to hold
+            NseFlag.set(
+                f'position_hold_{position_id}',
+                'true',
+                'User chose to hold position despite SL/Target alert'
+            )
+
+        except Exception as e:
+            logger.error(f"Error marking position hold: {e}")
+            raise
+
+    @sync_to_async(thread_sensitive=False)
+    def _execute_averaging(self, position_id: int, lots: int) -> dict:
+        """Execute averaging for a position"""
+        from django.db import close_old_connections
+        close_old_connections()
+
+        try:
+            from apps.positions.models import Position
+            from apps.trading.services.trade_confirmation import get_confirmation_service
+
+            position = Position.objects.get(id=position_id)
+            service = get_confirmation_service()
+            result = service.execute_averaging(position, lots)
+
+            return result
+
+        except Exception as e:
+            logger.error(f"Error executing averaging: {e}")
+            return {'success': False, 'error': str(e)}
+
+    # =========================================================================
+    # CORE SETTINGS HANDLERS (/core command)
+    # =========================================================================
+
+    @sync_to_async(thread_sensitive=False)
+    def _get_core_config(self) -> dict:
+        """Get current core trading config"""
+        from django.db import close_old_connections
+        close_old_connections()
+
+        try:
+            from apps.core.models import TradingCoreConfig
+            config = TradingCoreConfig.get_instance()
+            return {
+                'enable_futures_trading': config.enable_futures_trading,
+                'options_strategy': config.options_strategy,
+                'options_lots': config.manual_options_lots,
+                'futures_lots': config.manual_futures_lots,
+                'require_confirmation': config.require_telegram_confirmation,  # Legacy
+                'position_sizing_mode': config.position_sizing_mode,
+                'notification_level': config.notification_level,
+                'margin_utilization_pct': float(config.margin_utilization_pct),
+                # Display helpers
+                'sizing_display': config.get_position_sizing_display_short(),
+                'notification_display': config.get_notification_level_display_short(),
+            }
+        except Exception as e:
+            logger.error(f"Error getting core config: {e}")
+            return {
+                'enable_futures_trading': True,
+                'options_strategy': 'AUTO',
+                'options_lots': 1,
+                'futures_lots': 1,
+                'require_confirmation': True,
+                'position_sizing_mode': 'TEST',
+                'notification_level': 'FULL_CONTROL',
+                'margin_utilization_pct': 50.0,
+                'sizing_display': '🧪 Test (1 lot)',
+                'notification_display': '🔒 Full Control',
+            }
+
+    async def _show_core_settings(self, query):
+        """Show current core settings with buttons"""
+        config = await self._get_core_config()
+
+        futures_status = "ON" if config['enable_futures_trading'] else "OFF"
+        options_status = config['options_strategy']
+
+        options_display = {
+            'NONE': 'Disabled',
+            'AUTO': 'Auto (VIX)',
+            'STRANGLE': 'Strangle',
+            'BROKEN_IRON_CONDOR': 'Iron Condor'
+        }.get(options_status, options_status)
+
+        # Build detailed message with new fields
+        message = (
+            "<b>🎯 Core Trading Settings</b>\n\n"
+            f"<b>Trading:</b>\n"
+            f"  Futures: {futures_status}\n"
+            f"  Options: {options_display}\n\n"
+            f"<b>Position Sizing:</b>\n"
+            f"  {config['sizing_display']}\n\n"
+            f"<b>Notification Level:</b>\n"
+            f"  {config['notification_display']}\n\n"
+            "<i>Tap to change:</i>"
+        )
+
+        keyboard = [
+            # Trading toggles
+            [
+                InlineKeyboardButton(f"Futures: {futures_status}", callback_data="core_toggle_futures"),
+                InlineKeyboardButton(f"Options", callback_data="core_options_menu"),
+            ],
+            # Position Sizing Mode
+            [
+                InlineKeyboardButton(f"📏 {config['sizing_display']}", callback_data="core_sizing_menu"),
+            ],
+            # Notification Level
+            [
+                InlineKeyboardButton(f"📱 {config['notification_display']}", callback_data="core_notification_menu"),
+            ],
+            # Lots (only show if Manual mode)
+            [
+                InlineKeyboardButton(f"Opt Lots: {config['options_lots']}", callback_data="core_options_lots"),
+                InlineKeyboardButton(f"Fut Lots: {config['futures_lots']}", callback_data="core_futures_lots"),
+            ] if config['position_sizing_mode'] == 'MANUAL' else [],
+            # Navigation
+            [InlineKeyboardButton("🔄 Refresh", callback_data="core_refresh")],
+            [InlineKeyboardButton("« Main Menu", callback_data="back_main")],
+        ]
+
+        # Filter out empty rows
+        keyboard = [row for row in keyboard if row]
+
+        await query.edit_message_text(
+            message,
+            parse_mode='HTML',
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
+    async def _toggle_futures_trading(self, query):
+        """Toggle futures trading on/off"""
+        result = await self._toggle_config_field('enable_futures_trading')
+        if result['success']:
+            await self._show_core_settings(query)
+        else:
+            await query.edit_message_text(f"Error: {result['error']}")
+
+    async def _toggle_telegram_confirmation(self, query):
+        """Toggle telegram confirmation on/off"""
+        result = await self._toggle_config_field('require_telegram_confirmation')
+        if result['success']:
+            await self._show_core_settings(query)
+        else:
+            await query.edit_message_text(f"Error: {result['error']}")
+
+    @sync_to_async(thread_sensitive=False)
+    def _toggle_config_field(self, field_name: str) -> dict:
+        """Toggle a boolean config field"""
+        from django.db import close_old_connections
+        close_old_connections()
+
+        try:
+            from apps.core.models import TradingCoreConfig
+            config = TradingCoreConfig.get_instance()
+            current_value = getattr(config, field_name)
+            setattr(config, field_name, not current_value)
+            config.save()
+            return {'success': True, 'new_value': not current_value}
+        except Exception as e:
+            logger.error(f"Error toggling {field_name}: {e}")
+            return {'success': False, 'error': str(e)}
+
+    async def _show_options_strategy_menu(self, query):
+        """Show options strategy selection menu"""
+        config = await self._get_core_config()
+        current = config['options_strategy']
+
+        message = (
+            "<b>Select Options Strategy</b>\n\n"
+            f"Current: {current}\n\n"
+            "<i>Tap to select:</i>"
+        )
+
+        strategies = [
+            ('NONE', 'Disabled'),
+            ('AUTO', 'Auto (VIX)'),
+            ('STRANGLE', 'Strangle'),
+            ('BROKEN_IRON_CONDOR', 'Iron Condor'),
+        ]
+
+        keyboard = []
+        for value, label in strategies:
+            mark = " ✓" if value == current else ""
+            keyboard.append([
+                InlineKeyboardButton(f"{label}{mark}", callback_data=f"core_set_options_{value}")
+            ])
+
+        keyboard.append([InlineKeyboardButton("« Back", callback_data="core_refresh")])
+
+        await query.edit_message_text(
+            message,
+            parse_mode='HTML',
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
+    async def _set_options_strategy(self, query, strategy: str):
+        """Set options strategy"""
+        result = await self._update_config_field('options_strategy', strategy)
+        if result['success']:
+            await self._show_core_settings(query)
+        else:
+            await query.edit_message_text(f"Error: {result['error']}")
+
+    async def _show_lots_menu(self, query, trade_type: str):
+        """Show lots selection menu"""
+        config = await self._get_core_config()
+        current = config[f'{trade_type}_lots']
+
+        message = (
+            f"<b>Select {trade_type.title()} Lots</b>\n\n"
+            f"Current: {current}\n\n"
+            "<i>Tap to select:</i>"
+        )
+
+        lot_options = [1, 2, 3, 5, 10]
+        keyboard = []
+        row = []
+        for lots in lot_options:
+            mark = " ✓" if lots == current else ""
+            row.append(
+                InlineKeyboardButton(f"{lots}{mark}", callback_data=f"core_set_lots_{trade_type}_{lots}")
+            )
+            if len(row) == 3:
+                keyboard.append(row)
+                row = []
+        if row:
+            keyboard.append(row)
+
+        keyboard.append([InlineKeyboardButton("« Back", callback_data="core_refresh")])
+
+        await query.edit_message_text(
+            message,
+            parse_mode='HTML',
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
+    async def _set_lots(self, query, trade_type: str, lots: int):
+        """Set lots for a trade type"""
+        field_name = f'manual_{trade_type}_lots'  # Use new field names
+        result = await self._update_config_field(field_name, lots)
+        if result['success']:
+            await self._show_core_settings(query)
+        else:
+            await query.edit_message_text(f"Error: {result['error']}")
+
+    @sync_to_async(thread_sensitive=False)
+    def _update_config_field(self, field_name: str, value) -> dict:
+        """Update a config field"""
+        from django.db import close_old_connections
+        close_old_connections()
+
+        try:
+            from apps.core.models import TradingCoreConfig
+            config = TradingCoreConfig.get_instance()
+            setattr(config, field_name, value)
+            config.save()
+            return {'success': True}
+        except Exception as e:
+            logger.error(f"Error updating {field_name}: {e}")
+            return {'success': False, 'error': str(e)}
+
+    # =========================================================================
+    # POSITION SIZING MODE HANDLERS
+    # =========================================================================
+
+    async def _show_sizing_mode_menu(self, query):
+        """Show position sizing mode selection menu"""
+        config = await self._get_core_config()
+        current = config['position_sizing_mode']
+
+        message = (
+            "<b>📏 Select Position Sizing Mode</b>\n\n"
+            f"Current: {config['sizing_display']}\n\n"
+            "<b>Options:</b>\n"
+            "🧪 <b>Test</b> - 1 lot each (safe testing)\n"
+            "✋ <b>Manual</b> - Fixed lots you specify\n"
+            "📊 <b>Auto</b> - Based on broker margin\n"
+            "📝 <b>Simulated</b> - Paper trade (no orders)\n\n"
+            "<i>Tap to select:</i>"
+        )
+
+        modes = [
+            ('TEST', '🧪 Test (1 Lot)'),
+            ('MANUAL', '✋ Manual'),
+            ('AUTO', '📊 Auto (Margin)'),
+            ('SIMULATED', '📝 Simulated'),
+        ]
+
+        keyboard = []
+        for value, label in modes:
+            mark = " ✓" if value == current else ""
+            keyboard.append([
+                InlineKeyboardButton(f"{label}{mark}", callback_data=f"core_set_sizing_{value}")
+            ])
+
+        keyboard.append([InlineKeyboardButton("« Back", callback_data="core_refresh")])
+
+        await query.edit_message_text(
+            message,
+            parse_mode='HTML',
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
+    async def _set_sizing_mode(self, query, mode: str):
+        """Set position sizing mode"""
+        result = await self._update_config_field('position_sizing_mode', mode)
+        if result['success']:
+            await self._show_core_settings(query)
+        else:
+            await query.edit_message_text(f"Error: {result['error']}")
+
+    # =========================================================================
+    # NOTIFICATION LEVEL HANDLERS
+    # =========================================================================
+
+    async def _show_notification_level_menu(self, query):
+        """Show notification level selection menu"""
+        config = await self._get_core_config()
+        current = config['notification_level']
+
+        message = (
+            "<b>📱 Select Notification Level</b>\n\n"
+            f"Current: {config['notification_display']}\n\n"
+            "<b>Options:</b>\n"
+            "🔒 <b>Full Control</b> - Confirm everything\n"
+            "👁️ <b>Supervised</b> - Confirm entries/exits\n"
+            "🤖 <b>Autonomous</b> - Auto-execute all\n\n"
+            "<i>⚠️ Autonomous will execute trades without confirmation!</i>\n\n"
+            "<i>Tap to select:</i>"
+        )
+
+        levels = [
+            ('FULL_CONTROL', '🔒 Full Control'),
+            ('SUPERVISED', '👁️ Supervised'),
+            ('AUTONOMOUS', '🤖 Autonomous'),
+        ]
+
+        keyboard = []
+        for value, label in levels:
+            mark = " ✓" if value == current else ""
+            keyboard.append([
+                InlineKeyboardButton(f"{label}{mark}", callback_data=f"core_set_notification_{value}")
+            ])
+
+        keyboard.append([InlineKeyboardButton("« Back", callback_data="core_refresh")])
+
+        await query.edit_message_text(
+            message,
+            parse_mode='HTML',
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
+    async def _set_notification_level(self, query, level: str):
+        """Set notification level with confirmation for autonomous"""
+        if level == 'AUTONOMOUS':
+            # Show warning first
+            message = (
+                "<b>⚠️ Enable Autonomous Mode?</b>\n\n"
+                "In Autonomous mode, the system will:\n"
+                "• Execute trades without confirmation\n"
+                "• Auto-close on stop-loss/target\n"
+                "• Only send notifications\n\n"
+                "<b>Are you sure?</b>"
+            )
+            keyboard = [
+                [InlineKeyboardButton("✅ Yes, Enable", callback_data="core_confirm_autonomous")],
+                [InlineKeyboardButton("❌ Cancel", callback_data="core_notification_menu")],
+            ]
+            await query.edit_message_text(
+                message,
+                parse_mode='HTML',
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+        else:
+            result = await self._update_config_field('notification_level', level)
+            if result['success']:
+                await self._show_core_settings(query)
+            else:
+                await query.edit_message_text(f"Error: {result['error']}")
 
     # =========================================================================
     # ICICI BREEZE POSITION HANDLERS
@@ -1613,6 +3060,7 @@ class TelegramBotHandler:
         application.add_handler(CommandHandler("start", self.start_command))
         application.add_handler(CommandHandler("test", self.test_command))
         application.add_handler(CommandHandler("positions", self.positions_command))
+        application.add_handler(CommandHandler("core", self.core_command))
 
         # Add callback query handler for buttons
         application.add_handler(CallbackQueryHandler(self.button_callback))

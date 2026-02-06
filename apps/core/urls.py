@@ -51,6 +51,8 @@ urlpatterns = [
     path('celery/config/', views.get_task_config, name='get_task_config'),
     path('celery/config/save/', views.save_task_config, name='save_task_config'),
     path('celery/run-now/', views.run_task_now, name='run_task_now'),
+    path('celery/toggle-core-config/', views.toggle_core_config, name='toggle_core_config'),
+    path('celery/update-core-config/', views.update_core_config, name='update_core_config'),
 
     # Django Background Tasks Control
     path('bg-tasks/toggle/<int:task_id>/', views.toggle_bg_task, name='toggle_bg_task'),
