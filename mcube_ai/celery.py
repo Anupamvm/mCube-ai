@@ -178,19 +178,19 @@ def get_static_schedule():
 
     'monitor-all-positions': {
         'task': 'apps.positions.tasks.monitor_all_positions',
-        'schedule': 10.0,  # Every 10 seconds during market hours
+        'schedule': crontab(hour='9-15', minute='*', day_of_week='1-5'),  # Every minute 9 AM-3:59 PM Mon-Fri
         'options': {'queue': 'monitoring'},
     },
 
     'update-position-pnl': {
         'task': 'apps.positions.tasks.update_position_pnl',
-        'schedule': 15.0,  # Every 15 seconds
+        'schedule': crontab(hour='9-15', minute='*', day_of_week='1-5'),  # Every minute 9 AM-3:59 PM Mon-Fri
         'options': {'queue': 'monitoring'},
     },
 
     'check-exit-conditions': {
         'task': 'apps.positions.tasks.check_exit_conditions',
-        'schedule': 30.0,  # Every 30 seconds
+        'schedule': crontab(hour='9-15', minute='*', day_of_week='1-5'),  # Every minute 9 AM-3:59 PM Mon-Fri
         'options': {'queue': 'monitoring'},
     },
 
@@ -200,13 +200,13 @@ def get_static_schedule():
 
     'check-risk-limits-all-accounts': {
         'task': 'apps.risk.tasks.check_risk_limits_all_accounts',
-        'schedule': 60.0,  # Every 1 minute
+        'schedule': crontab(hour='9-15', minute='*', day_of_week='1-5'),  # Every minute 9 AM-3:59 PM Mon-Fri
         'options': {'queue': 'risk'},
     },
 
     'monitor-circuit-breakers': {
         'task': 'apps.risk.tasks.monitor_circuit_breakers',
-        'schedule': 30.0,  # Every 30 seconds
+        'schedule': crontab(hour='9-15', minute='*', day_of_week='1-5'),  # Every minute 9 AM-3:59 PM Mon-Fri
         'options': {'queue': 'risk'},
     },
 
@@ -284,7 +284,17 @@ def _build_custom_schedule(task_state):
             day_of_week=celery_days,
         )
     elif task_state.schedule_type == 'interval':
-        return float(task_state.interval_seconds)
+        # Convert interval to a time-bounded crontab to prevent 24/7 execution.
+        # Uses recurring_start_hour/end_hour fields for time bounds.
+        # Sub-minute intervals are rounded up to 1 minute (crontab minimum).
+        start_h = task_state.recurring_start_hour
+        end_h = task_state.recurring_end_hour
+        interval_mins = max(1, task_state.interval_seconds // 60)
+        return crontab(
+            hour=f'{start_h}-{end_h}',
+            minute=f'*/{interval_mins}' if interval_mins > 1 else '*',
+            day_of_week=celery_days,
+        )
     elif task_state.schedule_type == 'recurring':
         # Build crontab(s) that run every N minutes within a precise time window.
         # A single crontab uses cartesian product of hours x minutes, so when
