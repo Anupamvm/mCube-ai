@@ -15,6 +15,7 @@ urlpatterns = [
     path('triggers-old/', views.manual_triggers, name='manual_triggers_old'),  # Old version kept as backup
     path('view-trades/', views.view_trades, name='view_trades'),  # View active positions
     path('trigger/futures/', views.trigger_futures_algorithm, name='trigger_futures'),
+    path('trigger/futures/status/<str:task_id>/', views.futures_task_status, name='futures_task_status'),
     path('trigger/strangle/', views.trigger_nifty_strangle, name='trigger_strangle'),
     path('trigger/iron-condor/', views.trigger_broken_iron_condor, name='trigger_iron_condor'),
     path('trigger/verify/', views.verify_future_trade, name='verify_trade'),
@@ -51,6 +52,10 @@ urlpatterns = [
     path('api/create-execution-control/', api_views.create_execution_control, name='api_create_execution_control'),
     path('api/cancel-execution/', api_views.cancel_execution, name='api_cancel_execution'),
     path('api/execution-progress/<int:suggestion_id>/', api_views.get_execution_progress, name='api_execution_progress'),
+
+    # Expiry Selection
+    path('api/get-available-expiries/', api_views.get_available_expiries, name='api_get_available_expiries'),
+    path('api/get-available-options-expiries/', api_views.get_available_options_expiries, name='api_get_available_options_expiries'),
 
     # Option Chain Data
     path('api/get-option-premiums/', api_views.get_option_premiums, name='api_get_option_premiums'),

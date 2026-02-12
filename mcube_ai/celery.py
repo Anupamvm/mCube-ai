@@ -51,7 +51,7 @@ def get_static_schedule():
 
     'morning-data-sync': {
         'task': 'morning_data_sync',  # Uses custom name from @shared_task(name='morning_data_sync')
-        'schedule': crontab(hour=7, minute=0),  # 7:00 AM daily - full morning data sync
+        'schedule': crontab(hour=7, minute=0, day_of_week='1-5'),  # 7:00 AM Mon-Fri
         'options': {'queue': 'data'},
     },
 
@@ -76,13 +76,6 @@ def get_static_schedule():
     # =========================================================================
     # STRATEGY EXECUTION TASKS - DAILY TRADING WORKFLOW
     # =========================================================================
-
-    # Pre-market Breeze session refresh (8:15 AM — before trading tasks)
-    'refresh-breeze-session': {
-        'task': 'apps.strategies.tasks.refresh_breeze_session',
-        'schedule': crontab(hour=8, minute=15, day_of_week='1-5'),  # 8:15 AM Mon-Fri
-        'options': {'queue': 'monitoring'},
-    },
 
     # Futures screening (9:40 AM) - after market stabilizes
     # Flow: Screen → Telegram confirmation → User confirms → Immediate execution
@@ -161,7 +154,7 @@ def get_static_schedule():
 
     'close-trading-day': {
         'task': 'apps.strategies.tasks.close_trading_day',
-        'schedule': crontab(hour=15, minute=22, day_of_week='1-5'),  # 3:22 PM Mon-Fri (8 min buffer before close)
+        'schedule': crontab(hour=15, minute=25, day_of_week='1-5'),  # 3:25 PM Mon-Fri (5 min buffer before close)
         'options': {'queue': 'strategies'},
     },
 
@@ -229,7 +222,7 @@ def get_static_schedule():
 
     'sync-benchmark-data': {
         'task': 'apps.analytics.tasks.sync_benchmark_data',
-        'schedule': crontab(hour=16, minute=0, day_of_week='1-5'),  # 4:00 PM Mon-Fri
+        'schedule': crontab(hour=16, minute=15, day_of_week='1-5'),  # 4:15 PM Mon-Fri
         'options': {'queue': 'reports'},
     },
 

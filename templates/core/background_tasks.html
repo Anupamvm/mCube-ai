@@ -402,6 +402,7 @@
             <h2>System Tasks</h2>
             <div class="header-actions-inline">
                 <span class="badge badge-info">{{ celery_static_tasks|length }} Tasks</span>
+                <button class="btn btn-sm btn-warning" onclick="resetAllTaskConfigs()">Reset All Schedules</button>
                 <form method="post" action="{% url 'core:control_all_static_tasks' %}" style="display: inline;">
                     {% csrf_token %}
                     <input type="hidden" name="action" value="start">
@@ -532,9 +533,12 @@
         <div class="modal-body" id="configModalBody">
             <div class="loading-state">Loading configuration...</div>
         </div>
-        <div class="modal-footer">
-            <button class="btn btn-secondary" onclick="closeConfigModal()">Cancel</button>
-            <button class="btn btn-success" id="saveConfigBtn" onclick="saveTaskConfig()">Save & Apply</button>
+        <div class="modal-footer" style="justify-content: space-between;">
+            <button class="btn btn-warning" id="resetConfigBtn" onclick="resetTaskConfig()" title="Revert to default schedule">Reset to Defaults</button>
+            <div style="display: flex; gap: 12px;">
+                <button class="btn btn-secondary" onclick="closeConfigModal()">Cancel</button>
+                <button class="btn btn-success" id="saveConfigBtn" onclick="saveTaskConfig()">Save & Apply</button>
+            </div>
         </div>
     </div>
 </div>
@@ -1066,6 +1070,95 @@
             saveBtn.textContent = 'Save & Apply';
             alert('Error: ' + error);
         });
+    }
+
+    function resetTaskConfig() {
+        if (!currentConfigTaskKey) {
+            alert('No task selected');
+            return;
+        }
+
+        const resetBtn = document.getElementById('resetConfigBtn');
+        resetBtn.disabled = true;
+        resetBtn.textContent = 'Loading preview...';
+
+        fetch(`{% url "core:reset_task_config" %}?task_key=${encodeURIComponent(currentConfigTaskKey)}`)
+            .then(r => r.json())
+            .then(preview => {
+                resetBtn.disabled = false;
+                resetBtn.textContent = 'Reset to Defaults';
+
+                if (!preview.success) {
+                    alert('Error: ' + preview.error);
+                    return;
+                }
+                if (preview.changed_tasks.length === 0) {
+                    alert('This task is already using default schedule. Nothing to reset.');
+                    return;
+                }
+
+                const t = preview.changed_tasks[0];
+                let msg = `Reset "${t.display_name}" to defaults?\n\n`;
+                msg += `Current:  ${t.current_summary}\n`;
+                msg += `Default:  ${t.default_summary}`;
+                if (t.current_params) msg += `\n\nCustom params will also be reset.`;
+
+                if (!confirm(msg)) return;
+                _executeReset({ task_key: currentConfigTaskKey });
+            })
+            .catch(error => {
+                resetBtn.disabled = false;
+                resetBtn.textContent = 'Reset to Defaults';
+                alert('Error: ' + error);
+            });
+    }
+
+    function resetAllTaskConfigs() {
+        fetch('{% url "core:reset_task_config" %}?reset_all=true')
+            .then(r => r.json())
+            .then(preview => {
+                if (!preview.success) { alert('Error: ' + preview.error); return; }
+
+                const tasks = preview.changed_tasks;
+                if (tasks.length === 0) {
+                    alert('All tasks are already using default schedules. Nothing to reset.');
+                    return;
+                }
+
+                let msg = `${tasks.length} task(s) have custom schedules:\n\n`;
+                tasks.forEach(t => {
+                    msg += `${t.display_name}\n`;
+                    msg += `  Current: ${t.current_summary}\n`;
+                    msg += `  Default: ${t.default_summary}\n\n`;
+                });
+                msg += 'Reset all to defaults? Celery Beat will restart.';
+
+                if (!confirm(msg)) return;
+                _executeReset({ reset_all: true });
+            })
+            .catch(error => { alert('Error: ' + error); });
+    }
+
+    function _executeReset(payload) {
+        fetch('{% url "core:reset_task_config" %}', {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': '{{ csrf_token }}',
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(payload)
+        })
+        .then(r => r.json())
+        .then(data => {
+            if (data.success) {
+                closeConfigModal();
+                alert(data.message);
+                setTimeout(() => location.reload(), 1000);
+            } else {
+                alert('Error: ' + (data.error || 'Failed to reset'));
+            }
+        })
+        .catch(error => { alert('Error: ' + error); });
     }
 
     // Close on Escape key

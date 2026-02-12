@@ -219,6 +219,7 @@ class EnhancedFuturesAnalyzer:
             'direction': self.direction,
             'hard_reject': False,
             'reject_reason': None,
+            'news_warning': self.details.get('news_warning'),
             'composite_score': composite_score,
             'raw_score': raw_score,
             'max_score': self.TOTAL_WEIGHT,
@@ -426,7 +427,7 @@ class EnhancedFuturesAnalyzer:
         logger.info(f"  FII Change: {fii_change:+.2f}% > {self.MIN_FII_CHANGE_PCT}% - PASS")
 
     def _check_blocking_news(self):
-        """Check for blocking news articles"""
+        """Check for blocking news articles (soft warning, does not reject)"""
         try:
             from apps.strategies.filters.news_sentiment import check_market_news_sentiment
 
@@ -442,11 +443,11 @@ class EnhancedFuturesAnalyzer:
             }
 
             if not passed:
-                raise HardRejectError(
-                    f"Blocking news detected: {news_result.get('message', 'Negative market sentiment')}"
-                )
-
-            logger.info(f"  Market News: {news_result.get('message', 'OK')[:50]} - PASS")
+                # Soft warning — log but do NOT raise HardRejectError
+                self.details['news_warning'] = news_result.get('message', 'Negative market sentiment')
+                logger.warning(f"  Market News: {news_result.get('message', '')[:60]} - WARNING (proceeding)")
+            else:
+                logger.info(f"  Market News: {news_result.get('message', 'OK')[:50]} - PASS")
 
         except ImportError:
             self.details['hard_reject_checks']['blocking_news'] = {

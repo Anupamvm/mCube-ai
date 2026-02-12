@@ -194,6 +194,18 @@ def fetch_and_save_kotakneo_data():
 
     # Fetch & save positions
     resp = client.positions()
+
+    # Validate response — Neo API returns error dicts on session expiry
+    if not resp or not isinstance(resp, dict):
+        raise Exception(f"Neo positions() returned invalid response: {type(resp)}")
+    if resp.get('stat') == 'Not_Ok' or 'Error' in resp or 'Error Message' in resp:
+        error_msg = resp.get('Error Message') or resp.get('Error') or resp.get('message') or str(resp)
+        logger.error(f"Neo positions() API error: {error_msg}")
+        raise NeoAuthenticationError(
+            f"Neo API error: {error_msg}",
+            error_type='session',
+            is_retryable=True
+        )
     raw_positions = resp.get('data', [])
 
     # ── Fetch trade_report() for ACTUAL trade execution prices ──
@@ -237,12 +249,15 @@ def fetch_and_save_kotakneo_data():
             sell_qty = int(p.get('cfSellQty', 0)) + int(p.get('flSellQty', 0))
             net_q = buy_qty - sell_qty
 
-            # Debug log raw API values for position
+            # Debug log ALL raw API values for position
             api_lot_size = p.get('lotSz', 'N/A')
             logger.info(
-                f"[RAW API] {p.get('sym')}: cfBuyQty={p.get('cfBuyQty')}, flBuyQty={p.get('flBuyQty')}, "
+                f"[RAW API] {p.get('trdSym')}: cfBuyQty={p.get('cfBuyQty')}, flBuyQty={p.get('flBuyQty')}, "
                 f"cfSellQty={p.get('cfSellQty')}, flSellQty={p.get('flSellQty')}, "
-                f"net_qty={net_q}, lotSz={api_lot_size}, stkPrc={p.get('stkPrc')}"
+                f"net_qty={net_q}, lotSz={api_lot_size}, stkPrc={p.get('stkPrc')}, "
+                f"cfBuyAmt={p.get('cfBuyAmt')}, buyAmt={p.get('buyAmt')}, "
+                f"cfSellAmt={p.get('cfSellAmt')}, sellAmt={p.get('sellAmt')}, "
+                f"optTp={p.get('optTp')}, expDt={p.get('expDt')}"
             )
 
             buy_amt = _parse_float(p.get('cfBuyAmt', 0)) + _parse_float(p.get('buyAmt', 0))
@@ -253,20 +268,35 @@ def fetch_and_save_kotakneo_data():
                 (sell_amt / sell_qty) if sell_qty > 0 else 0.0)
 
             # Fetch LTP
-            ltp = _parse_float(p.get('stkPrc', 0))
-            if ltp == 0.0:
+            # IMPORTANT: stkPrc is the STRIKE PRICE for options (e.g., 26350 for NIFTY 26350 CE),
+            # NOT the Last Traded Price! Only use stkPrc for non-option instruments.
+            trading_symbol = p.get('trdSym') or ''
+            is_option = bool(re.search(r'(CE|PE)$', trading_symbol))
+
+            ltp = 0.0
+            if not is_option:
+                # For futures/other instruments, stkPrc may contain a useful price
+                ltp = _parse_float(p.get('stkPrc', 0))
+
+            if ltp == 0.0 and trading_symbol:
                 try:
-                    trading_symbol = p.get('trdSym') or ''
-                    if trading_symbol:
+                    if is_option:
+                        ltp = _fetch_option_ltp_from_breeze(
+                            trading_symbol,
+                            expiry_date_str=p.get('expDt', ''),
+                            strike_price=p.get('stkPrc', ''),
+                            option_type=p.get('optTp', ''),
+                            symbol=p.get('sym', ''))
+                    else:
                         fetched_ltp = get_ltp_from_neo(trading_symbol, client=client)
                         if fetched_ltp and fetched_ltp > 0:
                             ltp = fetched_ltp
                 except Exception as ltp_error:
                     logger.warning(f"Could not fetch LTP for {p.get('sym')}: {ltp_error}")
 
-                if ltp == 0.0:
-                    ltp = mtm_cost
-                    logger.info(f"Using MTM cost as LTP fallback for {p.get('sym')}: {ltp:,.2f}")
+            if ltp == 0.0:
+                ltp = mtm_cost
+                logger.info(f"Using MTM cost as LTP fallback for {p.get('sym')}: {ltp:,.2f}")
 
             # ── Average price: blended weighted average across days ──
             #
@@ -992,6 +1022,85 @@ def map_neo_symbol_to_breeze(neo_symbol: str) -> dict:
         }
 
 
+def _fetch_option_ltp_from_breeze(trading_symbol: str, expiry_date_str: str = '',
+                                  strike_price: str = '', option_type: str = '',
+                                  symbol: str = '') -> float:
+    """
+    Fetch real-time LTP for an option contract via Breeze API.
+
+    Uses raw Neo API fields directly (strike_price, option_type, symbol) instead
+    of parsing the complex Neo trading symbol format.
+
+    Args:
+        trading_symbol: Neo trading symbol (for logging only)
+        expiry_date_str: Expiry date from Neo API expDt field (e.g., '10 Feb, 2026')
+        strike_price: Strike price from Neo API stkPrc field (e.g., '26350.00')
+        option_type: Option type from Neo API optTp field ('CE' or 'PE')
+        symbol: Base symbol from Neo API sym field (e.g., 'NIFTY')
+
+    Returns:
+        float: LTP of the option, or 0.0 if not found
+    """
+    try:
+        from apps.brokers.integrations.breeze import get_breeze_client
+
+        if not symbol or not option_type or not strike_price:
+            logger.warning(f"[OPTION LTP] Missing params for {trading_symbol}: "
+                           f"symbol={symbol}, optType={option_type}, strike={strike_price}")
+            return 0.0
+
+        right = 'call' if option_type.upper() == 'CE' else 'put'
+
+        # Clean strike price - remove decimals if present (e.g., '26350.00' -> '26350')
+        strike = str(strike_price).split('.')[0] if strike_price else ''
+
+        # Format expiry for Breeze API (DD-MMM-YYYY)
+        expiry_breeze = None
+        if expiry_date_str:
+            # Neo expDt format is typically '10 Feb, 2026' or other variants
+            for fmt in ('%d %b, %Y', '%d-%b-%Y', '%d%b%Y', '%d-%B-%Y', '%Y-%m-%d'):
+                try:
+                    dt = datetime.strptime(expiry_date_str.strip(), fmt)
+                    expiry_breeze = dt.strftime('%d-%b-%Y')
+                    break
+                except ValueError:
+                    continue
+            if not expiry_breeze:
+                expiry_breeze = expiry_date_str
+
+        if not expiry_breeze:
+            logger.warning(f"[OPTION LTP] No expiry date for: {trading_symbol}")
+            return 0.0
+
+        breeze = get_breeze_client()
+        logger.info(f"[OPTION LTP] Fetching {trading_symbol}: stock={symbol}, "
+                     f"strike={strike}, right={right}, expiry={expiry_breeze}")
+
+        resp = breeze.get_quotes(
+            stock_code=symbol,
+            exchange_code="NFO",
+            product_type="options",
+            expiry_date=expiry_breeze,
+            right=right,
+            strike_price=strike
+        )
+
+        if resp and resp.get('Status') == 200:
+            data = resp.get('Success', [])
+            if data and len(data) > 0:
+                ltp = float(data[0].get('ltp', 0))
+                if ltp > 0:
+                    logger.info(f"[OPTION LTP] {trading_symbol}: ₹{ltp:.2f}")
+                    return ltp
+
+        logger.warning(f"[OPTION LTP] No LTP from Breeze for {trading_symbol}: {resp}")
+        return 0.0
+
+    except Exception as e:
+        logger.error(f"[OPTION LTP] Error fetching LTP for {trading_symbol}: {e}")
+        return 0.0
+
+
 def get_ltp_from_neo(trading_symbol: str, exchange_segment: str = 'nse_fo', client=None) -> float:
     """
     Get Last Traded Price (LTP) for a Neo trading symbol using Breeze API.
@@ -1223,15 +1332,70 @@ def get_lot_size_from_neo_with_token(trading_symbol: str, client=None) -> dict:
 _neo_scrip_master_cache = {'data': None, 'timestamp': None}
 _CACHE_DURATION_SECONDS = 3600  # 1 hour
 
-def _get_neo_scrip_master(client) -> list:
+def _is_neo_error_response(result: dict) -> str:
+    """
+    Check if a Neo API response dict is an error. Returns error message or empty string.
+
+    Neo API returns errors with different key patterns:
+    - {"Error Message": "Complete the 2fa process..."}  (auth/session issue)
+    - {"Error": "Exchange Segment is not available"}    (API error)
+    - {"error": <exception>}                            (ApiException)
+    - {"stat": "Not_Ok", ...}                           (general failure)
+    """
+    for key in ('Error Message', 'Error', 'error'):
+        if key in result:
+            return str(result[key])
+    if result.get('stat') == 'Not_Ok':
+        return result.get('message', 'API returned Not_Ok')
+    return ''
+
+
+def _retry_with_fresh_auth_kotak():
+    """
+    Clear cached Neo session and get a fresh authenticated client.
+    Returns the fresh client or None if auth fails.
+    """
+    try:
+        from tools.neo import get_neo_api, _cache_lock
+        import tools.neo as neo_module
+
+        with _cache_lock:
+            if neo_module._cached_instance:
+                neo_module._cached_instance.session_active = False
+                neo_module._cached_instance = None
+
+        try:
+            from apps.brokers.utils.auth_manager import clear_neo_session
+            clear_neo_session()
+        except Exception:
+            pass
+
+        neo_wrapper = get_neo_api()
+        if neo_wrapper.session_active:
+            logger.info("[SCRIP MASTER] Fresh authentication successful")
+            return neo_wrapper.neo
+        else:
+            logger.error(f"[SCRIP MASTER] Fresh authentication failed: {neo_wrapper.get_last_error()}")
+            return None
+    except Exception as e:
+        logger.error(f"[SCRIP MASTER] Error during fresh auth: {e}")
+        return None
+
+
+def _get_neo_scrip_master(client, _retried=False) -> list:
     """
     Get Neo scrip master with caching.
     Returns list of all contracts from CSV.
+    Retries once with fresh authentication on auth-related failures.
     """
     import csv
     import io
     import requests
     import time
+
+    if client is None:
+        logger.error("[SCRIP MASTER] Client is None - cannot download scrip master")
+        return []
 
     # Check cache
     current_time = time.time()
@@ -1245,19 +1409,68 @@ def _get_neo_scrip_master(client) -> list:
 
     try:
         # Get scrip master URL from Neo API
-        scrip_master_url = client.scrip_master(exchange_segment='nse_fo')
+        scrip_master_result = client.scrip_master(exchange_segment='nse_fo')
+
+        # Handle dict response (may contain error or URL)
+        if isinstance(scrip_master_result, dict):
+            error_msg = _is_neo_error_response(scrip_master_result)
+            if error_msg:
+                logger.error(f"[SCRIP MASTER] API error: {error_msg}")
+
+                # Retry once with fresh auth if this looks like a session/auth issue
+                auth_keywords = ['2fa', 'session', 'token', 'auth', 'login', 'unauthorized']
+                if not _retried and any(kw in error_msg.lower() for kw in auth_keywords):
+                    logger.info("[SCRIP MASTER] Auth-related error, retrying with fresh session...")
+                    fresh_client = _retry_with_fresh_auth_kotak()
+                    if fresh_client:
+                        return _get_neo_scrip_master(fresh_client, _retried=True)
+
+                return []
+
+            scrip_master_url = scrip_master_result.get('url') or scrip_master_result.get('data')
+        else:
+            scrip_master_url = scrip_master_result
 
         if not scrip_master_url or not isinstance(scrip_master_url, str):
-            logger.error("[SCRIP MASTER] Invalid scrip master response")
+            logger.error(f"[SCRIP MASTER] Invalid scrip master response: {type(scrip_master_result)}, value: {str(scrip_master_result)[:200]}")
+
+            if not _retried:
+                logger.info("[SCRIP MASTER] Unexpected response, retrying with fresh session...")
+                fresh_client = _retry_with_fresh_auth_kotak()
+                if fresh_client:
+                    return _get_neo_scrip_master(fresh_client, _retried=True)
+
             return []
 
-        # If it's a URL, download it
+        # If it's a URL, download it with retry logic
         if scrip_master_url.startswith('http'):
-            response = requests.get(scrip_master_url, timeout=30)
-            if response.status_code != 200:
-                logger.error(f"[SCRIP MASTER] Failed to download CSV: {response.status_code}")
+            logger.info(f"[SCRIP MASTER] Downloading from URL: {scrip_master_url[:100]}...")
+
+            max_retries = 3
+            scrip_master_csv = None
+
+            for attempt in range(1, max_retries + 1):
+                try:
+                    response = requests.get(scrip_master_url, timeout=(30, 120))
+                    if response.status_code != 200:
+                        logger.error(f"[SCRIP MASTER] Failed to download CSV: {response.status_code}")
+                        return []
+                    scrip_master_csv = response.text
+                    break
+                except requests.exceptions.Timeout as e:
+                    logger.warning(f"[SCRIP MASTER] Timeout on attempt {attempt}/{max_retries}: {e}")
+                    if attempt == max_retries:
+                        raise
+                    time.sleep(2)
+                except requests.exceptions.ConnectionError as e:
+                    logger.warning(f"[SCRIP MASTER] Connection error on attempt {attempt}/{max_retries}: {e}")
+                    if attempt == max_retries:
+                        raise
+                    time.sleep(2)
+
+            if scrip_master_csv is None:
+                logger.error("[SCRIP MASTER] Failed to download after all retries")
                 return []
-            scrip_master_csv = response.text
         else:
             scrip_master_csv = scrip_master_url
 
@@ -1265,7 +1478,7 @@ def _get_neo_scrip_master(client) -> list:
         reader = csv.DictReader(io.StringIO(scrip_master_csv))
         contracts = list(reader)
 
-        logger.info(f"[SCRIP MASTER] ✅ Downloaded {len(contracts)} contracts")
+        logger.info(f"[SCRIP MASTER] Downloaded {len(contracts)} contracts")
 
         # Cache the data
         _neo_scrip_master_cache['data'] = contracts
@@ -1274,7 +1487,7 @@ def _get_neo_scrip_master(client) -> list:
         return contracts
 
     except Exception as e:
-        logger.error(f"[SCRIP MASTER] Error downloading: {e}")
+        logger.error(f"[SCRIP MASTER] Error downloading: {e}", exc_info=True)
         return []
 
 
@@ -2248,7 +2461,16 @@ def get_neo_open_positions(include_raw=False) -> dict:
     or {'error': str} on failure.
     """
     try:
-        _, positions, _, raw_positions_resp, raw_trade_resp = fetch_and_save_kotakneo_data()
+        try:
+            _, positions, _, raw_positions_resp, raw_trade_resp = fetch_and_save_kotakneo_data()
+        except NeoAuthenticationError:
+            # Session might be stale — invalidate cached instance and retry once
+            logger.warning("Neo session error on positions fetch — invalidating cache and retrying")
+            from tools.neo import _cache_lock, _cached_instance
+            import tools.neo as neo_module
+            with _cache_lock:
+                neo_module._cached_instance = None
+            _, positions, _, raw_positions_resp, raw_trade_resp = fetch_and_save_kotakneo_data()
 
         # ── Fetch Holdings API for TRUE average prices (carry-forward positions) ──
         # The positions() API returns MTM-settled prices that reset daily.
@@ -2283,14 +2505,16 @@ def get_neo_open_positions(include_raw=False) -> dict:
 
         # ── Parse Trade Report for today's trades (same-day accuracy) ──
         # Trade report has actual execution prices for trades made TODAY
-        today_trades_map = {}  # symbol -> {buy_qty, buy_value, sell_qty, sell_value}
+        today_trades_map = {}  # trdSym -> {buy_qty, buy_value, sell_qty, sell_value}
         if raw_trade_resp and isinstance(raw_trade_resp, dict) and 'data' in raw_trade_resp:
             trades_data = raw_trade_resp.get('data', [])
             if isinstance(trades_data, list):
                 for t in trades_data:
                     symbol = (t.get('sym') or '').upper()
                     trd_sym = (t.get('trdSym') or '').upper()
-                    key = symbol or trd_sym
+                    # Key by trdSym (specific, e.g. NIFTY2621026350CE) not sym (base NIFTY)
+                    # to avoid merging futures + options trades together
+                    key = trd_sym or symbol
                     if not key:
                         continue
 
@@ -2340,9 +2564,14 @@ def get_neo_open_positions(include_raw=False) -> dict:
             # 3. If only today's trades (new position) -> use trade_report avg
             # 4. Fallback -> use positions API (MTM, least accurate)
             symbol_upper = (pos.symbol or '').upper()
+            trading_symbol_upper = (pos.trading_symbol or '').upper()
 
-            holdings_data = holdings_avg_map.get(symbol_upper)
-            today_data = today_trades_map.get(symbol_upper)
+            # Match by trading_symbol first (specific, e.g., NIFTY26FEB26350CE),
+            # then fall back to base symbol (e.g., NIFTY)
+            holdings_data = (holdings_avg_map.get(trading_symbol_upper)
+                             or holdings_avg_map.get(symbol_upper))
+            today_data = (today_trades_map.get(trading_symbol_upper)
+                          or today_trades_map.get(symbol_upper))
 
             # Determine direction for correct avg calculation
             direction = 'LONG' if net_qty > 0 else 'SHORT'
@@ -2350,8 +2579,14 @@ def get_neo_open_positions(include_raw=False) -> dict:
             avg_price_source = 'unknown'
 
             # Get carry-forward quantities from raw positions data
-            raw_pos = next((p for p in raw_positions_resp.get('data', [])
-                           if (p.get('sym') or '').upper() == symbol_upper), None) if raw_positions_resp else None
+            # Match by trdSym (specific) first, fall back to sym (base)
+            raw_pos = None
+            if raw_positions_resp:
+                raw_pos = next((p for p in raw_positions_resp.get('data', [])
+                               if (p.get('trdSym') or '').upper() == trading_symbol_upper), None)
+                if not raw_pos:
+                    raw_pos = next((p for p in raw_positions_resp.get('data', [])
+                                   if (p.get('sym') or '').upper() == symbol_upper), None)
             cf_buy_qty = int(raw_pos.get('cfBuyQty', 0)) if raw_pos else 0
             cf_sell_qty = int(raw_pos.get('cfSellQty', 0)) if raw_pos else 0
 
@@ -2434,6 +2669,36 @@ def get_neo_open_positions(include_raw=False) -> dict:
             today_sell_qty = today_data['sell_qty'] if today_data else 0
             today_sell_avg = today_data.get('sell_avg', 0) if today_data else 0
 
+            # Debug: log computation details for options
+            is_option_pos = bool(re.search(r'(CE|PE)$', pos.trading_symbol or ''))
+            if is_option_pos:
+                logger.info(
+                    f"[POS DEBUG] {pos.trading_symbol}: net_qty={net_qty}, lot_size={lot_size}, "
+                    f"net_qty_lots={net_qty_lots}, ltp={ltp:.2f}, avg_price={avg_price:.2f}, "
+                    f"avg_source={avg_price_source}, broker_avg={broker_avg_price:.2f}, "
+                    f"holdings_match={'YES' if holdings_data else 'NO'}, "
+                    f"buy_qty={pos.buy_qty}, sell_qty={pos.sell_qty}, "
+                    f"buy_amt={float(pos.buy_amount or 0):.2f}, sell_amt={float(pos.sell_amount or 0):.2f}"
+                )
+
+            # Include raw position fields for debugging
+            raw_fields = None
+            if raw_pos:
+                raw_fields = {
+                    'cfBuyQty': raw_pos.get('cfBuyQty'),
+                    'cfSellQty': raw_pos.get('cfSellQty'),
+                    'flBuyQty': raw_pos.get('flBuyQty'),
+                    'flSellQty': raw_pos.get('flSellQty'),
+                    'cfBuyAmt': raw_pos.get('cfBuyAmt'),
+                    'cfSellAmt': raw_pos.get('cfSellAmt'),
+                    'buyAmt': raw_pos.get('buyAmt'),
+                    'sellAmt': raw_pos.get('sellAmt'),
+                    'lotSz': raw_pos.get('lotSz'),
+                    'stkPrc': raw_pos.get('stkPrc'),
+                    'optTp': raw_pos.get('optTp'),
+                    'trdSym': raw_pos.get('trdSym'),
+                }
+
             positions_data.append({
                 'symbol': pos.symbol,
                 'trading_symbol': pos.trading_symbol or pos.symbol,
@@ -2457,6 +2722,7 @@ def get_neo_open_positions(include_raw=False) -> dict:
                 'total_pnl': round(unrealized_pnl, 2),
                 'pnl_percentage': round(pnl_pct, 2),
                 'expiry_date': pos.expiry_date.strftime('%Y-%m-%d') if pos.expiry_date else None,
+                '_raw_fields': raw_fields,
             })
 
         result = {

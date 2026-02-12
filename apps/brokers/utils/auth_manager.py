@@ -25,7 +25,7 @@ Example:
 
 import logging
 import jwt
-from datetime import datetime, timedelta
+from datetime import datetime, date, timedelta
 from typing import Optional, Tuple
 from django.utils import timezone
 from apps.core.models import CredentialStore
@@ -426,3 +426,98 @@ def should_refresh_session(service: str) -> Tuple[bool, str]:
         # Unknown service - refresh to be safe
         logger.warning(f"Unknown service '{service}' - recommending refresh")
         return True, f"Unknown service: {service}"
+
+
+# =============================================================================
+# AUTO-LOGIN DAILY TRACKING HELPERS
+# =============================================================================
+
+def can_attempt_auto_login(service: str) -> Tuple[bool, str]:
+    """
+    Check if auto-login is allowed today for a broker service.
+
+    Returns (True, reason) if login can be attempted, (False, reason) otherwise.
+    Only one auto-login attempt per day per broker is allowed.
+    """
+    try:
+        creds = get_credentials(service)
+        if not creds:
+            return False, f"No credentials found for {service}"
+
+        today = date.today()
+
+        # If no attempt today yet, allow
+        if creds.auto_login_date != today:
+            return True, "No auto-login attempt today"
+
+        # Same day — check status
+        status = creds.auto_login_status
+        if status == 'none':
+            return True, "Status is none — attempt allowed"
+        if status == 'in_progress':
+            return False, "Auto-login already in progress"
+        if status == 'success':
+            return False, "Auto-login already succeeded today"
+        if status == 'failed':
+            return False, "Auto-login already failed today — manual login required"
+
+        return False, f"Unknown auto_login_status: {status}"
+
+    except Exception as e:
+        logger.error(f"Error checking auto-login eligibility for {service}: {e}")
+        return False, f"Error: {e}"
+
+
+def mark_auto_login_started(service: str):
+    """Mark that an auto-login attempt has started for today."""
+    try:
+        creds = get_credentials(service)
+        if creds:
+            creds.auto_login_status = 'in_progress'
+            creds.auto_login_date = date.today()
+            creds.save(update_fields=['auto_login_status', 'auto_login_date'])
+            logger.info(f"[{service}] Auto-login marked as in_progress")
+    except Exception as e:
+        logger.error(f"Error marking auto-login started for {service}: {e}")
+
+
+def mark_auto_login_success(service: str):
+    """Mark that auto-login succeeded today."""
+    try:
+        creds = get_credentials(service)
+        if creds:
+            creds.auto_login_status = 'success'
+            creds.auto_login_date = date.today()
+            creds.save(update_fields=['auto_login_status', 'auto_login_date'])
+            logger.info(f"[{service}] Auto-login marked as success")
+    except Exception as e:
+        logger.error(f"Error marking auto-login success for {service}: {e}")
+
+
+def mark_auto_login_failed(service: str):
+    """Mark that auto-login failed today. No more attempts allowed until tomorrow or manual reset."""
+    try:
+        creds = get_credentials(service)
+        if creds:
+            creds.auto_login_status = 'failed'
+            creds.auto_login_date = date.today()
+            creds.save(update_fields=['auto_login_status', 'auto_login_date'])
+            logger.info(f"[{service}] Auto-login marked as failed")
+    except Exception as e:
+        logger.error(f"Error marking auto-login failed for {service}: {e}")
+
+
+def reset_auto_login_status(service: str):
+    """
+    Reset auto-login status to 'none'. Called when user manually enters a
+    session token via web UI, allowing auto-login to be attempted again.
+    """
+    try:
+        creds = get_credentials(service)
+        if creds:
+            creds.auto_login_status = 'none'
+            creds.auto_login_date = None
+            creds.save(update_fields=['auto_login_status', 'auto_login_date'])
+            logger.info(f"[{service}] Auto-login status reset to none")
+    except Exception as e:
+        logger.error(f"Error resetting auto-login status for {service}: {e}")

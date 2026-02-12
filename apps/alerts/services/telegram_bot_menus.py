@@ -199,19 +199,50 @@ class MenuMixin:
     # =========================================================================
 
     async def _show_tasks_menu(self, query):
-        """Show tasks category overview."""
+        """Show tasks category overview with algorithm status at top."""
         summary = await self._get_task_summary()
+        algo_status = await self._get_algorithm_status()
 
         message = "<b>\u2699\ufe0f Background Tasks</b>\n\n"
 
+        # Algorithm status section
+        if algo_status:
+            message += "<b>ALGORITHMS</b>\n"
+            for algo_key, info in algo_status.items():
+                status_icon = "\u2705" if info['is_active'] else "\u274c"
+                status_label = "ON" if info['is_active'] else "OFF"
+                message += (
+                    f"  {info['emoji']} {info['display_name']}: "
+                    f"{status_icon} {status_label} "
+                    f"({info['enabled_count']}/{info['own_count']} tasks)\n"
+                )
+            message += "\n"
+
+        # Category section
+        message += "<b>CATEGORIES</b>\n"
         for cat_key, cat_cfg in CATEGORY_CONFIG.items():
             counts = summary.get(cat_key, {'total': 0, 'active': 0})
             message += (
-                f"{cat_cfg['emoji']} {cat_cfg['label']}: "
+                f"  {cat_cfg['emoji']} {cat_cfg['label']}: "
                 f"{counts['active']}/{counts['total']} active\n"
             )
 
-        keyboard = [
+        # Build keyboard - algorithm buttons first
+        keyboard = []
+        if algo_status:
+            algo_row = []
+            for algo_key, info in algo_status.items():
+                if info['is_active']:
+                    label = f"Disable {info['display_name'].split()[0]}"
+                    cb = f"algo_dis_{algo_key}"
+                else:
+                    label = f"Enable {info['display_name'].split()[0]}"
+                    cb = f"algo_en_{algo_key}"
+                algo_row.append(InlineKeyboardButton(label, callback_data=cb))
+            keyboard.append(algo_row)
+
+        # Category buttons
+        keyboard += [
             [
                 InlineKeyboardButton("\U0001f4ca Data", callback_data="task_cat_data"),
                 InlineKeyboardButton("\U0001f3af Strategies", callback_data="task_cat_strategies"),
@@ -563,3 +594,160 @@ class MenuMixin:
         elif action == 'confirm_closeall':
             result = await self._trigger_close_all()
             await self._show_action_result(query, "Close All Positions", result)
+
+    # =========================================================================
+    # ALGORITHM DEPENDENCY MANAGEMENT
+    # =========================================================================
+
+    async def _handle_algorithm_action(self, query, data: str):
+        """Route algo_ prefixed callbacks to the appropriate handler.
+
+        Callback patterns:
+            algo_en_{key}       – show enable confirmation
+            algo_dis_{key}      – show disable confirmation
+            algo_ok_en_{key}    – execute enable
+            algo_ok_dis_{key}   – execute disable
+        """
+        # Strip "algo_" prefix
+        rest = data[5:]
+
+        if rest.startswith("ok_en_"):
+            algo_key = rest[6:]
+            result = await self._enable_algorithm(algo_key)
+            await self._show_algo_result(query, "Enable Algorithm", result)
+
+        elif rest.startswith("ok_dis_"):
+            algo_key = rest[7:]
+            result = await self._disable_algorithm(algo_key)
+            await self._show_algo_result(query, "Disable Algorithm", result)
+
+        elif rest.startswith("en_"):
+            algo_key = rest[3:]
+            preview = await self._get_algorithm_enable_preview(algo_key)
+            if preview.get('error'):
+                await query.edit_message_text(f"Error: {preview['error']}")
+            else:
+                await self._show_algo_enable_confirm(query, algo_key, preview)
+
+        elif rest.startswith("dis_"):
+            algo_key = rest[4:]
+            preview = await self._get_algorithm_disable_preview(algo_key)
+            if preview.get('error'):
+                await query.edit_message_text(f"Error: {preview['error']}")
+            else:
+                await self._show_algo_disable_confirm(query, algo_key, preview)
+
+    async def _show_algo_enable_confirm(self, query, algo_key: str, preview: dict):
+        """Show confirmation screen listing all tasks that will be enabled."""
+        emoji = preview['emoji']
+        name = preview['display_name']
+
+        message = f"<b>{emoji} Enable {name}?</b>\n\n"
+
+        # Own tasks (strategy)
+        message += "<b>STRATEGY TASKS:</b>\n"
+        for t in preview['own_tasks']:
+            icon = "\u2705" if t['is_enabled'] else "\u26aa"
+            message += f"  {icon} {t['name']} ({t['schedule']})\n"
+
+        # Shared tasks
+        shared_with = preview.get('shared_with', '')
+        shared_label = f"SHARED (also used by {shared_with})" if shared_with else "SHARED"
+        message += f"\n<b>{shared_label}:</b>\n"
+        for t in preview['shared_tasks']:
+            icon = "\u2705" if t['is_enabled'] else "\u26aa"
+            message += f"  {icon} {t['name']} ({t['schedule']})\n"
+
+        # Monitoring tasks
+        message += "\n<b>MONITORING:</b>\n"
+        for t in preview['monitoring_tasks']:
+            icon = "\u2705" if t['is_enabled'] else "\u26aa"
+            message += f"  {icon} {t['name']} ({t['schedule']})\n"
+
+        total = (
+            len(preview['own_tasks'])
+            + len(preview['shared_tasks'])
+            + len(preview['monitoring_tasks'])
+        )
+        already = sum(
+            1 for t in preview['own_tasks'] + preview['shared_tasks'] + preview['monitoring_tasks']
+            if t['is_enabled']
+        )
+        new_count = total - already
+        message += f"\n<i>{total} tasks total, {new_count} will be newly enabled</i>"
+
+        keyboard = [
+            [
+                InlineKeyboardButton(
+                    f"Confirm Enable",
+                    callback_data=f"algo_ok_en_{algo_key}"
+                ),
+                InlineKeyboardButton("Cancel", callback_data="back_tasks"),
+            ],
+        ]
+
+        await query.edit_message_text(
+            message, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
+    async def _show_algo_disable_confirm(self, query, algo_key: str, preview: dict):
+        """Show smart disable screen with tasks to disable vs keep."""
+        emoji = preview['emoji']
+        name = preview['display_name']
+
+        message = f"<b>{emoji} Disable {name}?</b>\n\n"
+
+        # Tasks to disable
+        message += "<b>WILL DISABLE:</b>\n"
+        for t in preview['tasks_to_disable']:
+            message += f"  \u274c {t['name']}\n"
+
+        # Tasks to keep (if any)
+        if preview['tasks_to_keep']:
+            message += "\n<b>WILL KEEP (still needed):</b>\n"
+            for t in preview['tasks_to_keep']:
+                message += f"  \u2705 {t['name']}\n"
+                message += f"      <i>{t['reason']}</i>\n"
+
+        disable_count = len(preview['tasks_to_disable'])
+        keep_count = len(preview['tasks_to_keep'])
+        message += f"\n<i>{disable_count} to disable"
+        if keep_count:
+            message += f", {keep_count} kept"
+        message += "</i>"
+
+        keyboard = [
+            [
+                InlineKeyboardButton(
+                    f"Confirm Disable",
+                    callback_data=f"algo_ok_dis_{algo_key}"
+                ),
+                InlineKeyboardButton("Cancel", callback_data="back_tasks"),
+            ],
+        ]
+
+        await query.edit_message_text(
+            message, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
+    async def _show_algo_result(self, query, action_name: str, result: dict):
+        """Show result of an algorithm action, then offer return to tasks."""
+        if result.get('success'):
+            icon = "\u2705"
+            msg = result.get('message', 'Done')
+        else:
+            icon = "\u274c"
+            msg = result.get('error', 'Unknown error')
+
+        message = f"{icon} <b>{action_name}</b>\n\n{msg}"
+
+        keyboard = [
+            [
+                InlineKeyboardButton("\u00ab Back to Tasks", callback_data="back_tasks"),
+                InlineKeyboardButton("\u00ab Main Menu", callback_data="back_main"),
+            ],
+        ]
+
+        await query.edit_message_text(
+            message, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard)
+        )

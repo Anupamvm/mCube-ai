@@ -677,10 +677,29 @@ def verify_future_trade(request):
         )
 
         if not analysis_result.get('success'):
+            # Remove failed recommendations so they don't appear on next page load
+            removed_count = 0
+            try:
+                from apps.trading.models import TradeSuggestion
+                removed_count, _ = TradeSuggestion.objects.filter(
+                    user=request.user,
+                    instrument=stock_symbol,
+                    strategy='icici_futures',
+                    expiry_date=expiry_date,
+                    status='SUGGESTED',
+                ).delete()
+                if removed_count:
+                    logger.info(f"Removed {removed_count} failed TradeSuggestion(s) for {stock_symbol} expiry {expiry_date}")
+            except Exception as del_err:
+                logger.warning(f"Failed to remove TradeSuggestion for {stock_symbol}: {del_err}")
+
             return JsonResponse({
                 'success': False,
                 'error': analysis_result.get('error', f'Unable to analyze {stock_symbol}. Stock may not be available for F&O or data is missing.'),
-                'execution_log': analysis_result.get('execution_log', [])
+                'execution_log': analysis_result.get('execution_log', []),
+                'removed': removed_count > 0,
+                'symbol': stock_symbol,
+                'expiry_date': expiry_date,
             })
 
         # ===== HISTORICAL DATA COLLECTION & VERIFICATION =====
@@ -1477,6 +1496,7 @@ def verify_future_trade(request):
             'enhanced_analysis': {
                 'hard_reject': hard_reject,
                 'reject_reason': reject_reason,
+                'news_warning': analysis_result.get('news_warning'),
                 'composite_score': analysis_result.get('composite_score', 0),
                 'recommendation': analysis_result.get('recommendation', 'N/A'),
                 'scores': analysis_result.get('scores', {}),

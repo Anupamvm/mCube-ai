@@ -260,6 +260,11 @@ class TelegramBotHandler(MenuMixin, DataMixin):
             await self._handle_task_bulk(query, data)
             return
 
+        # Algorithm dependency management
+        if data.startswith("algo_"):
+            await self._handle_algorithm_action(query, data)
+            return
+
         if data == "back_tasks":
             await self._show_tasks_menu(query)
             return
@@ -443,6 +448,20 @@ class TelegramBotHandler(MenuMixin, DataMixin):
             lots = int(parts[3])
             await self._handle_options_resize_confirm(query, suggestion_id, lots)
 
+        elif data.startswith("expiry_options_"):
+            suggestion_id = int(data.split("_")[2])
+            await self._show_options_expiry_toggle(query, suggestion_id)
+
+        elif data.startswith("set_opt_exp_"):
+            parts = data.split("_")
+            suggestion_id = int(parts[3])
+            new_expiry = parts[4]  # YYYYMMDD format
+            await self._handle_options_expiry_change(query, suggestion_id, new_expiry)
+
+        elif data.startswith("back_options_"):
+            suggestion_id = int(data.split("_")[2])
+            await self._resend_options_confirmation(query, suggestion_id)
+
         elif data.startswith("reject_options_"):
             suggestion_id = int(data.split("_")[2])
             await self._handle_options_reject(query, suggestion_id)
@@ -462,6 +481,16 @@ class TelegramBotHandler(MenuMixin, DataMixin):
             # STEP 2: User confirmed - spawn background thread for execution
             suggestion_id = int(data.split("_")[2])
             await self._handle_futures_confirm_with_thread(query, suggestion_id)
+
+        elif data.startswith("expiry_futures_"):
+            suggestion_id = int(data.split("_")[2])
+            await self._show_futures_expiry_toggle(query, suggestion_id)
+
+        elif data.startswith("set_expiry_"):
+            parts = data.split("_")
+            suggestion_id = int(parts[2])
+            new_expiry = parts[3]  # YYYYMMDD format
+            await self._handle_futures_expiry_change(query, suggestion_id, new_expiry)
 
         elif data.startswith("resize_futures_"):
             suggestion_id = int(data.split("_")[2])
@@ -524,65 +553,70 @@ class TelegramBotHandler(MenuMixin, DataMixin):
 
     async def otp_message_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """
-        Handle plain text messages - check if there's a pending OTP request.
+        Handle plain text messages - check if there's a pending OTP request
+        for Breeze auto-login.
 
-        When the Breeze auto-login process needs an OTP, it sets a NseFlag
-        to 'pending'. This handler watches for digit-only messages and
-        fulfills the request via NseFlag cross-process communication.
+        When Breeze auto-login needs an OTP, it sets a NseFlag to 'pending'.
+        This handler watches for digit-only messages and fulfills the OTP
+        request via NseFlag cross-process communication.
+
+        Note: Kotak Neo uses MPIN-based 2FA and does not require OTP.
         """
         if not self.is_authorized(update):
             return
 
         text = (update.message.text or '').strip()
 
-        # Check if there's a pending OTP request
-        status = await self._get_otp_request_status()
-        if status != 'pending':
-            # No pending OTP request - ignore plain text messages
+        # Check if Breeze has a pending OTP request
+        is_pending = await self._is_breeze_otp_pending()
+        if not is_pending:
             return
 
         # Validate OTP format: 4-6 digits
         import re
         if not re.match(r'^\d{4,6}$', text):
-            task_name = await self._get_otp_task_name()
+            task_name = await self._get_breeze_otp_task_name()
             await update.message.reply_text(
                 f"Invalid OTP format. Please send 4-6 digits.\n"
-                f"(Waiting for OTP for: {task_name})"
+                f"(Waiting for Breeze OTP for: {task_name})"
             )
             return
 
         # Store OTP and mark as fulfilled
-        await self._fulfill_otp_request(text)
+        await self._fulfill_breeze_otp(text)
 
-        task_name = await self._get_otp_task_name()
+        task_name = await self._get_breeze_otp_task_name()
         await update.message.reply_text(
-            f"OTP received. Entering into Breeze login...\n"
+            f"OTP received for Breeze. Processing login...\n"
             f"(Task: {task_name})"
         )
 
     @sync_to_async(thread_sensitive=False)
-    def _get_otp_request_status(self) -> str:
-        """Check if there's a pending Breeze OTP request via NseFlag."""
+    def _is_breeze_otp_pending(self) -> bool:
+        """Check if Breeze has a pending OTP request."""
         from django.db import close_old_connections
         close_old_connections()
         from apps.core.models import NseFlag
-        return NseFlag.get('breeze_otp_request', '')
+
+        return NseFlag.get('breeze_otp_request', '') == 'pending'
 
     @sync_to_async(thread_sensitive=False)
-    def _fulfill_otp_request(self, otp: str):
-        """Store the OTP value and mark the request as fulfilled."""
+    def _fulfill_breeze_otp(self, otp: str):
+        """Store the OTP value and mark the Breeze OTP request as fulfilled."""
         from django.db import close_old_connections
         close_old_connections()
         from apps.core.models import NseFlag
+
         NseFlag.set('breeze_otp_value', otp, 'OTP from Telegram')
         NseFlag.set('breeze_otp_request', 'fulfilled', 'OTP fulfilled via Telegram')
 
     @sync_to_async(thread_sensitive=False)
-    def _get_otp_task_name(self) -> str:
-        """Get the task name associated with the current OTP request."""
+    def _get_breeze_otp_task_name(self) -> str:
+        """Get the task name associated with the current Breeze OTP request."""
         from django.db import close_old_connections
         close_old_connections()
         from apps.core.models import NseFlag
+
         return NseFlag.get('breeze_otp_task', 'Breeze login')
 
     # =========================================================================
@@ -696,6 +730,245 @@ class TelegramBotHandler(MenuMixin, DataMixin):
             logger.error(f"Error rejecting options trade: {e}")
             await query.edit_message_text(f"Error: {str(e)[:200]}")
 
+    # =========================================================================
+    # OPTIONS EXPIRY CHANGE HANDLERS
+    # =========================================================================
+
+    async def _show_options_expiry_toggle(self, query, suggestion_id: int):
+        """Show available expiry options for an options suggestion."""
+        try:
+            suggestion = await self._get_suggestion_obj(suggestion_id)
+            if not suggestion:
+                await query.edit_message_text("Suggestion not found.")
+                return
+
+            expiries = await self._get_available_options_expiries(suggestion)
+
+            if not expiries or len(expiries) < 2:
+                await query.edit_message_text(
+                    "<b>No alternate expiry available</b>\n\n"
+                    f"Instrument: {suggestion.instrument}\n"
+                    "Only one options expiry is currently available.\n\n"
+                    "<i>Press Back to return.</i>",
+                    parse_mode='HTML',
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("◀️ Back", callback_data=f"back_options_{suggestion_id}")]
+                    ])
+                )
+                return
+
+            current_expiry = str(suggestion.expiry_date) if suggestion.expiry_date else ''
+
+            message = (
+                f"<b>📅 Change Expiry</b>\n\n"
+                f"Instrument: {suggestion.instrument}\n"
+                f"Strategy: {suggestion.get_strategy_display()}\n\n"
+                f"⚠️ <i>Strikes and premiums may differ for other expiries.</i>\n\n"
+                f"<b>Select expiry:</b>"
+            )
+
+            keyboard = []
+            for exp in expiries:
+                label = f"📅 {exp['expiry_formatted']} ({exp['days_to_expiry']}d)"
+                if exp['expiry_date'] == current_expiry:
+                    label += " ← Current"
+                # Callback: set_opt_exp_{id}_{YYYYMMDD}
+                expiry_compact = exp['expiry_date'].replace('-', '')
+                keyboard.append([InlineKeyboardButton(label, callback_data=f"set_opt_exp_{suggestion_id}_{expiry_compact}")])
+
+            keyboard.append([InlineKeyboardButton("◀️ Back", callback_data=f"back_options_{suggestion_id}")])
+
+            await query.edit_message_text(
+                message,
+                parse_mode='HTML',
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+
+        except Exception as e:
+            logger.error(f"Error showing options expiry toggle: {e}")
+            await query.edit_message_text(f"Error: {str(e)[:200]}")
+
+    async def _handle_options_expiry_change(self, query, suggestion_id: int, new_expiry_compact: str):
+        """Handle user selecting a new expiry for an options suggestion."""
+        try:
+            # Convert YYYYMMDD to YYYY-MM-DD
+            new_expiry = f"{new_expiry_compact[:4]}-{new_expiry_compact[4:6]}-{new_expiry_compact[6:]}"
+
+            result = await self._update_options_suggestion_expiry(suggestion_id, new_expiry)
+
+            if not result.get('success'):
+                await query.edit_message_text(
+                    f"<b>Expiry change failed</b>\n\n{result.get('error', 'Unknown error')}",
+                    parse_mode='HTML',
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("◀️ Back", callback_data=f"back_options_{suggestion_id}")]
+                    ])
+                )
+                return
+
+            # Re-send the options confirmation with updated expiry
+            await self._resend_options_confirmation(query, suggestion_id)
+
+        except Exception as e:
+            logger.error(f"Error changing options expiry: {e}")
+            await query.edit_message_text(f"Error: {str(e)[:200]}")
+
+    async def _resend_options_confirmation(self, query, suggestion_id: int):
+        """Re-display options confirmation message after expiry change."""
+        try:
+            suggestion = await self._get_suggestion_obj(suggestion_id)
+            if not suggestion:
+                await query.edit_message_text("Suggestion not found.")
+                return
+
+            from apps.trading.services.trade_confirmation import get_confirmation_service
+            service = get_confirmation_service()
+
+            from apps.core.models import TradingCoreConfig
+            config = await sync_to_async(TradingCoreConfig.get_instance)()
+
+            # Rebuild the message and keyboard (same as request_options_confirmation but inline)
+            strategy = await sync_to_async(suggestion.get_strategy_display)()
+            call_strike = suggestion.call_strike or 0
+            put_strike = suggestion.put_strike or 0
+            total_premium = suggestion.total_premium or 0
+            lots = suggestion.recommended_lots or config.options_lots
+
+            expiry_line = ''
+            if suggestion.expiry_date:
+                from datetime import date
+                days_to_exp = (suggestion.expiry_date - date.today()).days
+                expiry_fmt = suggestion.expiry_date.strftime('%d-%b-%Y')
+                expiry_line = f"<b>📅 Expiry:</b> {expiry_fmt} ({days_to_exp}d)\n"
+
+                details = suggestion.position_details or {}
+                if details.get('expiry_changed'):
+                    original = details.get('original_expiry', '')
+                    expiry_line += f"⚠️ <i>Changed from original: {original}</i>\n"
+
+            message = (
+                f"📊 <b>OPTIONS TRADE CONFIRMATION</b>\n\n"
+                f"Strategy: {strategy}\n"
+                f"Instrument: {suggestion.instrument}\n"
+                f"Direction: {suggestion.direction}\n"
+                f"{expiry_line}\n"
+                f"<b>Strikes:</b>\n"
+                f"  • Call: {call_strike:,.0f}\n"
+                f"  • Put: {put_strike:,.0f}\n\n"
+                f"<b>Position:</b>\n"
+                f"  • Lots: {lots}\n"
+                f"  • Premium: ₹{total_premium:,.0f}\n"
+                f"  • Margin: ₹{suggestion.margin_required or 0:,.0f}\n\n"
+                f"<b>Risk:</b>\n"
+                f"  • Max Loss: ₹{suggestion.max_loss or 0:,.0f}\n"
+                f"  • R:R Ratio: {suggestion.risk_reward_ratio or 0:.2f}\n\n"
+                f"<i>Reply with lot count to modify, or use buttons below:</i>"
+            )
+
+            keyboard = [
+                [InlineKeyboardButton(f'✅ Confirm ({lots} lots)', callback_data=f'confirm_options_{suggestion.id}')],
+                [
+                    InlineKeyboardButton('📊 Change Size', callback_data=f'resize_options_{suggestion.id}'),
+                    InlineKeyboardButton('📅 Change Expiry', callback_data=f'expiry_options_{suggestion.id}'),
+                ],
+                [InlineKeyboardButton('❌ Reject', callback_data=f'reject_options_{suggestion.id}')],
+            ]
+
+            await query.edit_message_text(
+                message,
+                parse_mode='HTML',
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+
+        except Exception as e:
+            logger.error(f"Error resending options confirmation: {e}")
+            await query.edit_message_text(f"Error: {str(e)[:200]}")
+
+    @sync_to_async(thread_sensitive=False)
+    def _get_available_options_expiries(self, suggestion) -> list:
+        """Get available options expiries for a suggestion's instrument."""
+        from django.db import close_old_connections
+        close_old_connections()
+
+        try:
+            from apps.data.models import OptionChain
+            from datetime import date
+
+            instrument = suggestion.instrument
+            today = date.today()
+
+            # Get distinct expiry dates from OptionChain
+            db_expiries = (
+                OptionChain.objects
+                .filter(underlying=instrument, expiry_date__gte=today)
+                .values_list('expiry_date', flat=True)
+                .distinct()
+                .order_by('expiry_date')
+            )
+            expiry_dates = sorted(set(db_expiries))
+
+            # Fallback to weekly expiry utilities if no DB data
+            if not expiry_dates:
+                from apps.core.utils import get_current_weekly_expiry, get_next_weekly_expiry
+                current_week = get_current_weekly_expiry(instrument)
+                next_week = get_next_weekly_expiry(instrument)
+                expiry_dates = sorted(set([current_week, next_week]))
+
+            expiries = []
+            for expiry_dt in expiry_dates:
+                days_to_expiry = (expiry_dt - today).days
+                if days_to_expiry < 0:
+                    continue
+
+                expiries.append({
+                    'expiry_date': str(expiry_dt),
+                    'expiry_formatted': expiry_dt.strftime('%d-%b-%Y'),
+                    'days_to_expiry': days_to_expiry,
+                })
+
+            return expiries
+
+        except Exception as e:
+            logger.error(f"Error getting available options expiries: {e}")
+            return []
+
+    @sync_to_async(thread_sensitive=False)
+    def _update_options_suggestion_expiry(self, suggestion_id: int, new_expiry: str) -> dict:
+        """Update an options suggestion's expiry date."""
+        from django.db import close_old_connections
+        close_old_connections()
+
+        try:
+            from apps.trading.models import TradeSuggestion
+            from datetime import date
+
+            suggestion = TradeSuggestion.objects.get(id=suggestion_id)
+
+            new_expiry_dt = datetime.strptime(new_expiry, '%Y-%m-%d').date()
+
+            # Preserve original expiry on first change
+            details = suggestion.position_details or {}
+            if not details.get('original_expiry') and suggestion.expiry_date:
+                details['original_expiry'] = str(suggestion.expiry_date)
+
+            details['expiry_date'] = new_expiry
+            details['expiry_changed'] = (new_expiry != details.get('original_expiry', new_expiry))
+
+            suggestion.position_details = details
+            suggestion.expiry_date = new_expiry_dt
+            suggestion.days_to_expiry = (new_expiry_dt - date.today()).days
+
+            suggestion.save()
+
+            logger.info(f"Updated options suggestion {suggestion_id} expiry to {new_expiry}")
+            return {'success': True}
+
+        except TradeSuggestion.DoesNotExist:
+            return {'success': False, 'error': 'Suggestion not found'}
+        except Exception as e:
+            logger.error(f"Error updating options suggestion expiry: {e}")
+            return {'success': False, 'error': str(e)}
+
     async def _handle_futures_confirm(self, query, suggestion_id: int):
         """Handle futures trade confirmation"""
         await query.edit_message_text("Executing futures trade...")
@@ -723,6 +996,205 @@ class TelegramBotHandler(MenuMixin, DataMixin):
         except Exception as e:
             logger.error(f"Error confirming futures trade: {e}")
             await query.edit_message_text(f"Error: {str(e)[:200]}")
+
+    # =========================================================================
+    # FUTURES EXPIRY CHANGE HANDLERS
+    # =========================================================================
+
+    async def _show_futures_expiry_toggle(self, query, suggestion_id: int):
+        """Show available expiry options for a futures suggestion."""
+        try:
+            suggestion = await self._get_suggestion_obj(suggestion_id)
+            if not suggestion:
+                await query.edit_message_text("Suggestion not found.")
+                return
+
+            expiries = await self._get_available_expiries(suggestion)
+
+            if not expiries or len(expiries) < 2:
+                # Only one expiry available — no alternate
+                await query.edit_message_text(
+                    "<b>No alternate expiry available</b>\n\n"
+                    f"Symbol: {suggestion.instrument}\n"
+                    "Only one futures expiry is currently available for this contract.\n\n"
+                    "<i>Press Back to return.</i>",
+                    parse_mode='HTML',
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("◀️ Back to Details", callback_data=f"select_futures_{suggestion_id}")]
+                    ])
+                )
+                return
+
+            current_expiry = (suggestion.position_details or {}).get('expiry_date', '')
+
+            message = (
+                f"<b>📅 Change Expiry</b>\n\n"
+                f"Symbol: {suggestion.instrument}\n"
+                f"Direction: {suggestion.direction}\n\n"
+                f"⚠️ <i>Analysis scores were computed for the original expiry.</i>\n\n"
+                f"<b>Select expiry:</b>"
+            )
+
+            keyboard = []
+            for exp in expiries:
+                if not exp['has_instrument']:
+                    continue
+                label = f"📅 {exp['expiry_formatted']} ({exp['days_to_expiry']}d)"
+                if exp['expiry_date'] == current_expiry:
+                    label += " ← Current"
+                # Callback: set_expiry_{id}_{YYYYMMDD}
+                expiry_compact = exp['expiry_date'].replace('-', '')
+                keyboard.append([InlineKeyboardButton(label, callback_data=f"set_expiry_{suggestion_id}_{expiry_compact}")])
+
+            keyboard.append([InlineKeyboardButton("◀️ Back to Details", callback_data=f"select_futures_{suggestion_id}")])
+
+            await query.edit_message_text(
+                message,
+                parse_mode='HTML',
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+
+        except Exception as e:
+            logger.error(f"Error showing expiry toggle: {e}")
+            await query.edit_message_text(f"Error: {str(e)[:200]}")
+
+    async def _handle_futures_expiry_change(self, query, suggestion_id: int, new_expiry_compact: str):
+        """Handle user selecting a new expiry for a futures suggestion."""
+        try:
+            # Convert YYYYMMDD to YYYY-MM-DD
+            new_expiry = f"{new_expiry_compact[:4]}-{new_expiry_compact[4:6]}-{new_expiry_compact[6:]}"
+
+            result = await self._update_suggestion_expiry(suggestion_id, new_expiry)
+
+            if not result.get('success'):
+                await query.edit_message_text(
+                    f"<b>Expiry change failed</b>\n\n{result.get('error', 'Unknown error')}",
+                    parse_mode='HTML',
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("◀️ Back to Details", callback_data=f"select_futures_{suggestion_id}")]
+                    ])
+                )
+                return
+
+            # Return to detail view which will now show the updated expiry
+            await self._show_futures_detail(query, suggestion_id)
+
+        except Exception as e:
+            logger.error(f"Error changing expiry: {e}")
+            await query.edit_message_text(f"Error: {str(e)[:200]}")
+
+    @sync_to_async(thread_sensitive=False)
+    def _get_available_expiries(self, suggestion) -> list:
+        """Get available expiries for a suggestion's symbol from ContractData + SecurityMaster."""
+        from django.db import close_old_connections
+        close_old_connections()
+
+        try:
+            from apps.data.models import ContractData
+            from apps.brokers.utils.security_master import get_futures_instrument
+            from datetime import date
+
+            symbol = suggestion.instrument
+            today = date.today()
+
+            contracts = ContractData.objects.filter(
+                symbol=symbol,
+                option_type='FUTURE',
+            ).order_by('expiry')
+
+            seen = set()
+            expiries = []
+            for contract in contracts:
+                if contract.expiry in seen:
+                    continue
+                seen.add(contract.expiry)
+
+                try:
+                    expiry_dt = datetime.strptime(contract.expiry, '%Y-%m-%d').date()
+                except (ValueError, TypeError):
+                    continue
+
+                if expiry_dt < today:
+                    continue
+
+                days_to_expiry = (expiry_dt - today).days
+                expiry_breeze = expiry_dt.strftime('%d-%b-%Y').upper()
+                instrument = get_futures_instrument(symbol, expiry_breeze)
+
+                expiries.append({
+                    'expiry_date': contract.expiry,
+                    'expiry_formatted': expiry_dt.strftime('%d-%b-%Y'),
+                    'days_to_expiry': days_to_expiry,
+                    'has_instrument': instrument is not None,
+                    'lot_size': contract.lot_size,
+                    'contract_price': contract.price,
+                })
+
+            return expiries
+
+        except Exception as e:
+            logger.error(f"Error getting available expiries: {e}")
+            return []
+
+    @sync_to_async(thread_sensitive=False)
+    def _update_suggestion_expiry(self, suggestion_id: int, new_expiry: str) -> dict:
+        """Update a suggestion's expiry date in position_details and model field."""
+        from django.db import close_old_connections
+        close_old_connections()
+
+        try:
+            from apps.trading.models import TradeSuggestion
+            from apps.data.models import ContractData
+            from apps.brokers.utils.security_master import get_futures_instrument
+            from datetime import date
+
+            suggestion = TradeSuggestion.objects.get(id=suggestion_id)
+
+            # Validate the new expiry has a contract
+            contract = ContractData.objects.filter(
+                symbol=suggestion.instrument,
+                option_type='FUTURE',
+                expiry=new_expiry,
+            ).first()
+
+            if not contract:
+                return {'success': False, 'error': f'No contract found for {suggestion.instrument} expiry {new_expiry}'}
+
+            # Validate SecurityMaster has instrument
+            expiry_dt = datetime.strptime(new_expiry, '%Y-%m-%d').date()
+            expiry_breeze = expiry_dt.strftime('%d-%b-%Y').upper()
+            instrument = get_futures_instrument(suggestion.instrument, expiry_breeze)
+
+            if not instrument:
+                return {'success': False, 'error': f'No instrument found in SecurityMaster for {new_expiry}'}
+
+            # Update position_details
+            details = suggestion.position_details or {}
+            current_expiry = details.get('expiry_date', '')
+
+            # Preserve original expiry on first change
+            if not details.get('original_expiry'):
+                details['original_expiry'] = current_expiry
+
+            details['expiry_date'] = new_expiry
+            details['expiry_changed'] = (new_expiry != details.get('original_expiry', new_expiry))
+
+            suggestion.position_details = details
+
+            # Update model-level expiry field too
+            suggestion.expiry_date = expiry_dt
+            suggestion.days_to_expiry = (expiry_dt - date.today()).days
+
+            suggestion.save()
+
+            logger.info(f"Updated suggestion {suggestion_id} expiry: {current_expiry} -> {new_expiry}")
+            return {'success': True}
+
+        except TradeSuggestion.DoesNotExist:
+            return {'success': False, 'error': 'Suggestion not found'}
+        except Exception as e:
+            logger.error(f"Error updating suggestion expiry: {e}")
+            return {'success': False, 'error': str(e)}
 
     async def _show_futures_resize(self, query, suggestion_id: int):
         """Show futures lot resize options"""

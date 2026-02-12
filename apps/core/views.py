@@ -3771,7 +3771,7 @@ def celery_task_control(request):
             'icon': '👁️',
             'color': '#dd6b20',
             'description': 'Monitor open positions, P&L updates, and exit conditions',
-            'keywords': ['monitor', 'position', 'pnl', 'exit', 'refresh-breeze'],
+            'keywords': ['monitor', 'position', 'pnl', 'exit'],
         },
         'risk': {
             'name': 'Risk Management',
@@ -3960,6 +3960,41 @@ def celery_task_control(request):
         logger.warning(f"Could not load TradingCoreConfig: {e}")
         trading_config = None
 
+    # Build algorithm task group data for confirmation modal
+    from apps.core.task_config import ALGORITHM_TASK_GROUPS
+    algo_task_data = {}
+    for algo_key, group in ALGORITHM_TASK_GROUPS.items():
+        def _build_task_list(task_keys):
+            result = []
+            for t in task_keys:
+                cfg = TASK_DEFAULT_CONFIG.get(t, {})
+                stype = cfg.get('schedule_type', 'crontab')
+                if stype == 'crontab':
+                    sched_desc = f"{cfg.get('default_hour', 0):02d}:{cfg.get('default_minute', 0):02d}"
+                elif stype == 'interval':
+                    sched_desc = f"Every {cfg.get('default_interval_seconds', 0)}s"
+                elif stype == 'recurring':
+                    sched_desc = f"{cfg.get('default_recurring_start_hour', 0):02d}:{cfg.get('default_recurring_start_minute', 0):02d}-{cfg.get('default_recurring_end_hour', 0):02d}:{cfg.get('default_recurring_end_minute', 0):02d}"
+                else:
+                    sched_desc = stype
+                result.append({
+                    'key': t,
+                    'name': cfg.get('display_name', t.replace('-', ' ').title()),
+                    'schedule': sched_desc,
+                    'enabled': CeleryTaskState.is_task_enabled(t),
+                })
+            return result
+
+        algo_task_data[algo_key] = {
+            'display_name': group['display_name'],
+            'own': _build_task_list(group['own_tasks']),
+            'shared': _build_task_list(group['shared_tasks']),
+            'monitoring': _build_task_list(group['monitoring_tasks']),
+        }
+
+    import json
+    algo_task_data_json = json.dumps(algo_task_data)
+
     context = {
         'dynamic_tasks': dynamic_tasks,
         'static_tasks': static_tasks,
@@ -3971,6 +4006,7 @@ def celery_task_control(request):
         'total_count': total_count,
         'timestamp': datetime.now(),
         'trading_config': trading_config,  # Core trading configuration
+        'algo_task_data_json': algo_task_data_json,
     }
 
     return render(request, 'core/celery_tasks.html', context)
@@ -4078,6 +4114,58 @@ def reload_celery_schedule(request):
         return JsonResponse({'success': False, 'error': str(e)}, status=500)
 
 
+def _manage_algorithm_tasks(algo_key, enabled):
+    """Enable or disable algorithm tasks with smart shared-task handling."""
+    from apps.core.models import CeleryTaskState
+    from apps.core.task_config import ALGORITHM_TASK_GROUPS, TASK_DEFAULT_CONFIG
+
+    group = ALGORITHM_TASK_GROUPS.get(algo_key)
+    if not group:
+        return
+
+    task_paths = {}
+    try:
+        from mcube_ai.celery import get_static_schedule
+        sched = get_static_schedule()
+        task_paths = {k: v.get('task', '') for k, v in sched.items()}
+    except Exception:
+        pass
+
+    if enabled:
+        all_tasks = group['own_tasks'] + group['shared_tasks'] + group['monitoring_tasks']
+        for task_key in all_tasks:
+            cfg = TASK_DEFAULT_CONFIG.get(task_key, {})
+            CeleryTaskState.set_task_state(
+                task_key=task_key, enabled=True,
+                task_path=task_paths.get(task_key, ''),
+                display_name=cfg.get('display_name', task_key.replace('-', ' ').title()),
+                user='web_ui',
+            )
+    else:
+        # Smart disable: check if other algo is active
+        active_others = []
+        for other_key, other_group in ALGORITHM_TASK_GROUPS.items():
+            if other_key == algo_key:
+                continue
+            if any(CeleryTaskState.is_task_enabled(t) for t in other_group['own_tasks']):
+                active_others.append(other_key)
+
+        tasks_to_disable = list(group['own_tasks'])
+        if not active_others:
+            tasks_to_disable += group['shared_tasks'] + group['monitoring_tasks']
+
+        for task_key in tasks_to_disable:
+            cfg = TASK_DEFAULT_CONFIG.get(task_key, {})
+            CeleryTaskState.set_task_state(
+                task_key=task_key, enabled=False,
+                task_path=task_paths.get(task_key, ''),
+                display_name=cfg.get('display_name', task_key.replace('-', ' ').title()),
+                user='web_ui',
+            )
+
+    ensure_celery_running()
+
+
 @login_required
 @user_passes_test(is_admin_user)
 def toggle_core_config(request):
@@ -4107,6 +4195,10 @@ def toggle_core_config(request):
         field_display = field.replace('_', ' ').title()
         new_status = 'enabled' if not current_value else 'disabled'
         messages.success(request, f'{field_display} {new_status}')
+
+        if field == 'enable_futures_trading' and request.POST.get('manage_tasks') == '1':
+            _manage_algorithm_tasks('futures', enabled=not current_value)
+            messages.success(request, f'Futures algorithm tasks {"enabled" if not current_value else "disabled"}')
 
     except Exception as e:
         logger.error(f"Error toggling core config {field}: {e}")
@@ -4179,6 +4271,17 @@ def update_core_config(request):
             config.manual_futures_lots = config.futures_lots  # Sync to new field
 
         config.save()
+
+        # Manage algorithm tasks when options strategy transitions to/from NONE
+        if 'options_strategy' in request.POST and request.POST.get('manage_tasks') == '1':
+            old_strategy = request.POST.get('old_options_strategy', 'NONE')
+            new_strategy = config.options_strategy
+            if old_strategy == 'NONE' and new_strategy != 'NONE':
+                _manage_algorithm_tasks('options', enabled=True)
+                messages.success(request, 'Options algorithm tasks enabled')
+            elif old_strategy != 'NONE' and new_strategy == 'NONE':
+                _manage_algorithm_tasks('options', enabled=False)
+                messages.success(request, 'Options algorithm tasks disabled')
 
         if updated_fields:
             messages.success(request, f'Config updated: {", ".join(updated_fields)}')
@@ -4477,6 +4580,229 @@ def save_task_config(request):
     except Exception as e:
         logger.error(f"Error saving task config for {task_key}: {e}", exc_info=True)
         return JsonResponse({'success': False, 'error': str(e)}, status=500)
+
+
+@login_required
+@user_passes_test(is_admin_user)
+def reset_task_config(request):
+    """
+    Reset task schedule(s) back to defaults from TASK_DEFAULT_CONFIG.
+
+    GET  -- Preview: returns tasks whose schedule differs from defaults.
+            Params: ?task_key=... or ?reset_all=true
+    POST -- Execute: resets schedules and restarts Celery Beat.
+            JSON body: {task_key: ...} or {reset_all: true}
+    """
+    import json
+    from apps.core.models import CeleryTaskState
+    from django.utils import timezone
+
+    DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+
+    def _fmt_time(h, m):
+        if h is None:
+            return '-'
+        h, m = int(h), int(m or 0)
+        ampm = 'AM' if h < 12 else 'PM'
+        display_h = h % 12 or 12
+        return f'{display_h}:{m:02d} {ampm}'
+
+    def _fmt_days(days):
+        if not days or sorted(days) == [0, 1, 2, 3, 4]:
+            return 'Mon-Fri'
+        if sorted(days) == [0, 1, 2, 3, 4, 5, 6]:
+            return 'Every day'
+        return ', '.join(DAY_NAMES[d] for d in sorted(days) if d < 7)
+
+    def _describe(stype, vals):
+        if stype == 'crontab':
+            return f"{_fmt_time(vals.get('hour'), vals.get('minute'))}, {_fmt_days(vals.get('days'))}"
+        elif stype == 'interval':
+            secs = vals.get('interval_seconds')
+            if secs and int(secs) >= 60:
+                return f"Every {int(secs) // 60} min, {_fmt_days(vals.get('days'))}"
+            return f"Every {secs}s, {_fmt_days(vals.get('days'))}"
+        elif stype == 'recurring':
+            start = _fmt_time(vals.get('start_hour'), vals.get('start_minute'))
+            end = _fmt_time(vals.get('end_hour'), vals.get('end_minute'))
+            interval = vals.get('interval_minutes', 5)
+            return f"{start} - {end} every {interval}m, {_fmt_days(vals.get('days'))}"
+        return '-'
+
+    def _build_preview(keys_to_check):
+        task_states = {
+            s.task_key: s
+            for s in CeleryTaskState.objects.filter(task_key__in=keys_to_check)
+        }
+        changed = []
+
+        for key in keys_to_check:
+            defaults = TASK_DEFAULT_CONFIG.get(key, {})
+            ts = task_states.get(key)
+            if not ts:
+                continue
+
+            stype = defaults.get('schedule_type', 'crontab')
+
+            current_vals = {
+                'hour': ts.schedule_hour, 'minute': ts.schedule_minute,
+                'interval_seconds': ts.interval_seconds,
+                'start_hour': ts.recurring_start_hour,
+                'start_minute': ts.recurring_start_minute,
+                'end_hour': ts.recurring_end_hour,
+                'end_minute': ts.recurring_end_minute,
+                'interval_minutes': ts.recurring_interval_minutes,
+                'days': ts.days_of_week or [0, 1, 2, 3, 4],
+            }
+
+            default_vals = {
+                'hour': defaults.get('default_hour'),
+                'minute': defaults.get('default_minute'),
+                'interval_seconds': defaults.get('default_interval_seconds'),
+                'start_hour': defaults.get('default_recurring_start_hour'),
+                'start_minute': defaults.get('default_recurring_start_minute'),
+                'end_hour': defaults.get('default_recurring_end_hour'),
+                'end_minute': defaults.get('default_recurring_end_minute'),
+                'interval_minutes': defaults.get('default_recurring_interval_minutes'),
+                'days': defaults.get('default_days', [0, 1, 2, 3, 4]),
+            }
+
+            has_diff = ts.use_custom_schedule
+            if not has_diff:
+                if stype == 'crontab':
+                    has_diff = (current_vals['hour'] != default_vals['hour']
+                                or current_vals['minute'] != default_vals['minute']
+                                or current_vals['days'] != default_vals['days'])
+                elif stype == 'interval':
+                    has_diff = current_vals['interval_seconds'] != default_vals['interval_seconds']
+                elif stype == 'recurring':
+                    for f in ['start_hour', 'start_minute', 'end_hour',
+                              'end_minute', 'interval_minutes']:
+                        if current_vals[f] != default_vals[f]:
+                            has_diff = True
+                            break
+                    if not has_diff:
+                        has_diff = current_vals['days'] != default_vals['days']
+
+            default_params = defaults.get('default_task_params')
+            current_params = ts.task_params
+            params_diff = (current_params or None) != (default_params or None)
+
+            if has_diff or params_diff:
+                entry = {
+                    'task_key': key,
+                    'display_name': defaults.get('display_name', key),
+                    'schedule_type': stype,
+                    'current_summary': _describe(stype, current_vals),
+                    'default_summary': _describe(stype, default_vals),
+                }
+                if params_diff and current_params:
+                    entry['current_params'] = current_params
+                    entry['default_params'] = default_params
+                changed.append(entry)
+
+        return changed
+
+    # ---- GET: Preview ----
+    if request.method == 'GET':
+        reset_all = request.GET.get('reset_all', '') == 'true'
+        task_key = request.GET.get('task_key', '')
+
+        if reset_all:
+            keys = list(TASK_DEFAULT_CONFIG.keys())
+        elif task_key and task_key in TASK_DEFAULT_CONFIG:
+            keys = [task_key]
+        else:
+            return JsonResponse(
+                {'success': False, 'error': 'task_key or reset_all required'},
+                status=400,
+            )
+
+        changed = _build_preview(keys)
+        return JsonResponse({
+            'success': True,
+            'changed_tasks': changed,
+            'total_checked': len(keys),
+        })
+
+    # ---- POST: Execute reset ----
+    if request.method != 'POST':
+        return JsonResponse(
+            {'success': False, 'error': 'GET or POST required'}, status=405
+        )
+
+    try:
+        body = json.loads(request.body)
+    except (json.JSONDecodeError, ValueError):
+        body = request.POST
+
+    reset_all = body.get('reset_all', False)
+    task_key = body.get('task_key', '')
+
+    if not reset_all and not task_key:
+        return JsonResponse(
+            {'success': False, 'error': 'task_key or reset_all required'},
+            status=400,
+        )
+
+    if reset_all:
+        keys_to_reset = list(TASK_DEFAULT_CONFIG.keys())
+    else:
+        if task_key not in TASK_DEFAULT_CONFIG:
+            return JsonResponse(
+                {'success': False, 'error': f'Unknown task: {task_key}'},
+                status=400,
+            )
+        keys_to_reset = [task_key]
+
+    reset_keys = []
+
+    for key in keys_to_reset:
+        defaults = TASK_DEFAULT_CONFIG[key]
+        try:
+            task_state = CeleryTaskState.objects.filter(task_key=key).first()
+            if not task_state:
+                continue
+
+            task_state.schedule_hour = defaults.get('default_hour')
+            task_state.schedule_minute = defaults.get('default_minute')
+            task_state.interval_seconds = defaults.get('default_interval_seconds') or 60
+            task_state.recurring_start_hour = defaults.get('default_recurring_start_hour')
+            task_state.recurring_start_minute = defaults.get('default_recurring_start_minute')
+            task_state.recurring_end_hour = defaults.get('default_recurring_end_hour')
+            task_state.recurring_end_minute = defaults.get('default_recurring_end_minute')
+            task_state.recurring_interval_minutes = defaults.get('default_recurring_interval_minutes')
+            task_state.days_of_week = defaults.get('default_days', [0, 1, 2, 3, 4])
+            task_state.task_params = defaults.get('default_task_params')
+            task_state.schedule_type = defaults.get('schedule_type', 'crontab')
+            task_state.use_custom_schedule = False
+            task_state.last_toggled_at = timezone.now()
+            task_state.last_toggled_by = request.user.username
+            task_state.save()
+            reset_keys.append(key)
+        except Exception as e:
+            logger.error(f"Error resetting task {key}: {e}", exc_info=True)
+
+    if not reset_keys:
+        return JsonResponse(
+            {'success': False, 'error': 'No tasks were reset'}, status=400
+        )
+
+    celery_result = ensure_celery_running()
+
+    action = ('All tasks' if reset_all
+              else f"'{TASK_DEFAULT_CONFIG[task_key].get('display_name', task_key)}'")
+    logger.info(f"Task config reset by {request.user.username}: {reset_keys}")
+
+    return JsonResponse({
+        'success': True,
+        'reset_keys': reset_keys,
+        'message': f'{action} reset to defaults. Celery Beat restarted.',
+        'celery': {
+            'success': celery_result.get('success', False),
+            'beat_restarted': celery_result.get('beat_restarted', False),
+        }
+    })
 
 
 @login_required

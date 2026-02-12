@@ -61,14 +61,9 @@
                 <p>Advanced screening algorithm to find top 3 futures trading opportunities</p>
             </div>
 
-            <!-- Today's Automated Results Section (TOP) -->
-            <div id="todaysResultsSection" style="margin-bottom: 20px;">
-                <!-- Will be populated by today's automated analysis results -->
-            </div>
-
-            <!-- Previous Shortlisted Suggestions Section -->
-            <div id="previousResultsSection" style="margin-bottom: 20px;">
-                <!-- Will be populated by preloaded results or show empty state -->
+            <!-- Unified Opportunities Section -->
+            <div id="unifiedOpportunitiesSection" style="margin-bottom: 20px;">
+                <!-- Populated by JS: header, filter tabs, sort/search, cards -->
             </div>
 
             <!-- Results Panel - List of contracts (for fresh manual analysis) -->
@@ -521,7 +516,7 @@
 
 <!-- Component Modules -->
 <script src="{% static 'js/trading/components/position-sizing.js' %}"></script>
-<script src="{% static 'js/trading/components/ui-builders.js' %}?v=5"></script>
+<script src="{% static 'js/trading/components/ui-builders.js' %}?v=6"></script>
 
 <!-- Chart Libraries (must load before inline scripts that use InteractiveChart) -->
 <script src="https://unpkg.com/lightweight-charts@4.1.0/dist/lightweight-charts.standalone.production.js"></script>
@@ -636,8 +631,21 @@ const FuturesAlgorithm = {
             });
 
             if (response && response.success) {
-                console.log('[Futures] Algorithm response:', response);
-                this.displayResults(response);
+                if (response.dispatched) {
+                    console.log('[Futures] Algorithm dispatched:', response.task_id);
+                    UIBuilders.showNotification({
+                        type: 'success',
+                        message: `Algorithm dispatched for ${response.contract_count} contracts.\n\nAnalyzing in background - results will appear here and on Telegram.`,
+                        icon: '🚀',
+                        timeout: 8000
+                    });
+                    // Start polling for results (keep loading state active)
+                    this.pollForResults(response.task_id);
+                    return; // Don't clear loading state yet
+                } else {
+                    console.log('[Futures] Algorithm response:', response);
+                    displayLatestProcessed(response);
+                }
             } else if (response && response.requires_confirmation) {
                 // Handle confirmation request
                 console.log('[Futures] Confirmation required for', response.contract_count, 'contracts');
@@ -684,6 +692,90 @@ const FuturesAlgorithm = {
         } finally {
             TradingState.setLoading('futures', false);
         }
+    },
+
+    async pollForResults(taskId) {
+        const POLL_INTERVAL = 15000; // 15 seconds
+        const MAX_POLLS = 40;       // 10 minutes max
+        let polls = 0;
+
+        console.log('[Futures] Starting poll for task:', taskId);
+
+        const poll = async () => {
+            polls++;
+            try {
+                const statusUrl = ApiClient.endpoints.futuresTaskStatus(taskId);
+                const resp = await fetch(statusUrl, {
+                    headers: { 'X-Requested-With': 'XMLHttpRequest' }
+                });
+                if (!resp.ok || !resp.headers.get('content-type')?.includes('application/json')) {
+                    console.warn('[Futures] Non-JSON status response, status:', resp.status);
+                    // Likely a session issue or server error - retry
+                    if (polls < MAX_POLLS) { setTimeout(poll, POLL_INTERVAL); }
+                    else { TradingState.setLoading('futures', false); }
+                    return;
+                }
+                const result = await resp.json();
+
+                if (!result) {
+                    console.warn('[Futures] Poll returned null (auth issue?)');
+                    TradingState.setLoading('futures', false);
+                    return;
+                }
+
+                console.log(`[Futures] Poll #${polls}:`, result.status, result.state || '');
+
+                if (result.status === 'running') {
+                    if (polls >= MAX_POLLS) {
+                        console.warn('[Futures] Max polls reached, stopping');
+                        UIBuilders.showNotification({
+                            type: 'info',
+                            message: 'Analysis still running. Results will be sent to Telegram when complete.',
+                            icon: 'ℹ️',
+                            timeout: 8000
+                        });
+                        TradingState.setLoading('futures', false);
+                        return;
+                    }
+                    setTimeout(poll, POLL_INTERVAL);
+                    return;
+                }
+
+                // Task finished (success or failure)
+                TradingState.setLoading('futures', false);
+
+                if (result.status === 'completed' && result.success) {
+                    console.log('[Futures] Task completed, displaying results');
+                    displayLatestProcessed(result);
+                } else if (result.status === 'failed') {
+                    UIBuilders.showNotification({
+                        type: 'error',
+                        message: `❌ Futures Algorithm Failed\n\n${result.error || 'Unknown error'}`,
+                        icon: '❌',
+                        timeout: false
+                    });
+                } else {
+                    UIBuilders.showNotification({
+                        type: 'error',
+                        message: `❌ Futures Algorithm Failed\n\n${result.error || 'Task did not complete successfully'}`,
+                        icon: '❌',
+                        timeout: false
+                    });
+                }
+            } catch (err) {
+                console.error('[Futures] Poll error:', err);
+                TradingState.setLoading('futures', false);
+                UIBuilders.showNotification({
+                    type: 'error',
+                    message: `❌ Error checking algorithm status\n\n${err.message}`,
+                    icon: '❌',
+                    timeout: false
+                });
+            }
+        };
+
+        // First poll after 15 seconds
+        setTimeout(poll, POLL_INTERVAL);
     },
 
     displayResults(response) {
@@ -997,6 +1089,9 @@ const FuturesAlgorithm = {
         const modal = document.getElementById('futuresDetailModal');
         modal.style.display = 'none';
         document.body.style.overflow = ''; // Restore scrolling
+        // Clear modal content to prevent duplicate IDs when verifyResults gets new content
+        const modalContent = document.getElementById('futuresDetailModalContent');
+        if (modalContent) modalContent.innerHTML = '';
     },
 
     /**
@@ -1076,9 +1171,10 @@ const FuturesAlgorithm = {
                 const html = verifyResultsDiv.innerHTML;
                 console.log('[Futures] Generated verification HTML length:', html.length);
 
-                // Restore the original state of verifyResults div
-                verifyResultsDiv.innerHTML = originalHTML;
-                verifyResultsDiv.style.display = originalDisplay;
+                // Clear verifyResults to prevent duplicate IDs in the DOM
+                // (the modal now owns the content with these IDs)
+                verifyResultsDiv.innerHTML = '';
+                verifyResultsDiv.style.display = 'none';
 
                 // Show the modal with the content
                 const modalContent = document.getElementById('futuresDetailModalContent');
@@ -1090,6 +1186,22 @@ const FuturesAlgorithm = {
 
                 console.log('[Futures] ✅ Modal opened with fresh verification data');
             } else {
+                // Analysis failed — remove this entry from the opportunities table
+                const failedSymbol = data.symbol || contract.symbol;
+                const failedExpiry = data.expiry_date || contract.expiry_date;
+                const beforeCount = UnifiedState.allOpportunities.length;
+
+                UnifiedState.allOpportunities = UnifiedState.allOpportunities.filter(
+                    o => !(o.symbol === failedSymbol && o.expiry_date === failedExpiry)
+                );
+                FuturesAlgorithm.analyzedContracts = [...UnifiedState.allOpportunities];
+
+                const removedCount = beforeCount - UnifiedState.allOpportunities.length;
+                if (removedCount > 0) {
+                    console.log(`[Futures] Removed ${removedCount} entry for ${failedSymbol} (${failedExpiry}) from opportunities`);
+                    displayUnifiedOpportunities();
+                }
+
                 throw new Error(data.error || 'Failed to load verification data');
             }
         } catch (error) {
@@ -2203,8 +2315,43 @@ const NiftyStrangle = {
     },
 
     showConfirmation() {
-        const callLots = parseInt(document.getElementById('callLotsInput').value) || 0;
-        const putLots = parseInt(document.getElementById('putLotsInput').value) || 0;
+        try {
+        // Validate data exists
+        if (!this.currentData || !this.currentData.strangle) {
+            UIBuilders.showNotification({
+                type: 'error',
+                message: 'No strangle data available. Please generate a strangle first.',
+                icon: '❌'
+            });
+            return;
+        }
+
+        const strangle = this.currentData.strangle;
+
+        // Check if position sizing data exists
+        if (!strangle.position_sizing || !strangle.position_sizing.position || !strangle.position_sizing.margin_data) {
+            UIBuilders.showNotification({
+                type: 'error',
+                message: 'Position sizing data not available. Margin calculation may have failed. Please check Neo login and retry.',
+                icon: '❌'
+            });
+            return;
+        }
+
+        // Check if lot input elements exist in the DOM
+        const callLotsEl = document.getElementById('callLotsInput');
+        const putLotsEl = document.getElementById('putLotsInput');
+        if (!callLotsEl || !putLotsEl) {
+            UIBuilders.showNotification({
+                type: 'error',
+                message: 'Lot input fields not found. Position sizing section may not have loaded. Please retry.',
+                icon: '❌'
+            });
+            return;
+        }
+
+        const callLots = parseInt(callLotsEl.value) || 0;
+        const putLots = parseInt(putLotsEl.value) || 0;
 
         if (callLots === 0 || putLots === 0) {
             UIBuilders.showNotification({
@@ -2215,7 +2362,6 @@ const NiftyStrangle = {
             return;
         }
 
-        const strangle = this.currentData.strangle;
         const position = strangle.position_sizing.position;
         const marginData = strangle.position_sizing.margin_data;
 
@@ -2282,10 +2428,20 @@ const NiftyStrangle = {
                 <div style="background: #f0fdf4; padding: 12px; border-radius: 6px; margin-bottom: 15px; border-left: 4px solid #10b981;">
                     <div style="display: flex; align-items: center; gap: 8px;">
                         <span style="font-size: 1.2rem;">📅</span>
-                        <div>
+                        <div style="flex: 1;">
                             <div style="color: #6b7280; font-size: 0.875rem;">Expiry Date</div>
-                            <div style="color: #1f2937; font-weight: 700; font-size: 1.1rem;">${formattedExpiry} <span style="color: #059669; font-size: 0.875rem;">(${strangle.days_to_expiry} days)</span></div>
+                            <div style="display: flex; align-items: center; gap: 10px;">
+                                <span id="strangleExpiryDisplay" style="color: #1f2937; font-weight: 700; font-size: 1.1rem;">${formattedExpiry} <span style="color: #059669; font-size: 0.875rem;">(${strangle.days_to_expiry} days)</span></span>
+                                <button onclick="NiftyStrangle.toggleExpiry()"
+                                        id="strangleChangeExpiryBtn"
+                                        style="background: #10b981; color: white; border: none; padding: 4px 12px; border-radius: 6px; font-size: 0.75rem; font-weight: 600; cursor: pointer;">
+                                    Change Expiry
+                                </button>
+                            </div>
                         </div>
+                    </div>
+                    <div id="strangleExpiryWarning" style="display: none; background: #fef2f2; padding: 8px 12px; border-radius: 6px; margin-top: 8px; border: 1px solid #fecaca;">
+                        <span style="color: #dc2626; font-size: 0.8rem; font-weight: 500;">⚠️ Strikes and premiums were computed for the original expiry. Verify before placing order.</span>
                     </div>
                 </div>
 
@@ -2383,13 +2539,104 @@ const NiftyStrangle = {
         `;
 
         document.body.appendChild(modal);
+
+        } catch (error) {
+            console.error('[Strangle] Error in showConfirmation:', error);
+            UIBuilders.showNotification({
+                type: 'error',
+                message: `Failed to show confirmation: ${error.message}`,
+                icon: '❌'
+            });
+        }
     },
 
-    closeConfirmation() {
+    // Expiry toggle state
+    _strangleExpiryOptions: null,
+    _strangleOriginalExpiry: null,
+
+    async toggleExpiry() {
+        const strangle = this.currentData.strangle;
+        const btn = document.getElementById('strangleChangeExpiryBtn');
+
+        // First call: fetch available expiries
+        if (!this._strangleExpiryOptions) {
+            btn.textContent = 'Loading...';
+            btn.disabled = true;
+
+            try {
+                const resp = await fetch(`/trading/api/get-available-options-expiries/?instrument=${encodeURIComponent(strangle.instrument || 'NIFTY')}&current_expiry=${encodeURIComponent(strangle.expiry_date)}`);
+                const data = await resp.json();
+
+                if (!data.success || !data.expiries || data.expiries.length < 2) {
+                    UIBuilders.showNotification({
+                        type: 'warning',
+                        message: 'No alternate expiry available',
+                        icon: '📅'
+                    });
+                    btn.textContent = 'Change Expiry';
+                    btn.disabled = false;
+                    return;
+                }
+
+                this._strangleExpiryOptions = data.expiries;
+                this._strangleOriginalExpiry = strangle.expiry_date;
+            } catch (err) {
+                console.error('[Strangle] Error fetching expiries:', err);
+                UIBuilders.showNotification({ type: 'error', message: 'Failed to fetch expiry options', icon: '❌' });
+                btn.textContent = 'Change Expiry';
+                btn.disabled = false;
+                return;
+            }
+        }
+
+        // Toggle to next available expiry
+        const currentIdx = this._strangleExpiryOptions.findIndex(e => e.expiry_date === strangle.expiry_date);
+        const nextIdx = (currentIdx + 1) % this._strangleExpiryOptions.length;
+        const nextExpiry = this._strangleExpiryOptions[nextIdx];
+
+        // Update strangle data in-place
+        strangle.expiry_date = nextExpiry.expiry_date;
+        strangle.days_to_expiry = nextExpiry.days_to_expiry;
+
+        // Update display
+        const expiryDt = new Date(nextExpiry.expiry_date + 'T00:00:00');
+        const formatted = expiryDt.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+        document.getElementById('strangleExpiryDisplay').innerHTML =
+            `${formatted} <span style="color: #059669; font-size: 0.875rem;">(${nextExpiry.days_to_expiry} days)</span>`;
+
+        // Show/hide warning
+        const isChanged = (strangle.expiry_date !== this._strangleOriginalExpiry);
+        document.getElementById('strangleExpiryWarning').style.display = isChanged ? 'block' : 'none';
+        btn.textContent = isChanged ? 'Revert Expiry' : 'Change Expiry';
+        btn.disabled = false;
+
+        // Persist to DB if suggestion_id exists
+        if (strangle.suggestion_id && isChanged) {
+            try {
+                await fetch('{% url "trading:api_update_suggestion_parameters" %}', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': ApiClient.csrftoken },
+                    body: JSON.stringify({ suggestion_id: strangle.suggestion_id, expiry_date: nextExpiry.expiry_date })
+                });
+            } catch (err) {
+                console.error('[Strangle] Error persisting expiry change:', err);
+            }
+        }
+
+        console.log('[Strangle] Expiry toggled to:', nextExpiry.expiry_date);
+    },
+
+    closeConfirmation(revertExpiry = true) {
         const modal = document.getElementById('confirmationModal');
         if (modal) {
             modal.remove();
         }
+        // Reset expiry toggle state — only revert expiry on cancel, NOT on execute
+        if (revertExpiry && this._strangleOriginalExpiry && this.currentData?.strangle) {
+            this.currentData.strangle.expiry_date = this._strangleOriginalExpiry;
+        }
+        this._strangleExpiryOptions = null;
+        this._strangleOriginalExpiry = null;
     },
 
     async executeStrangle() {
@@ -2415,7 +2662,7 @@ const NiftyStrangle = {
             return;
         }
 
-        this.closeConfirmation();
+        this.closeConfirmation(false);  // Keep user-selected expiry for order placement
 
         // Show loading overlay while placing orders
         UIBuilders.showLoadingOverlay({
@@ -3108,8 +3355,16 @@ const BrokenIronCondor = {
                 </div>
                 <div style="background: white; padding: 15px; border-radius: 8px; border: 1px solid #e5e7eb;">
                     <div style="font-size: 0.7rem; color: #6b7280; text-transform: uppercase; letter-spacing: 0.5px;">Expiry</div>
-                    <div style="font-size: 1.1rem; font-weight: 700; color: #1f2937;">${ic.expiry_date}</div>
-                    <div style="font-size: 0.75rem; color: #6b7280;">${ic.days_to_expiry} days</div>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <span id="icExpiryDisplay" style="font-size: 1.1rem; font-weight: 700; color: #1f2937;">${ic.expiry_date}</span>
+                        <button onclick="BrokenIronCondor.toggleExpiry()"
+                                id="icChangeExpiryBtn"
+                                style="background: #667eea; color: white; border: none; padding: 2px 8px; border-radius: 4px; font-size: 0.65rem; font-weight: 600; cursor: pointer;">
+                            Change
+                        </button>
+                    </div>
+                    <div id="icExpiryDays" style="font-size: 0.75rem; color: #6b7280;">${ic.days_to_expiry} days</div>
+                    <div id="icExpiryWarning" style="display: none; font-size: 0.7rem; color: #dc2626; margin-top: 4px;">⚠️ Strikes/premiums may differ</div>
                 </div>
             </div>
         `;
@@ -3515,18 +3770,225 @@ const BrokenIronCondor = {
             opt => Math.abs(opt.risk_multiplier - this.currentRiskMultiplier) < 0.01
         );
 
-        const msg = `Execute Broken Iron Condor?\n\n` +
-            `LEG 1: SELL ${ic.call_strike} CE @ ₹${ic.call_premium.toFixed(2)}\n` +
-            `LEG 2: SELL ${ic.put_strike} PE @ ₹${ic.put_premium.toFixed(2)}\n` +
-            `LEG 3: BUY ${selectedOption.insurance_strike} PE @ ₹${selectedOption.insurance_premium.toFixed(2)}\n\n` +
-            `Quantity: ${ic.quantity} (${ic.lots} lots)\n` +
-            `Max Profit: ₹${this.formatIndian((ic.call_premium + ic.put_premium - selectedOption.insurance_premium) * ic.quantity)}\n` +
-            `Max Loss (Put Side): ₹${this.formatIndian(selectedOption.max_loss_on_put_side)}\n\n` +
-            `Proceed?`;
+        const lots = parseInt(document.getElementById('icLotsInput')?.value || ic.lots);
+        const quantity = lots * (ic.lot_size || 50);
+        const netPremium = ic.call_premium + ic.put_premium - selectedOption.insurance_premium;
+        const maxProfit = netPremium * quantity;
+        const maxLoss = selectedOption.max_loss_on_put_side;
 
-        if (confirm(msg)) {
-            this.executeOrders();
+        // Format expiry
+        let formattedExpiry = ic.expiry_date;
+        try {
+            const expiryDt = new Date(ic.expiry_date + 'T00:00:00');
+            formattedExpiry = expiryDt.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+        } catch (e) {}
+
+        const modal = document.createElement('div');
+        modal.id = 'icConfirmationModal';
+        modal.style.cssText = 'position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 10000;';
+
+        modal.innerHTML = `
+            <div style="background: white; border-radius: 12px; padding: 30px; max-width: 600px; width: 90%; max-height: 90vh; overflow-y: auto; box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1);">
+                <h2 style="color: #1f2937; margin-bottom: 20px; font-size: 1.5rem; display: flex; align-items: center; gap: 10px;">
+                    🎯 Confirm Iron Condor
+                    <span style="background: #fbbf24; color: #78350f; padding: 4px 12px; border-radius: 20px; font-size: 0.75rem; font-weight: 500;">KOTAK NEO</span>
+                </h2>
+
+                <!-- Expiry -->
+                <div style="background: #f0fdf4; padding: 12px; border-radius: 6px; margin-bottom: 15px; border-left: 4px solid #10b981;">
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <span style="font-size: 1.2rem;">📅</span>
+                        <div style="flex: 1;">
+                            <div style="color: #6b7280; font-size: 0.875rem;">Expiry Date</div>
+                            <div style="display: flex; align-items: center; gap: 10px;">
+                                <span id="icModalExpiryDisplay" style="color: #1f2937; font-weight: 700; font-size: 1.1rem;">${formattedExpiry} <span style="color: #059669; font-size: 0.875rem;">(${ic.days_to_expiry} days)</span></span>
+                                <button onclick="BrokenIronCondor.toggleExpiryModal()"
+                                        id="icModalChangeExpiryBtn"
+                                        style="background: #10b981; color: white; border: none; padding: 4px 12px; border-radius: 6px; font-size: 0.75rem; font-weight: 600; cursor: pointer;">
+                                    Change Expiry
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    <div id="icModalExpiryWarning" style="display: none; background: #fef2f2; padding: 8px 12px; border-radius: 6px; margin-top: 8px; border: 1px solid #fecaca;">
+                        <span style="color: #dc2626; font-size: 0.8rem; font-weight: 500;">⚠️ Strikes and premiums were computed for the original expiry. Verify before placing order.</span>
+                    </div>
+                </div>
+
+                <!-- Legs -->
+                <div style="background: #f9fafb; padding: 20px; border-radius: 8px; margin-bottom: 15px;">
+                    <h3 style="color: #374151; margin-bottom: 12px; font-size: 1rem;">Position Legs</h3>
+                    <div style="display: grid; gap: 10px;">
+                        <div style="background: white; padding: 10px 15px; border-radius: 6px; border-left: 4px solid #ef4444; display: flex; justify-content: space-between; align-items: center;">
+                            <span style="font-weight: 600; color: #dc2626;">SELL ${ic.call_strike} CE</span>
+                            <span style="color: #1f2937; font-weight: 700;">₹${ic.call_premium.toFixed(2)}</span>
+                        </div>
+                        <div style="background: white; padding: 10px 15px; border-radius: 6px; border-left: 4px solid #ef4444; display: flex; justify-content: space-between; align-items: center;">
+                            <span style="font-weight: 600; color: #dc2626;">SELL ${ic.put_strike} PE</span>
+                            <span style="color: #1f2937; font-weight: 700;">₹${ic.put_premium.toFixed(2)}</span>
+                        </div>
+                        <div style="background: white; padding: 10px 15px; border-radius: 6px; border-left: 4px solid #10b981; display: flex; justify-content: space-between; align-items: center;">
+                            <span style="font-weight: 600; color: #059669;">BUY ${selectedOption.insurance_strike} PE</span>
+                            <span style="color: #1f2937; font-weight: 700;">₹${selectedOption.insurance_premium.toFixed(2)}</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Summary -->
+                <div style="background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%); padding: 15px; border-radius: 8px; margin-bottom: 15px; border: 1px solid #3b82f6;">
+                    <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px;">
+                        <div>
+                            <div style="color: #1e40af; font-size: 0.8rem;">Lots</div>
+                            <div style="font-weight: 700; font-size: 1.1rem; color: #1f2937;">${lots}</div>
+                        </div>
+                        <div>
+                            <div style="color: #1e40af; font-size: 0.8rem;">Max Profit</div>
+                            <div style="font-weight: 700; font-size: 1.1rem; color: #10b981;">₹${this.formatIndian(maxProfit)}</div>
+                        </div>
+                        <div>
+                            <div style="color: #1e40af; font-size: 0.8rem;">Max Loss</div>
+                            <div style="font-weight: 700; font-size: 1.1rem; color: #ef4444;">₹${this.formatIndian(maxLoss)}</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Action Buttons -->
+                <div style="display: flex; gap: 15px; justify-content: center;">
+                    <button onclick="BrokenIronCondor.closeConfirmation(false); BrokenIronCondor.executeOrders();"
+                            style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; padding: 12px 30px; border: none; border-radius: 6px; font-size: 1rem; font-weight: 600; cursor: pointer;">
+                        ✅ Confirm & Place Orders
+                    </button>
+                    <button onclick="BrokenIronCondor.closeConfirmation()"
+                            style="background: #6b7280; color: white; padding: 12px 30px; border: none; border-radius: 6px; font-size: 1rem; font-weight: 600; cursor: pointer;">
+                        Cancel
+                    </button>
+                </div>
+            </div>
+        `;
+
+        document.body.appendChild(modal);
+    },
+
+    closeConfirmation(revertExpiry = true) {
+        const modal = document.getElementById('icConfirmationModal');
+        if (modal) {
+            modal.remove();
         }
+        // Reset expiry toggle state — only revert expiry on cancel, NOT on execute
+        if (revertExpiry && this._icOriginalExpiry && this.data?.iron_condor) {
+            this.data.iron_condor.expiry_date = this._icOriginalExpiry;
+        }
+        this._icExpiryOptions = null;
+        this._icOriginalExpiry = null;
+    },
+
+    // Expiry toggle state
+    _icExpiryOptions: null,
+    _icOriginalExpiry: null,
+
+    async toggleExpiry() {
+        await this._doToggleExpiry('icChangeExpiryBtn', 'icExpiryDisplay', 'icExpiryDays', 'icExpiryWarning', false);
+    },
+
+    async toggleExpiryModal() {
+        await this._doToggleExpiry('icModalChangeExpiryBtn', 'icModalExpiryDisplay', null, 'icModalExpiryWarning', true);
+    },
+
+    async _doToggleExpiry(btnId, displayId, daysId, warningId, isModal) {
+        const ic = this.data.iron_condor;
+        const btn = document.getElementById(btnId);
+
+        // First call: fetch available expiries
+        if (!this._icExpiryOptions) {
+            btn.textContent = 'Loading...';
+            btn.disabled = true;
+
+            try {
+                const resp = await fetch(`/trading/api/get-available-options-expiries/?instrument=${encodeURIComponent(ic.underlying || 'NIFTY')}&current_expiry=${encodeURIComponent(ic.expiry_date)}`);
+                const data = await resp.json();
+
+                if (!data.success || !data.expiries || data.expiries.length < 2) {
+                    UIBuilders.showNotification({ type: 'warning', message: 'No alternate expiry available', icon: '📅' });
+                    btn.textContent = isModal ? 'Change Expiry' : 'Change';
+                    btn.disabled = false;
+                    return;
+                }
+
+                this._icExpiryOptions = data.expiries;
+                this._icOriginalExpiry = ic.expiry_date;
+            } catch (err) {
+                console.error('[IronCondor] Error fetching expiries:', err);
+                UIBuilders.showNotification({ type: 'error', message: 'Failed to fetch expiry options', icon: '❌' });
+                btn.textContent = isModal ? 'Change Expiry' : 'Change';
+                btn.disabled = false;
+                return;
+            }
+        }
+
+        // Toggle to next available expiry
+        const currentIdx = this._icExpiryOptions.findIndex(e => e.expiry_date === ic.expiry_date);
+        const nextIdx = (currentIdx + 1) % this._icExpiryOptions.length;
+        const nextExpiry = this._icExpiryOptions[nextIdx];
+
+        // Update data in-place
+        ic.expiry_date = nextExpiry.expiry_date;
+        ic.days_to_expiry = nextExpiry.days_to_expiry;
+
+        const expiryDt = new Date(nextExpiry.expiry_date + 'T00:00:00');
+        const formatted = expiryDt.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+
+        // Update display
+        const displayEl = document.getElementById(displayId);
+        if (isModal) {
+            displayEl.innerHTML = `${formatted} <span style="color: #059669; font-size: 0.875rem;">(${nextExpiry.days_to_expiry} days)</span>`;
+        } else {
+            displayEl.textContent = formatted;
+        }
+
+        if (daysId) {
+            document.getElementById(daysId).textContent = `${nextExpiry.days_to_expiry} days`;
+        }
+
+        const isChanged = (ic.expiry_date !== this._icOriginalExpiry);
+        document.getElementById(warningId).style.display = isChanged ? 'block' : 'none';
+
+        // Update both buttons
+        const mainBtn = document.getElementById('icChangeExpiryBtn');
+        const modalBtn = document.getElementById('icModalChangeExpiryBtn');
+        if (mainBtn) { mainBtn.textContent = isChanged ? 'Revert' : 'Change'; mainBtn.disabled = false; }
+        if (modalBtn) { modalBtn.textContent = isChanged ? 'Revert Expiry' : 'Change Expiry'; modalBtn.disabled = false; }
+
+        // Also update the main display if toggling from modal, and vice versa
+        const otherDisplayId = isModal ? 'icExpiryDisplay' : 'icModalExpiryDisplay';
+        const otherDisplay = document.getElementById(otherDisplayId);
+        if (otherDisplay) {
+            if (isModal) {
+                otherDisplay.textContent = formatted;
+            } else {
+                otherDisplay.innerHTML = `${formatted} <span style="color: #059669; font-size: 0.875rem;">(${nextExpiry.days_to_expiry} days)</span>`;
+            }
+        }
+
+        const otherWarningId = isModal ? 'icExpiryWarning' : 'icModalExpiryWarning';
+        const otherWarning = document.getElementById(otherWarningId);
+        if (otherWarning) {
+            otherWarning.style.display = isChanged ? 'block' : 'none';
+        }
+
+        // Persist to DB
+        if (ic.suggestion_id && isChanged) {
+            try {
+                await fetch('{% url "trading:api_update_suggestion_parameters" %}', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': ApiClient.csrftoken },
+                    body: JSON.stringify({ suggestion_id: ic.suggestion_id, expiry_date: nextExpiry.expiry_date })
+                });
+            } catch (err) {
+                console.error('[IronCondor] Error persisting expiry change:', err);
+            }
+        }
+
+        console.log('[IronCondor] Expiry toggled to:', nextExpiry.expiry_date);
     },
 
     incrementLots() {
@@ -4264,6 +4726,23 @@ const TradeVerification = {
             </div>
         `;
 
+        // News Warning Banner (soft block — user can still proceed)
+        const newsWarning = (data.enhanced_analysis || {}).news_warning;
+        if (newsWarning) {
+            html += `
+                <div style="background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%); border: 2px solid #f59e0b; border-radius: 12px; padding: 20px; margin-bottom: 25px; box-shadow: 0 4px 12px rgba(245,158,11,0.2);">
+                    <div style="display: flex; align-items: flex-start; gap: 12px;">
+                        <span style="font-size: 2rem; line-height: 1;">&#x26A0;&#xFE0F;</span>
+                        <div>
+                            <h3 style="color: #92400e; margin: 0 0 8px 0; font-size: 1.125rem; font-weight: 700;">Negative Market News Detected</h3>
+                            <p style="color: #78350f; margin: 0; font-size: 0.95rem; font-weight: 600; line-height: 1.5;">${newsWarning}</p>
+                            <p style="color: #92400e; margin: 8px 0 0 0; font-size: 0.8rem;">You may still proceed with this trade at your own discretion.</p>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
         // Contract Summary (always visible)
         html += `
             <div style="background: white; border-radius: 8px; padding: 20px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
@@ -4369,11 +4848,15 @@ const TradeVerification = {
         if (data.enhanced_analysis || analysis.enhanced_analysis) {
             const ea = data.enhanced_analysis || analysis.enhanced_analysis;
             const eaScore = ea.composite_score || 0;
-            const eaStatus = ea.hard_reject ? 'fail' : (eaScore >= 65 ? 'pass' : eaScore >= 50 ? 'warning' : 'fail');
+            const hasNewsWarning = !!ea.news_warning;
+            const eaStatus = ea.hard_reject ? 'fail' : hasNewsWarning ? 'warning' : (eaScore >= 65 ? 'pass' : eaScore >= 50 ? 'warning' : 'fail');
             const eaStatusText = ea.hard_reject ? 'HARD REJECT' : (ea.recommendation || 'ANALYZING');
-            const eaSummary = ea.hard_reject
+            let eaSummary = ea.hard_reject
                 ? `🚫 ${ea.reject_reason || 'Entry blocked'}`
                 : `Score: ${eaScore}/100 | ${ea.recommendation || 'N/A'}`;
+            if (hasNewsWarning && !ea.hard_reject) {
+                eaSummary += ' | ⚠️ News Warning';
+            }
 
             html += UIBuilders.buildCollapsibleSection({
                 id: 'verify-enhanced',
@@ -4495,7 +4978,7 @@ const TradeVerification = {
         } else {
             html += `
                 <div style="display: flex; gap: 15px; justify-content: center; margin-top: 30px;">
-                    <button onclick="TradeVerification.reset()"
+                    <button onclick="closeVerificationView()"
                             style="background: #6b7280; color: white; padding: 14px 40px; border: none; border-radius: 8px; font-size: 1.125rem; font-weight: 600; cursor: pointer;">
                         ← Back to Selection
                     </button>
@@ -6351,7 +6834,7 @@ const TradeVerification = {
                         style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; padding: 14px 40px; border: none; border-radius: 8px; font-size: 1.125rem; font-weight: 600; cursor: pointer; box-shadow: 0 4px 6px rgba(16, 185, 129, 0.3);">
                     ✅ Review & Confirm Order
                 </button>
-                <button onclick="TradeVerification.reset()"
+                <button onclick="closeVerificationView()"
                         style="background: #6b7280; color: white; padding: 14px 40px; border: none; border-radius: 8px; font-size: 1.125rem; font-weight: 600; cursor: pointer;">
                     Cancel
                 </button>
@@ -6509,9 +6992,19 @@ const TradeVerification = {
                         <span style="font-size: 1.5rem;">📅</span>
                         <div style="flex: 1;">
                             <div style="color: #92400e; font-size: 0.875rem; font-weight: 600; margin-bottom: 4px;">⚠️ CRITICAL: Contract Expiry Date</div>
-                            <div style="color: #1f2937; font-weight: 700; font-size: 1.3rem;">${formattedExpiry}</div>
+                            <div style="display: flex; align-items: center; gap: 10px;">
+                                <span id="expiryDisplay" style="color: #1f2937; font-weight: 700; font-size: 1.3rem;">${formattedExpiry}</span>
+                                <button onclick="TradeVerification.toggleExpiry()"
+                                        id="changeExpiryBtn"
+                                        style="background: #f59e0b; color: white; border: none; padding: 4px 12px; border-radius: 6px; font-size: 0.75rem; font-weight: 600; cursor: pointer;">
+                                    Change Expiry
+                                </button>
+                            </div>
                             <div style="color: #78350f; font-size: 0.75rem; margin-top: 4px;">Order will be placed for this specific expiry only</div>
                         </div>
+                    </div>
+                    <div id="expiryWarning" style="display: none; background: #fef2f2; padding: 8px 12px; border-radius: 6px; margin-top: 8px; border: 1px solid #fecaca;">
+                        <span style="color: #dc2626; font-size: 0.8rem; font-weight: 500;">⚠️ Analysis scores were computed for the original expiry. Verify before placing order.</span>
                     </div>
                 </div>
 
@@ -6522,10 +7015,10 @@ const TradeVerification = {
                         <span style="font-size: 1.5rem;">🔑</span>
                         <div style="flex: 1;">
                             <div style="color: #1e40af; font-size: 0.875rem; font-weight: 600; margin-bottom: 4px;">Breeze Instrument Token</div>
-                            <div style="color: #1f2937; font-weight: 700; font-size: 1.1rem; font-family: 'Courier New', monospace;">${analysis.breeze_token}</div>
+                            <div class="breeze-token-value" style="color: #1f2937; font-weight: 700; font-size: 1.1rem; font-family: 'Courier New', monospace;">${analysis.breeze_token}</div>
                             ${analysis.breeze_stock_code ? `
                             <div style="color: #1e40af; font-size: 0.75rem; margin-top: 4px;">
-                                Stock Code: <span style="font-weight: 600; font-family: 'Courier New', monospace;">${analysis.breeze_stock_code}</span>
+                                Stock Code: <span class="breeze-stock-code" style="font-weight: 600; font-family: 'Courier New', monospace;">${analysis.breeze_stock_code}</span>
                             </div>
                             ` : ''}
                             <div style="color: #1e3a8a; font-size: 0.75rem; margin-top: 4px;">This token will be used for order placement on ICICI Breeze</div>
@@ -6658,17 +7151,113 @@ const TradeVerification = {
         document.body.appendChild(modal);
     },
 
-    closeConfirmation() {
+    // Expiry toggle state
+    _expiryOptions: null,
+    _originalExpiry: null,
+
+    async toggleExpiry() {
+        const analysis = this.currentContract.analysis || {};
+        const btn = document.getElementById('changeExpiryBtn');
+
+        // First call: fetch available expiries
+        if (!this._expiryOptions) {
+            btn.textContent = 'Loading...';
+            btn.disabled = true;
+
+            try {
+                const resp = await fetch(`/trading/api/get-available-expiries/?symbol=${encodeURIComponent(this.currentContract.symbol)}&current_expiry=${encodeURIComponent(analysis.expiry_date)}`);
+                const data = await resp.json();
+
+                if (!data.success || !data.expiries || data.expiries.length < 2) {
+                    UIBuilders.showNotification({
+                        type: 'warning',
+                        message: 'No alternate expiry available for this contract',
+                        icon: '📅'
+                    });
+                    btn.textContent = 'Change Expiry';
+                    btn.disabled = false;
+                    return;
+                }
+
+                // Filter to only those with instruments
+                const valid = data.expiries.filter(e => e.has_instrument);
+                if (valid.length < 2) {
+                    UIBuilders.showNotification({
+                        type: 'warning',
+                        message: 'No alternate expiry with valid instrument available',
+                        icon: '📅'
+                    });
+                    btn.textContent = 'Change Expiry';
+                    btn.disabled = false;
+                    return;
+                }
+
+                this._expiryOptions = valid;
+                this._originalExpiry = analysis.expiry_date;
+            } catch (err) {
+                console.error('[Verify Trade] Error fetching expiries:', err);
+                UIBuilders.showNotification({
+                    type: 'error',
+                    message: 'Failed to fetch expiry options',
+                    icon: '❌'
+                });
+                btn.textContent = 'Change Expiry';
+                btn.disabled = false;
+                return;
+            }
+        }
+
+        // Toggle to next available expiry
+        const currentIdx = this._expiryOptions.findIndex(e => e.expiry_date === analysis.expiry_date);
+        const nextIdx = (currentIdx + 1) % this._expiryOptions.length;
+        const nextExpiry = this._expiryOptions[nextIdx];
+
+        // Update analysis in-place
+        analysis.expiry_date = nextExpiry.expiry_date;
+
+        // Update Breeze token and stock code for the new expiry
+        if (nextExpiry.breeze_token) {
+            analysis.breeze_token = nextExpiry.breeze_token;
+            analysis.breeze_stock_code = nextExpiry.breeze_stock_code || '';
+            // Update the token display in the confirmation modal
+            const tokenDisplay = document.querySelector('#verifyConfirmationModal .breeze-token-value');
+            if (tokenDisplay) tokenDisplay.textContent = nextExpiry.breeze_token;
+            const stockCodeDisplay = document.querySelector('#verifyConfirmationModal .breeze-stock-code');
+            if (stockCodeDisplay) stockCodeDisplay.textContent = nextExpiry.breeze_stock_code || '';
+        }
+
+        // Format and update display
+        const expiryDt = new Date(nextExpiry.expiry_date + 'T00:00:00');
+        const formatted = expiryDt.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+        document.getElementById('expiryDisplay').textContent = formatted;
+
+        // Show/hide warning
+        const isChanged = (analysis.expiry_date !== this._originalExpiry);
+        document.getElementById('expiryWarning').style.display = isChanged ? 'block' : 'none';
+        btn.textContent = isChanged ? 'Revert Expiry' : 'Change Expiry';
+        btn.disabled = false;
+
+        console.log('[Verify Trade] Expiry toggled to:', nextExpiry.expiry_date,
+            'Token:', nextExpiry.breeze_token, 'StockCode:', nextExpiry.breeze_stock_code);
+    },
+
+    closeConfirmation(revertExpiry = true) {
         const modal = document.getElementById('verifyConfirmationModal');
         if (modal) {
             modal.remove();
         }
+        // Reset expiry toggle state — only revert expiry on cancel, NOT on execute
+        if (revertExpiry && this._originalExpiry && this.currentContract?.analysis) {
+            this.currentContract.analysis.expiry_date = this._originalExpiry;
+        }
+        this._expiryOptions = null;
+        this._originalExpiry = null;
     },
 
     async executeTrade() {
         const lots = parseInt(document.getElementById('verifyLotsInput').value) || 1;
 
-        this.closeConfirmation();
+        this.closeConfirmation(false);  // Keep user-selected expiry for order placement
 
         // Show loading overlay while placing order
         UIBuilders.showLoadingOverlay({
@@ -6793,19 +7382,34 @@ const TradeVerification = {
     }
 };
 
+// Close verification: if inside the futures detail modal, close modal; otherwise reset inline view
+function closeVerificationView() {
+    const modal = document.getElementById('futuresDetailModal');
+    if (modal && modal.style.display !== 'none') {
+        FuturesAlgorithm.closeDetailModal();
+    } else {
+        TradeVerification.reset();
+    }
+}
+
 // Function stub for backward compatibility
 function hideResults() {
     document.getElementById('resultsPanel').style.display = 'none';
 }
 
-// Preloaded results from server (latest algorithm run)
-const PRELOADED_FUTURES_RESULTS = {{ preloaded_results|safe }};
-
-// Today's automated results from daily Celery task
-const TODAYS_AUTOMATED_RESULTS = {{ todays_results|safe }};
+// Unified opportunities from server (consolidated by symbol+expiry)
+const UNIFIED_OPPORTUNITIES = {{ unified_opportunities|safe }};
 
 // Recommendation history for last 30 days (symbol -> array of recommendations)
 const RECOMMENDATION_HISTORY = {{ recommendation_history|safe }};
+
+// Runtime state for the unified display
+const UnifiedState = {
+    allOpportunities: [],   // Full list from server + manual merges
+    activeFilter: 'all',    // 'all', 'auto', 'manual', 'historical'
+    activeSort: 'conviction', // 'conviction', 'score', 'frequency', 'recent'
+    searchQuery: '',
+};
 
 // Recommendation History Module - Shows historical calls for a symbol
 const RecommendationHistory = {
@@ -6956,226 +7560,37 @@ const RecommendationHistory = {
     }
 };
 
-// Build recommendation count badge HTML
+// ===== BACKWARD COMPAT: buildRecommendationBadge + buildUnifiedContractCard =====
+// Still used by FuturesAlgorithm.displayResults (resultsPanel PASS/FAIL breakdown)
+
 function buildRecommendationBadge(symbol, count) {
     if (!count || count <= 1) return '';
-
-    // Color intensity based on count
     let bgColor, textColor;
-    if (count >= 5) {
-        bgColor = '#fef2f2'; textColor = '#dc2626'; // Red for hot picks
-    } else if (count >= 3) {
-        bgColor = '#fefce8'; textColor = '#ca8a04'; // Yellow for warm picks
-    } else {
-        bgColor = '#f0fdf4'; textColor = '#16a34a'; // Green for regular
-    }
-
-    return `
-        <span onclick="event.stopPropagation(); RecommendationHistory.show('${symbol}')"
-              style="background: ${bgColor}; color: ${textColor}; padding: 4px 10px; border-radius: 12px; font-size: 0.75rem; font-weight: 700; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; border: 1px solid ${textColor}20; transition: transform 0.1s;"
-              onmouseover="this.style.transform='scale(1.05)'"
-              onmouseout="this.style.transform='scale(1)'"
-              title="Click to see recommendation history">
-            🔥 ${count}x in 30d
-        </span>
-    `;
+    if (count >= 5) { bgColor = '#fef2f2'; textColor = '#dc2626'; }
+    else if (count >= 3) { bgColor = '#fefce8'; textColor = '#ca8a04'; }
+    else { bgColor = '#f0fdf4'; textColor = '#16a34a'; }
+    return `<span onclick="event.stopPropagation(); RecommendationHistory.show('${symbol}')"
+              style="background: ${bgColor}; color: ${textColor}; padding: 4px 10px; border-radius: 12px; font-size: 0.75rem; font-weight: 700; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; border: 1px solid ${textColor}20;"
+              title="Click to see recommendation history">🔥 ${count}x in 30d</span>`;
 }
 
-// Toggle visibility of previous results cards
-// Toggle today's automated results visibility
-function toggleTodaysResults() {
-    const container = document.getElementById('todaysResultsCards');
-    const chevron = document.getElementById('todaysResultsChevron');
-    if (!container) return;
-    const isHidden = container.style.display === 'none';
-    container.style.display = isHidden ? 'block' : 'none';
-    if (chevron) chevron.style.transform = isHidden ? 'rotate(90deg)' : 'rotate(0deg)';
-}
-
-// Display today's automated results in the dedicated section
-function displayTodaysResults(results) {
-    const sectionDiv = document.getElementById('todaysResultsSection');
-
-    if (!results || !results.success || !results.all_contracts || results.all_contracts.length === 0) {
-        // Show empty state
-        sectionDiv.innerHTML = `
-            <div style="background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%); border-radius: 12px; padding: 20px; border: 1px dashed #93c5fd;">
-                <div style="display: flex; align-items: center; gap: 15px;">
-                    <span style="font-size: 2rem;">🤖</span>
-                    <div>
-                        <h3 style="margin: 0 0 5px 0; color: #1e40af; font-weight: 600;">Today's Automated Results</h3>
-                        <p style="margin: 0; color: #3b82f6; font-size: 0.875rem;">
-                            No automated analysis ran today. Daily task runs at 8:30 AM on weekdays.
-                        </p>
-                    </div>
-                </div>
-            </div>
-        `;
-        return;
-    }
-
-    const allContracts = results.all_contracts || [];
-    const totalPassed = results.total_passed || allContracts.length;
-    const batchTime = results.batch_time || 'Unknown';
-
-    // Build cards HTML
-    let cardsHtml = '';
-    allContracts.forEach((contract, index) => {
-        const recCount = contract.recommendation_count || (RECOMMENDATION_HISTORY[contract.symbol] || []).length;
-        const recBadge = buildRecommendationBadge(contract.symbol, recCount);
-        cardsHtml += buildUnifiedContractCard(contract, `today-${index}`, { recBadge });
-    });
-
-    // Today's Results Banner (blue/cyan gradient) - clickable to toggle cards
-    let html = `
-        <div style="background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%); border-radius: 12px; padding: 20px; margin-bottom: 20px; border: 2px solid #3b82f6; cursor: pointer;"
-             onclick="toggleTodaysResults()">
-            <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 15px;">
-                <div>
-                    <h2 style="color: #1e40af; margin: 0 0 8px 0; display: flex; align-items: center; gap: 10px; font-size: 1.25rem;">
-                        <span style="font-size: 1.5rem;">🤖</span>
-                        Today's Automated Results
-                        <span id="todaysResultsChevron" style="font-size: 1rem; transition: transform 0.2s; transform: rotate(90deg);">&#9654;</span>
-                    </h2>
-                    <div style="color: #2563eb; font-size: 0.875rem;">
-                        <span style="font-weight: 600;">${totalPassed} contracts passed</span> automated screening
-                        <span style="margin-left: 10px; padding: 2px 8px; background: #bfdbfe; border-radius: 4px;">
-                            🕐 ${batchTime}
-                        </span>
-                    </div>
-                </div>
-                <div style="display: flex; align-items: center; gap: 8px;">
-                    <span style="background: #dbeafe; color: #1e40af; padding: 4px 12px; border-radius: 20px; font-size: 0.8rem; font-weight: 600;">
-                        Daily 8:30 AM
-                    </span>
-                </div>
-            </div>
-        </div>
-    `;
-
-    // Cards container - expanded by default
-    html += `<div id="todaysResultsCards" style="display: block;">${cardsHtml}</div>`;
-
-    sectionDiv.innerHTML = html;
-
-    // Store contracts for reference (merge with any existing)
-    if (!FuturesAlgorithm.analyzedContracts || FuturesAlgorithm.analyzedContracts.length === 0) {
-        FuturesAlgorithm.analyzedContracts = allContracts;
-    } else {
-        // Add today's contracts that aren't already in the list
-        const existingSymbols = new Set(FuturesAlgorithm.analyzedContracts.map(c => c.symbol));
-        allContracts.forEach(c => {
-            if (!existingSymbols.has(c.symbol)) {
-                FuturesAlgorithm.analyzedContracts.push(c);
-            }
-        });
-    }
-}
-
-function togglePreviousResults() {
-    const container = document.getElementById('previousResultsCards');
-    const chevron = document.getElementById('previousResultsChevron');
-    if (!container) return;
-    const isHidden = container.style.display === 'none';
-    container.style.display = isHidden ? 'block' : 'none';
-    if (chevron) chevron.style.transform = isHidden ? 'rotate(90deg)' : 'rotate(0deg)';
-}
-
-// Display preloaded results in the dedicated previous results section
-function displayPreloadedResults(results) {
-    const sectionDiv = document.getElementById('previousResultsSection');
-
-    if (!results || !results.success || !results.all_contracts || results.all_contracts.length === 0) {
-        // Show empty state
-        sectionDiv.innerHTML = `
-            <div style="background: #f9fafb; border-radius: 12px; padding: 20px; border: 1px dashed #d1d5db;">
-                <div style="display: flex; align-items: center; gap: 15px;">
-                    <span style="font-size: 2rem;">📋</span>
-                    <div>
-                        <h3 style="margin: 0 0 5px 0; color: #6b7280; font-weight: 600;">Previous Shortlisted Suggestions</h3>
-                        <p style="margin: 0; color: #9ca3af; font-size: 0.875rem;">
-                            No previous analysis results found. Click "Find Top 3 Opportunities" above to run the algorithm.
-                        </p>
-                    </div>
-                </div>
-            </div>
-        `;
-        return;
-    }
-
-    const allContracts = results.all_contracts || [];
-    const totalPassed = results.total_passed || allContracts.length;
-    const batchTime = results.batch_time || 'Unknown';
-
-    // Build HTML with "Previous Results" header
-    let html = '';
-
-    // Build cards HTML first (for embedding inside collapsible container)
-    let cardsHtml = '';
-    allContracts.forEach((contract, index) => {
-        const recCount = contract.recommendation_count || (RECOMMENDATION_HISTORY[contract.symbol] || []).length;
-        const recBadge = buildRecommendationBadge(contract.symbol, recCount);
-        cardsHtml += buildUnifiedContractCard(contract, `prev-${index}`, { recBadge });
-    });
-
-    // Previous Results Banner (yellow/amber styling) - clickable to toggle cards
-    html += `
-        <div style="background: linear-gradient(135deg, #fefce8 0%, #fef9c3 100%); border-radius: 12px; padding: 20px; margin-bottom: 20px; border: 2px solid #eab308; cursor: pointer;"
-             onclick="togglePreviousResults()">
-            <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 15px;">
-                <div>
-                    <h2 style="color: #854d0e; margin: 0 0 8px 0; display: flex; align-items: center; gap: 10px; font-size: 1.25rem;">
-                        <span style="font-size: 1.5rem;">📋</span>
-                        Previous Shortlisted Suggestions
-                        <span id="previousResultsChevron" style="font-size: 1rem; transition: transform 0.2s;">&#9654;</span>
-                    </h2>
-                    <div style="color: #a16207; font-size: 0.875rem;">
-                        <span style="font-weight: 600;">${totalPassed} contracts passed</span> algorithm screening
-                        <span style="margin-left: 10px; padding: 2px 8px; background: #fef3c7; border-radius: 4px;">
-                            🕐 ${batchTime}
-                        </span>
-                    </div>
-                </div>
-                <button onclick="event.stopPropagation(); FuturesAlgorithm.run()"
-                        style="background: #3b82f6; color: white; border: none; padding: 10px 20px; border-radius: 8px; cursor: pointer; font-weight: 600; display: flex; align-items: center; gap: 8px; font-size: 0.875rem;">
-                    🔄 Run Fresh Analysis
-                </button>
-            </div>
-        </div>
-    `;
-
-    // Cards container - collapsed by default
-    html += `<div id="previousResultsCards" style="display: none;">${cardsHtml}</div>`;
-
-    sectionDiv.innerHTML = html;
-
-    // Store contracts for reference
-    FuturesAlgorithm.analyzedContracts = allContracts;
-}
-
-// Unified contract card builder for PASS contracts (used by both fresh and preloaded results)
 function buildUnifiedContractCard(contract, index, options = {}) {
     const recBadge = options.recBadge || '';
-    const style = { color: '#10b981', bg: '#d1fae5', icon: '✅', border: '#10b981' };
     const directionColor = contract.direction === 'LONG' ? '#10b981' : '#ef4444';
     const directionIcon = contract.direction === 'LONG' ? '📈' : '📉';
-
     return `
-        <div style="background: white; border: 2px solid ${style.border}; border-radius: 12px; margin-bottom: 15px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.05);">
-            <!-- Card Header -->
-            <div style="background: ${style.bg}; padding: 16px 20px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+        <div style="background: white; border: 2px solid #10b981; border-radius: 12px; margin-bottom: 15px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.05);">
+            <div style="background: #d1fae5; padding: 16px 20px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
                 <div style="display: flex; align-items: center; gap: 15px;">
-                    <span style="font-size: 1.5rem;">${style.icon}</span>
+                    <span style="font-size: 1.5rem;">✅</span>
                     <div>
                         <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
                             <span style="font-size: 1.25rem; font-weight: 700; color: #1f2937;">${contract.symbol}</span>
-                            <span style="background: ${directionColor}; color: white; padding: 3px 10px; border-radius: 12px; font-size: 0.75rem; font-weight: 600;">
-                                ${directionIcon} ${contract.direction}
-                            </span>
+                            <span style="background: ${directionColor}; color: white; padding: 3px 10px; border-radius: 12px; font-size: 0.75rem; font-weight: 600;">${directionIcon} ${contract.direction}</span>
                             ${recBadge}
                         </div>
                         <div style="color: #6b7280; font-size: 0.85rem; margin-top: 4px;">
-                            Expiry: ${contract.expiry} • Score: <strong style="color: ${style.color};">${contract.composite_score}/100</strong>
+                            Expiry: ${contract.expiry} • Score: <strong style="color: #10b981;">${contract.composite_score}/100</strong>${contract.analyzed_at ? ` • <span style="color: #9ca3af;">Analyzed: ${contract.analyzed_at}</span>` : ''}
                         </div>
                     </div>
                 </div>
@@ -7184,31 +7599,125 @@ function buildUnifiedContractCard(contract, index, options = {}) {
                     <div style="font-size: 0.8rem; color: #6b7280;">Spot Price</div>
                 </div>
             </div>
+            <div style="padding: 16px 20px; display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 15px; border-top: 1px solid #e5e7eb;">
+                <div><div style="font-size: 0.7rem; color: #9ca3af; text-transform: uppercase;">Lots</div><div style="font-weight: 600; color: #1f2937;">${contract.recommended_lots || 'N/A'}</div></div>
+                <div><div style="font-size: 0.7rem; color: #9ca3af; text-transform: uppercase;">Margin Req.</div><div style="font-weight: 600; color: #1f2937;">₹${((contract.margin_required || 0) / 100000).toFixed(1)}L</div></div>
+                <div><div style="font-size: 0.7rem; color: #9ca3af; text-transform: uppercase;">Max Profit</div><div style="font-weight: 600; color: #10b981;">₹${((contract.max_profit || 0) / 1000).toFixed(1)}K</div></div>
+                <div><div style="font-size: 0.7rem; color: #9ca3af; text-transform: uppercase;">Max Loss</div><div style="font-weight: 600; color: #ef4444;">₹${((contract.max_loss || 0) / 1000).toFixed(1)}K</div></div>
+            </div>
+            <div style="padding: 12px 20px; background: #f9fafb; border-top: 1px solid #e5e7eb;">
+                <button onclick="FuturesAlgorithm.showDetailModal(FuturesAlgorithm.analyzedContracts.find(c => c.symbol === '${contract.symbol}'))"
+                        style="width: 100%; background: #3b82f6; color: white; border: none; padding: 10px; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 0.875rem;">
+                    View Full Analysis
+                </button>
+            </div>
+        </div>`;
+}
+
+// ===== UNIFIED OPPORTUNITIES DISPLAY =====
+
+// Get source badge HTML
+function getSourceBadges(opportunity) {
+    const sources = opportunity.sources || [opportunity.source || 'historical'];
+    const details = opportunity.source_details || {};
+    let badges = '';
+
+    const badgeStyles = {
+        auto: { bg: '#dbeafe', color: '#1e40af', border: '#3b82f6', icon: '🤖', label: 'Auto' },
+        manual: { bg: '#d1fae5', color: '#065f46', border: '#10b981', icon: '🖱', label: 'Manual' },
+        historical: { bg: '#fef3c7', color: '#92400e', border: '#f59e0b', icon: '📋', label: 'Hist' },
+    };
+
+    sources.forEach(src => {
+        const s = badgeStyles[src] || badgeStyles.historical;
+        let extra = '';
+        if (src === 'historical' && details[src]) {
+            // Show relative time for historical
+            const analyzedAt = details[src].analyzed_at;
+            if (analyzedAt) extra = ` (${analyzedAt})`;
+        }
+        badges += `<span style="background: ${s.bg}; color: ${s.color}; padding: 2px 8px; border-radius: 10px; font-size: 0.7rem; font-weight: 600; border: 1px solid ${s.border}30; display: inline-flex; align-items: center; gap: 3px;">${s.icon} ${s.label}${extra}</span> `;
+    });
+    return badges;
+}
+
+// Get frequency indicator HTML
+function getFrequencyIndicator(opportunity) {
+    const freq = opportunity.frequency || 0;
+    if (freq <= 0) return '';
+
+    let icon, color;
+    if (freq >= 5) { icon = '🔥'; color = '#dc2626'; }
+    else if (freq >= 2) { icon = '🔄'; color = '#ca8a04'; }
+    else { icon = '✨'; color = '#16a34a'; }
+
+    return `<span onclick="event.stopPropagation(); RecommendationHistory.show('${opportunity.symbol}')"
+                  style="color: ${color}; font-size: 0.8rem; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 3px;"
+                  title="Click to see recommendation history">
+                ${icon} ${freq}× in 30d
+            </span>`;
+}
+
+// Build a single opportunity card
+function buildOpportunityCard(opportunity, index) {
+    const directionColor = opportunity.direction === 'LONG' ? '#10b981' : '#ef4444';
+    const directionIcon = opportunity.direction === 'LONG' ? '📈' : '📉';
+    const sourceBadges = getSourceBadges(opportunity);
+    const freqIndicator = getFrequencyIndicator(opportunity);
+    const basisPct = opportunity.basis_pct ? `Basis: ${Number(opportunity.basis_pct).toFixed(1)}%` : '';
+
+    return `
+        <div class="opportunity-card" data-sources='${JSON.stringify(opportunity.sources || [opportunity.source || "historical"])}' data-symbol="${opportunity.symbol}" style="background: white; border: 2px solid #e5e7eb; border-radius: 12px; margin-bottom: 12px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.04); transition: border-color 0.2s, box-shadow 0.2s;"
+             onmouseover="this.style.borderColor='#3b82f6'; this.style.boxShadow='0 4px 12px rgba(59,130,246,0.15)';"
+             onmouseout="this.style.borderColor='#e5e7eb'; this.style.boxShadow='0 2px 8px rgba(0,0,0,0.04)';">
+            <!-- Card Header -->
+            <div style="padding: 14px 18px; display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 10px;">
+                <div style="flex: 1; min-width: 200px;">
+                    <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 6px;">
+                        <span style="font-size: 1.15rem; font-weight: 700; color: #1f2937;">${opportunity.symbol}</span>
+                        <span style="background: ${directionColor}; color: white; padding: 2px 8px; border-radius: 10px; font-size: 0.7rem; font-weight: 600;">
+                            ${directionIcon} ${opportunity.direction}
+                        </span>
+                        <span style="background: #f3f4f6; color: #374151; padding: 2px 8px; border-radius: 10px; font-size: 0.7rem; font-weight: 600;">
+                            Score: ${opportunity.composite_score}/100
+                        </span>
+                        <span style="color: #9ca3af; font-size: 0.75rem;">${opportunity.expiry}</span>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
+                        ${sourceBadges}
+                        ${freqIndicator}
+                    </div>
+                </div>
+                <div style="text-align: right; min-width: 120px;">
+                    <div style="font-size: 1.05rem; font-weight: 700; color: #1f2937;">₹${(opportunity.spot_price || 0).toLocaleString('en-IN', {maximumFractionDigits: 2})}</div>
+                    <div style="font-size: 0.75rem; color: #9ca3af;">${basisPct}</div>
+                </div>
+            </div>
 
             <!-- Card Body - Quick Stats -->
-            <div style="padding: 16px 20px; display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 15px; border-top: 1px solid #e5e7eb;">
+            <div style="padding: 10px 18px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; border-top: 1px solid #f3f4f6; background: #fafafa;">
                 <div>
-                    <div style="font-size: 0.7rem; color: #9ca3af; text-transform: uppercase;">Lots</div>
-                    <div style="font-weight: 600; color: #1f2937;">${contract.recommended_lots || 'N/A'}</div>
+                    <div style="font-size: 0.65rem; color: #9ca3af; text-transform: uppercase; letter-spacing: 0.5px;">Lots</div>
+                    <div style="font-weight: 600; color: #1f2937; font-size: 0.9rem;">${opportunity.recommended_lots || 'N/A'}</div>
                 </div>
                 <div>
-                    <div style="font-size: 0.7rem; color: #9ca3af; text-transform: uppercase;">Margin Req.</div>
-                    <div style="font-weight: 600; color: #1f2937;">₹${((contract.margin_required || 0) / 100000).toFixed(1)}L</div>
+                    <div style="font-size: 0.65rem; color: #9ca3af; text-transform: uppercase; letter-spacing: 0.5px;">Margin</div>
+                    <div style="font-weight: 600; color: #1f2937; font-size: 0.9rem;">₹${((opportunity.margin_required || 0) / 100000).toFixed(1)}L</div>
                 </div>
                 <div>
-                    <div style="font-size: 0.7rem; color: #9ca3af; text-transform: uppercase;">Max Profit</div>
-                    <div style="font-weight: 600; color: #10b981;">₹${((contract.max_profit || 0) / 1000).toFixed(1)}K</div>
+                    <div style="font-size: 0.65rem; color: #9ca3af; text-transform: uppercase; letter-spacing: 0.5px;">Max Profit</div>
+                    <div style="font-weight: 600; color: #10b981; font-size: 0.9rem;">₹${((opportunity.max_profit || 0) / 1000).toFixed(1)}K</div>
                 </div>
                 <div>
-                    <div style="font-size: 0.7rem; color: #9ca3af; text-transform: uppercase;">Max Loss</div>
-                    <div style="font-weight: 600; color: #ef4444;">₹${((contract.max_loss || 0) / 1000).toFixed(1)}K</div>
+                    <div style="font-size: 0.65rem; color: #9ca3af; text-transform: uppercase; letter-spacing: 0.5px;">Max Loss</div>
+                    <div style="font-weight: 600; color: #ef4444; font-size: 0.9rem;">₹${((opportunity.max_loss || 0) / 1000).toFixed(1)}K</div>
                 </div>
             </div>
 
             <!-- View Details Button -->
-            <div style="padding: 12px 20px; background: #f9fafb; border-top: 1px solid #e5e7eb;">
-                <button onclick="FuturesAlgorithm.showDetailModal(FuturesAlgorithm.analyzedContracts.find(c => c.symbol === '${contract.symbol}'))"
-                        style="width: 100%; background: #3b82f6; color: white; border: none; padding: 10px; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 0.875rem;">
+            <div style="padding: 10px 18px; border-top: 1px solid #f3f4f6;">
+                <button onclick="FuturesAlgorithm.showDetailModal(FuturesAlgorithm.analyzedContracts.find(c => c.symbol === '${opportunity.symbol}'))"
+                        style="width: 100%; background: #3b82f6; color: white; border: none; padding: 9px; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 0.85rem;">
                     View Full Analysis
                 </button>
             </div>
@@ -7216,27 +7725,249 @@ function buildUnifiedContractCard(contract, index, options = {}) {
     `;
 }
 
-// Initialize preloaded results on page load
+// Get filtered + sorted list based on current state
+function getFilteredOpportunities() {
+    let list = [...UnifiedState.allOpportunities];
+
+    // Apply source filter
+    if (UnifiedState.activeFilter !== 'all') {
+        list = list.filter(o => {
+            const sources = o.sources || [o.source || 'historical'];
+            return sources.includes(UnifiedState.activeFilter);
+        });
+    }
+
+    // Apply search filter
+    if (UnifiedState.searchQuery) {
+        const q = UnifiedState.searchQuery.toUpperCase();
+        list = list.filter(o => o.symbol.toUpperCase().includes(q));
+    }
+
+    // Apply sort
+    const sortFns = {
+        conviction: (a, b) => (b.conviction_score || 0) - (a.conviction_score || 0),
+        score: (a, b) => (b.composite_score || 0) - (a.composite_score || 0),
+        frequency: (a, b) => (b.frequency || 0) - (a.frequency || 0),
+        recent: (a, b) => (b.latest_analyzed_at || '').localeCompare(a.latest_analyzed_at || ''),
+    };
+    list.sort(sortFns[UnifiedState.activeSort] || sortFns.conviction);
+
+    return list;
+}
+
+// Count opportunities per source
+function getSourceCounts() {
+    const counts = { all: 0, auto: 0, manual: 0, historical: 0 };
+    UnifiedState.allOpportunities.forEach(o => {
+        counts.all++;
+        const sources = o.sources || [o.source || 'historical'];
+        if (sources.includes('auto')) counts.auto++;
+        if (sources.includes('manual')) counts.manual++;
+        if (sources.includes('historical')) counts.historical++;
+    });
+    return counts;
+}
+
+// Render the unified display
+function displayUnifiedOpportunities() {
+    const sectionDiv = document.getElementById('unifiedOpportunitiesSection');
+    const opportunities = UnifiedState.allOpportunities;
+
+    if (!opportunities || opportunities.length === 0) {
+        sectionDiv.innerHTML = `
+            <div style="background: linear-gradient(135deg, #f9fafb 0%, #f3f4f6 100%); border-radius: 12px; padding: 24px; border: 1px dashed #d1d5db;">
+                <div style="display: flex; align-items: center; gap: 15px;">
+                    <span style="font-size: 2rem;">📊</span>
+                    <div>
+                        <h3 style="margin: 0 0 5px 0; color: #374151; font-weight: 600;">No Futures Opportunities</h3>
+                        <p style="margin: 0; color: #6b7280; font-size: 0.875rem;">
+                            No analysis results found. Click "Find Top 3 Opportunities" above to run the algorithm, or wait for the daily automated scan at 9:40 AM.
+                        </p>
+                    </div>
+                </div>
+            </div>
+        `;
+        return;
+    }
+
+    // Compute stats
+    const counts = getSourceCounts();
+    const uniqueSymbols = new Set(opportunities.map(o => o.symbol)).size;
+    // Find most recent analysis time
+    let lastScan = '';
+    for (const o of opportunities) {
+        if (o.analyzed_at) { lastScan = o.analyzed_at; break; }
+    }
+
+    // Build header bar
+    let html = `
+        <div style="background: linear-gradient(135deg, #1e293b 0%, #334155 100%); border-radius: 12px; padding: 16px 20px; margin-bottom: 16px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+            <div>
+                <h2 style="color: #f8fafc; margin: 0 0 4px 0; font-size: 1.15rem; font-weight: 700; display: flex; align-items: center; gap: 8px;">
+                    FUTURES OPPORTUNITIES
+                </h2>
+                <div style="color: #94a3b8; font-size: 0.8rem;">
+                    ${counts.all} opportunities &bull; ${uniqueSymbols} unique symbols${lastScan ? ` &bull; Last scan: ${lastScan}` : ''}
+                </div>
+            </div>
+            <button onclick="FuturesAlgorithm.run()"
+                    style="background: #3b82f6; color: white; border: none; padding: 8px 18px; border-radius: 8px; cursor: pointer; font-weight: 600; font-size: 0.85rem; display: flex; align-items: center; gap: 6px;">
+                Run Algorithm ▶
+            </button>
+        </div>
+    `;
+
+    // Build filter tabs + sort/search bar
+    const filterActive = UnifiedState.activeFilter;
+    const tabStyle = (key) => {
+        const isActive = filterActive === key;
+        return `background: ${isActive ? '#3b82f6' : '#f3f4f6'}; color: ${isActive ? 'white' : '#374151'}; border: none; padding: 6px 14px; border-radius: 8px; cursor: pointer; font-weight: 600; font-size: 0.8rem; transition: all 0.15s;`;
+    };
+
+    html += `
+        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 14px;">
+            <div style="display: flex; gap: 6px; flex-wrap: wrap;">
+                <button onclick="setUnifiedFilter('all')" style="${tabStyle('all')}">All (${counts.all})</button>
+                <button onclick="setUnifiedFilter('auto')" style="${tabStyle('auto')}">🤖 Auto (${counts.auto})</button>
+                <button onclick="setUnifiedFilter('manual')" style="${tabStyle('manual')}">🖱 Manual (${counts.manual})</button>
+                <button onclick="setUnifiedFilter('historical')" style="${tabStyle('historical')}">📋 Historical (${counts.historical})</button>
+            </div>
+            <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+                <select id="unifiedSortSelect" onchange="setUnifiedSort(this.value)"
+                        style="padding: 5px 10px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 0.8rem; background: white; color: #374151; cursor: pointer;">
+                    <option value="conviction" ${UnifiedState.activeSort === 'conviction' ? 'selected' : ''}>Conviction</option>
+                    <option value="score" ${UnifiedState.activeSort === 'score' ? 'selected' : ''}>Score</option>
+                    <option value="frequency" ${UnifiedState.activeSort === 'frequency' ? 'selected' : ''}>Frequency</option>
+                    <option value="recent" ${UnifiedState.activeSort === 'recent' ? 'selected' : ''}>Recent</option>
+                </select>
+                <input type="text" id="unifiedSearchInput" placeholder="Search symbol..."
+                       value="${UnifiedState.searchQuery}"
+                       oninput="setUnifiedSearch(this.value)"
+                       style="padding: 5px 10px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 0.8rem; width: 140px;">
+            </div>
+        </div>
+    `;
+
+    // Build cards
+    const filtered = getFilteredOpportunities();
+    if (filtered.length === 0) {
+        html += `<div style="text-align: center; padding: 30px; color: #9ca3af; font-size: 0.9rem;">No opportunities match the current filter.</div>`;
+    } else {
+        html += `<div id="unifiedCardsContainer">`;
+        filtered.forEach((opp, i) => {
+            html += buildOpportunityCard(opp, i);
+        });
+        html += `</div>`;
+    }
+
+    sectionDiv.innerHTML = html;
+
+    // Store all opportunities in FuturesAlgorithm.analyzedContracts for View Details
+    FuturesAlgorithm.analyzedContracts = [...UnifiedState.allOpportunities];
+}
+
+// Filter handler
+function setUnifiedFilter(source) {
+    UnifiedState.activeFilter = source;
+    displayUnifiedOpportunities();
+}
+
+// Sort handler
+function setUnifiedSort(criteria) {
+    UnifiedState.activeSort = criteria;
+    displayUnifiedOpportunities();
+}
+
+// Search handler
+function setUnifiedSearch(query) {
+    UnifiedState.searchQuery = query;
+    displayUnifiedOpportunities();
+}
+
+// Merge manual results into the unified list
+function mergeManualResults(results) {
+    if (!results || !results.success || !results.all_contracts || results.all_contracts.length === 0) return;
+
+    const newContracts = results.all_contracts;
+    newContracts.forEach(contract => {
+        const key = `${contract.symbol}|${contract.expiry_date}`;
+        // Find existing entry
+        const existingIdx = UnifiedState.allOpportunities.findIndex(
+            o => o.symbol === contract.symbol && o.expiry_date === contract.expiry_date
+        );
+
+        // Tag as manual source
+        contract.source = 'manual';
+        contract.sources = contract.sources || ['manual'];
+        contract.source_details = contract.source_details || {
+            manual: { analyzed_at: contract.analyzed_at, score: contract.composite_score }
+        };
+        const freq = (RECOMMENDATION_HISTORY[contract.symbol] || []).length;
+        contract.frequency = freq;
+        contract.recommendation_count = freq;
+        const freqNorm = Math.min(freq / 10.0, 1.0) * 100;
+        const srcDiv = (contract.sources.length / 3.0) * 100;
+        contract.conviction_score = Math.round(
+            (contract.composite_score * 0.6 + freqNorm * 0.25 + srcDiv * 0.15) * 10
+        ) / 10;
+        contract.latest_analyzed_at = new Date().toISOString();
+
+        if (existingIdx >= 0) {
+            // Merge: add 'manual' source, update if higher score
+            const existing = UnifiedState.allOpportunities[existingIdx];
+            if (!existing.sources) existing.sources = [existing.source || 'historical'];
+            if (!existing.sources.includes('manual')) {
+                existing.sources.push('manual');
+                existing.source_details = existing.source_details || {};
+                existing.source_details.manual = { analyzed_at: contract.analyzed_at, score: contract.composite_score };
+            }
+            // Update base data if higher score
+            if (contract.composite_score > existing.composite_score) {
+                const savedSources = existing.sources;
+                const savedDetails = existing.source_details;
+                Object.assign(existing, contract);
+                existing.sources = savedSources;
+                existing.source_details = savedDetails;
+            }
+            // Recompute conviction
+            const eSrcDiv = (existing.sources.length / 3.0) * 100;
+            existing.conviction_score = Math.round(
+                (existing.composite_score * 0.6 + freqNorm * 0.25 + eSrcDiv * 0.15) * 10
+            ) / 10;
+            existing.latest_analyzed_at = new Date().toISOString();
+        } else {
+            // New entry
+            UnifiedState.allOpportunities.push(contract);
+        }
+    });
+
+    // Re-sort and re-display
+    UnifiedState.activeFilter = 'all';
+    displayUnifiedOpportunities();
+
+    // Flash notification
+    UIBuilders.showNotification({
+        type: 'success',
+        message: `${newContracts.length} manual results merged into opportunities list.`,
+        icon: '🖱',
+        timeout: 4000
+    });
+}
+
+// Backward-compatible wrapper for existing callers
+function displayLatestProcessed(results) {
+    mergeManualResults(results);
+}
+
+// Initialize on page load
 document.addEventListener('DOMContentLoaded', function() {
-    console.log('[Futures] Checking for preloaded results...');
-    console.log('[Futures] TODAYS_AUTOMATED_RESULTS:', TODAYS_AUTOMATED_RESULTS);
-    console.log('[Futures] PRELOADED_FUTURES_RESULTS:', PRELOADED_FUTURES_RESULTS);
+    console.log('[Futures] Initializing unified opportunities...');
+    console.log('[Futures] UNIFIED_OPPORTUNITIES:', UNIFIED_OPPORTUNITIES);
 
-    // Small delay to ensure all modules (especially FuturesAlgorithm) are loaded
     setTimeout(function() {
-        // Display today's automated results first (expanded by default)
-        displayTodaysResults(TODAYS_AUTOMATED_RESULTS);
-
-        if (TODAYS_AUTOMATED_RESULTS && TODAYS_AUTOMATED_RESULTS.all_contracts) {
-            console.log('[Futures] Loaded', TODAYS_AUTOMATED_RESULTS.all_contracts.length, "today's automated results from", TODAYS_AUTOMATED_RESULTS.batch_time);
-        }
-
-        // Then display previous suggestions (collapsed by default)
-        displayPreloadedResults(PRELOADED_FUTURES_RESULTS);
-
-        if (PRELOADED_FUTURES_RESULTS && PRELOADED_FUTURES_RESULTS.all_contracts) {
-            console.log('[Futures] Loaded', PRELOADED_FUTURES_RESULTS.all_contracts.length, 'previous results from', PRELOADED_FUTURES_RESULTS.batch_time);
-        }
+        UnifiedState.allOpportunities = UNIFIED_OPPORTUNITIES || [];
+        console.log('[Futures] Loaded', UnifiedState.allOpportunities.length, 'unified opportunities');
+        displayUnifiedOpportunities();
     }, 150);
 });
 </script>

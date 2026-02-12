@@ -12,8 +12,8 @@ from .models import (
 
 @admin.register(CredentialStore)
 class CredentialStoreAdmin(admin.ModelAdmin):
-    list_display = ['service', 'name', 'username', 'created_at', 'last_session_update']
-    list_filter = ['service']
+    list_display = ['service', 'name', 'username', 'auto_login_status', 'auto_login_date', 'created_at', 'last_session_update']
+    list_filter = ['service', 'auto_login_status']
     search_fields = ['service', 'name', 'username']
     readonly_fields = ['created_at', 'last_session_update']
 
@@ -31,6 +31,13 @@ class CredentialStoreAdmin(admin.ModelAdmin):
         ('Additional Fields', {
             'fields': ('pan', 'neo_password', 'sid'),
             'classes': ('collapse',)
+        }),
+        ('Neo Session (saved for reuse)', {
+            'fields': ('neo_edit_token', 'neo_edit_sid', 'neo_server_id'),
+            'classes': ('collapse',)
+        }),
+        ('Auto-Login Tracking', {
+            'fields': ('auto_login_status', 'auto_login_date'),
         }),
         ('Timestamps', {
             'fields': ('created_at', 'last_session_update'),

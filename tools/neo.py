@@ -36,7 +36,6 @@ from datetime import datetime
 import pandas as pd
 import re
 import logging
-import time
 import threading
 
 logger = logging.getLogger(__name__)
@@ -160,13 +159,15 @@ class NeoAPI(BrokerInterface if isinstance(BrokerInterface, type) else object):
             logger.warning(f"Session restore failed during client init: {e}")
             return False
 
-    def login(self, max_retries: int = 10, retry_delay: float = 2.0) -> bool:
+    def login(self) -> bool:
         """
-        Login to Kotak Neo and establish session with retry logic.
+        Login to Kotak Neo with single-attempt auto-login using MPIN.
 
-        Args:
-            max_retries: Maximum number of login attempts (default: 10)
-            retry_delay: Delay between retries in seconds (default: 2.0)
+        Flow:
+        1. Try restoring saved session (no login needed)
+        2. Check daily auto-login limit (one attempt per day)
+        3. Call API login() with PAN + password
+        4. Complete 2FA with stored MPIN (no OTP needed)
 
         Returns:
             bool: True if login successful
@@ -176,107 +177,124 @@ class NeoAPI(BrokerInterface if isinstance(BrokerInterface, type) else object):
             logger.info("Session restored from database — skipping login/2FA")
             return True
 
+        from apps.brokers.utils.auth_manager import (
+            can_attempt_auto_login, mark_auto_login_started,
+            mark_auto_login_success, mark_auto_login_failed,
+        )
+
+        # Check daily limit
+        can_login, reason = can_attempt_auto_login('kotakneo')
+        if not can_login:
+            self.last_error = f"Auto-login blocked: {reason}"
+            logger.warning(f"Neo login blocked: {reason}")
+            return False
+
         from neo_api_client import NeoAPI as KotakNeoAPI
         from apps.core.models import CredentialStore
 
-        # Get fresh credentials to access session_token
         creds = CredentialStore.objects.filter(service='kotakneo').first()
         if not creds:
             self.last_error = "Kotak Neo credentials not found in database"
             logger.error(self.last_error)
             return False
 
-        last_error = None
+        if not self.mpin:
+            self.last_error = "MPIN not configured — cannot auto-login"
+            logger.error(self.last_error)
+            self._notify_neo_login_failed(self.last_error)
+            return False
 
-        for attempt in range(1, max_retries + 1):
+        mark_auto_login_started('kotakneo')
+
+        try:
+            self.neo = KotakNeoAPI(
+                consumer_key=self.consumer_key,
+                consumer_secret=self.consumer_secret,
+                environment='prod'
+            )
+
+            # Login with PAN + password (generates view token)
+            logger.info(f"Logging in with PAN: {creds.username[:4]}****")
+            response = self.neo.login(
+                pan=creds.username,
+                password=creds.password
+            )
+
+            if not response or 'error' in response:
+                error_msg = response.get('error', 'Unknown') if response else 'No response'
+                self.last_error = f"Login API error: {error_msg}"
+                logger.error(f"Neo login failed: {self.last_error}")
+                mark_auto_login_failed('kotakneo')
+                self._notify_neo_login_failed(self.last_error)
+                return False
+
+            # Complete 2FA with stored MPIN (no OTP needed)
+            logger.info("Login API succeeded — completing 2FA with MPIN")
+            session_response = self.neo.session_2fa(OTP=self.mpin)
+
+            if not session_response or not session_response.get('data'):
+                self.last_error = f"2FA failed: {session_response}"
+                logger.error(f"Neo 2FA failed: {self.last_error}")
+                mark_auto_login_failed('kotakneo')
+                self._notify_neo_login_failed(f"2FA failed with MPIN")
+                return False
+
+            # 2FA succeeded
+            self.session_active = True
+            self.last_error = None
+
+            server_id = session_response.get('data', {}).get('hsServerId')
+            logger.info(f"Neo login successful - serverId: {server_id}")
+
+            if not (hasattr(self.neo.configuration, 'serverId') and self.neo.configuration.serverId):
+                logger.warning("serverId not set in configuration. Quotes API may not work.")
+
+            # Persist session for reuse
             try:
-                logger.info(f"Neo login attempt {attempt}/{max_retries}")
-
-                self.neo = KotakNeoAPI(
-                    consumer_key=self.consumer_key,
-                    consumer_secret=self.consumer_secret,
-                    environment='prod'
+                from apps.brokers.utils.auth_manager import save_neo_session
+                save_neo_session(
+                    edit_token=self.neo.configuration.edit_token,
+                    edit_sid=self.neo.configuration.edit_sid,
+                    server_id=getattr(self.neo.configuration, 'serverId', '') or ''
                 )
+            except Exception as save_err:
+                logger.warning(f"Failed to persist Neo session (non-fatal): {save_err}")
 
-                # Login with PAN (username field stores PAN)
-                logger.info(f"Logging in with PAN: {creds.username[:4]}****")
-                response = self.neo.login(
-                    pan=creds.username,
-                    password=creds.password
-                )
+            mark_auto_login_success('kotakneo')
+            self._notify_neo_login_success()
+            return True
 
-                if not response or 'error' in response:
-                    last_error = f"Login error: {response.get('error', 'Unknown') if response else 'No response'}"
-                    logger.warning(f"Attempt {attempt}: {last_error}")
-                    if attempt < max_retries:
-                        time.sleep(retry_delay)
-                    continue
+        except Exception as e:
+            self.last_error = self._format_exception(e)
+            self.session_active = False
+            logger.error(f"Neo login error: {self.last_error}", exc_info=True)
+            mark_auto_login_failed('kotakneo')
+            self._notify_neo_login_failed(self.last_error)
+            return False
 
-                # Login succeeded — complete 2FA with MPIN
-                mpin_value = creds.session_token  # 6-digit MPIN
-                logger.info(f"Attempting 2FA with MPIN (length: {len(str(mpin_value))})")
-                session_response = self.neo.session_2fa(OTP=mpin_value)
+    def _notify_neo_login_failed(self, reason: str):
+        """Send Telegram notification that Neo auto-login failed."""
+        self._send_telegram(
+            f"Kotak Neo Auto-Login Failed\n\n"
+            f"Reason: {reason}\n\n"
+            f"No more auto-login attempts today.\n"
+            f"Please login manually via the web UI."
+        )
 
-                if not session_response or not session_response.get('data'):
-                    last_error = f"2FA failed: {session_response}"
-                    logger.warning(f"Attempt {attempt}: {last_error}")
-                    if attempt < max_retries:
-                        time.sleep(retry_delay)
-                    continue
+    def _notify_neo_login_success(self):
+        """Send Telegram notification that Neo auto-login succeeded."""
+        self._send_telegram(
+            f"Kotak Neo Login Successful\n\n"
+            f"Session established and saved."
+        )
 
-                # 2FA succeeded
-                self.session_active = True
-                self.last_error = None
-
-                server_id = session_response.get('data', {}).get('hsServerId')
-                has_server_id = hasattr(self.neo.configuration, 'serverId') and self.neo.configuration.serverId
-                logger.info(f"Neo login successful on attempt {attempt} - serverId: {server_id}")
-
-                if not has_server_id:
-                    logger.warning("serverId not set in configuration. Quotes API may not work.")
-
-                # Persist session for reuse across processes/restarts
-                try:
-                    from apps.brokers.utils.auth_manager import save_neo_session
-                    save_neo_session(
-                        edit_token=self.neo.configuration.edit_token,
-                        edit_sid=self.neo.configuration.edit_sid,
-                        server_id=getattr(self.neo.configuration, 'serverId', '') or ''
-                    )
-                except Exception as save_err:
-                    logger.warning(f"Failed to persist Neo session (non-fatal): {save_err}")
-
-                return True
-
-            except Exception as e:
-                # Handle exceptions with broken __str__ methods (like ApiException)
-                last_error = self._format_exception(e)
-
-                # Check if it's a connection/timeout error
-                error_lower = last_error.lower()
-                is_retryable = any(keyword in error_lower for keyword in [
-                    'timeout', 'connection', 'connect', 'network', 'unreachable',
-                    'temporarily', 'retry', 'reset', 'refused'
-                ])
-
-                logger.warning(f"Attempt {attempt}: {last_error} (retryable: {is_retryable})")
-
-                if is_retryable and attempt < max_retries:
-                    # Exponential backoff for connection errors
-                    wait_time = retry_delay * (1.5 ** (attempt - 1))
-                    wait_time = min(wait_time, 30)  # Cap at 30 seconds
-                    logger.info(f"Waiting {wait_time:.1f}s before retry...")
-                    time.sleep(wait_time)
-                    continue
-                elif not is_retryable:
-                    # Non-retryable error (auth failure, invalid credentials, etc.)
-                    break
-
-        # All retries exhausted
-        self.last_error = last_error or "Login failed after all retries"
-        self.session_active = False
-        logger.error(f"Neo login failed after {max_retries} attempts: {self.last_error}")
-        return False
+    def _send_telegram(self, message: str):
+        """Send a Telegram notification (convenience wrapper)."""
+        try:
+            from apps.alerts.services.telegram_client import send_telegram_notification
+            send_telegram_notification(message, notification_type='INFO')
+        except Exception as e:
+            logger.warning(f"Failed to send Telegram notification: {e}")
 
     def _format_exception(self, e: Exception) -> str:
         """Format exception message, handling broken __str__ methods."""

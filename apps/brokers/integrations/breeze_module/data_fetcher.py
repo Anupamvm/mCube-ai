@@ -36,7 +36,7 @@ def fetch_and_save_breeze_data():
     """
     breeze = get_breeze_client()
     funds_resp = breeze.get_funds()
-    funds = funds_resp.get('Success', {})
+    funds = funds_resp.get('Success') or {}
 
     # Use centralized credential loading and API patterns
     creds = get_credentials('breeze')
@@ -69,7 +69,7 @@ def fetch_and_save_breeze_data():
     )
 
     pos_resp = breeze.get_portfolio_positions()
-    raw_positions = pos_resp.get('Success', [])
+    raw_positions = pos_resp.get('Success') or []
     pos_objs = []
     for p in raw_positions:
         try:

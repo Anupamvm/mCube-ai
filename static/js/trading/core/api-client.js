@@ -196,6 +196,7 @@ const ApiClient = (function() {
     const endpoints = {
         // Algorithm endpoints
         futures: '/trading/trigger/futures/',
+        futuresTaskStatus: (taskId) => `/trading/trigger/futures/status/${taskId}/`,
         strangle: '/trading/trigger/strangle/',
         verify: '/trading/trigger/verify/',  // Verify future trade
 

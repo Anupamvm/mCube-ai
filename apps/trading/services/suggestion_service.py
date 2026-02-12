@@ -180,7 +180,9 @@ def save_futures_suggestions(passed_results, user=None, source='manual'):
                 'margin_data': margin_data,
                 'stop_loss': position_sizing['stop_loss'],
                 'target': position_sizing['target'],
-                'direction': direction
+                'direction': direction,
+                'entry_price': float(futures_price),
+                'expiry_date': expiry_date_str,
             }
 
             # Convert data to JSON-safe format

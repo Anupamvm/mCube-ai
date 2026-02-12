@@ -98,17 +98,16 @@ def manual_triggers_refactored(request):
     except Exception as e:
         logger.warning(f"Error getting data freshness: {e}")
 
-    # ===== PRELOAD LATEST FUTURES SUGGESTIONS =====
-    # Fetch the latest futures suggestions (created within last 7 days for current view)
-    # AND 30 days history for aggregation
-    preloaded_results = None
-    todays_results = None
+    # ===== BUILD UNIFIED FUTURES OPPORTUNITIES =====
+    unified_opportunities = []
     recommendation_history = {}  # symbol -> list of historical recommendations
 
-    def _suggestion_to_contract(suggestion, rec_count=0):
+    def _suggestion_to_contract(suggestion, rec_count=0, source='historical'):
         """Convert a TradeSuggestion to the contract data format expected by the frontend."""
         reasoning = suggestion.algorithm_reasoning or {}
         position_details = suggestion.position_details or {}
+        analyzed_at_str = timezone.localtime(suggestion.created_at).strftime('%d %b %H:%M') if suggestion.created_at else None
+        analyzed_at_iso = timezone.localtime(suggestion.created_at).isoformat() if suggestion.created_at else None
         return {
             'symbol': suggestion.instrument,
             'expiry': suggestion.expiry_date.strftime('%d-%b-%Y') if suggestion.expiry_date else '',
@@ -139,6 +138,9 @@ def manual_triggers_refactored(request):
             'max_profit': float(suggestion.max_profit or 0),
             'max_loss': float(suggestion.max_loss or 0),
             'recommendation_count': rec_count,
+            'analyzed_at': analyzed_at_str,
+            'analyzed_at_iso': analyzed_at_iso,
+            'source': source,
         }
 
     try:
@@ -162,7 +164,7 @@ def manual_triggers_refactored(request):
 
             recommendation_history[symbol].append({
                 'id': suggestion.id,
-                'date': suggestion.created_at.strftime('%Y-%m-%d %H:%M'),
+                'date': timezone.localtime(suggestion.created_at).strftime('%Y-%m-%d %H:%M'),
                 'direction': suggestion.direction,
                 'score': reasoning.get('composite_score', 0),
                 'entry_price': float(suggestion.spot_price or 0),
@@ -173,68 +175,101 @@ def manual_triggers_refactored(request):
                 'expiry_date': suggestion.expiry_date.strftime('%Y-%m-%d') if suggestion.expiry_date else '',
             })
 
-        # ===== TODAY'S AUTOMATED RESULTS =====
-        today_start = timezone.now().replace(hour=0, minute=0, second=0, microsecond=0)
-        todays_auto_suggestions = TradeSuggestion.objects.filter(
+        # ===== COLLECT ALL SUGGESTIONS WITH SOURCE TAGS =====
+        today_start = timezone.localtime(timezone.now()).replace(hour=0, minute=0, second=0, microsecond=0)
+        now_local = timezone.localtime(timezone.now())
+
+        # Today's automated results
+        todays_auto = TradeSuggestion.objects.filter(
             user=request.user,
             strategy='icici_futures',
             source='auto',
             created_at__gte=today_start
         ).order_by('-created_at')
 
-        if todays_auto_suggestions.exists():
-            todays_contracts = []
-            for suggestion in todays_auto_suggestions:
-                rec_count = len(recommendation_history.get(suggestion.instrument, []))
-                todays_contracts.append(_suggestion_to_contract(suggestion, rec_count))
-
-            todays_contracts.sort(key=lambda x: x['composite_score'], reverse=True)
-
-            most_recent_auto = todays_auto_suggestions.first()
-            todays_results = {
-                'success': True,
-                'all_contracts': todays_contracts,
-                'total_passed': len(todays_contracts),
-                'batch_time': most_recent_auto.created_at.strftime('%Y-%m-%d %H:%M:%S'),
-            }
-
-        # ===== PREVIOUS SUGGESTIONS (exclude today's auto to avoid duplication) =====
-        cutoff_time = timezone.now() - timedelta(days=7)
-        latest_suggestions = all_history.filter(created_at__gte=cutoff_time).exclude(
+        # Historical results (last 7 days, excluding today's auto)
+        cutoff_7d = timezone.now() - timedelta(days=7)
+        historical = all_history.filter(created_at__gte=cutoff_7d).exclude(
             source='auto', created_at__gte=today_start
         )
 
-        if latest_suggestions.exists():
-            # Get the most recent suggestion's timestamp
-            most_recent = latest_suggestions.first()
-            batch_start = most_recent.created_at - timedelta(minutes=5)
+        # Build per-suggestion contract dicts with source tag
+        all_tagged_contracts = []
+        for suggestion in todays_auto:
+            rec_count = len(recommendation_history.get(suggestion.instrument, []))
+            contract = _suggestion_to_contract(suggestion, rec_count, source='auto')
+            all_tagged_contracts.append(contract)
 
-            # Get all suggestions from this batch
-            batch_suggestions = latest_suggestions.filter(created_at__gte=batch_start)
+        for suggestion in historical:
+            rec_count = len(recommendation_history.get(suggestion.instrument, []))
+            source_tag = 'historical'
+            # Today's manual triggers are tagged 'manual' (not auto, but created today)
+            if suggestion.created_at >= today_start and suggestion.source != 'auto':
+                source_tag = 'manual'
+            contract = _suggestion_to_contract(suggestion, rec_count, source=source_tag)
+            all_tagged_contracts.append(contract)
 
-            all_contracts = []
-            for suggestion in batch_suggestions:
-                rec_count = len(recommendation_history.get(suggestion.instrument, []))
-                all_contracts.append(_suggestion_to_contract(suggestion, rec_count))
+        # ===== CONSOLIDATE BY (symbol, expiry_date) =====
+        consolidated = {}  # key: "SYMBOL|EXPIRY_DATE" -> merged entry
+        for contract in all_tagged_contracts:
+            key = f"{contract['symbol']}|{contract['expiry_date']}"
+            source = contract['source']
 
-            # Sort by composite score descending
-            all_contracts.sort(key=lambda x: x['composite_score'], reverse=True)
+            if key not in consolidated:
+                # First occurrence — use as base
+                contract['sources'] = [source]
+                contract['source_details'] = {
+                    source: {
+                        'analyzed_at': contract['analyzed_at'],
+                        'score': contract['composite_score'],
+                    }
+                }
+                consolidated[key] = contract
+            else:
+                existing = consolidated[key]
+                # Add source if not already present
+                if source not in existing['sources']:
+                    existing['sources'].append(source)
+                    existing['source_details'][source] = {
+                        'analyzed_at': contract['analyzed_at'],
+                        'score': contract['composite_score'],
+                    }
+                # Keep highest score and most recent data
+                if contract['composite_score'] > existing['composite_score']:
+                    # Update base data with higher-scoring entry (preserve sources/source_details)
+                    sources = existing['sources']
+                    source_details = existing['source_details']
+                    existing.update(contract)
+                    existing['sources'] = sources
+                    existing['source_details'] = source_details
 
-            preloaded_results = {
-                'success': True,
-                'all_contracts': all_contracts,
-                'total_analyzed': len(all_contracts),
-                'total_passed': len(all_contracts),
-                'total_hist_fail': 0,
-                'total_failed': 0,
-                'total_errors': 0,
-                'historical_validation_enabled': True,
-                'preloaded': True,
-                'batch_time': most_recent.created_at.strftime('%Y-%m-%d %H:%M:%S'),
-            }
+        # ===== COMPUTE CONVICTION SCORE =====
+        for entry in consolidated.values():
+            freq = len(recommendation_history.get(entry['symbol'], []))
+            entry['frequency'] = freq
+            entry['recommendation_count'] = freq
+
+            # Conviction: score * 0.6 + frequency_normalized * 0.25 + source_diversity * 0.15
+            freq_normalized = min(freq / 10.0, 1.0) * 100  # cap at 10 appearances
+            source_diversity = len(entry['sources']) / 3.0 * 100  # max 3 sources
+            entry['conviction_score'] = round(
+                entry['composite_score'] * 0.6 +
+                freq_normalized * 0.25 +
+                source_diversity * 0.15,
+                1
+            )
+
+            # Determine latest_analyzed_at for sorting by recency
+            entry['latest_analyzed_at'] = entry.get('analyzed_at_iso', '')
+
+        unified_opportunities = sorted(
+            consolidated.values(),
+            key=lambda x: x['conviction_score'],
+            reverse=True
+        )
 
     except Exception as e:
-        logger.warning(f"Error loading preloaded futures results: {e}")
+        logger.warning(f"Error loading unified futures opportunities: {e}")
 
     # Helper function to serialize for JSON
     def json_serial(obj):
@@ -246,8 +281,7 @@ def manual_triggers_refactored(request):
 
     context = {
         'data_freshness': data_freshness,
-        'preloaded_results': json.dumps(preloaded_results, default=json_serial) if preloaded_results else 'null',
-        'todays_results': json.dumps(todays_results, default=json_serial) if todays_results else 'null',
+        'unified_opportunities': json.dumps(unified_opportunities, default=json_serial) if unified_opportunities else '[]',
         'recommendation_history': json.dumps(recommendation_history, default=json_serial) if recommendation_history else '{}',
     }
 

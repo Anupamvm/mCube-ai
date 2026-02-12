@@ -8,7 +8,6 @@ DAILY TRADING WORKFLOW (IST Timezone)
 =============================================================================
 
 PRE-MARKET (8:00 - 9:15 AM):
-- 8:15 AM: refresh_breeze_session - Validate/refresh Breeze API token
 - 8:55 AM: setup_trading_day - Evaluate data, determine if day is tradable
 
 MARKET OPEN (9:15 AM):
@@ -1584,66 +1583,14 @@ def check_futures_averaging():
 
 
 # =============================================================================
-# BREEZE SESSION REFRESH (Pre-market)
-# =============================================================================
-
-@shared_task(name='apps.strategies.tasks.refresh_breeze_session', bind=True)
-@task_enabled_guard('refresh-breeze-session')
-def refresh_breeze_session(self):
-    """
-    Refresh Breeze API Session - Scheduled Daily @ 8:15 AM
-
-    Ensures the Breeze session is valid before trading tasks run.
-    Breeze tokens expire daily at midnight IST. This task:
-    1. Checks if the current session token is still valid
-    2. If expired, triggers auto-login (Selenium + Telegram OTP)
-    3. Sends a Telegram notification with the result
-
-    Must run BEFORE execute_futures_algorithm (8:30 AM).
-    """
-    task_logger = TaskLogger(
-        task_name='refresh_breeze_session',
-        task_category='monitoring',
-        task_id=self.request.id
-    )
-
-    task_logger.start("Checking Breeze API session")
-
-    try:
-        # Same API call the web app uses — reads session token from DB,
-        # triggers auto-login (Selenium + Telegram OTP) if expired.
-        from apps.brokers.integrations.breeze import get_breeze_client
-        breeze = get_breeze_client()
-
-        # If we get here, session is valid
-        task_logger.success("Breeze session is valid and ready")
-        send_telegram_notification(
-            f"✅ BREEZE SESSION\n\nSession valid - ready for trading tasks.",
-            notification_type='INFO'
-        )
-        return {'success': True, 'status': 'valid'}
-
-    except Exception as e:
-        task_logger.failure("Breeze session not available", error=e)
-        send_telegram_notification(
-            f"⚠️ BREEZE SESSION\n\n"
-            f"Could not authenticate: {e}\n\n"
-            f"Trading tasks will use database prices.\n"
-            f"Login manually: /brokers/breeze/login/",
-            notification_type='WARNING'
-        )
-        return {'success': False, 'status': 'failed', 'message': str(e)}
-
-
-# =============================================================================
 # FUTURES ALGORITHM SCHEDULED TASK (PARALLELIZED)
 # =============================================================================
 
 @shared_task(
     name='apps.strategies.tasks.analyze_futures_batch',
     bind=True,
-    soft_time_limit=480,  # 8 minutes soft limit (return partial results)
-    time_limit=540,       # 9 minutes hard limit
+    soft_time_limit=540,  # 9 minutes soft limit (return partial results)
+    time_limit=720,       # 12 minutes hard limit (3 min grace for graceful shutdown)
 )
 def analyze_futures_batch(self, contract_ids, min_score=65):
     """
@@ -1662,6 +1609,7 @@ def analyze_futures_batch(self, contract_ids, min_score=65):
             'timed_out': bool (True if soft limit was hit)
         }
     """
+    import time
     from celery.exceptions import SoftTimeLimitExceeded
     from apps.data.models import ContractData
     from apps.trading.futures_analyzer import enhanced_futures_analysis
@@ -1674,15 +1622,30 @@ def analyze_futures_batch(self, contract_ids, min_score=65):
 
     contracts = ContractData.objects.filter(id__in=contract_ids)
     analyzed_count = 0
+    batch_start = time.time()
+    MAX_BATCH_SECONDS = 480  # Stop starting new contracts after 8 min (leaves buffer for soft/hard limits)
 
     try:
         for contract in contracts:
+            # Proactive time check: don't start a new contract if we're running low
+            elapsed = time.time() - batch_start
+            if elapsed > MAX_BATCH_SECONDS:
+                timed_out = True
+                logger.warning(
+                    f"analyze_futures_batch proactive stop after {elapsed:.0f}s - "
+                    f"{analyzed_count}/{len(contract_ids)} contracts done. Skipping remaining."
+                )
+                break
+
             try:
+                contract_start = time.time()
                 analysis_result = enhanced_futures_analysis(
                     stock_symbol=contract.symbol,
                     expiry_date=contract.expiry,
                     contract=contract
                 )
+                contract_elapsed = time.time() - contract_start
+                logger.info(f"Analyzed {contract.symbol} in {contract_elapsed:.1f}s")
 
                 composite_score = analysis_result.get('composite_score', 0)
                 verdict = analysis_result.get('verdict', 'FAIL')
@@ -1699,6 +1662,7 @@ def analyze_futures_batch(self, contract_ids, min_score=65):
                         'direction': direction,
                         'hard_reject': hard_reject,
                         'reject_reason': analysis_result.get('reject_reason'),
+                        'news_warning': analysis_result.get('news_warning'),
                         'recommendation': analysis_result.get('recommendation', 'N/A'),
                         'qualified': composite_score >= min_score and not hard_reject
                     }
@@ -2018,7 +1982,7 @@ def _send_futures_summary_notification(
 
 @shared_task(name='apps.strategies.tasks.execute_futures_algorithm', bind=True)
 @task_enabled_guard('execute-futures-algorithm')
-def execute_futures_algorithm(self, this_month_volume=1000, next_month_volume=800, min_score=65, top_contracts=50, batch_size=3):
+def execute_futures_algorithm(self, this_month_volume=1000, next_month_volume=800, min_score=65, top_contracts=50, batch_size=2, _manual_trigger=False):
     """
     Screen Futures Opportunities - Scheduled Daily @ 9:40 AM (Parallelized)
 
@@ -2074,7 +2038,6 @@ def execute_futures_algorithm(self, this_month_volume=1000, next_month_volume=80
     RELATED TASKS:
     - analyze_futures_batch: Subtask for parallel contract analysis
     - aggregate_futures_results: Callback that handles scoring and notification
-    - refresh_breeze_session: Runs at 8:15 AM to ensure valid Breeze token
     """
     from celery import chord
     from apps.core.models import CeleryTaskState
@@ -2112,30 +2075,33 @@ def execute_futures_algorithm(self, this_month_volume=1000, next_month_volume=80
         from apps.core.models import NseFlag
 
         # ===== STEP 1: Check trading day validity =====
-        task_logger.step('check_trading_day', "Checking if trading is allowed today")
-
         today = date.today()
 
-        # Check NSE holiday flag (key-value store)
-        if NseFlag.get_bool('is_holiday', default=False):
-            task_logger.info('skipped', "Today is a market holiday", context={'date': str(today)})
-            return {'success': True, 'skipped': True, 'reason': 'Market holiday'}
+        if _manual_trigger:
+            task_logger.info('manual_trigger', "Manual trigger - skipping trading day/config checks")
+        else:
+            task_logger.step('check_trading_day', "Checking if trading is allowed today")
 
-        # Check day of week (skip weekends)
-        if today.weekday() >= 5:  # Saturday=5, Sunday=6
-            task_logger.info('skipped', "Weekend - markets closed", context={'day': today.strftime('%A')})
-            return {'success': True, 'skipped': True, 'reason': 'Weekend'}
+            # Check NSE holiday flag (key-value store)
+            if NseFlag.get_bool('is_holiday', default=False):
+                task_logger.info('skipped', "Today is a market holiday", context={'date': str(today)})
+                return {'success': True, 'skipped': True, 'reason': 'Market holiday'}
 
-        # Check if futures trading is enabled in core config
-        from apps.core.models import TradingCoreConfig
-        core_config = TradingCoreConfig.get_instance()
-        if not core_config.is_futures_enabled():
-            task_logger.info('skipped', "Futures trading disabled in Core Config")
-            send_telegram_notification(
-                "Futures algorithm skipped - trading disabled in Core Config",
-                notification_type='INFO'
-            )
-            return {'success': True, 'skipped': True, 'reason': 'Futures trading disabled'}
+            # Check day of week (skip weekends)
+            if today.weekday() >= 5:  # Saturday=5, Sunday=6
+                task_logger.info('skipped', "Weekend - markets closed", context={'day': today.strftime('%A')})
+                return {'success': True, 'skipped': True, 'reason': 'Weekend'}
+
+            # Check if futures trading is enabled in core config
+            from apps.core.models import TradingCoreConfig
+            core_config = TradingCoreConfig.get_instance()
+            if not core_config.is_futures_enabled():
+                task_logger.info('skipped', "Futures trading disabled in Core Config")
+                send_telegram_notification(
+                    "Futures algorithm skipped - trading disabled in Core Config",
+                    notification_type='INFO'
+                )
+                return {'success': True, 'skipped': True, 'reason': 'Futures trading disabled'}
 
         # ===== STEP 2: Get ICICI account =====
         task_logger.step('get_account', "Getting active ICICI futures account")

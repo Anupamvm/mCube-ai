@@ -13,8 +13,6 @@ from django.contrib.auth.decorators import login_required
 from django.views.decorators.http import require_POST
 from django.http import JsonResponse
 
-from apps.trading.services.analysis_service import build_suggestion_result
-
 logger = logging.getLogger(__name__)
 
 
@@ -24,17 +22,9 @@ def trigger_futures_algorithm(request):
     """
     Manually trigger the futures screening algorithm with volume filtering.
 
-    Analyzes futures contracts based on volume criteria:
-    - This month contracts: volume >= threshold (default 1000)
-    - Next month contracts: volume >= threshold (default 800)
-
-    For each contract that passes volume filter:
-    1. Runs comprehensive 9-step technical analysis
-    2. Calculates composite score from multiple factors
-    3. Determines trading direction (LONG/SHORT/NEUTRAL)
-    4. Fetches real margin requirements from Breeze API
-    5. Calculates position sizing with 50% margin rule
-    6. Saves trade suggestions to database
+    Dispatches the execute_futures_algorithm Celery task asynchronously.
+    The task runs parallel batch analysis and sends TOP 3 results to Telegram
+    with interactive approve/reject buttons. Returns immediately.
 
     Request Body (JSON):
         {
@@ -44,41 +34,13 @@ def trigger_futures_algorithm(request):
         }
 
     Returns:
-        JsonResponse: {
-            'success': bool,
-            'all_contracts': [...],     # All analyzed contracts sorted by score
-            'total_analyzed': int,
-            'total_passed': int,
-            'total_failed': int,
-            'total_errors': int,
-            'execution_summary': [...],
-            'volume_filters': {...},
-            'suggestion_ids': [...]     # IDs of saved TradeSuggestion records
-        }
-
-    Error Responses:
-        - 400: Invalid request body or no contracts match criteria
-        - 401: Breeze authentication required
-        - 500: Internal server error during analysis
-
-    Side Effects:
-        - Creates TradeSuggestion records for PASS contracts
-        - Fetches real-time margin data from Breeze API
-        - Logs analysis results for each contract
-
-    Notes:
-        - Uses 50% margin rule: recommended position = 50% of available margin
-        - Remaining 50% reserved for averaging (2 additional positions)
-        - Applies stop loss (2%) and target (4%) based on direction
-        - Breeze API required for margin and futures price data
+        JsonResponse with dispatched=True and task_id on success.
+        Results delivered via Telegram in ~5 minutes.
     """
     import json
-    from apps.trading.futures_analyzer import enhanced_futures_analysis
     from apps.data.models import ContractData
-    from datetime import datetime, timedelta
 
     try:
-        # Parse volume thresholds from request
         body = json.loads(request.body)
         this_month_volume = int(body.get('this_month_volume', 1000))
         next_month_volume = int(body.get('next_month_volume', 800))
@@ -86,12 +48,11 @@ def trigger_futures_algorithm(request):
 
         logger.info(f"Manual trigger: Futures algorithm with volume filters (this_month≥{this_month_volume}, next_month≥{next_month_volume})")
 
-        # Use model manager for standardized query (no limit for manual trigger)
+        # Quick contract count check (fast DB query, no analysis)
         futures_contracts = ContractData.objects.get_tradable_futures(
             this_month_volume=this_month_volume,
             next_month_volume=next_month_volume
         )
-
         contract_count = futures_contracts.count()
 
         if contract_count == 0:
@@ -102,197 +63,173 @@ def trigger_futures_algorithm(request):
 
         logger.info(f"Found {contract_count} contracts matching volume criteria")
 
-        # If more than 15 contracts and not yet confirmed, ask for user confirmation
+        # Ask confirmation if > 15 contracts (keep existing UX)
         if contract_count > 15 and not confirmed:
             return JsonResponse({
                 'success': False,
                 'requires_confirmation': True,
                 'contract_count': contract_count,
-                'message': f'Found {contract_count} contracts to analyze. This may take a while (estimated {contract_count * 3} seconds). Do you want to proceed?'
+                'message': f'Found {contract_count} contracts. Analysis runs in background (~5 min). Results sent to Telegram.'
             })
 
-        # Run comprehensive analysis on all contracts (no limit)
-        analyzed_results = []
-        execution_summary = []
-
-        for contract in futures_contracts:  # Analyze ALL contracts
-            try:
-                logger.info(f"Analyzing {contract.symbol} (expiry: {contract.expiry})")
-
-                analysis_result = enhanced_futures_analysis(
-                    stock_symbol=contract.symbol,
-                    expiry_date=contract.expiry,
-                    contract=contract
-                )
-
-                # Use shared function to build base result (eliminates code duplication)
-                base_result = build_suggestion_result(contract, analysis_result)
-
-                # Extract commonly used fields
-                metrics = analysis_result.get('metrics', {})
-                composite_score = base_result['composite_score']
-                direction = base_result['direction']
-                verdict = base_result['verdict']
-                success = analysis_result.get('success', False)
-
-                # Format expiry for display
-                expiry_dt = datetime.strptime(contract.expiry, '%Y-%m-%d')
-                expiry_formatted = expiry_dt.strftime('%d-%b-%Y')
-
-                # Extend base result with UI-specific fields
-                ui_result = {
-                    **base_result,
-                    'expiry': expiry_formatted,  # Formatted for display
-                    'success': success,
-                    'basis': metrics.get('basis', 0),
-                    'basis_pct': metrics.get('basis_pct', 0),
-                    'volume': contract.traded_contracts,
-                    'lot_size': contract.lot_size,
-                    'error': analysis_result.get('error', None) if not success else None,
-                    # Enhanced Analysis (12-component scoring) for UI display
-                    'enhanced_analysis': {
-                        'composite_score': composite_score,
-                        'recommendation': base_result.get('recommendation', 'N/A'),
-                        'hard_reject': base_result.get('hard_reject', False),
-                        'reject_reason': base_result.get('reject_reason'),
-                        'scores': base_result.get('scores', {}),
-                        'details': analysis_result.get('details', {}),
-                    }
-                }
-
-                analyzed_results.append(ui_result)
-
-                execution_summary.append({
-                    'symbol': contract.symbol,
-                    'status': verdict,
-                    'score': composite_score,
-                    'success': success
-                })
-
-            except Exception as e:
-                logger.error(f"Error analyzing {contract.symbol}: {e}")
-
-                # Add failed contract to results
-                try:
-                    expiry_dt = datetime.strptime(contract.expiry, '%Y-%m-%d')
-                    expiry_formatted = expiry_dt.strftime('%d-%b-%Y')
-                except:
-                    expiry_formatted = contract.expiry
-
-                analyzed_results.append({
-                    'symbol': contract.symbol,
-                    'expiry': expiry_formatted,
-                    'expiry_date': contract.expiry,
-                    'composite_score': 0,
-                    'direction': 'NEUTRAL',
-                    'verdict': 'ERROR',
-                    'success': False,
-                    'spot_price': 0,
-                    'futures_price': 0,
-                    'basis': 0,
-                    'basis_pct': 0,
-                    'volume': contract.traded_contracts,
-                    'lot_size': contract.lot_size,
-                    'explanation': [f"Analysis failed: {str(e)[:200]}"],
-                    'execution_log': [],
-                    'metrics': {},
-                    'scores': {},
-                    'error': str(e)
-                })
-
-                execution_summary.append({
-                    'symbol': contract.symbol,
-                    'status': 'ERROR',
-                    'error': str(e),
-                    'score': 0,
-                    'success': False
-                })
-                continue
-
-        # Sort by verdict priority (PASS first, then FAIL, then ERROR) and then by score
-        def sort_key(contract):
-            verdict = contract['verdict']
-            score = contract['composite_score']
-
-            # Priority: PASS=0, FAIL=1, ERROR=2 (lower is better)
-            priority = 0 if verdict == 'PASS' else (1 if verdict == 'FAIL' else 2)
-
-            # Return tuple: (priority, negative_score) so PASS comes first, then sorted by score descending
-            return (priority, -score)
-
-        analyzed_results.sort(key=sort_key)
-
-        # Count passed contracts
-        passed_results = [r for r in analyzed_results if r['verdict'] == 'PASS']
-
-        if not analyzed_results:
-            return JsonResponse({
-                'success': False,
-                'error': 'No contracts could be analyzed',
-                'execution_summary': execution_summary,
-                'total_analyzed': 0
-            })
-
-        logger.info(f"Analysis complete: {len(analyzed_results)} contracts analyzed, {len(passed_results)} passed")
-
-        # Save trade suggestions for ALL PASS results using shared service
-        suggestion_ids = []
-        if passed_results:
-            from apps.trading.services.suggestion_service import save_futures_suggestions
-            suggestion_ids = save_futures_suggestions(passed_results, user=request.user, source='manual')
-
-            # Merge position sizing data from saved TradeSuggestion records back into results
-            from apps.trading.models import TradeSuggestion
-            valid_ids = [sid for sid in suggestion_ids if sid is not None]
-            if valid_ids:
-                suggestions = {
-                    s.instrument: s
-                    for s in TradeSuggestion.objects.filter(id__in=valid_ids)
-                }
-                for result in analyzed_results:
-                    if result['verdict'] == 'PASS' and result['symbol'] in suggestions:
-                        s = suggestions[result['symbol']]
-                        result['recommended_lots'] = s.recommended_lots
-                        result['margin_required'] = float(s.margin_required) if s.margin_required else 0
-                        result['max_profit'] = float(s.max_profit) if s.max_profit else 0
-                        result['max_loss'] = float(s.max_loss) if s.max_loss else 0
-
-        # Prepare response - return ALL analyzed results
-        response_data = {
-            'success': True,
-            'all_contracts': analyzed_results,  # All contracts sorted by score
-            'total_analyzed': len(analyzed_results),
-            'total_passed': len(passed_results),
-            'total_failed': len([r for r in analyzed_results if r['verdict'] == 'FAIL']),
-            'total_errors': len([r for r in analyzed_results if r['verdict'] == 'ERROR']),
-            'execution_summary': execution_summary,
-            'volume_filters': {
-                'this_month': this_month_volume,
-                'next_month': next_month_volume
+        # Dispatch the existing Celery task (parallel batches + Telegram delivery)
+        from mcube_ai.celery import app as celery_app
+        task = celery_app.send_task(
+            'apps.strategies.tasks.execute_futures_algorithm',
+            kwargs={
+                'this_month_volume': this_month_volume,
+                'next_month_volume': next_month_volume,
+                '_bypass_guard': True,
+                '_manual_trigger': True,
             },
-            'suggestion_ids': suggestion_ids  # IDs of saved suggestions
-        }
+        )
 
-        return JsonResponse(response_data)
+        logger.info(f"Futures algorithm dispatched as Celery task {task.id} for {contract_count} contracts")
+
+        return JsonResponse({
+            'success': True,
+            'dispatched': True,
+            'task_id': task.id,
+            'contract_count': contract_count,
+            'message': f'Futures algorithm dispatched for {contract_count} contracts. Results will be sent to Telegram in ~5 minutes.'
+        })
 
     except Exception as e:
-        from apps.brokers.exceptions import BreezeAuthenticationError
+        logger.error(f"Error dispatching futures algorithm: {e}", exc_info=True)
+        return JsonResponse({'success': False, 'error': str(e)})
 
-        # Check if it's an authentication error
-        if isinstance(e, BreezeAuthenticationError):
-            logger.warning(f"Breeze authentication failed: {e}")
+
+@login_required
+def futures_task_status(request, task_id):
+    """
+    Poll the status of a dispatched futures algorithm task.
+
+    The orchestrator task (execute_futures_algorithm) dispatches a Celery chord
+    and returns immediately with chord_id. We need to follow the chain:
+    1. Check orchestrator → if SUCCESS, extract chord_id
+    2. Check chord callback (aggregate_futures_results) → if SUCCESS, fetch results
+    """
+    from celery.result import AsyncResult
+
+    result = AsyncResult(task_id)
+    state = result.state
+
+    if state in ('PENDING', 'STARTED', 'RETRY'):
+        return JsonResponse({'status': 'running', 'state': state})
+
+    if state == 'FAILURE':
+        return JsonResponse({
+            'status': 'failed',
+            'error': str(result.result) if result.result else 'Task failed',
+        })
+
+    if state == 'SUCCESS':
+        task_result = result.result or {}
+
+        if task_result.get('skipped'):
             return JsonResponse({
+                'status': 'completed',
                 'success': False,
-                'auth_required': True,
-                'error': str(e),
-                'message': 'Breeze session expired. Please re-login to continue.'
+                'error': task_result.get('reason', 'Task skipped'),
             })
 
-        logger.error(f"Error in trigger_futures_algorithm: {e}", exc_info=True)
-        return JsonResponse({
-            'success': False,
-            'error': str(e)
+        # The orchestrator returns chord_id — the actual work is in the chord callback
+        chord_id = task_result.get('chord_id')
+        if chord_id:
+            chord_result = AsyncResult(chord_id)
+            chord_state = chord_result.state
+
+            if chord_state in ('PENDING', 'STARTED', 'RETRY'):
+                return JsonResponse({'status': 'running', 'state': f'analyzing ({chord_state})'})
+
+            if chord_state == 'FAILURE':
+                return JsonResponse({
+                    'status': 'failed',
+                    'error': str(chord_result.result) if chord_result.result else 'Analysis failed',
+                })
+
+            if chord_state != 'SUCCESS':
+                return JsonResponse({'status': 'running', 'state': chord_state})
+
+        # Chord completed (or no chord_id) — fetch saved suggestions
+        return _build_suggestions_response(task_result)
+
+    return JsonResponse({'status': 'running', 'state': state})
+
+
+def _build_suggestions_response(task_result):
+    """Build response from saved TradeSuggestions for manual trigger results.
+
+    Note: This is called after a manual task completes. Due to deduplication in
+    save_futures_suggestions(), re-runs may not create new DB records, so we use
+    timezone.now() for timestamps (the analysis DID just run, even if records weren't recreated).
+    """
+    from apps.trading.models import TradeSuggestion
+    from django.utils import timezone
+
+    now = timezone.localtime(timezone.now())
+    today = now.date()
+    now_formatted = now.strftime('%d %b %H:%M')
+
+    suggestions = TradeSuggestion.objects.filter(
+        suggestion_type='FUTURES',
+        created_at__date=today,
+    ).order_by('-algorithm_reasoning__composite_score')
+
+    all_contracts = []
+    for s in suggestions:
+        reasoning = s.algorithm_reasoning or {}
+        scores = reasoning.get('scores', {})
+        composite_score = reasoning.get('composite_score', 0)
+        metrics = reasoning.get('metrics', {})
+        expiry_formatted = s.expiry_date.strftime('%d-%b-%Y') if s.expiry_date else 'N/A'
+
+        all_contracts.append({
+            'symbol': s.instrument,
+            'expiry': expiry_formatted,
+            'expiry_date': str(s.expiry_date) if s.expiry_date else None,
+            'composite_score': composite_score,
+            'direction': s.direction,
+            'verdict': 'PASS',
+            'success': True,
+            'spot_price': float(s.spot_price) if s.spot_price else 0,
+            'futures_price': float(metrics.get('futures_price', 0)),
+            'basis': float(metrics.get('basis', 0)),
+            'basis_pct': float(metrics.get('basis_pct', 0)),
+            'volume': metrics.get('volume', 0),
+            'lot_size': metrics.get('lot_size', 0),
+            'explanation': reasoning.get('explanation', []),
+            'execution_log': reasoning.get('execution_log', []),
+            'metrics': metrics,
+            'scores': scores,
+            'recommended_lots': s.recommended_lots,
+            'margin_required': float(s.margin_required) if s.margin_required else 0,
+            'max_profit': float(s.max_profit) if s.max_profit else 0,
+            'max_loss': float(s.max_loss) if s.max_loss else 0,
+            'analyzed_at': now_formatted,
+            'enhanced_analysis': {
+                'composite_score': composite_score,
+                'recommendation': reasoning.get('recommendation', 'N/A'),
+                'hard_reject': False,
+                'reject_reason': None,
+                'scores': scores,
+                'details': reasoning.get('details', {}),
+            },
         })
+
+    total = len(all_contracts)
+
+    return JsonResponse({
+        'status': 'completed',
+        'success': True,
+        'all_contracts': all_contracts,
+        'total_analyzed': task_result.get('total_contracts', total),
+        'total_passed': total,
+        'total_failed': 0,
+        'total_errors': 0,
+        'volume_filters': {},
+        'batch_time': now.strftime('%Y-%m-%d %H:%M:%S'),
+    })
 
 
 @login_required

@@ -100,8 +100,8 @@ TASK_DEFAULT_CONFIG = {
         'default_minute': 40,
         'default_recurring_start_hour': 9,
         'default_recurring_start_minute': 40,
-        'default_recurring_end_hour': 10,
-        'default_recurring_end_minute': 15,
+        'default_recurring_end_hour': 9,
+        'default_recurring_end_minute': 55,
         'default_recurring_interval_minutes': 5,
         'default_days': [0, 1, 2, 3, 4],
     },
@@ -115,7 +115,7 @@ TASK_DEFAULT_CONFIG = {
         'default_recurring_start_hour': 10,
         'default_recurring_start_minute': 0,
         'default_recurring_end_hour': 10,
-        'default_recurring_end_minute': 15,
+        'default_recurring_end_minute': 30,
         'default_recurring_interval_minutes': 5,
         'default_days': [0, 1, 2, 3, 4],
     },
@@ -127,15 +127,6 @@ TASK_DEFAULT_CONFIG = {
         'default_hour': 9,
         'default_minute': 45,
         'default_days': [0, 1, 2, 3, 4],
-    },
-    'refresh-breeze-session': {
-        'display_name': 'Breeze Session Refresh',
-        'description': 'Validates and refreshes Breeze API session before trading tasks. Triggers auto-login with Telegram OTP if session expired.',
-        'schedule_type': 'crontab',
-        'category': 'monitoring',
-        'default_hour': 8,
-        'default_minute': 15,
-        'default_days': [0, 1, 2, 3, 4],  # Mon-Fri
     },
     'execute-futures-algorithm': {
         'display_name': 'Screen Futures Opportunities',
@@ -173,7 +164,7 @@ TASK_DEFAULT_CONFIG = {
         'default_hour': 9,
         'default_minute': 0,
         'default_recurring_start_hour': 9,
-        'default_recurring_start_minute': 0,
+        'default_recurring_start_minute': 30,
         'default_recurring_end_hour': 15,
         'default_recurring_end_minute': 0,
         'default_recurring_interval_minutes': 10,
@@ -255,7 +246,7 @@ TASK_DEFAULT_CONFIG = {
         'schedule_type': 'crontab',
         'category': 'reports',
         'default_hour': 16,
-        'default_minute': 0,
+        'default_minute': 15,
         'default_days': [0, 1, 2, 3, 4],
     },
     'daily-data-aggregation': {
@@ -280,3 +271,54 @@ TASK_DEFAULT_CONFIG = {
 
 # Backwards-compatible alias
 TASK_CONFIG_FIELDS = TASK_DEFAULT_CONFIG
+
+# =============================================================================
+# ALGORITHM TASK GROUPS
+#
+# Defines task dependency tiers per algorithm.
+#   own_tasks     – unique to this algorithm, always toggled
+#   shared_tasks  – needed by multiple algos, only disabled when no other algo needs them
+#   monitoring_tasks – position monitoring, only disabled when no algo is active
+# =============================================================================
+ALGORITHM_TASK_GROUPS = {
+    'options': {
+        'display_name': 'Options Algorithm',
+        'emoji': '\U0001f3af',
+        'description': 'Strangle / Iron Condor strategy',
+        'own_tasks': [
+            'evaluate-options-strategy',
+            'start-options-trade',
+            'batch-options-averaging',
+            'batch-options-averaging-10am',
+        ],
+        'shared_tasks': [
+            'setup-trading-day',
+            'start-trading-day',
+            'close-trading-day',
+        ],
+        'monitoring_tasks': [
+            'monitor-all-positions',
+            'update-position-pnl',
+            'check-exit-conditions',
+        ],
+    },
+    'futures': {
+        'display_name': 'Futures Algorithm',
+        'emoji': '\U0001f4c8',
+        'description': 'Futures screening & averaging',
+        'own_tasks': [
+            'execute-futures-algorithm',
+            'check-futures-averaging',
+        ],
+        'shared_tasks': [
+            'setup-trading-day',
+            'start-trading-day',
+            'close-trading-day',
+        ],
+        'monitoring_tasks': [
+            'monitor-all-positions',
+            'update-position-pnl',
+            'check-exit-conditions',
+        ],
+    },
+}

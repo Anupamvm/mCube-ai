@@ -23,10 +23,29 @@ _neo_scrip_master_cache = {'data': None, 'timestamp': None}
 _CACHE_DURATION_SECONDS = 3600  # 1 hour
 
 
-def _get_neo_scrip_master(client) -> list:
+def _is_neo_error_response(result: dict) -> str:
+    """
+    Check if a Neo API response dict is an error. Returns error message or empty string.
+
+    Neo API returns errors with different key patterns:
+    - {"Error Message": "Complete the 2fa process..."}  (auth/session issue)
+    - {"Error": "Exchange Segment is not available"}    (API error)
+    - {"error": <exception>}                            (ApiException)
+    - {"stat": "Not_Ok", ...}                           (general failure)
+    """
+    for key in ('Error Message', 'Error', 'error'):
+        if key in result:
+            return str(result[key])
+    if result.get('stat') == 'Not_Ok':
+        return result.get('message', 'API returned Not_Ok')
+    return ''
+
+
+def _get_neo_scrip_master(client, _retried=False) -> list:
     """
     Get Neo scrip master with caching.
     Returns list of all contracts from CSV.
+    Retries once with fresh authentication on auth-related failures.
     """
     global _neo_scrip_master_cache
 
@@ -50,12 +69,22 @@ def _get_neo_scrip_master(client) -> list:
         scrip_master_result = client.scrip_master(exchange_segment='nse_fo')
         logger.info(f"[SCRIP MASTER] scrip_master() returned type: {type(scrip_master_result)}")
 
-        # Handle dict response (may contain URL in a field)
+        # Handle dict response (may contain URL in a field, or may be an error)
         if isinstance(scrip_master_result, dict):
-            # Check if it's an error response
-            if 'error' in scrip_master_result or scrip_master_result.get('stat') == 'Not_Ok':
-                logger.error(f"[SCRIP MASTER] API error response: {scrip_master_result}")
+            error_msg = _is_neo_error_response(scrip_master_result)
+            if error_msg:
+                logger.error(f"[SCRIP MASTER] API error: {error_msg}")
+
+                # Retry once with fresh auth if this looks like a session/auth issue
+                auth_keywords = ['2fa', 'session', 'token', 'auth', 'login', 'unauthorized']
+                if not _retried and any(kw in error_msg.lower() for kw in auth_keywords):
+                    logger.info("[SCRIP MASTER] Auth-related error, retrying with fresh session...")
+                    fresh_client = _retry_with_fresh_auth()
+                    if fresh_client:
+                        return _get_neo_scrip_master(fresh_client, _retried=True)
+
                 return []
+
             # Try to extract URL from dict
             scrip_master_url = scrip_master_result.get('url') or scrip_master_result.get('data')
             logger.info(f"[SCRIP MASTER] Extracted from dict: {type(scrip_master_url)}")
@@ -64,6 +93,14 @@ def _get_neo_scrip_master(client) -> list:
 
         if not scrip_master_url or not isinstance(scrip_master_url, str):
             logger.error(f"[SCRIP MASTER] Invalid scrip master response: {type(scrip_master_url)}, value: {str(scrip_master_url)[:200]}")
+
+            # Retry once with fresh auth if not already retried
+            if not _retried:
+                logger.info("[SCRIP MASTER] Unexpected response, retrying with fresh session...")
+                fresh_client = _retry_with_fresh_auth()
+                if fresh_client:
+                    return _get_neo_scrip_master(fresh_client, _retried=True)
+
             return []
 
         # If it's a URL, download it with retry logic
@@ -114,6 +151,41 @@ def _get_neo_scrip_master(client) -> list:
     except Exception as e:
         logger.error(f"[SCRIP MASTER] Error downloading: {e}", exc_info=True)
         return []
+
+
+def _retry_with_fresh_auth():
+    """
+    Clear cached Neo session and get a fresh authenticated client.
+    Returns the fresh client or None if auth fails.
+    """
+    try:
+        from tools.neo import get_neo_api, _cached_instance, _cache_lock
+        import tools.neo as neo_module
+
+        # Invalidate the process-level cached instance to force fresh login
+        with _cache_lock:
+            if neo_module._cached_instance:
+                neo_module._cached_instance.session_active = False
+                neo_module._cached_instance = None
+
+        # Clear saved session from DB so it does a full login
+        try:
+            from apps.brokers.utils.auth_manager import clear_neo_session
+            clear_neo_session()
+        except Exception:
+            pass
+
+        # Get fresh client (will do full login)
+        neo_wrapper = get_neo_api()
+        if neo_wrapper.session_active:
+            logger.info("[SCRIP MASTER] Fresh authentication successful")
+            return neo_wrapper.neo
+        else:
+            logger.error(f"[SCRIP MASTER] Fresh authentication failed: {neo_wrapper.get_last_error()}")
+            return None
+    except Exception as e:
+        logger.error(f"[SCRIP MASTER] Error during fresh auth: {e}")
+        return None
 
 
 def map_neo_symbol_to_breeze(neo_symbol: str) -> dict:

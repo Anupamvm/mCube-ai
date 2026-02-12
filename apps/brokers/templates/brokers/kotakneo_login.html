@@ -4,27 +4,27 @@
 
 {% block content %}
 <div class="card">
-    <h2>Kotak Neo - OTP Login</h2>
-    <p>Enter the OTP received on your registered mobile number to authenticate with Kotak Neo API.</p>
+    <h2>Kotak Neo - Manual Login</h2>
+    <p>Enter your MPIN to authenticate with Kotak Neo API.</p>
 
     <form method="post">
         {% csrf_token %}
         <div class="form-group">
-            <label for="otp">Enter OTP:</label>
-            <input type="text" id="otp" name="otp" required placeholder="Enter 6-digit OTP">
+            <label for="otp">Enter MPIN:</label>
+            <input type="text" id="otp" name="otp" required placeholder="Enter 6-digit MPIN">
         </div>
 
-        <button type="submit" class="btn btn-success">Submit OTP</button>
+        <button type="submit" class="btn btn-success">Submit MPIN</button>
     </form>
 </div>
 
 <div class="card">
-    <h3>How to get OTP</h3>
+    <h3>How it works</h3>
     <ol>
         <li>Ensure your Kotak Neo credentials are configured in the CredentialStore</li>
-        <li>The OTP will be sent automatically to your registered mobile number when you attempt login</li>
-        <li>Enter the OTP above to complete authentication</li>
-        <li>The OTP is valid for a limited time</li>
+        <li>Enter your MPIN above and save it</li>
+        <li>When a task needs Neo access, auto-login uses the stored MPIN automatically</li>
+        <li>No OTP is required — Neo uses MPIN-based 2FA</li>
     </ol>
 </div>
 {% endblock %}

@@ -1264,6 +1264,14 @@ def update_suggestion_parameters(request):
         if 'expiry_date' in data:
             new_expiry = datetime.strptime(data['expiry_date'], '%Y-%m-%d').date()
             if new_expiry != suggestion.expiry_date:
+                # Track original expiry in position_details
+                position_details = suggestion.position_details or {}
+                if not position_details.get('original_expiry') and suggestion.expiry_date:
+                    position_details['original_expiry'] = str(suggestion.expiry_date)
+                position_details['expiry_date'] = str(new_expiry)
+                position_details['expiry_changed'] = (str(new_expiry) != position_details.get('original_expiry', str(new_expiry)))
+                suggestion.position_details = position_details
+
                 suggestion.expiry_date = new_expiry
                 updated_fields.append(f'expiry_date: {new_expiry}')
 
@@ -1728,6 +1736,9 @@ def get_active_positions(request):
 
             try:
                 _, positions = fetch_and_save_breeze_data()
+
+                if not positions:
+                    positions = []
 
                 for pos in positions:
                     # Calculate P&L from BrokerPosition model
@@ -3049,6 +3060,163 @@ def analyze_position_averaging(request):
             'success': False,
             'error': str(e)
         })
+
+
+# ============================================================================
+# EXPIRY SELECTION API
+# ============================================================================
+
+@login_required
+@require_GET
+def get_available_expiries(request):
+    """
+    Get available futures expiries for a symbol.
+
+    GET params:
+        - symbol: Stock symbol (e.g., 'RELIANCE')
+        - current_expiry: Current expiry in YYYY-MM-DD format
+
+    Returns JSON with available expiries including contract details.
+    """
+    from datetime import date
+
+    symbol = request.GET.get('symbol', '').upper()
+    current_expiry = request.GET.get('current_expiry', '')
+
+    if not symbol:
+        return JsonResponse({'success': False, 'error': 'Symbol is required'})
+
+    try:
+        today = date.today()
+
+        # Get all future-dated FUTURE contracts for this symbol
+        contracts = ContractData.objects.filter(
+            symbol=symbol,
+            option_type='FUTURE',
+        ).order_by('expiry')
+
+        # Deduplicate by expiry and filter future-dated
+        seen_expiries = set()
+        expiries = []
+
+        for contract in contracts:
+            if contract.expiry in seen_expiries:
+                continue
+            seen_expiries.add(contract.expiry)
+
+            # Parse expiry date
+            try:
+                expiry_dt = datetime.strptime(contract.expiry, '%Y-%m-%d').date()
+            except (ValueError, TypeError):
+                continue
+
+            if expiry_dt < today:
+                continue
+
+            days_to_expiry = (expiry_dt - today).days
+            is_current = (contract.expiry == current_expiry)
+
+            # Check SecurityMaster for instrument availability
+            from apps.brokers.utils.security_master import get_futures_instrument
+            expiry_breeze = expiry_dt.strftime('%d-%b-%Y').upper()
+            instrument = get_futures_instrument(symbol, expiry_breeze)
+
+            expiry_info = {
+                'expiry_date': contract.expiry,
+                'expiry_formatted': expiry_dt.strftime('%d-%b-%Y'),
+                'expiry_breeze': expiry_breeze,
+                'days_to_expiry': days_to_expiry,
+                'is_current': is_current,
+                'has_instrument': instrument is not None,
+                'contract_price': contract.price,
+                'lot_size': contract.lot_size,
+            }
+
+            # Include instrument token and stock code for order placement
+            if instrument:
+                expiry_info['breeze_token'] = instrument.get('token', '')
+                expiry_info['breeze_stock_code'] = instrument.get('short_name', '')
+
+            expiries.append(expiry_info)
+
+        return JsonResponse({
+            'success': True,
+            'symbol': symbol,
+            'expiries': expiries,
+            'count': len(expiries),
+        })
+
+    except Exception as e:
+        logger.error(f"Error fetching available expiries for {symbol}: {e}")
+        return JsonResponse({'success': False, 'error': str(e)})
+
+
+@login_required
+@require_GET
+def get_available_options_expiries(request):
+    """
+    Get available options expiries for an instrument (NIFTY/BANKNIFTY).
+
+    Uses weekly expiry utilities + OptionChain DB for upcoming expiries.
+
+    GET params:
+        - instrument: NIFTY, BANKNIFTY, FINNIFTY
+        - current_expiry: Current expiry in YYYY-MM-DD format
+    """
+    from datetime import date, timedelta
+    from apps.data.models import OptionChain
+
+    instrument = request.GET.get('instrument', '').upper()
+    current_expiry = request.GET.get('current_expiry', '')
+
+    if not instrument:
+        return JsonResponse({'success': False, 'error': 'Instrument is required'})
+
+    try:
+        today = date.today()
+
+        # Strategy 1: Get expiries from OptionChain DB (most reliable)
+        db_expiries = (
+            OptionChain.objects
+            .filter(underlying=instrument, expiry_date__gte=today)
+            .values_list('expiry_date', flat=True)
+            .distinct()
+            .order_by('expiry_date')
+        )
+        expiry_dates = sorted(set(db_expiries))
+
+        # Strategy 2: If DB has no data, compute from weekly expiry utilities
+        if not expiry_dates:
+            from apps.core.utils import get_current_weekly_expiry, get_next_weekly_expiry
+            current_week = get_current_weekly_expiry(instrument)
+            next_week = get_next_weekly_expiry(instrument)
+            expiry_dates = sorted(set([current_week, next_week]))
+
+        expiries = []
+        for expiry_dt in expiry_dates:
+            days_to_expiry = (expiry_dt - today).days
+            if days_to_expiry < 0:
+                continue
+
+            is_current = (str(expiry_dt) == current_expiry)
+
+            expiries.append({
+                'expiry_date': str(expiry_dt),
+                'expiry_formatted': expiry_dt.strftime('%d-%b-%Y'),
+                'days_to_expiry': days_to_expiry,
+                'is_current': is_current,
+            })
+
+        return JsonResponse({
+            'success': True,
+            'instrument': instrument,
+            'expiries': expiries,
+            'count': len(expiries),
+        })
+
+    except Exception as e:
+        logger.error(f"Error fetching options expiries for {instrument}: {e}")
+        return JsonResponse({'success': False, 'error': str(e)})
 
 
 # ============================================================================

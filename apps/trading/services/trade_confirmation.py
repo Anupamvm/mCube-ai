@@ -67,11 +67,26 @@ class TradeConfirmationService:
         total_premium = suggestion.total_premium or 0
         lots = suggestion.recommended_lots or config.options_lots
 
+        # Expiry display
+        expiry_line = ''
+        if suggestion.expiry_date:
+            from datetime import date
+            days_to_exp = (suggestion.expiry_date - date.today()).days
+            expiry_fmt = suggestion.expiry_date.strftime('%d-%b-%Y')
+            expiry_line = f"<b>📅 Expiry:</b> {expiry_fmt} ({days_to_exp}d)\n"
+
+            # Check if expiry was changed
+            details = suggestion.position_details or {}
+            if details.get('expiry_changed'):
+                original = details.get('original_expiry', '')
+                expiry_line += f"⚠️ <i>Changed from original: {original}</i>\n"
+
         message = (
             f"📊 <b>OPTIONS TRADE CONFIRMATION</b>\n\n"
             f"Strategy: {strategy}\n"
             f"Instrument: {suggestion.instrument}\n"
-            f"Direction: {suggestion.direction}\n\n"
+            f"Direction: {suggestion.direction}\n"
+            f"{expiry_line}\n"
             f"<b>Strikes:</b>\n"
             f"  • Call: {call_strike:,.0f}\n"
             f"  • Put: {put_strike:,.0f}\n\n"
@@ -94,6 +109,9 @@ class TradeConfirmationService:
                 ],
                 [
                     {'text': '📊 Change Size', 'callback_data': f'resize_options_{suggestion.id}'},
+                    {'text': '📅 Change Expiry', 'callback_data': f'expiry_options_{suggestion.id}'},
+                ],
+                [
                     {'text': '❌ Reject', 'callback_data': f'reject_options_{suggestion.id}'},
                 ],
             ]
@@ -254,15 +272,50 @@ class TradeConfirmationService:
 
         direction_emoji = "🟢" if direction == "LONG" else "🔴"
 
+        # Check for news warning from analysis details
+        news_warning = details.get('news_warning', '')
+
         # Build detailed message
         message = (
             f"📊 <b>TRADE CONFIRMATION</b>\n"
             f"{'─' * 25}\n\n"
+        )
 
+        if news_warning:
+            message += (
+                f"⚠️ <b>NEWS WARNING</b>\n"
+                f"{news_warning}\n"
+                f"{'─' * 25}\n\n"
+            )
+
+        # Extract expiry info
+        expiry_date_str = details.get('expiry_date', '')
+        expiry_changed = details.get('expiry_changed', False)
+        original_expiry = details.get('original_expiry', '')
+
+        expiry_display = ''
+        if expiry_date_str:
+            try:
+                from datetime import date
+                expiry_dt = datetime.strptime(expiry_date_str, '%Y-%m-%d').date()
+                days_to_exp = (expiry_dt - date.today()).days
+                expiry_display = f"{expiry_dt.strftime('%d-%b-%Y')} ({days_to_exp}d)"
+            except (ValueError, TypeError):
+                expiry_display = expiry_date_str
+
+        message += (
             f"<b>Symbol:</b> {symbol}\n"
             f"<b>Direction:</b> {direction_emoji} {direction}\n"
-            f"<b>Score:</b> {score}/100\n\n"
+            f"<b>Score:</b> {score}/100\n"
+        )
 
+        if expiry_display:
+            message += f"<b>📅 Expiry:</b> {expiry_display}\n"
+            if expiry_changed:
+                message += f"⚠️ <i>Changed from original: {original_expiry}</i>\n"
+
+        message += (
+            f"\n"
             f"<b>📍 PRICE LEVELS</b>\n"
             f"  Entry: ₹{entry_price:,.2f}\n"
             f"  Stop-Loss: ₹{stop_loss:,.2f}\n"
@@ -296,6 +349,7 @@ class TradeConfirmationService:
                 ],
                 [
                     {'text': '📊 Change Lots', 'callback_data': f'resize_futures_{suggestion.id}'},
+                    {'text': '📅 Change Expiry', 'callback_data': f'expiry_futures_{suggestion.id}'},
                 ],
                 [
                     {'text': '◀️ Back to List', 'callback_data': 'back_futures_list'},
@@ -758,7 +812,28 @@ class TradeConfirmationService:
             entry_price = suggestion.position_details.get('entry_price', 0) if suggestion.position_details else 0
             stop_loss = suggestion.position_details.get('stop_loss', 0) if suggestion.position_details else 0
             target = suggestion.position_details.get('target', 0) if suggestion.position_details else 0
-            expiry_date = suggestion.position_details.get('expiry_date') if suggestion.position_details else None
+
+            # Get expiry date: prefer position_details (user may have changed it), fallback to model field
+            expiry_date_raw = suggestion.position_details.get('expiry_date') if suggestion.position_details else None
+            if not expiry_date_raw and suggestion.expiry_date:
+                expiry_date_raw = suggestion.expiry_date.strftime('%Y-%m-%d') if hasattr(suggestion.expiry_date, 'strftime') else str(suggestion.expiry_date)
+
+            # Convert to Breeze format (DD-MMM-YYYY) for order placement
+            if expiry_date_raw:
+                try:
+                    from datetime import date as date_type
+                    if isinstance(expiry_date_raw, date_type):
+                        expiry_dt_parsed = expiry_date_raw
+                    else:
+                        expiry_dt_parsed = datetime.strptime(str(expiry_date_raw), '%Y-%m-%d').date()
+                    expiry_date = expiry_dt_parsed.strftime('%d-%b-%Y').upper()
+                except (ValueError, TypeError):
+                    # Already in Breeze format or unknown — pass as-is
+                    expiry_date = str(expiry_date_raw)
+                logger.info(f"Futures execution expiry: raw={expiry_date_raw} -> breeze_format={expiry_date}")
+            else:
+                expiry_date = None
+                logger.warning(f"No expiry date found for suggestion {suggestion.id}")
 
             # Check for simulated mode
             if config.is_simulated():

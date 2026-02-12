@@ -174,26 +174,32 @@ def is_trader_user(user):
 @user_passes_test(is_admin_user, login_url='/brokers/login/')
 def kotakneo_login(request):
     """
-    Handle Kotak Neo OTP login (Admin only).
+    Handle Kotak Neo MPIN login (Admin only).
+
+    Neo uses MPIN-based 2FA (no OTP needed). This view saves the MPIN
+    to credentials for auto-login to use.
     """
+    from apps.brokers.utils.auth_manager import reset_auto_login_status
+
     if request.method == 'POST':
-        otp = request.POST.get('otp')
-        if otp:
+        mpin = request.POST.get('otp')
+        if mpin:
             try:
-                # Save OTP to credentials
                 creds = CredentialStore.objects.filter(service='kotakneo').first()
                 if not creds:
                     messages.error(request, "No Kotak Neo credentials found. Please add credentials first.")
                     return render(request, 'brokers/kotakneo_login.html')
 
-                creds.session_token = otp
-                creds.save()
+                creds.neo_password = mpin
+                creds.save(update_fields=['neo_password'])
+                # Reset auto-login status so it can be attempted again
+                reset_auto_login_status('kotakneo')
 
-                messages.success(request, "OTP saved successfully!")
+                messages.success(request, "MPIN saved successfully!")
                 return redirect('brokers:kotakneo_data')
 
             except Exception as e:
-                logger.exception(f"Error saving Kotak Neo OTP: {e}")
+                logger.exception(f"Error saving Kotak Neo MPIN: {e}")
                 messages.error(request, f"Error: {str(e)}")
 
     return render(request, 'brokers/kotakneo_login.html')
@@ -245,6 +251,9 @@ def breeze_login(request):
         if session_token:
             try:
                 save_breeze_token(session_token)
+                # Reset auto-login status so it can be attempted again
+                from apps.brokers.utils.auth_manager import reset_auto_login_status
+                reset_auto_login_status('breeze')
                 messages.success(request, "Session token saved successfully!")
                 # Redirect to the original page if next_url is provided
                 if next_url:

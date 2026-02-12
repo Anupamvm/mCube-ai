@@ -32,10 +32,17 @@ class StrangleNewsAnalyzer:
     WARN_THRESHOLD = -0.2   # Warn if avg sentiment below this
     BLOCKING_ARTICLE_THRESHOLD = -0.6  # Individual article blocking threshold
 
+    # In-memory cache duration (seconds) for market sentiment
+    # Prevents redundant LLM calls when multiple stocks check market news
+    # in the same algorithm run (e.g., 50 stocks × same market news = 1000+ LLM calls without cache)
+    SENTIMENT_CACHE_SECONDS = 1800  # 30 minutes
+
     def __init__(self):
         """Initialize with NewsImpactAnalyzer"""
         self._analyzer = None
         self._gnews_client = None
+        self._cached_sentiment = None
+        self._cached_sentiment_at = None
 
     @property
     def analyzer(self):
@@ -140,6 +147,91 @@ class StrangleNewsAnalyzer:
             logger.error(f"[StrangleNews] Error fetching fresh news: {e}")
             return []
 
+    def _persist_analyzed_articles(self, analyzed_articles: List[Dict]):
+        """
+        Persist LLM-analyzed articles to NewsArticle DB.
+
+        Saves fresh GNews articles that were analyzed by LLM to the database,
+        so future calls to get_recent_news_from_db() can return pre-analyzed
+        articles instead of triggering LLM again.
+
+        Args:
+            analyzed_articles: List of article dicts with LLM impact scores
+        """
+        try:
+            from apps.data.models import NewsArticle
+            from django.utils.dateparse import parse_datetime
+
+            saved_count = 0
+            for article in analyzed_articles:
+                url = article.get('url', '')
+                if not url:
+                    continue
+
+                # Skip if already in DB
+                if NewsArticle.objects.filter(url=url).exists():
+                    # Update existing article with LLM scores if missing
+                    existing = NewsArticle.objects.get(url=url)
+                    if existing.sentiment_score is None and article.get('impact_score') is not None:
+                        existing.sentiment_score = article['impact_score']
+                        existing.sentiment_label = article.get('impact_label', 'NEUTRAL')
+                        existing.impact_category = article.get('impact_category', '')
+                        existing.market_direction = article.get('market_direction')
+                        existing.impact_reasoning = article.get('impact_reasoning', '')
+                        existing.relevance_score = article.get('relevance')
+                        existing.save(update_fields=[
+                            'sentiment_score', 'sentiment_label', 'impact_category',
+                            'market_direction', 'impact_reasoning', 'relevance_score'
+                        ])
+                        saved_count += 1
+                    continue
+
+                # Parse published date
+                published_at = None
+                raw_date = article.get('publishedAt', '')
+                if raw_date:
+                    try:
+                        published_at = parse_datetime(raw_date)
+                    except Exception:
+                        published_at = timezone.now()
+                else:
+                    published_at = timezone.now()
+
+                # Create new article
+                source_name = ''
+                source_data = article.get('source', {})
+                if isinstance(source_data, dict):
+                    source_name = source_data.get('name', '')
+                elif isinstance(source_data, str):
+                    source_name = source_data
+
+                NewsArticle.objects.create(
+                    title=article.get('title', '')[:500],
+                    source=source_name[:100],
+                    published_at=published_at,
+                    url=url,
+                    image_url=article.get('image', '')[:1000] if article.get('image') else '',
+                    summary=article.get('description', ''),
+                    content=article.get('content', article.get('description', '')),
+                    news_type='MARKET',
+                    search_keywords=[article.get('search_keyword', '')] if article.get('search_keyword') else [],
+                    sentiment_score=article.get('impact_score'),
+                    sentiment_label=article.get('impact_label', 'NEUTRAL'),
+                    impact_category=article.get('impact_category', ''),
+                    market_direction=article.get('market_direction'),
+                    impact_reasoning=article.get('impact_reasoning', ''),
+                    relevance_score=article.get('relevance'),
+                    processed=True,
+                    processed_at=timezone.now(),
+                )
+                saved_count += 1
+
+            if saved_count > 0:
+                logger.info(f"[StrangleNews] Persisted {saved_count} analyzed articles to DB")
+
+        except Exception as e:
+            logger.warning(f"[StrangleNews] Error persisting articles to DB: {e}")
+
     def analyze_articles(self, articles: List[Dict]) -> Dict:
         """
         Analyze articles using NewsImpactAnalyzer.
@@ -175,7 +267,11 @@ class StrangleNewsAnalyzer:
                     articles=articles_needing_analysis,
                     top_n=20
                 )
-                analyzed_articles.extend(result.get('articles', []))
+                newly_analyzed = result.get('articles', [])
+                analyzed_articles.extend(newly_analyzed)
+
+                # Persist LLM results to DB so future calls skip LLM
+                self._persist_analyzed_articles(newly_analyzed)
 
             # Calculate overall metrics
             if not analyzed_articles:
@@ -261,12 +357,18 @@ class StrangleNewsAnalyzer:
             'analyzed_at': timezone.now().isoformat(),
         }
 
-    def get_market_sentiment(self, hours_back: int = 4) -> Dict:
+    def get_market_sentiment(self, hours_back: int = 4, force_refresh: bool = False) -> Dict:
         """
         Get overall market sentiment for strangle entry decision.
 
+        Implements in-memory caching (30 min) to prevent redundant LLM calls
+        when multiple stocks check market news in the same algorithm run.
+        For example, 50 stocks each calling this method would trigger ~1000+
+        LLM calls without caching. With caching, only the first call runs LLM.
+
         Args:
             hours_back: Hours to look back for news
+            force_refresh: Bypass in-memory cache (default: False)
 
         Returns:
             Dict with sentiment analysis including:
@@ -276,6 +378,16 @@ class StrangleNewsAnalyzer:
             - blocking_articles: list
             - confidence: float (0.0 to 1.0)
         """
+        # Check in-memory cache first (prevents 50x redundant LLM calls per algorithm run)
+        if not force_refresh and self._cached_sentiment and self._cached_sentiment_at:
+            cache_age = (timezone.now() - self._cached_sentiment_at).total_seconds()
+            if cache_age < self.SENTIMENT_CACHE_SECONDS:
+                logger.info(
+                    f"[StrangleNews] Using cached sentiment ({cache_age:.0f}s old, "
+                    f"outlook={self._cached_sentiment.get('market_outlook', 'UNKNOWN')})"
+                )
+                return self._cached_sentiment
+
         logger.info(f"[StrangleNews] Getting market sentiment (last {hours_back}h)")
 
         # First try to get recent news from DB
@@ -305,6 +417,10 @@ class StrangleNewsAnalyzer:
             f"Outlook: {analysis['market_outlook']}, "
             f"Articles: {analysis['articles_analyzed']}"
         )
+
+        # Cache result in memory
+        self._cached_sentiment = analysis
+        self._cached_sentiment_at = timezone.now()
 
         return analysis
 

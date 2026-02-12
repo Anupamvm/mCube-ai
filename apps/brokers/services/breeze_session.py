@@ -34,7 +34,11 @@ from apps.brokers.exceptions import BreezeAuthenticationError
 from apps.brokers.utils.auth_manager import (
     get_credentials,
     save_session_token,
-    is_session_valid_breeze
+    is_session_valid_breeze,
+    can_attempt_auto_login,
+    mark_auto_login_started,
+    mark_auto_login_success,
+    mark_auto_login_failed,
 )
 
 logger = logging.getLogger(__name__)
@@ -138,9 +142,16 @@ class BreezeSessionManager:
             session_token=creds.session_token
         )
 
-        # Workaround for breeze-connect v1.0.62 bug
-        if not hasattr(breeze, 'error_exception'):
-            breeze.error_exception = None
+        # Workaround for breeze-connect v1.0.62 bug:
+        # SDK methods call self.error_exception(method_name, e) on failure,
+        # but error_exception is never defined in __init__.
+        # Setting it to None causes "'NoneType' object is not callable".
+        # Fix: set it to a callable that re-raises the original exception.
+        if not hasattr(breeze, 'error_exception') or breeze.error_exception is None:
+            def _error_handler(method_name, exception):
+                logger.error(f"Breeze API error in {method_name}: {exception}")
+                raise exception
+            breeze.error_exception = _error_handler
 
         return breeze
 
@@ -317,12 +328,26 @@ class BreezeSessionManager:
             if auto_refresh:
                 # Check if auto-login credentials are available
                 if creds.username and creds.password:
+                    # Daily tracking: only one auto-login attempt per day
+                    can_login, reason = can_attempt_auto_login('breeze')
+                    if not can_login:
+                        logger.warning(f"Breeze auto-login blocked: {reason}")
+                        raise BreezeAuthenticationError(
+                            f"Session expired. {reason}. Please login manually.",
+                            requires_login=True,
+                            login_url='/brokers/breeze/login/'
+                        )
+
+                    mark_auto_login_started('breeze')
                     auto_login_attempted = True
                     success, login_msg = self._try_auto_login(task_name="session validation refresh")
                     if success:
+                        mark_auto_login_success('breeze')
                         # Reload credentials after auto-login
                         creds = self.get_credentials()
                     else:
+                        mark_auto_login_failed('breeze')
+                        self._notify_login_failed('breeze')
                         raise BreezeAuthenticationError(
                             f"Session expired. Auto-login failed: {login_msg}",
                             requires_login=True,
@@ -349,11 +374,18 @@ class BreezeSessionManager:
             if any(kw in error_str for kw in ['session', 'expired', 'unauthorized', 'invalid', 'resource not available']):
                 # Only attempt auto-login if we haven't already tried in this call
                 if auto_refresh and not auto_login_attempted and creds.username and creds.password:
-                    success, login_msg = self._try_auto_login(task_name="session error recovery")
-                    if success:
-                        # Retry with new credentials
-                        creds = self.get_credentials()
-                        return self._create_client(creds)
+                    can_login, reason = can_attempt_auto_login('breeze')
+                    if can_login:
+                        mark_auto_login_started('breeze')
+                        success, login_msg = self._try_auto_login(task_name="session error recovery")
+                        if success:
+                            mark_auto_login_success('breeze')
+                            # Retry with new credentials
+                            creds = self.get_credentials()
+                            return self._create_client(creds)
+                        else:
+                            mark_auto_login_failed('breeze')
+                            self._notify_login_failed('breeze')
 
                 raise BreezeAuthenticationError(
                     f"Session expired: {e}",
@@ -363,6 +395,20 @@ class BreezeSessionManager:
                 )
 
             raise BreezeAuthenticationError(f"Breeze authentication failed: {e}")
+
+    def _notify_login_failed(self, service: str):
+        """Send Telegram notification that auto-login failed."""
+        try:
+            from apps.alerts.services.telegram_client import send_telegram_notification
+            name = 'Breeze' if service == 'breeze' else service.title()
+            send_telegram_notification(
+                f"Auto-Login Failed: {name}\n\n"
+                f"No more auto-login attempts today.\n"
+                f"Please login manually via the web UI.",
+                notification_type='WARNING'
+            )
+        except Exception as e:
+            logger.warning(f"Failed to send login-failed notification: {e}")
 
     def refresh_session(self) -> Tuple[bool, str]:
         """

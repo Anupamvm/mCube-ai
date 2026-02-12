@@ -143,6 +143,17 @@
         box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
     }
 
+    .btn-warning {
+        background: #ed8936;
+        color: white;
+    }
+
+    .btn-warning:hover {
+        background: #dd6b20;
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(237, 137, 54, 0.3);
+    }
+
     .btn-secondary {
         background: #e2e8f0;
         color: #4a5568;
@@ -1622,12 +1633,13 @@
                         <span class="task-icon">📈</span>
                         Futures Trading
                     </div>
-                    <form method="post" action="{% url 'core:toggle_core_config' %}" style="display: inline;">
+                    <form method="post" action="{% url 'core:toggle_core_config' %}" id="futures-toggle-form" style="display: inline;">
                         {% csrf_token %}
                         <input type="hidden" name="field" value="enable_futures_trading">
                         <input type="hidden" name="redirect" value="celery">
+                        <input type="hidden" name="manage_tasks" value="0">
                         <label class="toggle">
-                            <input type="checkbox" name="toggle" onchange="this.form.submit()" {% if trading_config.enable_futures_trading %}checked{% endif %}>
+                            <input type="checkbox" name="toggle" onchange="handleFuturesToggle(this)" {% if trading_config.enable_futures_trading %}checked{% endif %}>
                             <span class="slider"></span>
                         </label>
                     </form>
@@ -1645,10 +1657,12 @@
                         Options Strategy
                     </div>
                 </div>
-                <form method="post" action="{% url 'core:update_core_config' %}" style="margin-top: 10px;">
+                <form method="post" action="{% url 'core:update_core_config' %}" id="options-strategy-form" style="margin-top: 10px;">
                     {% csrf_token %}
                     <input type="hidden" name="redirect" value="celery">
-                    <select name="options_strategy" class="form-control" style="width: 100%; padding: 8px; border-radius: 5px; border: 1px solid #e2e8f0;" onchange="this.form.submit()">
+                    <input type="hidden" name="manage_tasks" value="0">
+                    <input type="hidden" name="old_options_strategy" value="{{ trading_config.options_strategy }}">
+                    <select name="options_strategy" class="form-control" style="width: 100%; padding: 8px; border-radius: 5px; border: 1px solid #e2e8f0;" onchange="handleOptionsChange(this)">
                         <option value="NONE" {% if trading_config.options_strategy == 'NONE' %}selected{% endif %}>Disabled</option>
                         <option value="AUTO" {% if trading_config.options_strategy == 'AUTO' %}selected{% endif %}>Auto (VIX)</option>
                         <option value="STRANGLE" {% if trading_config.options_strategy == 'STRANGLE' %}selected{% endif %}>Strangle</option>
@@ -1831,6 +1845,129 @@
     }
     </script>
 
+    <!-- Algorithm Task Confirmation Modal -->
+    <div id="algo-task-modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; justify-content: center; align-items: center;">
+        <div style="background: white; padding: 30px; border-radius: 10px; max-width: 520px; box-shadow: 0 10px 40px rgba(0,0,0,0.3);">
+            <h3 id="algo-modal-title" style="margin-bottom: 15px;"></h3>
+            <div id="algo-modal-body" style="color: #4a5568; margin-bottom: 20px; max-height: 400px; overflow-y: auto;"></div>
+            <div style="display: flex; gap: 15px; justify-content: flex-end;">
+                <button onclick="cancelAlgoAction()" style="background: #e2e8f0; color: #4a5568; padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer;">Cancel</button>
+                <button id="algo-modal-confirm-btn" style="padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer; font-weight: bold; color: white;"></button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+    var ALGO_TASK_DATA = {{ algo_task_data_json|safe }};
+    var previousFuturesState = {{ trading_config.enable_futures_trading|yesno:"true,false" }};
+    var previousOptionsStrategy = '{{ trading_config.options_strategy }}';
+    var _algoModalOnConfirm = null;
+
+    function handleFuturesToggle(checkbox) {
+        var enabling = checkbox.checked;
+        var title = enabling ? 'Enable Futures Algorithm?' : 'Disable Futures Algorithm?';
+        var body = buildAlgoTaskList('futures', enabling);
+        var btnText = enabling ? 'Enable & Start Tasks' : 'Disable & Stop Tasks';
+        var btnColor = enabling ? '#48bb78' : '#e53e3e';
+
+        showAlgoModal(title, body, btnText, btnColor, function() {
+            checkbox.form.querySelector('[name="manage_tasks"]').value = '1';
+            checkbox.form.submit();
+        });
+    }
+
+    function handleOptionsChange(select) {
+        var oldVal = previousOptionsStrategy;
+        var newVal = select.value;
+        var wasEnabled = oldVal !== 'NONE';
+        var willEnable = newVal !== 'NONE';
+
+        if (wasEnabled === willEnable) {
+            // Just changing strategy type, no task changes needed
+            select.form.submit();
+            return;
+        }
+
+        var enabling = willEnable;
+        var title = enabling ? 'Enable Options Algorithm?' : 'Disable Options Algorithm?';
+        var body = buildAlgoTaskList('options', enabling);
+        var btnText = enabling ? 'Enable & Start Tasks' : 'Disable & Stop Tasks';
+        var btnColor = enabling ? '#48bb78' : '#e53e3e';
+
+        showAlgoModal(title, body, btnText, btnColor, function() {
+            select.form.querySelector('[name="manage_tasks"]').value = '1';
+            select.form.submit();
+        });
+    }
+
+    function buildAlgoTaskList(algoKey, enabling) {
+        var data = ALGO_TASK_DATA[algoKey];
+        if (!data) return '';
+        var html = '';
+
+        function taskListHtml(tasks, label) {
+            if (!tasks || tasks.length === 0) return '';
+            var items = tasks.map(function(t) {
+                var icon = enabling ? '&#x2705;' : '&#x274C;';
+                return '<li style="margin: 4px 0;">' + icon + ' <strong>' + t.name + '</strong> <span style="color:#a0aec0;">(' + t.schedule + ')</span></li>';
+            }).join('');
+            return '<div style="margin-bottom: 10px;"><strong style="color:#2d3748;">' + label + '</strong><ul style="list-style:none; padding-left:5px; margin:5px 0;">' + items + '</ul></div>';
+        }
+
+        if (enabling) {
+            html += taskListHtml(data.own, 'Strategy Tasks');
+            html += taskListHtml(data.shared, 'Shared Tasks');
+            html += taskListHtml(data.monitoring, 'Monitoring Tasks');
+            html += '<p style="font-size:12px; color:#718096; margin-top:10px;">These tasks will be <strong>enabled</strong> and Celery Beat will be restarted.</p>';
+        } else {
+            // Check if other algo has active own tasks
+            var otherActive = false;
+            for (var key in ALGO_TASK_DATA) {
+                if (key === algoKey) continue;
+                var otherOwn = ALGO_TASK_DATA[key].own;
+                if (otherOwn && otherOwn.some(function(t) { return t.enabled; })) {
+                    otherActive = true;
+                    break;
+                }
+            }
+            html += taskListHtml(data.own, 'Tasks to Disable');
+            if (otherActive) {
+                html += '<div style="margin-bottom:10px;"><strong style="color:#2d3748;">Shared & Monitoring Tasks</strong>';
+                html += '<p style="color:#718096; font-size:13px; margin:5px 0;">Kept active (other algorithm is running)</p></div>';
+            } else {
+                html += taskListHtml(data.shared, 'Shared Tasks to Disable');
+                html += taskListHtml(data.monitoring, 'Monitoring Tasks to Disable');
+            }
+            html += '<p style="font-size:12px; color:#718096; margin-top:10px;">These tasks will be <strong>disabled</strong> and Celery Beat will be restarted.</p>';
+        }
+        return html;
+    }
+
+    function showAlgoModal(title, body, btnText, btnColor, onConfirm) {
+        document.getElementById('algo-modal-title').innerHTML = title;
+        document.getElementById('algo-modal-body').innerHTML = body;
+        var confirmBtn = document.getElementById('algo-modal-confirm-btn');
+        confirmBtn.innerHTML = btnText;
+        confirmBtn.style.background = btnColor;
+        _algoModalOnConfirm = onConfirm;
+        confirmBtn.onclick = function() {
+            document.getElementById('algo-task-modal').style.display = 'none';
+            if (_algoModalOnConfirm) _algoModalOnConfirm();
+        };
+        document.getElementById('algo-task-modal').style.display = 'flex';
+    }
+
+    function cancelAlgoAction() {
+        document.getElementById('algo-task-modal').style.display = 'none';
+        // Revert futures checkbox
+        var futuresCheckbox = document.querySelector('#futures-toggle-form input[type="checkbox"]');
+        if (futuresCheckbox) futuresCheckbox.checked = previousFuturesState;
+        // Revert options select
+        var optionsSelect = document.querySelector('#options-strategy-form select[name="options_strategy"]');
+        if (optionsSelect) optionsSelect.value = previousOptionsStrategy;
+    }
+    </script>
+
     <div class="action-bar">
         <div>
             <strong>Quick Actions:</strong>
@@ -1851,6 +1988,9 @@
                     Deactivate All Tasks
                 </button>
             </form>
+            <button class="btn btn-warning" onclick="resetAllTaskConfigs()">
+                Reset All Schedules
+            </button>
             <button class="btn btn-primary" onclick="showAllCeleryLogs()">
                 All Celery Logs
             </button>
@@ -2080,9 +2220,12 @@
         <div class="modal-body" id="configModalBody">
             <div class="logs-loading">Loading configuration...</div>
         </div>
-        <div class="modal-footer" style="padding: 16px 24px; border-top: 1px solid #e2e8f0; display: flex; justify-content: flex-end; gap: 12px;">
-            <button class="btn btn-secondary" onclick="closeConfigModal()">Cancel</button>
-            <button class="btn btn-success" id="saveConfigBtn" onclick="saveTaskConfig()">Save & Apply</button>
+        <div class="modal-footer" style="padding: 16px 24px; border-top: 1px solid #e2e8f0; display: flex; justify-content: space-between;">
+            <button class="btn btn-warning" id="resetConfigBtn" onclick="resetTaskConfig()" title="Revert to default schedule">Reset to Defaults</button>
+            <div style="display: flex; gap: 12px;">
+                <button class="btn btn-secondary" onclick="closeConfigModal()">Cancel</button>
+                <button class="btn btn-success" id="saveConfigBtn" onclick="saveTaskConfig()">Save & Apply</button>
+            </div>
         </div>
     </div>
 </div>
@@ -3347,6 +3490,117 @@
             saveBtn.classList.remove('loading');
             saveBtn.textContent = 'Save & Apply';
             showStatusToast(currentConfigTaskKey, {error: error.toString()}, true);
+        });
+    }
+
+    function resetTaskConfig() {
+        if (!currentConfigTaskKey) {
+            showStatusToast('', {error: 'No task selected'}, true);
+            return;
+        }
+
+        const resetBtn = document.getElementById('resetConfigBtn');
+        resetBtn.classList.add('loading');
+        resetBtn.textContent = 'Loading preview...';
+
+        // GET preview first
+        fetch(`{% url "core:reset_task_config" %}?task_key=${encodeURIComponent(currentConfigTaskKey)}`)
+            .then(r => r.json())
+            .then(preview => {
+                resetBtn.classList.remove('loading');
+                resetBtn.textContent = 'Reset to Defaults';
+
+                if (!preview.success) {
+                    showStatusToast(currentConfigTaskKey, {error: preview.error}, true);
+                    return;
+                }
+
+                if (preview.changed_tasks.length === 0) {
+                    alert('This task is already using default schedule. Nothing to reset.');
+                    return;
+                }
+
+                const t = preview.changed_tasks[0];
+                let msg = `Reset "${t.display_name}" to defaults?\n\n`;
+                msg += `Current:  ${t.current_summary}\n`;
+                msg += `Default:  ${t.default_summary}`;
+                if (t.current_params) {
+                    msg += `\n\nCustom params will also be reset.`;
+                }
+
+                if (!confirm(msg)) return;
+
+                // POST to execute
+                _executeReset({ task_key: currentConfigTaskKey });
+            })
+            .catch(error => {
+                resetBtn.classList.remove('loading');
+                resetBtn.textContent = 'Reset to Defaults';
+                showStatusToast(currentConfigTaskKey, {error: error.toString()}, true);
+            });
+    }
+
+    function resetAllTaskConfigs() {
+        // GET preview first
+        fetch('{% url "core:reset_task_config" %}?reset_all=true')
+            .then(r => r.json())
+            .then(preview => {
+                if (!preview.success) {
+                    showStatusToast('all', {error: preview.error}, true);
+                    return;
+                }
+
+                const tasks = preview.changed_tasks;
+
+                if (tasks.length === 0) {
+                    alert('All tasks are already using default schedules. Nothing to reset.');
+                    return;
+                }
+
+                // Build a detailed confirmation message
+                let msg = `${tasks.length} task(s) have custom schedules:\n\n`;
+                tasks.forEach(t => {
+                    msg += `${t.display_name}\n`;
+                    msg += `  Current: ${t.current_summary}\n`;
+                    msg += `  Default: ${t.default_summary}\n\n`;
+                });
+                msg += 'Reset all to defaults? Celery Beat will restart.';
+
+                if (!confirm(msg)) return;
+
+                _executeReset({ reset_all: true });
+            })
+            .catch(error => {
+                showStatusToast('all', {error: error.toString()}, true);
+            });
+    }
+
+    function _executeReset(payload) {
+        fetch('{% url "core:reset_task_config" %}', {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': '{{ csrf_token }}',
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(payload)
+        })
+        .then(r => r.json())
+        .then(data => {
+            if (data.success) {
+                closeConfigModal();
+                showStatusToast(payload.task_key || 'all', {
+                    is_enabled: true,
+                    celery: data.celery || {},
+                    active_tasks: {},
+                    message: data.message
+                }, false);
+                setTimeout(() => location.reload(), 2000);
+            } else {
+                showStatusToast(payload.task_key || 'all', {error: data.error || 'Failed to reset'}, true);
+            }
+        })
+        .catch(error => {
+            showStatusToast(payload.task_key || 'all', {error: error.toString()}, true);
         });
     }
 

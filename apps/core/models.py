@@ -87,6 +87,22 @@ class CredentialStore(models.Model):
     neo_edit_sid = models.CharField(max_length=256, null=True, blank=True)
     neo_server_id = models.CharField(max_length=100, null=True, blank=True)
 
+    # Auto-login tracking: one attempt per day per broker
+    AUTO_LOGIN_STATUS_CHOICES = [
+        ('none', 'None'),
+        ('in_progress', 'In Progress'),
+        ('success', 'Success'),
+        ('failed', 'Failed'),
+    ]
+    auto_login_status = models.CharField(
+        max_length=20, choices=AUTO_LOGIN_STATUS_CHOICES, default='none',
+        help_text="Today's auto-login status: none|in_progress|success|failed"
+    )
+    auto_login_date = models.DateField(
+        null=True, blank=True,
+        help_text="Date of last auto-login attempt (resets daily)"
+    )
+
     created_at = models.DateTimeField(auto_now_add=True)
     last_session_update = models.DateTimeField(null=True, blank=True)
 

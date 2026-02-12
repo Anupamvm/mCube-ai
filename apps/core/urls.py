@@ -50,6 +50,7 @@ urlpatterns = [
     path('celery/reload/', views.reload_celery_schedule, name='reload_celery_schedule'),
     path('celery/config/', views.get_task_config, name='get_task_config'),
     path('celery/config/save/', views.save_task_config, name='save_task_config'),
+    path('celery/config/reset/', views.reset_task_config, name='reset_task_config'),
     path('celery/run-now/', views.run_task_now, name='run_task_now'),
     path('celery/toggle-core-config/', views.toggle_core_config, name='toggle_core_config'),
     path('celery/update-core-config/', views.update_core_config, name='update_core_config'),

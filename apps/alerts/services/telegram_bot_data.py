@@ -538,26 +538,31 @@ class DataMixin:
 
     @sync_to_async(thread_sensitive=False)
     def _refresh_breeze(self) -> dict:
-        """Trigger breeze session refresh."""
+        """
+        Trigger breeze session refresh on-demand (via Telegram quick action).
+
+        Uses BreezeSessionManager directly instead of dispatching a Celery task.
+        The scheduled refresh-breeze-session task was removed — all Breeze
+        logins are now on-demand only, limited to one auto-login per day.
+        """
         from django.db import close_old_connections
         close_old_connections()
 
         try:
-            from celery import current_app
-            from mcube_ai.celery import get_static_schedule
+            from apps.brokers.services.breeze_session import BreezeSessionManager
 
-            static_schedule = get_static_schedule()
-            task_config = static_schedule.get('refresh-breeze-session')
+            manager = BreezeSessionManager()
+            is_valid, msg = manager.is_session_valid()
 
-            if not task_config:
-                return {'success': False, 'error': 'refresh-breeze-session task not found'}
+            if is_valid:
+                return {'success': True, 'message': f'Breeze session already valid: {msg}'}
 
-            task_path = task_config.get('task')
-            task_kwargs = task_config.get('kwargs', {}).copy()
-            task_kwargs['_bypass_guard'] = True
-
-            result = current_app.send_task(task_path, kwargs=task_kwargs)
-            return {'success': True, 'task_id': result.id, 'message': 'Breeze refresh triggered'}
+            # Attempt refresh (subject to daily auto-login limit)
+            success, refresh_msg = manager.refresh_session()
+            if success:
+                return {'success': True, 'message': f'Breeze session refreshed: {refresh_msg}'}
+            else:
+                return {'success': False, 'error': f'Refresh failed: {refresh_msg}'}
         except Exception as e:
             logger.error(f"Error refreshing breeze: {e}")
             return {'success': False, 'error': str(e)}
@@ -612,4 +617,280 @@ class DataMixin:
             return {'success': True, 'task_id': result.id, 'message': 'Data sync triggered'}
         except Exception as e:
             logger.error(f"Error forcing data sync: {e}")
+            return {'success': False, 'error': str(e)}
+
+    # =========================================================================
+    # ALGORITHM DEPENDENCY MANAGEMENT
+    # =========================================================================
+
+    @sync_to_async(thread_sensitive=False)
+    def _get_algorithm_status(self) -> dict:
+        """Return {algo_key: {is_active, own_count, enabled_count}} for each algorithm.
+
+        An algorithm is "active" only when ALL its own_tasks are enabled.
+        """
+        from django.db import close_old_connections
+        close_old_connections()
+
+        from apps.core.models import CeleryTaskState
+        from apps.core.task_config import ALGORITHM_TASK_GROUPS
+
+        try:
+            result = {}
+            for algo_key, group in ALGORITHM_TASK_GROUPS.items():
+                own_tasks = group['own_tasks']
+                enabled_count = sum(
+                    1 for t in own_tasks if CeleryTaskState.is_task_enabled(t)
+                )
+                result[algo_key] = {
+                    'is_active': enabled_count == len(own_tasks),
+                    'own_count': len(own_tasks),
+                    'enabled_count': enabled_count,
+                    'display_name': group['display_name'],
+                    'emoji': group['emoji'],
+                }
+            return result
+        except Exception as e:
+            logger.error(f"Error fetching algorithm status: {e}")
+            return {}
+
+    @sync_to_async(thread_sensitive=False)
+    def _get_algorithm_enable_preview(self, algo_key: str) -> dict:
+        """Return grouped preview of tasks that will be enabled for an algorithm."""
+        from django.db import close_old_connections
+        close_old_connections()
+
+        from apps.core.models import CeleryTaskState
+        from apps.core.task_config import ALGORITHM_TASK_GROUPS, TASK_DEFAULT_CONFIG
+
+        try:
+            group = ALGORITHM_TASK_GROUPS.get(algo_key)
+            if not group:
+                return {'error': f'Unknown algorithm: {algo_key}'}
+
+            def _task_info(task_key):
+                config = TASK_DEFAULT_CONFIG.get(task_key, {})
+                sched_type = config.get('schedule_type', 'crontab')
+                if sched_type == 'crontab':
+                    h = config.get('default_hour', 0)
+                    m = config.get('default_minute', 0)
+                    sched = f"{h:02d}:{m:02d}"
+                elif sched_type == 'recurring':
+                    sh = config.get('default_recurring_start_hour', 0)
+                    sm = config.get('default_recurring_start_minute', 0)
+                    eh = config.get('default_recurring_end_hour', 0)
+                    em = config.get('default_recurring_end_minute', 0)
+                    iv = config.get('default_recurring_interval_minutes', 5)
+                    sched = f"{sh:02d}:{sm:02d}-{eh:02d}:{em:02d} q{iv}m"
+                elif sched_type == 'interval':
+                    secs = config.get('default_interval_seconds', 30)
+                    sched = f"q{secs}s"
+                else:
+                    sched = ''
+                return {
+                    'key': task_key,
+                    'name': config.get('display_name', task_key),
+                    'schedule': sched,
+                    'is_enabled': CeleryTaskState.is_task_enabled(task_key),
+                }
+
+            # Find which other algos share tasks
+            other_algos = [
+                ALGORITHM_TASK_GROUPS[k]['display_name']
+                for k in ALGORITHM_TASK_GROUPS if k != algo_key
+            ]
+
+            return {
+                'algo_key': algo_key,
+                'display_name': group['display_name'],
+                'emoji': group['emoji'],
+                'own_tasks': [_task_info(t) for t in group['own_tasks']],
+                'shared_tasks': [_task_info(t) for t in group['shared_tasks']],
+                'monitoring_tasks': [_task_info(t) for t in group['monitoring_tasks']],
+                'shared_with': ', '.join(other_algos),
+            }
+        except Exception as e:
+            logger.error(f"Error building enable preview for {algo_key}: {e}")
+            return {'error': str(e)}
+
+    @sync_to_async(thread_sensitive=False)
+    def _get_algorithm_disable_preview(self, algo_key: str) -> dict:
+        """Return smart disable preview: tasks to disable vs tasks to keep."""
+        from django.db import close_old_connections
+        close_old_connections()
+
+        from apps.core.models import CeleryTaskState
+        from apps.core.task_config import ALGORITHM_TASK_GROUPS, TASK_DEFAULT_CONFIG
+
+        try:
+            group = ALGORITHM_TASK_GROUPS.get(algo_key)
+            if not group:
+                return {'error': f'Unknown algorithm: {algo_key}'}
+
+            def _task_info(task_key):
+                config = TASK_DEFAULT_CONFIG.get(task_key, {})
+                return {
+                    'key': task_key,
+                    'name': config.get('display_name', task_key),
+                }
+
+            # Check which OTHER algorithms are active (all own_tasks enabled)
+            active_others = []
+            for other_key, other_group in ALGORITHM_TASK_GROUPS.items():
+                if other_key == algo_key:
+                    continue
+                all_own_enabled = all(
+                    CeleryTaskState.is_task_enabled(t) for t in other_group['own_tasks']
+                )
+                if all_own_enabled:
+                    active_others.append(other_group['display_name'])
+
+            # Own tasks: always disable
+            tasks_to_disable = [_task_info(t) for t in group['own_tasks']]
+
+            # Shared + monitoring: only disable if no other algo is active
+            tasks_to_keep = []
+            if active_others:
+                reason = f"Needed by {', '.join(active_others)}"
+                for t in group['shared_tasks'] + group['monitoring_tasks']:
+                    tasks_to_keep.append({**_task_info(t), 'reason': reason})
+            else:
+                for t in group['shared_tasks'] + group['monitoring_tasks']:
+                    tasks_to_disable.append(_task_info(t))
+
+            return {
+                'algo_key': algo_key,
+                'display_name': group['display_name'],
+                'emoji': group['emoji'],
+                'tasks_to_disable': tasks_to_disable,
+                'tasks_to_keep': tasks_to_keep,
+                'active_others': active_others,
+            }
+        except Exception as e:
+            logger.error(f"Error building disable preview for {algo_key}: {e}")
+            return {'error': str(e)}
+
+    @sync_to_async(thread_sensitive=False)
+    def _enable_algorithm(self, algo_key: str) -> dict:
+        """Enable all tasks (own + shared + monitoring) for an algorithm."""
+        from django.db import close_old_connections
+        close_old_connections()
+
+        from apps.core.models import CeleryTaskState
+        from apps.core.task_config import ALGORITHM_TASK_GROUPS, TASK_DEFAULT_CONFIG
+
+        try:
+            group = ALGORITHM_TASK_GROUPS.get(algo_key)
+            if not group:
+                return {'success': False, 'error': f'Unknown algorithm: {algo_key}'}
+
+            all_tasks = group['own_tasks'] + group['shared_tasks'] + group['monitoring_tasks']
+            enabled_count = 0
+
+            # Resolve task paths from static schedule once
+            task_paths = {}
+            try:
+                from mcube_ai.celery import get_static_schedule
+                sched = get_static_schedule()
+                task_paths = {k: v.get('task', '') for k, v in sched.items()}
+            except Exception:
+                pass
+
+            for task_key in all_tasks:
+                config = TASK_DEFAULT_CONFIG.get(task_key, {})
+                CeleryTaskState.set_task_state(
+                    task_key=task_key,
+                    enabled=True,
+                    task_path=task_paths.get(task_key, ''),
+                    display_name=config.get('display_name', task_key.replace('-', ' ').title()),
+                    user='telegram_bot',
+                )
+                enabled_count += 1
+
+            # Restart beat once
+            from apps.core.views import ensure_celery_running
+            ensure_celery_running()
+
+            return {
+                'success': True,
+                'message': f"{group['display_name']} enabled ({enabled_count} tasks)",
+                'count': enabled_count,
+            }
+        except Exception as e:
+            logger.error(f"Error enabling algorithm {algo_key}: {e}")
+            return {'success': False, 'error': str(e)}
+
+    @sync_to_async(thread_sensitive=False)
+    def _disable_algorithm(self, algo_key: str) -> dict:
+        """Disable algorithm tasks. Shared/monitoring tasks kept if another algo is active."""
+        from django.db import close_old_connections
+        close_old_connections()
+
+        from apps.core.models import CeleryTaskState
+        from apps.core.task_config import ALGORITHM_TASK_GROUPS, TASK_DEFAULT_CONFIG
+
+        try:
+            group = ALGORITHM_TASK_GROUPS.get(algo_key)
+            if not group:
+                return {'success': False, 'error': f'Unknown algorithm: {algo_key}'}
+
+            # Check which OTHER algorithms are active
+            active_others = []
+            for other_key, other_group in ALGORITHM_TASK_GROUPS.items():
+                if other_key == algo_key:
+                    continue
+                all_own_enabled = all(
+                    CeleryTaskState.is_task_enabled(t) for t in other_group['own_tasks']
+                )
+                if all_own_enabled:
+                    active_others.append(other_group['display_name'])
+
+            # Always disable own tasks
+            tasks_to_disable = list(group['own_tasks'])
+
+            # Only disable shared/monitoring if no other algo is active
+            if not active_others:
+                tasks_to_disable += group['shared_tasks'] + group['monitoring_tasks']
+
+            kept_count = 0
+            if active_others:
+                kept_count = len(group['shared_tasks']) + len(group['monitoring_tasks'])
+
+            # Resolve task paths from static schedule once
+            task_paths = {}
+            try:
+                from mcube_ai.celery import get_static_schedule
+                sched = get_static_schedule()
+                task_paths = {k: v.get('task', '') for k, v in sched.items()}
+            except Exception:
+                pass
+
+            disabled_count = 0
+            for task_key in tasks_to_disable:
+                config = TASK_DEFAULT_CONFIG.get(task_key, {})
+                CeleryTaskState.set_task_state(
+                    task_key=task_key,
+                    enabled=False,
+                    task_path=task_paths.get(task_key, ''),
+                    display_name=config.get('display_name', task_key.replace('-', ' ').title()),
+                    user='telegram_bot',
+                )
+                disabled_count += 1
+
+            # Restart beat once
+            from apps.core.views import ensure_celery_running
+            ensure_celery_running()
+
+            msg = f"{group['display_name']} disabled ({disabled_count} tasks)"
+            if kept_count:
+                msg += f" | {kept_count} kept ({', '.join(active_others)})"
+
+            return {
+                'success': True,
+                'message': msg,
+                'disabled': disabled_count,
+                'kept': kept_count,
+            }
+        except Exception as e:
+            logger.error(f"Error disabling algorithm {algo_key}: {e}")
             return {'success': False, 'error': str(e)}

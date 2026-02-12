@@ -33,6 +33,7 @@ from .suggestion_views import (
 
 from .algorithm_views import (
     trigger_futures_algorithm,
+    futures_task_status,
     trigger_nifty_strangle,
     trigger_broken_iron_condor,
 )
@@ -88,6 +89,7 @@ __all__ = [
 
     # Algorithm views
     'trigger_futures_algorithm',
+    'futures_task_status',
     'trigger_nifty_strangle',
     'trigger_broken_iron_condor',
 

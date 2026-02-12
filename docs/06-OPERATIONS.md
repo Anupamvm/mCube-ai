@@ -192,7 +192,6 @@ python manage.py populate_trendlyne --file trendlyne_data/fno_data_2026-01-23.xl
 | Time | Task | Description |
 |------|------|-------------|
 | 7:00 AM | `morning-data-sync` | Full morning data synchronization |
-| 8:15 AM | `refresh-breeze-session` | Validate/refresh Breeze API token |
 | 8:50 AM | `update-pre-market-data` | Fetch pre-market data |
 | 8:55 AM | `setup-trading-day` | Evaluate data, determine tradability |
 
