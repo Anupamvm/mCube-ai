@@ -5,7 +5,7 @@
 
 {% block extra_css %}
 <!-- Custom CSS for Trading Triggers -->
-<link rel="stylesheet" href="{% static 'css/trading/triggers.css' %}?v=2">
+<link rel="stylesheet" href="{% static 'css/trading/triggers.css' %}?v=3">
 <link rel="stylesheet" href="{% static 'css/trading/chart.css' %}">
 <style>
     /* Override body margin since we have navbar */
@@ -56,10 +56,115 @@
     <main class="trading-main">
         <!-- Futures Algorithm Tab -->
         <div id="futures-content" class="tab-content active">
-            <div class="content-header">
-                <h1>🎯 Futures Algorithm</h1>
-                <p>Advanced screening algorithm to find top 3 futures trading opportunities</p>
+            <!-- Sticky Command Bar -->
+            <div class="futures-command-bar" id="futuresCommandBar">
+                <div class="futures-command-bar__left">
+                    <h2>🎯 Futures Algorithm</h2>
+                    <div class="futures-command-bar__status" id="commandBarStatus">
+                        <span id="commandBarAutoScan"></span>
+                        <span id="commandBarOpCount"></span>
+                        <span id="commandBarManualRun"></span>
+                    </div>
+                </div>
+                <div class="futures-command-bar__actions">
+                    <button class="futures-command-bar__settings-btn" id="settingsToggleBtn" onclick="FuturesAlgorithm.toggleSettings()">
+                        ⚙ Settings
+                    </button>
+                    <button class="futures-command-bar__run-btn" id="commandBarRunBtn" onclick="FuturesAlgorithm.run()">
+                        ▶ Run Algorithm
+                    </button>
+                </div>
             </div>
+
+            <!-- Collapsible Settings Drawer -->
+            <div class="futures-settings-drawer" id="futuresSettingsDrawer">
+                <div class="futures-settings-drawer__inner">
+                    <!-- Volume Filtering -->
+                    <div class="futures-settings-drawer__section">
+                        <h4>📊 Volume Filtering (OR)</h4>
+                        <div style="margin-bottom: 10px;">
+                            <label for="thisMonthVolume">This Month Volume:</label>
+                            <input type="number" id="thisMonthVolume" name="thisMonthVolume" value="1000" min="0">
+                            <small>Min contracts for current month expiry</small>
+                        </div>
+                        <div style="margin-bottom: 12px;">
+                            <label for="nextMonthVolume">Next Month Volume:</label>
+                            <input type="number" id="nextMonthVolume" name="nextMonthVolume" value="800" min="0">
+                            <small>Min contracts for next month expiry</small>
+                        </div>
+                        <button class="btn btn-secondary" onclick="FuturesAlgorithm.applyFilters()" style="padding: 6px 16px; font-size: 0.8rem;">
+                            🔍 Apply Filters
+                        </button>
+                        <div id="contractsCount" style="font-weight: 500; color: #2563eb; display: none; margin-top: 8px; font-size: 0.85rem;"></div>
+                        <div id="filterStatus" style="margin-top: 8px; padding: 8px; background: #fef3c7; border-left: 4px solid #f59e0b; border-radius: 4px; display: none; font-size: 0.8rem;">
+                            <strong>Filter Applied:</strong> <span id="filterDetails"></span>
+                        </div>
+                    </div>
+
+                    <!-- Historical Validation -->
+                    <div class="futures-settings-drawer__section validation">
+                        <h4>📈 Historical Validation</h4>
+                        <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 8px;">
+                            <input type="checkbox" id="validateHistorical" name="validateHistorical" checked
+                                   style="width: 18px; height: 18px; cursor: pointer;">
+                            <label for="validateHistorical" style="cursor: pointer; font-weight: 500; margin-bottom: 0;">
+                                Enable Verification
+                            </label>
+                        </div>
+                        <p style="margin: 0; color: #6b7280; font-size: 0.8rem; line-height: 1.5;">
+                            Validates each contract against historical price data. Checks: 5/15/30-day loss, single-day drops, volatility, support breach.
+                        </p>
+                    </div>
+
+                    <!-- Data Freshness -->
+                    <div class="futures-settings-drawer__section">
+                        <h4>📊 Data Freshness</h4>
+                        <div style="margin-bottom: 10px;">
+                            <button onclick="FuturesAlgorithm.fetchFreshData()" id="btnFetchTrendlyneFutures"
+                                    style="background: #3b82f6; color: white; padding: 8px 16px; border: none; border-radius: 6px; font-size: 0.8rem; font-weight: 600; cursor: pointer;">
+                                📥 Fetch Fresh Data
+                            </button>
+                        </div>
+                        <div id="dataFreshnessInfoFutures" style="font-size: 0.75rem; padding: 8px; background: {% if data_freshness.is_stale %}#fef3c7{% else %}#d1fae5{% endif %}; border-radius: 6px; border-left: 3px solid {% if data_freshness.is_stale %}#f59e0b{% else %}#10b981{% endif %};">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                                <span style="font-weight: 600; color: {% if data_freshness.is_stale %}#92400e{% else %}#065f46{% endif %};">
+                                    {% if data_freshness.is_stale %}⚠️ Stale{% else %}✅ Fresh{% endif %}
+                                </span>
+                                <span style="color: #6b7280;">
+                                    <strong id="lastUpdatedTimeFutures">{{ data_freshness.last_updated_display }}</strong>
+                                </span>
+                            </div>
+                            <div style="color: #4b5563; display: flex; gap: 10px;">
+                                <span>F&O: <strong id="contractDataCountFutures">{{ data_freshness.contract_count|default:"0" }}</strong></span>
+                                <span>Stocks: <strong id="stockDataCountFutures">{{ data_freshness.stock_count|default:"0" }}</strong></span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Run Progress Banner -->
+            <div class="futures-run-banner" id="futuresRunBanner">
+                <div class="futures-run-banner__header">
+                    <div class="futures-run-banner__title">
+                        <div class="futures-run-banner__spinner"></div>
+                        <span>Algorithm Running</span>
+                    </div>
+                    <div class="futures-run-banner__timer" id="runBannerTimer">0:00</div>
+                </div>
+                <div class="futures-run-banner__status" id="runBannerStatus">
+                    Dispatching analysis...
+                </div>
+                <div class="futures-run-banner__progress">
+                    <div class="futures-run-banner__progress-bar"></div>
+                </div>
+            </div>
+
+            <!-- Hidden loading element for TradingState.setLoading compatibility -->
+            <div class="loading-spinner" id="futuresLoading" style="display: none;">
+                <div>⏳ Analyzing market data...</div>
+            </div>
+            <div class="error-message" id="futuresError" style="display: none;"></div>
 
             <!-- Unified Opportunities Section -->
             <div id="unifiedOpportunitiesSection" style="margin-bottom: 20px;">
@@ -69,122 +174,6 @@
             <!-- Results Panel - List of contracts (for fresh manual analysis) -->
             <div id="futuresResults" style="display: none; margin-bottom: 20px;">
                 <!-- Results will be dynamically populated -->
-            </div>
-
-            <!-- Run Futures Screening Card (BOTTOM) -->
-            <div class="trigger-card">
-                <div class="trigger-header">
-                    <span class="trigger-icon">🚀</span>
-                    <h2 class="trigger-title">Run Futures Screening</h2>
-                </div>
-                <p class="trigger-description">
-                    Analyzes top 300 stocks by market cap for futures opportunities.
-                    Uses 7-factor scoring: Volume, Price Action, OI Analysis,
-                    Sector Performance, Volatility, and AI Confidence.
-                </p>
-
-                <!-- Volume Filtering Section -->
-                <div class="trigger-content" style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin: 20px 0;">
-                    <h4 style="color: #1f2937; margin-bottom: 15px;">📊 Volume Filtering (OR condition)</h4>
-                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
-                        <div class="form-group">
-                            <label for="thisMonthVolume" style="display: block; margin-bottom: 5px; font-weight: 500;">
-                                This Month Volume (contracts):
-                            </label>
-                            <input type="number"
-                                   id="thisMonthVolume"
-                                   name="thisMonthVolume"
-                                   class="form-control"
-                                   value="1000"
-                                   min="0"
-                                   style="width: 100%; padding: 10px; border: 1px solid #e5e7eb; border-radius: 6px;">
-                            <small style="color: #6b7280; font-size: 0.875rem;">Min contracts for current month expiry</small>
-                        </div>
-                        <div class="form-group">
-                            <label for="nextMonthVolume" style="display: block; margin-bottom: 5px; font-weight: 500;">
-                                Next Month Volume (contracts):
-                            </label>
-                            <input type="number"
-                                   id="nextMonthVolume"
-                                   name="nextMonthVolume"
-                                   class="form-control"
-                                   value="800"
-                                   min="0"
-                                   style="width: 100%; padding: 10px; border: 1px solid #e5e7eb; border-radius: 6px;">
-                            <small style="color: #6b7280; font-size: 0.875rem;">Min contracts for next month expiry</small>
-                        </div>
-                    </div>
-
-                    <div style="margin-top: 15px; display: flex; align-items: center; gap: 15px;">
-                        <button class="btn btn-secondary" onclick="FuturesAlgorithm.applyFilters()" style="padding: 8px 20px;">
-                            🔍 Apply Filters & Count
-                        </button>
-                        <div id="contractsCount" style="font-weight: 500; color: #2563eb; display: none;">
-                            <!-- Contract count will be displayed here -->
-                        </div>
-                    </div>
-
-                    <div id="filterStatus" style="margin-top: 10px; padding: 10px; background: #fef3c7; border-left: 4px solid #f59e0b; border-radius: 4px; display: none;">
-                        <strong>Filter Applied:</strong> <span id="filterDetails"></span>
-                    </div>
-                </div>
-
-                <!-- Historical Validation Section -->
-                <div class="trigger-content" style="background: #e0f2fe; padding: 15px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #0284c7;">
-                    <h4 style="color: #1f2937; margin-bottom: 15px;">📈 Historical Data Validation</h4>
-                    <div style="display: flex; align-items: center; gap: 10px;">
-                        <input type="checkbox"
-                               id="validateHistorical"
-                               name="validateHistorical"
-                               checked
-                               style="width: 18px; height: 18px; cursor: pointer;">
-                        <label for="validateHistorical" style="cursor: pointer; font-weight: 500;">
-                            Enable Historical Verification
-                        </label>
-                    </div>
-                    <p style="margin-top: 10px; color: #6b7280; font-size: 0.875rem;">
-                        When enabled, each contract will be validated against historical price data for risk assessment.
-                        Checks include: 5-day/15-day/30-day loss, single-day drops, volatility, and support breach detection.
-                    </p>
-                </div>
-
-                <!-- Data Freshness Section -->
-                <div class="trigger-content" style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin: 20px 0;">
-                    <h4 style="color: #1f2937; margin-bottom: 15px;">📊 Data Freshness</h4>
-                    <div style="display: flex; gap: 10px; margin-bottom: 12px;">
-                        <button onclick="FuturesAlgorithm.fetchFreshData()"
-                                id="btnFetchTrendlyneFutures"
-                                style="background: #3b82f6; color: white; padding: 10px 20px; border: none; border-radius: 6px; font-size: 0.875rem; font-weight: 600; cursor: pointer; transition: background 0.2s;">
-                            📥 Fetch Fresh Data
-                        </button>
-                    </div>
-                    <!-- Data Freshness Info -->
-                    <div id="dataFreshnessInfoFutures" style="font-size: 0.75rem; padding: 10px; background: {% if data_freshness.is_stale %}#fef3c7{% else %}#d1fae5{% endif %}; border-radius: 6px; border-left: 3px solid {% if data_freshness.is_stale %}#f59e0b{% else %}#10b981{% endif %};">
-                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-                            <span style="font-weight: 600; color: {% if data_freshness.is_stale %}#92400e{% else %}#065f46{% endif %};">
-                                {% if data_freshness.is_stale %}⚠️ Data may be stale{% else %}✅ Data is fresh{% endif %}
-                            </span>
-                            <span style="color: #6b7280;">
-                                Last updated: <strong id="lastUpdatedTimeFutures">{{ data_freshness.last_updated_display }}</strong>
-                            </span>
-                        </div>
-                        <div style="color: #4b5563; display: flex; gap: 15px;">
-                            <span>📊 F&O Contracts: <strong id="contractDataCountFutures">{{ data_freshness.contract_count|default:"0" }}</strong></span>
-                            <span>📈 Stocks: <strong id="stockDataCountFutures">{{ data_freshness.stock_count|default:"0" }}</strong></span>
-                        </div>
-                    </div>
-                    <div style="font-size: 0.7rem; color: #9ca3af; margin-top: 8px; font-style: italic;">
-                        <strong>Note:</strong> Data is considered fresh if updated within the last 8 hours. Click "Fetch Fresh Data" to download latest from Trendlyne (2-3 min).
-                    </div>
-                </div>
-
-                <button class="btn btn-primary" onclick="FuturesAlgorithm.run()" id="futuresButton">
-                    🎯 Find Top 3 Opportunities
-                </button>
-                <div class="loading-spinner" id="futuresLoading" style="display: none;">
-                    <div>⏳ Analyzing market data...</div>
-                </div>
-                <div class="error-message" id="futuresError" style="display: none;"></div>
             </div>
 
         </div>
@@ -560,13 +549,13 @@ const FuturesAlgorithm = {
                 filterStatus.style.display = 'block';
                 filterDetails.textContent = `This Month ≥ ${thisMonthVolume} OR Next Month ≥ ${nextMonthVolume} contracts`;
 
-                // Update button text to show count
-                const runButton = document.getElementById('futuresButton');
+                // Update command bar button text to show count
+                const runButton = document.getElementById('commandBarRunBtn');
                 if (count > 0) {
-                    runButton.innerHTML = `🎯 Find Top 3 from ${count} Contracts`;
+                    runButton.innerHTML = `▶ Run (${count})`;
                     runButton.disabled = false;
                 } else {
-                    runButton.innerHTML = '❌ No Contracts Match Filter';
+                    runButton.innerHTML = '❌ No Matches';
                     runButton.disabled = true;
                 }
 
@@ -616,7 +605,8 @@ const FuturesAlgorithm = {
 
         console.log('[Futures] Running with filters:', { thisMonthVolume, nextMonthVolume, confirmed, validateHistorical, contractCount: this.filteredContracts.length });
 
-        TradingState.setLoading('futures', true);
+        this.showRunBanner(this.filteredContracts.length);
+        let keepBannerAlive = false;
 
         try {
             // Include the filtered contracts in the request
@@ -633,15 +623,11 @@ const FuturesAlgorithm = {
             if (response && response.success) {
                 if (response.dispatched) {
                     console.log('[Futures] Algorithm dispatched:', response.task_id);
-                    UIBuilders.showNotification({
-                        type: 'success',
-                        message: `Algorithm dispatched for ${response.contract_count} contracts.\n\nAnalyzing in background - results will appear here and on Telegram.`,
-                        icon: '🚀',
-                        timeout: 8000
-                    });
-                    // Start polling for results (keep loading state active)
+                    this.updateRunBannerStatus(`Dispatched for ${response.contract_count} contracts... Analyzing in background.`);
+                    // Start polling for results (keep banner active)
                     this.pollForResults(response.task_id);
-                    return; // Don't clear loading state yet
+                    keepBannerAlive = true;
+                    return; // Don't hide banner yet
                 } else {
                     console.log('[Futures] Algorithm response:', response);
                     displayLatestProcessed(response);
@@ -690,7 +676,7 @@ const FuturesAlgorithm = {
                 timeout: false
             });
         } finally {
-            TradingState.setLoading('futures', false);
+            if (!keepBannerAlive) this.hideRunBanner();
         }
     },
 
@@ -703,6 +689,8 @@ const FuturesAlgorithm = {
 
         const poll = async () => {
             polls++;
+            this._pollCount = polls;
+            this.updateRunBannerStatus(`Analyzing... (poll #${polls})`);
             try {
                 const statusUrl = ApiClient.endpoints.futuresTaskStatus(taskId);
                 const resp = await fetch(statusUrl, {
@@ -712,14 +700,14 @@ const FuturesAlgorithm = {
                     console.warn('[Futures] Non-JSON status response, status:', resp.status);
                     // Likely a session issue or server error - retry
                     if (polls < MAX_POLLS) { setTimeout(poll, POLL_INTERVAL); }
-                    else { TradingState.setLoading('futures', false); }
+                    else { this.hideRunBanner(); }
                     return;
                 }
                 const result = await resp.json();
 
                 if (!result) {
                     console.warn('[Futures] Poll returned null (auth issue?)');
-                    TradingState.setLoading('futures', false);
+                    this.hideRunBanner();
                     return;
                 }
 
@@ -734,7 +722,7 @@ const FuturesAlgorithm = {
                             icon: 'ℹ️',
                             timeout: 8000
                         });
-                        TradingState.setLoading('futures', false);
+                        this.hideRunBanner();
                         return;
                     }
                     setTimeout(poll, POLL_INTERVAL);
@@ -742,7 +730,7 @@ const FuturesAlgorithm = {
                 }
 
                 // Task finished (success or failure)
-                TradingState.setLoading('futures', false);
+                this.hideRunBanner();
 
                 if (result.status === 'completed' && result.success) {
                     console.log('[Futures] Task completed, displaying results');
@@ -764,7 +752,7 @@ const FuturesAlgorithm = {
                 }
             } catch (err) {
                 console.error('[Futures] Poll error:', err);
-                TradingState.setLoading('futures', false);
+                this.hideRunBanner();
                 UIBuilders.showNotification({
                     type: 'error',
                     message: `❌ Error checking algorithm status\n\n${err.message}`,
@@ -1226,8 +1214,123 @@ const FuturesAlgorithm = {
         TrendlyneLogger.startFetch();
     },
 
+    // --- Settings Drawer ---
+    toggleSettings() {
+        const drawer = document.getElementById('futuresSettingsDrawer');
+        const btn = document.getElementById('settingsToggleBtn');
+        const isOpen = drawer.classList.toggle('open');
+        btn.classList.toggle('active', isOpen);
+        try { localStorage.setItem('futures_settings_open', isOpen ? '1' : '0'); } catch(e) {}
+    },
+
+    restoreSettingsState() {
+        try {
+            if (localStorage.getItem('futures_settings_open') === '1') {
+                document.getElementById('futuresSettingsDrawer').classList.add('open');
+                document.getElementById('settingsToggleBtn').classList.add('active');
+            }
+        } catch(e) {}
+    },
+
+    // --- Run Progress Banner ---
+    _runTimerInterval: null,
+    _runStartTime: null,
+    _pollCount: 0,
+
+    showRunBanner(contractCount) {
+        const banner = document.getElementById('futuresRunBanner');
+        const statusEl = document.getElementById('runBannerStatus');
+        const timerEl = document.getElementById('runBannerTimer');
+        const runBtn = document.getElementById('commandBarRunBtn');
+
+        banner.classList.add('visible');
+        statusEl.textContent = contractCount
+            ? `Dispatched for ${contractCount} contracts... Results will appear below.`
+            : 'Dispatching analysis...';
+        timerEl.textContent = '0:00';
+
+        // Button → running state
+        runBtn.classList.add('running');
+        runBtn.disabled = true;
+        runBtn.innerHTML = '⏳ Running...';
+
+        // Start elapsed timer
+        this._runStartTime = Date.now();
+        this._pollCount = 0;
+        clearInterval(this._runTimerInterval);
+        this._runTimerInterval = setInterval(() => {
+            const elapsed = Math.floor((Date.now() - this._runStartTime) / 1000);
+            const mins = Math.floor(elapsed / 60);
+            const secs = String(elapsed % 60).padStart(2, '0');
+            timerEl.textContent = `${mins}:${secs}`;
+        }, 1000);
+    },
+
+    updateRunBannerStatus(text) {
+        const statusEl = document.getElementById('runBannerStatus');
+        if (statusEl) statusEl.textContent = text;
+    },
+
+    hideRunBanner() {
+        const banner = document.getElementById('futuresRunBanner');
+        const runBtn = document.getElementById('commandBarRunBtn');
+
+        banner.classList.remove('visible');
+        clearInterval(this._runTimerInterval);
+        this._runTimerInterval = null;
+        this._runStartTime = null;
+        this._pollCount = 0;
+
+        // Button → default state (restore contract count if filters were applied)
+        runBtn.classList.remove('running');
+        runBtn.disabled = false;
+        const count = this.filteredContracts ? this.filteredContracts.length : 0;
+        runBtn.innerHTML = count > 0 ? `▶ Run (${count})` : '▶ Run Algorithm';
+    },
+
+    // --- Command Bar Status ---
+    updateCommandBar() {
+        const opCountEl = document.getElementById('commandBarOpCount');
+        const autoScanEl = document.getElementById('commandBarAutoScan');
+        const manualRunEl = document.getElementById('commandBarManualRun');
+        const counts = getSourceCounts ? getSourceCounts() : { all: 0 };
+        const opportunities = UnifiedState ? UnifiedState.allOpportunities : [];
+
+        // Opportunity count
+        if (opCountEl) {
+            opCountEl.textContent = counts.all > 0 ? `${counts.all} opportunities` : '';
+        }
+
+        // Last auto scan time
+        if (autoScanEl && opportunities.length > 0) {
+            let lastAutoScan = '';
+            for (const o of opportunities) {
+                const sources = o.sources || [o.source || 'historical'];
+                if (sources.includes('auto') && o.analyzed_at) {
+                    lastAutoScan = o.analyzed_at;
+                    break;
+                }
+            }
+            autoScanEl.textContent = lastAutoScan ? `Auto: ${lastAutoScan}` : '';
+            if (lastAutoScan && counts.all > 0) autoScanEl.textContent += ' •';
+        }
+
+        // Manual run badge
+        if (manualRunEl) {
+            if (UnifiedState.lastManualRunTimestamp) {
+                const t = new Date(UnifiedState.lastManualRunTimestamp);
+                const timeStr = t.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false });
+                const count = UnifiedState.lastManualRunSymbols ? UnifiedState.lastManualRunSymbols.size : 0;
+                manualRunEl.innerHTML = `<span class="manual-run-badge">Manual: ${timeStr} • ${count} results</span>`;
+            } else {
+                manualRunEl.innerHTML = '';
+            }
+        }
+    },
+
     init() {
         console.log('Futures Algorithm module initialized');
+        this.restoreSettingsState();
         // Auto-apply filters on init with default values
         setTimeout(() => {
             this.applyFilters();
@@ -7406,9 +7509,11 @@ const RECOMMENDATION_HISTORY = {{ recommendation_history|safe }};
 // Runtime state for the unified display
 const UnifiedState = {
     allOpportunities: [],   // Full list from server + manual merges
-    activeFilter: 'all',    // 'all', 'auto', 'manual', 'historical'
+    activeFilter: 'all',    // 'all', 'auto', 'manual', 'historical', 'latest'
     activeSort: 'conviction', // 'conviction', 'score', 'frequency', 'recent'
     searchQuery: '',
+    lastManualRunTimestamp: null,  // ISO string of when last manual run completed
+    lastManualRunSymbols: null,    // Set of symbols from that run
 };
 
 // Recommendation History Module - Shows historical calls for a symbol
@@ -7659,22 +7764,27 @@ function getFrequencyIndicator(opportunity) {
 }
 
 // Build a single opportunity card
-function buildOpportunityCard(opportunity, index) {
+function buildOpportunityCard(opportunity, index, options = {}) {
     const directionColor = opportunity.direction === 'LONG' ? '#10b981' : '#ef4444';
     const directionIcon = opportunity.direction === 'LONG' ? '📈' : '📉';
     const sourceBadges = getSourceBadges(opportunity);
     const freqIndicator = getFrequencyIndicator(opportunity);
     const basisPct = opportunity.basis_pct ? `Basis: ${Number(opportunity.basis_pct).toFixed(1)}%` : '';
+    const isLatest = options.isLatestRun || false;
+    const latestClass = isLatest ? ' latest-run' : '';
+    const latestBorderStyle = isLatest ? 'border-left: 4px solid #10b981; border-color: #10b981;' : 'border: 2px solid #e5e7eb;';
+    const defaultBorder = isLatest ? '#10b981' : '#e5e7eb';
 
     return `
-        <div class="opportunity-card" data-sources='${JSON.stringify(opportunity.sources || [opportunity.source || "historical"])}' data-symbol="${opportunity.symbol}" style="background: white; border: 2px solid #e5e7eb; border-radius: 12px; margin-bottom: 12px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.04); transition: border-color 0.2s, box-shadow 0.2s;"
+        <div class="opportunity-card${latestClass}" data-sources='${JSON.stringify(opportunity.sources || [opportunity.source || "historical"])}' data-symbol="${opportunity.symbol}" style="background: white; ${latestBorderStyle} border-radius: 12px; margin-bottom: 12px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.04); transition: border-color 0.2s, box-shadow 0.2s;"
              onmouseover="this.style.borderColor='#3b82f6'; this.style.boxShadow='0 4px 12px rgba(59,130,246,0.15)';"
-             onmouseout="this.style.borderColor='#e5e7eb'; this.style.boxShadow='0 2px 8px rgba(0,0,0,0.04)';">
+             onmouseout="this.style.borderColor='${defaultBorder}'; this.style.boxShadow='0 2px 8px rgba(0,0,0,0.04)';">
             <!-- Card Header -->
             <div style="padding: 14px 18px; display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 10px;">
                 <div style="flex: 1; min-width: 200px;">
                     <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 6px;">
                         <span style="font-size: 1.15rem; font-weight: 700; color: #1f2937;">${opportunity.symbol}</span>
+                        ${isLatest ? '<span class="new-badge" style="display: inline-flex;">NEW</span>' : ''}
                         <span style="background: ${directionColor}; color: white; padding: 2px 8px; border-radius: 10px; font-size: 0.7rem; font-weight: 600;">
                             ${directionIcon} ${opportunity.direction}
                         </span>
@@ -7730,7 +7840,14 @@ function getFilteredOpportunities() {
     let list = [...UnifiedState.allOpportunities];
 
     // Apply source filter
-    if (UnifiedState.activeFilter !== 'all') {
+    if (UnifiedState.activeFilter === 'latest') {
+        const latestSymbols = UnifiedState.lastManualRunSymbols;
+        if (latestSymbols) {
+            list = list.filter(o => latestSymbols.has(o.symbol));
+        } else {
+            list = [];
+        }
+    } else if (UnifiedState.activeFilter !== 'all') {
         list = list.filter(o => {
             const sources = o.sources || [o.source || 'historical'];
             return sources.includes(UnifiedState.activeFilter);
@@ -7757,13 +7874,15 @@ function getFilteredOpportunities() {
 
 // Count opportunities per source
 function getSourceCounts() {
-    const counts = { all: 0, auto: 0, manual: 0, historical: 0 };
+    const counts = { all: 0, auto: 0, manual: 0, historical: 0, latest: 0 };
+    const latestSymbols = UnifiedState.lastManualRunSymbols;
     UnifiedState.allOpportunities.forEach(o => {
         counts.all++;
         const sources = o.sources || [o.source || 'historical'];
         if (sources.includes('auto')) counts.auto++;
         if (sources.includes('manual')) counts.manual++;
         if (sources.includes('historical')) counts.historical++;
+        if (latestSymbols && latestSymbols.has(o.symbol)) counts.latest++;
     });
     return counts;
 }
@@ -7781,7 +7900,7 @@ function displayUnifiedOpportunities() {
                     <div>
                         <h3 style="margin: 0 0 5px 0; color: #374151; font-weight: 600;">No Futures Opportunities</h3>
                         <p style="margin: 0; color: #6b7280; font-size: 0.875rem;">
-                            No analysis results found. Click "Find Top 3 Opportunities" above to run the algorithm, or wait for the daily automated scan at 9:40 AM.
+                            No analysis results found. Click "Run Algorithm" above to run the screening, or wait for the daily automated scan at 9:40 AM.
                         </p>
                     </div>
                 </div>
@@ -7799,21 +7918,27 @@ function displayUnifiedOpportunities() {
         if (o.analyzed_at) { lastScan = o.analyzed_at; break; }
     }
 
-    // Build header bar
+    // Build header bar (no Run Algorithm button — it's in the command bar)
+    const manualRunBadge = UnifiedState.lastManualRunTimestamp
+        ? (() => {
+            const t = new Date(UnifiedState.lastManualRunTimestamp);
+            const timeStr = t.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false });
+            const cnt = UnifiedState.lastManualRunSymbols ? UnifiedState.lastManualRunSymbols.size : 0;
+            return `<span style="background: rgba(16,185,129,0.15); color: #6ee7b7; padding: 3px 10px; border-radius: 10px; font-size: 0.75rem; font-weight: 600; border: 1px solid rgba(16,185,129,0.3); margin-left: 8px;">Manual run: ${timeStr} &bull; ${cnt} results</span>`;
+        })()
+        : '';
+
     let html = `
-        <div style="background: linear-gradient(135deg, #1e293b 0%, #334155 100%); border-radius: 12px; padding: 16px 20px; margin-bottom: 16px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
-            <div>
-                <h2 style="color: #f8fafc; margin: 0 0 4px 0; font-size: 1.15rem; font-weight: 700; display: flex; align-items: center; gap: 8px;">
+        <div style="background: linear-gradient(135deg, #1e293b 0%, #334155 100%); border-radius: 12px; padding: 16px 20px; margin-bottom: 16px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+                <h2 style="color: #f8fafc; margin: 0; font-size: 1.15rem; font-weight: 700;">
                     FUTURES OPPORTUNITIES
                 </h2>
-                <div style="color: #94a3b8; font-size: 0.8rem;">
-                    ${counts.all} opportunities &bull; ${uniqueSymbols} unique symbols${lastScan ? ` &bull; Last scan: ${lastScan}` : ''}
-                </div>
             </div>
-            <button onclick="FuturesAlgorithm.run()"
-                    style="background: #3b82f6; color: white; border: none; padding: 8px 18px; border-radius: 8px; cursor: pointer; font-weight: 600; font-size: 0.85rem; display: flex; align-items: center; gap: 6px;">
-                Run Algorithm ▶
-            </button>
+            <div style="color: #94a3b8; font-size: 0.8rem; margin-top: 4px; display: flex; align-items: center; flex-wrap: wrap; gap: 4px;">
+                ${counts.all} opportunities &bull; ${uniqueSymbols} unique symbols${lastScan ? ` &bull; Last auto scan: ${lastScan}` : ''}
+                ${manualRunBadge}
+            </div>
         </div>
     `;
 
@@ -7823,6 +7948,10 @@ function displayUnifiedOpportunities() {
         const isActive = filterActive === key;
         return `background: ${isActive ? '#3b82f6' : '#f3f4f6'}; color: ${isActive ? 'white' : '#374151'}; border: none; padding: 6px 14px; border-radius: 8px; cursor: pointer; font-weight: 600; font-size: 0.8rem; transition: all 0.15s;`;
     };
+    const latestTabStyle = (key) => {
+        const isActive = filterActive === key;
+        return `background: ${isActive ? '#10b981' : '#d1fae5'}; color: ${isActive ? 'white' : '#065f46'}; border: none; padding: 6px 14px; border-radius: 8px; cursor: pointer; font-weight: 600; font-size: 0.8rem; transition: all 0.15s;`;
+    };
 
     html += `
         <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 14px;">
@@ -7831,6 +7960,7 @@ function displayUnifiedOpportunities() {
                 <button onclick="setUnifiedFilter('auto')" style="${tabStyle('auto')}">🤖 Auto (${counts.auto})</button>
                 <button onclick="setUnifiedFilter('manual')" style="${tabStyle('manual')}">🖱 Manual (${counts.manual})</button>
                 <button onclick="setUnifiedFilter('historical')" style="${tabStyle('historical')}">📋 Historical (${counts.historical})</button>
+                ${counts.latest > 0 ? `<button onclick="setUnifiedFilter('latest')" style="${latestTabStyle('latest')}">🆕 Latest Run (${counts.latest})</button>` : ''}
             </div>
             <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
                 <select id="unifiedSortSelect" onchange="setUnifiedSort(this.value)"
@@ -7848,14 +7978,16 @@ function displayUnifiedOpportunities() {
         </div>
     `;
 
-    // Build cards
+    // Build cards (with latest-run highlighting)
     const filtered = getFilteredOpportunities();
+    const latestSymbols = UnifiedState.lastManualRunSymbols;
     if (filtered.length === 0) {
         html += `<div style="text-align: center; padding: 30px; color: #9ca3af; font-size: 0.9rem;">No opportunities match the current filter.</div>`;
     } else {
         html += `<div id="unifiedCardsContainer">`;
         filtered.forEach((opp, i) => {
-            html += buildOpportunityCard(opp, i);
+            const isLatest = latestSymbols && latestSymbols.has(opp.symbol);
+            html += buildOpportunityCard(opp, i, { isLatestRun: isLatest });
         });
         html += `</div>`;
     }
@@ -7864,6 +7996,9 @@ function displayUnifiedOpportunities() {
 
     // Store all opportunities in FuturesAlgorithm.analyzedContracts for View Details
     FuturesAlgorithm.analyzedContracts = [...UnifiedState.allOpportunities];
+
+    // Update command bar status
+    if (FuturesAlgorithm.updateCommandBar) FuturesAlgorithm.updateCommandBar();
 }
 
 // Filter handler
@@ -7941,15 +8076,23 @@ function mergeManualResults(results) {
         }
     });
 
-    // Re-sort and re-display
-    UnifiedState.activeFilter = 'all';
+    // Track latest manual run
+    UnifiedState.lastManualRunTimestamp = new Date().toISOString();
+    UnifiedState.lastManualRunSymbols = new Set(newContracts.map(c => c.symbol));
+
+    // Auto-switch to "Latest Run" tab and scroll to top
+    UnifiedState.activeFilter = 'latest';
     displayUnifiedOpportunities();
+
+    // Scroll opportunities section into view
+    const section = document.getElementById('unifiedOpportunitiesSection');
+    if (section) section.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
     // Flash notification
     UIBuilders.showNotification({
         type: 'success',
-        message: `${newContracts.length} manual results merged into opportunities list.`,
-        icon: '🖱',
+        message: `${newContracts.length} new results merged. Showing "Latest Run" tab.`,
+        icon: '🆕',
         timeout: 4000
     });
 }
@@ -7968,6 +8111,8 @@ document.addEventListener('DOMContentLoaded', function() {
         UnifiedState.allOpportunities = UNIFIED_OPPORTUNITIES || [];
         console.log('[Futures] Loaded', UnifiedState.allOpportunities.length, 'unified opportunities');
         displayUnifiedOpportunities();
+        // Initial command bar status update
+        if (FuturesAlgorithm.updateCommandBar) FuturesAlgorithm.updateCommandBar();
     }, 150);
 });
 </script>
