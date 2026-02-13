@@ -1,0 +1,35 @@
+<!-- Single task row within a category (compact view) -->
+{# Expects: task, category variables #}
+<div class="task-row" id="task-row-{{ task.key }}" data-task-key="{{ task.key }}">
+    <div class="task-toggle">
+        {% if task.is_enabled %}
+        <div class="toggle-switch active" onclick="toggleStaticTask('{{ task.key }}', '{{ task.task }}', this, 'stop')" title="Click to deactivate"></div>
+        {% else %}
+        <div class="toggle-switch" onclick="toggleStaticTask('{{ task.key }}', '{{ task.task }}', this, 'start')" title="Click to activate"></div>
+        {% endif %}
+    </div>
+    <div class="task-info">
+        <div class="task-name">{{ task.display_name|default:task.key }}</div>
+        {% if task.description %}
+        <div class="task-description" style="color: #718096; font-size: 11px;">{{ task.description }}</div>
+        {% endif %}
+    </div>
+    <div class="task-schedule">{{ task.schedule }}</div>
+    {% if task.use_custom_schedule %}
+    <span class="task-custom-badge">Custom</span>
+    {% endif %}
+    <div class="kebab-menu">
+        <button class="kebab-btn" onclick="toggleKebab(this)" title="More actions">⋮</button>
+        <div class="kebab-dropdown">
+            <button onclick="runTaskNow('{{ task.key }}', this.closest('.task-row').querySelector('.kebab-btn'))">
+                ▶ Run Now
+            </button>
+            <button onclick="openLogsPanel('task', '{{ task.key }}', '{{ task.task }}')">
+                📋 View Logs
+            </button>
+            <button onclick="showTaskConfig('{{ task.key }}', '{{ task.display_name|default:task.key }}')">
+                ⚙ Configure
+            </button>
+        </div>
+    </div>
+</div>

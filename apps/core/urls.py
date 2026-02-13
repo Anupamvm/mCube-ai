@@ -63,4 +63,9 @@ urlpatterns = [
     # Task Timeline API
     path('api/task-timeline/', views.api_task_timeline, name='api_task_timeline'),
     path('api/recent-executions/', views.api_recent_executions, name='api_recent_executions'),
+
+    # Task Presets API
+    path('celery/presets/', views.list_presets, name='list_presets'),
+    path('celery/presets/apply/', views.apply_preset, name='apply_preset'),
+    path('celery/presets/save/', views.save_preset, name='save_preset'),
 ]

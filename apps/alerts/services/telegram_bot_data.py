@@ -8,6 +8,7 @@ All methods use close_old_connections() for thread safety.
 import logging
 from datetime import date, datetime, timedelta
 from decimal import Decimal
+from typing import Optional
 
 from asgiref.sync import sync_to_async
 
@@ -899,4 +900,587 @@ class DataMixin:
             }
         except Exception as e:
             logger.error(f"Error disabling algorithm {algo_key}: {e}")
+            return {'success': False, 'error': str(e)}
+
+    # =========================================================================
+    # ORDER BOOK DATA
+    # =========================================================================
+
+    @sync_to_async(thread_sensitive=False)
+    def _get_breeze_orders(self) -> dict:
+        """Get today's orders from ICICI Breeze."""
+        from django.db import close_old_connections
+        close_old_connections()
+
+        try:
+            from apps.brokers.services.breeze_session import get_breeze_client
+            breeze = get_breeze_client()
+            if not breeze:
+                return {'success': False, 'orders': [], 'error': 'Breeze session not available'}
+
+            from apps.brokers.integrations.breeze import get_order_list
+            today_str = date.today().strftime('%Y-%m-%d')
+            result = get_order_list(from_date=today_str, to_date=today_str)
+
+            if result and result.get('success'):
+                return {'success': True, 'orders': result.get('orders', [])}
+            return {'success': False, 'orders': [], 'error': result.get('error', 'Failed')}
+        except Exception as e:
+            logger.error(f"Error fetching Breeze orders: {e}")
+            return {'success': False, 'orders': [], 'error': str(e)}
+
+    @sync_to_async(thread_sensitive=False)
+    def _get_kotak_orders(self) -> dict:
+        """Get today's orders from Kotak Neo."""
+        from django.db import close_old_connections
+        close_old_connections()
+
+        try:
+            from tools.neo import NeoAPI
+            neo = NeoAPI()
+            orders = neo.get_orders()
+            if orders is not None:
+                return {'success': True, 'orders': orders if isinstance(orders, list) else []}
+            return {'success': False, 'orders': [], 'error': 'No orders data'}
+        except Exception as e:
+            logger.error(f"Error fetching Kotak orders: {e}")
+            return {'success': False, 'orders': [], 'error': str(e)}
+
+    @sync_to_async(thread_sensitive=False)
+    def _cancel_kotak_order(self, order_id: str) -> dict:
+        """Cancel a Kotak Neo order."""
+        from django.db import close_old_connections
+        close_old_connections()
+
+        try:
+            from tools.neo import NeoAPI
+            neo = NeoAPI()
+            success = neo.cancel_order(order_id)
+            if success:
+                return {'success': True, 'message': f'Order {order_id} cancelled'}
+            return {'success': False, 'error': 'Cancellation failed'}
+        except Exception as e:
+            logger.error(f"Error cancelling Kotak order {order_id}: {e}")
+            return {'success': False, 'error': str(e)}
+
+    # =========================================================================
+    # MARGIN / LIMITS DATA
+    # =========================================================================
+
+    @sync_to_async(thread_sensitive=False)
+    def _get_breeze_margin(self) -> dict:
+        """Get margin data from ICICI Breeze."""
+        from django.db import close_old_connections
+        close_old_connections()
+
+        try:
+            from apps.brokers.services.breeze_session import get_breeze_client
+            breeze = get_breeze_client()
+            if not breeze:
+                return {'success': False, 'error': 'Breeze session not available'}
+
+            from apps.brokers.integrations.breeze import get_nfo_margin
+            margin = get_nfo_margin()
+            if margin:
+                cash_limit = float(margin.get('cash_limit', 0) or 0)
+                blocked = float(margin.get('block_by_trade', 0) or 0)
+                available = cash_limit - blocked
+                return {
+                    'success': True,
+                    'cash_limit': cash_limit,
+                    'blocked': blocked,
+                    'available': available,
+                    'pct': round(available / cash_limit * 100, 1) if cash_limit > 0 else 0,
+                }
+            return {'success': False, 'error': 'No margin data'}
+        except Exception as e:
+            logger.error(f"Error fetching Breeze margin: {e}")
+            return {'success': False, 'error': str(e)}
+
+    @sync_to_async(thread_sensitive=False)
+    def _get_kotak_margin(self) -> dict:
+        """Get margin data from Kotak Neo."""
+        from django.db import close_old_connections
+        close_old_connections()
+
+        try:
+            from tools.neo import NeoAPI
+            neo = NeoAPI()
+            margin = neo.get_margin()
+            if margin:
+                total = float(margin.get('total_margin', 0) or 0)
+                used = float(margin.get('used_margin', 0) or 0)
+                available = float(margin.get('available_margin', 0) or 0)
+                return {
+                    'success': True,
+                    'total': total,
+                    'used': used,
+                    'available': available,
+                    'pct': round(available / total * 100, 1) if total > 0 else 0,
+                }
+            return {'success': False, 'error': 'No margin data'}
+        except Exception as e:
+            logger.error(f"Error fetching Kotak margin: {e}")
+            return {'success': False, 'error': str(e)}
+
+    @sync_to_async(thread_sensitive=False)
+    def _get_margin_summary_for_header(self) -> dict:
+        """Get a compact margin summary for the main menu header."""
+        from django.db import close_old_connections
+        close_old_connections()
+
+        result = {'breeze_free': None, 'kotak_free': None}
+
+        try:
+            # Breeze
+            try:
+                from apps.brokers.services.breeze_session import get_breeze_client
+                breeze = get_breeze_client()
+                if breeze:
+                    from apps.brokers.integrations.breeze import get_nfo_margin
+                    margin = get_nfo_margin()
+                    if margin:
+                        cash = float(margin.get('cash_limit', 0) or 0)
+                        blocked = float(margin.get('block_by_trade', 0) or 0)
+                        result['breeze_free'] = cash - blocked
+            except Exception as e:
+                logger.debug(f"Breeze margin header: {e}")
+
+            # Kotak
+            try:
+                from tools.neo import NeoAPI
+                neo = NeoAPI()
+                margin = neo.get_margin()
+                if margin:
+                    result['kotak_free'] = float(margin.get('available_margin', 0) or 0)
+            except Exception as e:
+                logger.debug(f"Kotak margin header: {e}")
+
+        except Exception as e:
+            logger.error(f"Error fetching margin summary: {e}")
+
+        return result
+
+    # =========================================================================
+    # POSITION SL/TARGET MODIFICATION
+    # =========================================================================
+
+    @sync_to_async(thread_sensitive=False)
+    def _get_position_detail(self, position_id: int) -> dict:
+        """Get position detail for SL/Target modification."""
+        from django.db import close_old_connections
+        close_old_connections()
+
+        try:
+            from apps.positions.models import Position
+            pos = Position.objects.get(id=position_id)
+            return {
+                'success': True,
+                'id': pos.id,
+                'instrument': pos.instrument,
+                'direction': pos.direction,
+                'entry_price': float(pos.entry_price),
+                'current_price': float(pos.current_price) if pos.current_price else None,
+                'stop_loss': float(pos.stop_loss) if pos.stop_loss else None,
+                'target': float(pos.target) if pos.target else None,
+                'quantity': pos.quantity,
+                'lot_size': pos.lot_size,
+                'unrealized_pnl': float(pos.unrealized_pnl) if pos.unrealized_pnl else 0,
+            }
+        except Exception as e:
+            logger.error(f"Error fetching position {position_id}: {e}")
+            return {'success': False, 'error': str(e)}
+
+    @sync_to_async(thread_sensitive=False)
+    def _update_position_sl(self, position_id: int, new_sl: float) -> dict:
+        """Update stop loss for a position."""
+        from django.db import close_old_connections
+        close_old_connections()
+
+        try:
+            from apps.positions.models import Position
+            pos = Position.objects.get(id=position_id)
+            old_sl = float(pos.stop_loss) if pos.stop_loss else None
+            pos.stop_loss = Decimal(str(new_sl))
+            pos.save(update_fields=['stop_loss'])
+            return {
+                'success': True,
+                'old_sl': old_sl,
+                'new_sl': new_sl,
+                'instrument': pos.instrument,
+            }
+        except Exception as e:
+            logger.error(f"Error updating SL for position {position_id}: {e}")
+            return {'success': False, 'error': str(e)}
+
+    @sync_to_async(thread_sensitive=False)
+    def _update_position_target(self, position_id: int, new_target: float) -> dict:
+        """Update target for a position."""
+        from django.db import close_old_connections
+        close_old_connections()
+
+        try:
+            from apps.positions.models import Position
+            pos = Position.objects.get(id=position_id)
+            old_target = float(pos.target) if pos.target else None
+            pos.target = Decimal(str(new_target))
+            pos.save(update_fields=['target'])
+            return {
+                'success': True,
+                'old_target': old_target,
+                'new_target': new_target,
+                'instrument': pos.instrument,
+            }
+        except Exception as e:
+            logger.error(f"Error updating target for position {position_id}: {e}")
+            return {'success': False, 'error': str(e)}
+
+    # =========================================================================
+    # TRADE HISTORY
+    # =========================================================================
+
+    @sync_to_async(thread_sensitive=False)
+    def _get_trade_history(self, count: int = 10) -> dict:
+        """Get recent closed trades from TakenTrade model."""
+        from django.db import close_old_connections
+        close_old_connections()
+
+        try:
+            from apps.trading.models import TakenTrade
+            trades = list(
+                TakenTrade.objects
+                .filter(status='CLOSED')
+                .order_by('-exit_time', '-id')[:count]
+                .values(
+                    'id', 'instrument', 'trade_type', 'direction',
+                    'realized_pnl', 'net_pnl', 'outcome', 'exit_time',
+                    'entry_price', 'exit_price', 'quantity',
+                )
+            )
+
+            # Summary stats
+            all_closed = TakenTrade.objects.filter(status='CLOSED')
+            total_count = all_closed.count()
+            wins = all_closed.filter(outcome='PROFIT').count()
+            losses = all_closed.filter(outcome='LOSS').count()
+
+            total_pnl = sum(
+                float(t.get('net_pnl') or t.get('realized_pnl') or 0)
+                for t in trades
+            )
+
+            return {
+                'success': True,
+                'trades': trades,
+                'total_count': total_count,
+                'wins': wins,
+                'losses': losses,
+                'win_rate': round(wins / total_count * 100, 1) if total_count > 0 else 0,
+                'total_pnl': total_pnl,
+            }
+        except Exception as e:
+            logger.error(f"Error fetching trade history: {e}")
+            return {'success': False, 'trades': [], 'error': str(e)}
+
+    # =========================================================================
+    # BROKER SESSION STATUS & LOGIN
+    # =========================================================================
+
+    @sync_to_async(thread_sensitive=False)
+    def _get_broker_session_status(self) -> dict:
+        """Check session validity for both brokers."""
+        from django.db import close_old_connections
+        close_old_connections()
+
+        result = {
+            'breeze_valid': False,
+            'breeze_since': None,
+            'kotak_valid': False,
+            'kotak_since': None,
+        }
+
+        try:
+            from apps.core.models import NseFlag
+
+            # Breeze
+            breeze_token = NseFlag.get('breeze_session_token', '')
+            result['breeze_valid'] = bool(breeze_token)
+            breeze_time = NseFlag.get('breeze_session_time', '')
+            if breeze_time:
+                result['breeze_since'] = breeze_time
+
+            # Kotak
+            try:
+                from apps.core.models import CredentialStore
+                creds = CredentialStore.objects.filter(service='kotak_neo').first()
+                if creds and creds.neo_base_url:
+                    result['kotak_valid'] = True
+                    if creds.auto_login_date:
+                        result['kotak_since'] = str(creds.auto_login_date)
+            except Exception:
+                pass
+
+        except Exception as e:
+            logger.error(f"Error checking broker sessions: {e}")
+
+        return result
+
+    @sync_to_async(thread_sensitive=False)
+    def _trigger_kotak_login(self) -> dict:
+        """Trigger Kotak Neo login (TOTP + MPIN, no user input needed)."""
+        from django.db import close_old_connections
+        close_old_connections()
+
+        try:
+            from tools.neo import NeoAPI
+            neo = NeoAPI()
+            success = neo.login()
+            if success:
+                return {'success': True, 'message': 'Kotak Neo login successful'}
+            return {'success': False, 'error': 'Login failed'}
+        except Exception as e:
+            logger.error(f"Error triggering Kotak login: {e}")
+            return {'success': False, 'error': str(e)}
+
+    @sync_to_async(thread_sensitive=False)
+    def _trigger_breeze_login(self) -> dict:
+        """Trigger Breeze session refresh."""
+        from django.db import close_old_connections
+        close_old_connections()
+
+        try:
+            from apps.brokers.services.breeze_session import BreezeSessionManager
+
+            manager = BreezeSessionManager()
+            is_valid, msg = manager.is_session_valid()
+
+            if is_valid:
+                return {'success': True, 'message': f'Session already valid: {msg}'}
+
+            from apps.brokers.utils.auth_manager import can_attempt_auto_login
+            can_login, reason = can_attempt_auto_login('breeze')
+            if not can_login:
+                return {'success': False, 'error': f'Login blocked: {reason}'}
+
+            success, refresh_msg = manager.refresh_session()
+            if success:
+                return {'success': True, 'message': f'Login successful: {refresh_msg}'}
+            return {'success': False, 'error': f'Login failed: {refresh_msg}'}
+        except Exception as e:
+            logger.error(f"Error triggering Breeze login: {e}")
+            return {'success': False, 'error': str(e)}
+
+    # =========================================================================
+    # ANALYTICS / PERFORMANCE
+    # =========================================================================
+
+    @sync_to_async(thread_sensitive=False)
+    def _get_performance_summary(self, period: str = 'FY') -> dict:
+        """Get performance analytics summary."""
+        from django.db import close_old_connections
+        close_old_connections()
+
+        try:
+            from apps.trading.models import TakenTrade
+            from django.db.models import Sum, Count, Q, Avg, Max, Min
+
+            # Build date filter
+            today = date.today()
+            if period == 'week':
+                start_date = today - timedelta(days=today.weekday())
+            elif period == 'month':
+                start_date = today.replace(day=1)
+            else:  # FY
+                if today.month >= 4:
+                    start_date = today.replace(month=4, day=1)
+                else:
+                    start_date = today.replace(year=today.year - 1, month=4, day=1)
+
+            qs = TakenTrade.objects.filter(
+                status='CLOSED',
+                exit_time__date__gte=start_date,
+            )
+
+            total = qs.count()
+            if total == 0:
+                return {
+                    'success': True,
+                    'period': period,
+                    'total_trades': 0,
+                    'win_rate': 0,
+                    'total_pnl': 0,
+                }
+
+            wins = qs.filter(outcome='PROFIT').count()
+            losses = qs.filter(outcome='LOSS').count()
+
+            agg = qs.aggregate(
+                total_pnl=Sum('net_pnl'),
+                avg_win=Avg('net_pnl', filter=Q(outcome='PROFIT')),
+                avg_loss=Avg('net_pnl', filter=Q(outcome='LOSS')),
+                best_trade=Max('net_pnl'),
+                worst_trade=Min('net_pnl'),
+            )
+
+            # Strategy breakdown
+            futures_qs = qs.filter(trade_type='FUTURES')
+            options_qs = qs.filter(trade_type='OPTIONS')
+
+            futures_pnl = futures_qs.aggregate(total=Sum('net_pnl'))['total'] or 0
+            options_pnl = options_qs.aggregate(total=Sum('net_pnl'))['total'] or 0
+
+            # Best/worst trade details
+            best_trade_obj = qs.order_by('-net_pnl').first()
+            worst_trade_obj = qs.order_by('net_pnl').first()
+
+            return {
+                'success': True,
+                'period': period,
+                'total_trades': total,
+                'wins': wins,
+                'losses': losses,
+                'win_rate': round(wins / total * 100, 1) if total > 0 else 0,
+                'total_pnl': float(agg['total_pnl'] or 0),
+                'avg_win': float(agg['avg_win'] or 0),
+                'avg_loss': float(agg['avg_loss'] or 0),
+                'best_trade': float(agg['best_trade'] or 0),
+                'worst_trade': float(agg['worst_trade'] or 0),
+                'best_trade_name': best_trade_obj.instrument if best_trade_obj else '',
+                'worst_trade_name': worst_trade_obj.instrument if worst_trade_obj else '',
+                'futures_count': futures_qs.count(),
+                'futures_pnl': float(futures_pnl),
+                'options_count': options_qs.count(),
+                'options_pnl': float(options_pnl),
+            }
+        except Exception as e:
+            logger.error(f"Error fetching performance summary: {e}")
+            return {'success': False, 'error': str(e)}
+
+    # =========================================================================
+    # MARKET SENTIMENT / NEWS
+    # =========================================================================
+
+    @sync_to_async(thread_sensitive=False)
+    def _get_market_sentiment(self) -> dict:
+        """Get market sentiment from analyzed news articles."""
+        from django.db import close_old_connections
+        close_old_connections()
+
+        try:
+            from apps.data.models import NewsArticle
+            today = date.today()
+
+            articles = list(
+                NewsArticle.objects
+                .filter(published_at__date=today)
+                .order_by('-published_at')[:10]
+                .values('title', 'sentiment_score', 'published_at')
+            )
+
+            if not articles:
+                return {
+                    'success': True,
+                    'overall_score': 0,
+                    'overall_label': 'NO DATA',
+                    'articles': [],
+                    'blocking_news': False,
+                }
+
+            scores = [a['sentiment_score'] for a in articles if a.get('sentiment_score') is not None]
+            avg_score = sum(scores) / len(scores) if scores else 0
+
+            if avg_score > 0.3:
+                label = 'BULLISH'
+            elif avg_score < -0.3:
+                label = 'BEARISH'
+            else:
+                label = 'NEUTRAL'
+
+            return {
+                'success': True,
+                'overall_score': round(avg_score, 2),
+                'overall_label': label,
+                'articles': articles[:5],
+                'blocking_news': avg_score < -0.6,
+            }
+        except Exception as e:
+            logger.error(f"Error fetching market sentiment: {e}")
+            return {'success': True, 'overall_score': 0, 'overall_label': 'N/A', 'articles': [], 'blocking_news': False}
+
+    # =========================================================================
+    # TASK SCHEDULE EDITING
+    # =========================================================================
+
+    @sync_to_async(thread_sensitive=False)
+    def _get_task_schedule_detail(self, task_key: str) -> dict:
+        """Get current schedule details for a task."""
+        from django.db import close_old_connections
+        close_old_connections()
+
+        try:
+            from apps.core.models import CeleryTaskState
+            from apps.core.task_config import TASK_DEFAULT_CONFIG
+
+            config = TASK_DEFAULT_CONFIG.get(task_key, {})
+            state = CeleryTaskState.objects.filter(task_key=task_key).first()
+
+            sched_type = config.get('schedule_type', 'crontab')
+
+            current_hour = config.get('default_hour', 0)
+            current_minute = config.get('default_minute', 0)
+
+            if state and state.use_custom_schedule:
+                if state.custom_hour is not None:
+                    current_hour = state.custom_hour
+                if state.custom_minute is not None:
+                    current_minute = state.custom_minute
+
+            return {
+                'success': True,
+                'task_key': task_key,
+                'display_name': config.get('display_name', task_key),
+                'schedule_type': sched_type,
+                'current_hour': current_hour,
+                'current_minute': current_minute,
+                'default_hour': config.get('default_hour', 0),
+                'default_minute': config.get('default_minute', 0),
+            }
+        except Exception as e:
+            logger.error(f"Error getting schedule for {task_key}: {e}")
+            return {'success': False, 'error': str(e)}
+
+    @sync_to_async(thread_sensitive=False)
+    def _update_task_schedule(self, task_key: str, hour: int, minute: int) -> dict:
+        """Update a task's schedule and restart beat."""
+        from django.db import close_old_connections
+        close_old_connections()
+
+        try:
+            from apps.core.models import CeleryTaskState
+            from apps.core.task_config import TASK_DEFAULT_CONFIG
+
+            config = TASK_DEFAULT_CONFIG.get(task_key, {})
+
+            state, _ = CeleryTaskState.objects.get_or_create(
+                task_key=task_key,
+                defaults={
+                    'display_name': config.get('display_name', task_key),
+                    'is_enabled': True,
+                }
+            )
+            state.custom_hour = hour
+            state.custom_minute = minute
+            state.use_custom_schedule = True
+            state.save(update_fields=['custom_hour', 'custom_minute', 'use_custom_schedule'])
+
+            # Restart beat
+            from apps.core.views import ensure_celery_running
+            ensure_celery_running()
+
+            return {
+                'success': True,
+                'message': f'{config.get("display_name", task_key)} rescheduled to {hour:02d}:{minute:02d}',
+            }
+        except Exception as e:
+            logger.error(f"Error updating schedule for {task_key}: {e}")
             return {'success': False, 'error': str(e)}

@@ -1,0 +1,20 @@
+<!-- Sticky Status Bar -->
+<div class="status-bar" id="celery-status-bar">
+    <div class="status-item">
+        <span class="status-dot {% if worker_status.active %}ok{% else %}error{% endif %}"></span>
+        <span>Worker {% if worker_status.active %}OK{% else %}Down{% endif %}</span>
+    </div>
+    <div class="status-divider"></div>
+    <div class="status-item">
+        <span style="font-weight: 600;" id="statusbar-active-count">{{ enabled_count }}/{{ total_count }} active</span>
+    </div>
+    <div class="status-divider"></div>
+    <div class="status-item">
+        Next: <span class="next-task-countdown" id="status-bar-next-task">--:--</span>
+    </div>
+    <div class="status-divider"></div>
+    <div class="status-item">
+        <span class="status-dot {% if redis_status.connected %}ok{% else %}error{% endif %}"></span>
+        <span>Redis {% if redis_status.connected %}OK{% else %}Down{% endif %}</span>
+    </div>
+</div>

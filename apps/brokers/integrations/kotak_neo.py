@@ -20,7 +20,7 @@ from django.utils import timezone
 from django.core.cache import cache
 from apps.core.models import CredentialStore
 from apps.core.constants import BROKER_KOTAK
-from apps.brokers.models import BrokerLimit, BrokerPosition
+from apps.brokers.models import BrokerLimit, BrokerPosition, PositionAvgOverride
 from apps.brokers.utils.common import parse_float as _parse_float, parse_decimal
 from apps.brokers.utils.auth_manager import get_credentials
 
@@ -274,11 +274,7 @@ def fetch_and_save_kotakneo_data():
             is_option = bool(re.search(r'(CE|PE)$', trading_symbol))
 
             ltp = 0.0
-            if not is_option:
-                # For futures/other instruments, stkPrc may contain a useful price
-                ltp = _parse_float(p.get('stkPrc', 0))
-
-            if ltp == 0.0 and trading_symbol:
+            if trading_symbol:
                 try:
                     if is_option:
                         ltp = _fetch_option_ltp_from_breeze(
@@ -293,6 +289,13 @@ def fetch_and_save_kotakneo_data():
                             ltp = fetched_ltp
                 except Exception as ltp_error:
                     logger.warning(f"Could not fetch LTP for {p.get('sym')}: {ltp_error}")
+
+            # Fallback chain: stkPrc (non-options only) → MTM cost
+            if ltp == 0.0 and not is_option:
+                stk_prc = _parse_float(p.get('stkPrc', 0))
+                if stk_prc > 0:
+                    ltp = stk_prc
+                    logger.info(f"Using stkPrc as LTP fallback for {p.get('sym')}: {ltp:,.2f}")
 
             if ltp == 0.0:
                 ltp = mtm_cost
@@ -329,54 +332,109 @@ def fetch_and_save_kotakneo_data():
             cf_buy_qty = int(p.get('cfBuyQty', 0))
             cf_sell_qty = int(p.get('cfSellQty', 0))
 
-            # Look up previous DB record for carry-forward avg price
-            prev = BrokerPosition.objects.filter(
-                broker=BROKER_KOTAK,
-                trading_symbol=trd_sym,
-            ).order_by('-fetched_at').first()
-            db_avg = float(prev.average_price) if prev and float(prev.average_price) > 0 else 0.0
+            # ── Look up carry-forward avg price for blending ──
+            #
+            # Key principles:
+            #   1. The carry-forward avg (cf_avg) must come from a PRE-TODAY record
+            #      to avoid double-counting when trade_report returns all of today's
+            #      trades on every fetch (including earlier batches already blended).
+            #   2. Today's sells reduce the effective carry-forward quantity for LONG
+            #      (and today's buys reduce it for SHORT) — partial/full exits.
+            #   3. If today's record exists with same net_qty, reuse it (drift guard).
+            #   4. Lifecycle filter: only look at records after the last full close.
+            today = timezone.now().date()
+            override = PositionAvgOverride.objects.filter(trading_symbol=trd_sym).first()
+            if override:
+                cf_avg = float(override.manual_avg_price)
+                logger.info(f"[AVG OVERRIDE] {p.get('sym')}: Using manual override avg={cf_avg:.2f}")
+                already_blended_today = False
+            else:
+                # Find the last time this symbol was fully closed
+                last_close = BrokerPosition.objects.filter(
+                    broker=BROKER_KOTAK, trading_symbol=trd_sym, net_quantity=0,
+                ).order_by('-fetched_at').values_list('fetched_at', flat=True).first()
+
+                qs = BrokerPosition.objects.filter(
+                    broker=BROKER_KOTAK, trading_symbol=trd_sym,
+                )
+                if last_close:
+                    qs = qs.filter(fetched_at__gt=last_close)
+
+                # Drift guard: if today's record exists with same qty, reuse it
+                prev_today = qs.filter(
+                    fetched_at__date=today, net_quantity=net_q,
+                ).order_by('-fetched_at').first()
+                already_blended_today = prev_today is not None
+
+                # Carry-forward avg: always from PRE-TODAY record to avoid
+                # double-counting today's trades in blending formula
+                if direction == 'LONG':
+                    prev_pre_today = qs.filter(
+                        net_quantity__gt=0, fetched_at__date__lt=today,
+                    ).order_by('-fetched_at').first()
+                else:
+                    prev_pre_today = qs.filter(
+                        net_quantity__lt=0, fetched_at__date__lt=today,
+                    ).order_by('-fetched_at').first()
+
+                cf_avg = float(prev_pre_today.average_price) if (
+                    prev_pre_today and float(prev_pre_today.average_price) > 0
+                ) else 0.0
+
+            # Effective carry-forward qty after today's exits:
+            #   LONG: sells reduce the carry-forward buy qty
+            #   SHORT: buys reduce the carry-forward sell qty
+            if direction == 'LONG':
+                effective_cf = max(cf_buy_qty - trade_sell_qty, 0)
+            else:
+                effective_cf = max(cf_sell_qty - trade_buy_qty, 0)
+
             logger.info(
-                f"[DB LOOKUP] {p.get('sym')}: trading_symbol={trd_sym}, "
-                f"found_record={prev is not None}, db_avg={db_avg:.2f}, mtm_cost={mtm_cost:.2f}"
+                f"[DB LOOKUP] {p.get('sym')}: trd_sym={trd_sym}, "
+                f"override={'YES' if override else 'NO'}, cf_avg={cf_avg:.2f}, "
+                f"effective_cf={effective_cf} (cf_buy={cf_buy_qty}, cf_sell={cf_sell_qty}, "
+                f"trade_buy={trade_buy_qty}, trade_sell={trade_sell_qty}), "
+                f"mtm_cost={mtm_cost:.2f}, already_blended={already_blended_today}"
             )
 
-            if direction == 'LONG':
-                if cf_buy_qty > 0 and trade_buy_qty > 0 and db_avg > 0:
-                    # Averaging: blend carry-forward cost with today's new buys
-                    avg_price = (cf_buy_qty * db_avg + trade_buy_value) / (cf_buy_qty + trade_buy_qty)
+            if already_blended_today:
+                # Same qty as a previous fetch today — reuse saved value
+                avg_price = float(prev_today.average_price)
+                logger.info(f"{p.get('sym')}: Reusing today's blended avg {avg_price:.2f} (no qty change)")
+            elif direction == 'LONG':
+                if effective_cf > 0 and trade_buy_qty > 0 and cf_avg > 0:
+                    # Blend remaining carry-forward cost with today's new buys
+                    avg_price = (effective_cf * cf_avg + trade_buy_value) / (effective_cf + trade_buy_qty)
                     logger.info(
                         f"{p.get('sym')}: Blended LONG avg: "
-                        f"({cf_buy_qty} × {db_avg:.2f} + {trade_buy_value:.2f}) "
-                        f"/ {cf_buy_qty + trade_buy_qty} = {avg_price:.2f}"
+                        f"({effective_cf} × {cf_avg:.2f} + {trade_buy_value:.2f}) "
+                        f"/ {effective_cf + trade_buy_qty} = {avg_price:.2f}"
                     )
                 elif trade_buy_qty > 0:
-                    # New position opened today (no carry-forward)
+                    # All carry-forward sold (full close+reopen) or new position today
                     avg_price = trade_buy_value / trade_buy_qty
-                    logger.info(f"{p.get('sym')}: New LONG from trade_report avg buy {avg_price:.2f}")
-                elif db_avg > 0:
-                    # Pure carry-forward, no trades today - use stored avg from previous days
-                    avg_price = db_avg
-                    logger.info(f"{p.get('sym')}: Carry-forward LONG avg from DB {avg_price:.2f} (MTM today={mtm_cost:.2f})")
+                    logger.info(f"{p.get('sym')}: LONG from trade_report VWAP {avg_price:.2f}")
+                elif cf_avg > 0:
+                    # Pure carry-forward, no trades today
+                    avg_price = cf_avg
+                    logger.info(f"{p.get('sym')}: Carry-forward LONG avg from DB {avg_price:.2f}")
                 else:
                     avg_price = mtm_cost
                     logger.warning(f"{p.get('sym')}: No trade data or DB record for LONG, using MTM cost {avg_price:.2f}")
             else:  # SHORT
-                if cf_sell_qty > 0 and trade_sell_qty > 0 and db_avg > 0:
-                    # Averaging: blend carry-forward cost with today's new sells
-                    avg_price = (cf_sell_qty * db_avg + trade_sell_value) / (cf_sell_qty + trade_sell_qty)
+                if effective_cf > 0 and trade_sell_qty > 0 and cf_avg > 0:
+                    avg_price = (effective_cf * cf_avg + trade_sell_value) / (effective_cf + trade_sell_qty)
                     logger.info(
                         f"{p.get('sym')}: Blended SHORT avg: "
-                        f"({cf_sell_qty} × {db_avg:.2f} + {trade_sell_value:.2f}) "
-                        f"/ {cf_sell_qty + trade_sell_qty} = {avg_price:.2f}"
+                        f"({effective_cf} × {cf_avg:.2f} + {trade_sell_value:.2f}) "
+                        f"/ {effective_cf + trade_sell_qty} = {avg_price:.2f}"
                     )
                 elif trade_sell_qty > 0:
-                    # New short position opened today (no carry-forward)
                     avg_price = trade_sell_value / trade_sell_qty
-                    logger.info(f"{p.get('sym')}: New SHORT from trade_report avg sell {avg_price:.2f}")
-                elif db_avg > 0:
-                    # Pure carry-forward, no trades today - use stored avg from previous days
-                    avg_price = db_avg
-                    logger.info(f"{p.get('sym')}: Carry-forward SHORT avg from DB {avg_price:.2f} (MTM today={mtm_cost:.2f})")
+                    logger.info(f"{p.get('sym')}: SHORT from trade_report VWAP {avg_price:.2f}")
+                elif cf_avg > 0:
+                    avg_price = cf_avg
+                    logger.info(f"{p.get('sym')}: Carry-forward SHORT avg from DB {avg_price:.2f}")
                 else:
                     avg_price = mtm_cost
                     logger.warning(f"{p.get('sym')}: No trade data or DB record for SHORT, using MTM cost {avg_price:.2f}")
@@ -1103,130 +1161,111 @@ def _fetch_option_ltp_from_breeze(trading_symbol: str, expiry_date_str: str = ''
 
 def get_ltp_from_neo(trading_symbol: str, exchange_segment: str = 'nse_fo', client=None) -> float:
     """
-    Get Last Traded Price (LTP) for a Neo trading symbol using Breeze API.
+    Get real-time Last Traded Price (LTP) for a Neo trading symbol.
 
-    This function maps Neo symbols to Breeze format and fetches real-time LTP
-    from Breeze API for the actual traded instrument (futures contract).
+    Strategy order:
+      1. Neo quotes() API — real-time, works for ALL instruments by trading symbol
+      2. Breeze option_chain_quotes — real-time, requires symbol mapping
+      3. Breeze portfolio positions — works if position held on Breeze side
 
     Args:
-        trading_symbol (str): Neo trading symbol (e.g., 'NIFTY26JANFUT', 'BANKNIFTY25DECFUT')
+        trading_symbol (str): Neo trading symbol (e.g., 'NIFTY26FEBFUT', 'BHARTIARTL26FEBFUT')
         exchange_segment (str): Exchange segment (default: 'nse_fo')
-        client: Optional authenticated Neo client (not used, kept for compatibility)
+        client: Optional authenticated Neo client to reuse
 
     Returns:
-        float: Real-time LTP for the futures contract, or None if not found
-
-    Example:
-        >>> ltp = get_ltp_from_neo('NIFTY26JANFUT')
-        >>> print(ltp)  # 26499.30 (real-time futures price from Breeze)
+        float: Real-time LTP, or None if all strategies fail
     """
+    # ── Strategy 1: Neo quotes() API — real-time, universal ──
+    # The quotes API needs pSymbol (internal token), NOT the trading symbol.
+    # Use search_scrip to find pSymbol first, then pass it to quotes().
+    try:
+        neo_client = client or _get_authenticated_client()
+
+        # Extract base symbol for search_scrip (e.g., BHARTIARTL from BHARTIARTL26MARFUT)
+        base_match = re.match(r'^([A-Z]+)', trading_symbol)
+        base_symbol = base_match.group(1) if base_match else trading_symbol
+
+        scrip_results = neo_client.search_scrip(
+            exchange_segment=exchange_segment,
+            symbol=base_symbol,
+        )
+        if scrip_results and isinstance(scrip_results, list):
+            for scrip in scrip_results:
+                if scrip.get('pTrdSymbol') == trading_symbol:
+                    p_symbol = scrip.get('pSymbol')
+                    if p_symbol:
+                        response = neo_client.quotes(
+                            instrument_tokens=[{
+                                "exchange_segment": exchange_segment,
+                                "instrument_token": p_symbol,
+                            }],
+                            quote_type="ltp",
+                        )
+                        if isinstance(response, list) and response:
+                            ltp = float(response[0].get('ltp', 0))
+                            if ltp > 0:
+                                logger.info(f"[LTP] {trading_symbol}: ₹{ltp:.2f} (Neo quotes via pSymbol={p_symbol})")
+                                return ltp
+                        elif isinstance(response, dict) and not response.get('error') and not response.get('fault'):
+                            data = response.get('data', response)
+                            if isinstance(data, list) and data:
+                                ltp = float(data[0].get('ltp', 0))
+                                if ltp > 0:
+                                    logger.info(f"[LTP] {trading_symbol}: ₹{ltp:.2f} (Neo quotes via pSymbol={p_symbol})")
+                                    return ltp
+                        logger.warning(f"[LTP] Neo quotes no LTP for {trading_symbol} (pSymbol={p_symbol}): {response}")
+                    break
+
+        logger.info(f"[LTP] Neo quotes: no pSymbol found for {trading_symbol}")
+    except Exception as e:
+        logger.warning(f"[LTP] Neo quotes API failed for {trading_symbol}: {e}")
+
+    # ── Strategy 2: Breeze option_chain_quotes — real-time, needs mapping ──
     try:
         from apps.brokers.integrations.breeze import get_breeze_client
 
-        # Map Neo symbol to Breeze format
         mapping = map_neo_symbol_to_breeze(trading_symbol)
-
-        if not mapping['success']:
-            logger.error(f"Failed to map Neo symbol to Breeze: {mapping['error']}")
-            return None
-
-        logger.info(f"Fetching real-time LTP for {trading_symbol} futures contract via Breeze")
-
-        # Get Breeze client
-        breeze = get_breeze_client()
-
-        # Strategy 1: Get all futures contracts for this stock and match by month/year
-        # This automatically handles holiday-adjusted expiry dates (e.g., 27-Jan vs 29-Jan)
-        try:
+        if mapping['success']:
+            breeze = get_breeze_client()
             resp = breeze.get_option_chain_quotes(
                 stock_code=mapping['stock_code'],
                 exchange_code=mapping['exchange_code'],
                 product_type=mapping['product_type'],
-                expiry_date=""  # Empty string returns all available expiries
+                expiry_date="",
             )
-
             if resp and resp.get('Status') == 200:
                 contracts = resp.get('Success', [])
-                if contracts:
-                    # Match contract by month and year (handles holiday adjustments)
-                    calc_expiry = mapping['expiry_date']
-                    calc_month_year = calc_expiry.split('-')[1:3]  # ['Jan', '2026']
+                calc_month_year = mapping['expiry_date'].split('-')[1:3]
+                for contract in contracts:
+                    contract_expiry = contract.get('expiry_date', '')
+                    if contract_expiry and contract_expiry.split('-')[1:3] == calc_month_year:
+                        ltp = float(contract.get('ltp', 0))
+                        if ltp > 0:
+                            logger.info(f"[LTP] {trading_symbol}: ₹{ltp:.2f} (Breeze option_chain)")
+                            return ltp
+    except Exception as e:
+        logger.warning(f"[LTP] Breeze option_chain_quotes failed for {trading_symbol}: {e}")
 
-                    for contract in contracts:
-                        contract_expiry = contract.get('expiry_date', '')
-                        if contract_expiry:
-                            contract_month_year = contract_expiry.split('-')[1:3]
-
-                            if contract_month_year == calc_month_year:
-                                ltp = float(contract.get('ltp', 0))
-                                if ltp > 0:
-                                    logger.info(f"✅ Real-time futures LTP for {trading_symbol}: ₹{ltp:.2f}")
-                                    logger.info(f"   Breeze expiry: {contract_expiry} (Neo mapped to {calc_expiry})")
-                                    return ltp
-
-        except Exception as e:
-            logger.error(f"Error calling Breeze get_option_chain_quotes: {e}")
-
-        # Strategy 2: For stock futures, check Breeze portfolio positions for LTP
-        # (Breeze positions include real-time LTP which works for stock futures)
-        try:
-            logger.info(f"Trying Breeze portfolio positions for {mapping['stock_code']} LTP...")
+    # ── Strategy 3: Breeze portfolio positions ──
+    try:
+        from apps.brokers.integrations.breeze import get_breeze_client
+        mapping = map_neo_symbol_to_breeze(trading_symbol)
+        if mapping['success']:
+            breeze = get_breeze_client()
             pos_resp = breeze.get_portfolio_positions()
             if pos_resp and pos_resp.get('Status') == 200:
-                positions = pos_resp.get('Success', [])
-                for pos in positions:
-                    pos_stock_code = pos.get('stock_code', '')
-                    # Match by stock code (HDFCBAN matches HDFCBAN)
-                    if pos_stock_code == mapping['stock_code']:
+                for pos in (pos_resp.get('Success') or []):
+                    if pos.get('stock_code', '') == mapping['stock_code']:
                         ltp = float(pos.get('ltp', 0))
                         if ltp > 0:
-                            logger.info(f"✅ LTP from Breeze position for {trading_symbol}: ₹{ltp:.2f}")
+                            logger.info(f"[LTP] {trading_symbol}: ₹{ltp:.2f} (Breeze position)")
                             return ltp
-        except Exception as e:
-            logger.warning(f"Error checking Breeze positions for LTP: {e}")
-
-        # Final fallback to Neo search_scrip when Breeze also fails
-        logger.info(f"Falling back to Neo search_scrip for {trading_symbol}")
-
-        # Use provided client or get new one
-        if client is None:
-            client = _get_authenticated_client()
-
-        # Extract base symbol from trading symbol
-        import re
-        match = re.match(r'^([A-Z]+)', trading_symbol)
-        base_symbol = match.group(1) if match else trading_symbol
-
-        logger.info(f"Fetching LTP from Neo search_scrip for {trading_symbol}")
-
-        # Search using Neo API
-        result = client.search_scrip(
-            exchange_segment=exchange_segment,
-            symbol=base_symbol
-        )
-
-        if result and isinstance(result, list):
-            # Find exact match for trading symbol
-            for scrip in result:
-                if scrip.get('pTrdSymbol') == trading_symbol:
-                    # Extract price from scrip data
-                    base_price = float(scrip.get('pScripBasePrice', 0))
-
-                    if base_price > 0:
-                        # Divide by 100 to get actual price
-                        ltp = base_price / 100
-                        logger.info(f"⚠️ LTP for {trading_symbol} from Neo (may be delayed): ₹{ltp:.2f}")
-                        return ltp
-
-            logger.warning(f"No exact match found for {trading_symbol} in Neo search results")
-            return None
-        else:
-            logger.warning(f"No scrip found for {trading_symbol} in Neo")
-            return None
-
     except Exception as e:
-        logger.error(f"Error fetching LTP for {trading_symbol}: {e}")
-        return None
+        logger.warning(f"[LTP] Breeze positions failed for {trading_symbol}: {e}")
+
+    logger.error(f"[LTP] All strategies failed for {trading_symbol}")
+    return None
 
 
 def get_lot_size_from_neo_with_token(trading_symbol: str, client=None) -> dict:
@@ -2490,7 +2529,7 @@ def get_neo_open_positions(include_raw=False) -> dict:
                         exchange_seg = h.get('exchangeSegment', '')
 
                         if avg_price > 0:
-                            holdings_avg_map[symbol] = {
+                            entry = {
                                 'avg_price': avg_price,
                                 'quantity': int(h.get('quantity', 0)),
                                 'holding_cost': _parse_float(h.get('holdingCost', 0)),
@@ -2498,6 +2537,10 @@ def get_neo_open_positions(include_raw=False) -> dict:
                                 'instrument_type': h.get('instrumentType', ''),
                                 'expiry_date': h.get('expiryDate', ''),
                             }
+                            # Store as list: same symbol can have futures + options entries
+                            if symbol not in holdings_avg_map:
+                                holdings_avg_map[symbol] = []
+                            holdings_avg_map[symbol].append(entry)
                             logger.info(f"[HOLDINGS] {symbol}: avg_price={avg_price:.2f}, "
                                        f"qty={h.get('quantity')}, segment={exchange_seg}")
         except Exception as holdings_err:
@@ -2568,15 +2611,33 @@ def get_neo_open_positions(include_raw=False) -> dict:
 
             # Match by trading_symbol first (specific, e.g., NIFTY26FEB26350CE),
             # then fall back to base symbol (e.g., NIFTY)
-            holdings_data = (holdings_avg_map.get(trading_symbol_upper)
-                             or holdings_avg_map.get(symbol_upper))
+            # Holdings map is a list per symbol (same symbol can have futures + options).
+            # Pick the entry matching position direction (LONG→qty>0, SHORT→qty<0).
+            holdings_entries = (holdings_avg_map.get(trading_symbol_upper)
+                                or holdings_avg_map.get(symbol_upper)
+                                or [])
             today_data = (today_trades_map.get(trading_symbol_upper)
                           or today_trades_map.get(symbol_upper))
 
             # Determine direction for correct avg calculation
             direction = 'LONG' if net_qty > 0 else 'SHORT'
+
+            # Pick holdings entry matching position direction
+            if direction == 'LONG':
+                holdings_data = next((e for e in holdings_entries if e['quantity'] > 0), None)
+            else:
+                holdings_data = next((e for e in holdings_entries if e['quantity'] < 0), None)
             avg_price = None
             avg_price_source = 'unknown'
+
+            # Check for manual avg_price override (fixes DB chain corruption)
+            override = PositionAvgOverride.objects.filter(
+                trading_symbol=pos.trading_symbol
+            ).first()
+            if override:
+                avg_price = float(override.manual_avg_price)
+                avg_price_source = 'manual override'
+                logger.info(f"[AVG OVERRIDE] {pos.symbol}: Using manual override avg={avg_price:.2f}")
 
             # Get carry-forward quantities from raw positions data
             # Match by trdSym (specific) first, fall back to sym (base)
@@ -2590,45 +2651,43 @@ def get_neo_open_positions(include_raw=False) -> dict:
             cf_buy_qty = int(raw_pos.get('cfBuyQty', 0)) if raw_pos else 0
             cf_sell_qty = int(raw_pos.get('cfSellQty', 0)) if raw_pos else 0
 
-            if direction == 'LONG':
+            if avg_price is not None:
+                # Override was applied — skip the normal avg_price computation
+                pass
+            elif direction == 'LONG':
                 # For LONG: avg is weighted avg of buys
                 holdings_qty = holdings_data['quantity'] if holdings_data else 0
                 holdings_avg = holdings_data['avg_price'] if holdings_data else 0
                 today_buy_qty = today_data['buy_qty'] if today_data else 0
                 today_buy_avg = today_data.get('buy_avg', 0) if today_data else 0
+                today_sell_qty = today_data['sell_qty'] if today_data else 0
 
-                if holdings_qty > 0 and today_buy_qty > 0:
-                    # Blend: carry-forward + today's buys (averaging up/down)
-                    # Note: holdings_qty might include today's buys if Holdings API updates intraday
-                    # Use cf_buy_qty for more accurate carry-forward count
-                    if cf_buy_qty > 0 and cf_buy_qty != holdings_qty:
-                        # Holdings updated intraday, use holdings as-is (already includes today)
-                        avg_price = holdings_avg
-                        avg_price_source = 'holdings (updated intraday)'
-                    else:
-                        # Blend carry-forward with today's new buys
-                        total_qty = holdings_qty + today_buy_qty
-                        avg_price = (holdings_qty * holdings_avg + today_buy_qty * today_buy_avg) / total_qty
-                        avg_price_source = 'blended (holdings + today)'
+                # Effective carry-forward after today's exits (sells reduce LONG cf)
+                effective_holdings = max(holdings_qty - today_sell_qty, 0) if today_sell_qty > 0 else holdings_qty
+
+                if effective_holdings > 0 and today_buy_qty > 0 and holdings_avg > 0:
+                    # Blend remaining carry-forward with today's new buys
+                    total_qty = effective_holdings + today_buy_qty
+                    avg_price = (effective_holdings * holdings_avg + today_buy_qty * today_buy_avg) / total_qty
+                    avg_price_source = 'blended (holdings + today)'
                     logger.info(f"[AVG PRICE] {pos.symbol}: {avg_price_source} = {avg_price:.2f} "
-                               f"(holdings: {holdings_qty}@{holdings_avg:.2f}, today: {today_buy_qty}@{today_buy_avg:.2f})")
-                elif holdings_qty > 0:
-                    # Pure carry-forward, no new buys today
+                               f"(eff_holdings: {effective_holdings}@{holdings_avg:.2f}, today_buy: {today_buy_qty}@{today_buy_avg:.2f})")
+                elif today_buy_qty > 0 and effective_holdings == 0:
+                    # All carry-forward sold (full close+reopen) or new position today
+                    avg_price = today_buy_avg
+                    avg_price_source = 'trade_report'
+                    logger.info(f"[AVG PRICE] {pos.symbol}: Using Trade Report avg {avg_price:.2f} (cf fully exited or new)")
+                elif holdings_qty > 0 and holdings_avg > 0:
+                    # Pure carry-forward, no new buys today (sells don't change avg)
                     avg_price = holdings_avg
                     avg_price_source = 'holdings'
                     logger.info(f"[AVG PRICE] {pos.symbol}: Using Holdings avg {avg_price:.2f} (carry-forward only)")
-                elif today_buy_qty > 0 and cf_buy_qty == 0:
-                    # Truly new position opened today (no carry-forward)
-                    avg_price = today_buy_avg
-                    avg_price_source = 'trade_report'
-                    logger.info(f"[AVG PRICE] {pos.symbol}: Using Trade Report avg {avg_price:.2f} (new position today)")
-                elif cf_buy_qty > 0 and broker_avg_price > 0:
-                    # Carry-forward exists but Holdings API has no data (e.g. F&O positions)
-                    # Use broker_avg_price which was already correctly blended in fetch_and_save_kotakneo_data()
+                elif broker_avg_price > 0:
+                    # No holdings data — use broker_avg_price from fetch_and_save (just computed)
                     avg_price = broker_avg_price
                     avg_price_source = 'positions (blended from DB)'
                     logger.info(f"[AVG PRICE] {pos.symbol}: Using DB-blended avg {avg_price:.2f} "
-                               f"(cf_buy_qty={cf_buy_qty}, today_buy_qty={today_buy_qty}, no holdings data)")
+                               f"(cf_buy_qty={cf_buy_qty}, no holdings data)")
                 else:
                     # Fallback to positions API
                     avg_price = broker_avg_price
@@ -2637,39 +2696,45 @@ def get_neo_open_positions(include_raw=False) -> dict:
 
             else:  # SHORT
                 # For SHORT: avg is weighted avg of sells
-                holdings_qty = holdings_data['quantity'] if holdings_data else 0
+                holdings_qty = abs(holdings_data['quantity']) if holdings_data else 0
                 holdings_avg = holdings_data['avg_price'] if holdings_data else 0
                 today_sell_qty = today_data['sell_qty'] if today_data else 0
                 today_sell_avg = today_data.get('sell_avg', 0) if today_data else 0
+                today_buy_qty_short = today_data['buy_qty'] if today_data else 0
 
-                if holdings_qty > 0 and today_sell_qty > 0:
-                    if cf_sell_qty > 0 and cf_sell_qty != holdings_qty:
-                        avg_price = holdings_avg
-                        avg_price_source = 'holdings (updated intraday)'
-                    else:
-                        total_qty = holdings_qty + today_sell_qty
-                        avg_price = (holdings_qty * holdings_avg + today_sell_qty * today_sell_avg) / total_qty
-                        avg_price_source = 'blended (holdings + today)'
+                # Effective carry-forward after today's exits (buys reduce SHORT cf)
+                effective_holdings = max(holdings_qty - today_buy_qty_short, 0) if today_buy_qty_short > 0 else holdings_qty
+
+                if effective_holdings > 0 and today_sell_qty > 0 and holdings_avg > 0:
+                    total_qty = effective_holdings + today_sell_qty
+                    avg_price = (effective_holdings * holdings_avg + today_sell_qty * today_sell_avg) / total_qty
+                    avg_price_source = 'blended (holdings + today)'
                     logger.info(f"[AVG PRICE] {pos.symbol}: {avg_price_source} = {avg_price:.2f}")
-                elif holdings_qty > 0:
+                elif today_sell_qty > 0 and effective_holdings == 0:
+                    avg_price = today_sell_avg
+                    avg_price_source = 'trade_report'
+                    logger.info(f"[AVG PRICE] {pos.symbol}: Using Trade Report avg {avg_price:.2f} (cf fully exited or new)")
+                elif holdings_qty > 0 and holdings_avg > 0:
+                    # Pure carry-forward, no new sells today
                     avg_price = holdings_avg
                     avg_price_source = 'holdings'
                     logger.info(f"[AVG PRICE] {pos.symbol}: Using Holdings avg {avg_price:.2f} (carry-forward only)")
-                elif today_sell_qty > 0 and cf_sell_qty == 0:
-                    # Truly new short position opened today (no carry-forward)
-                    avg_price = today_sell_avg
-                    avg_price_source = 'trade_report'
-                    logger.info(f"[AVG PRICE] {pos.symbol}: Using Trade Report avg {avg_price:.2f} (new position today)")
-                elif cf_sell_qty > 0 and broker_avg_price > 0:
-                    # Carry-forward exists but Holdings API has no data (e.g. F&O positions)
+                elif broker_avg_price > 0:
                     avg_price = broker_avg_price
                     avg_price_source = 'positions (blended from DB)'
                     logger.info(f"[AVG PRICE] {pos.symbol}: Using DB-blended avg {avg_price:.2f} "
-                               f"(cf_sell_qty={cf_sell_qty}, today_sell_qty={today_sell_qty}, no holdings data)")
+                               f"(cf_sell_qty={cf_sell_qty}, no holdings data)")
                 else:
                     avg_price = broker_avg_price
                     avg_price_source = 'positions (MTM)'
                     logger.info(f"[AVG PRICE] {pos.symbol}: Fallback to positions MTM avg {avg_price:.2f}")
+
+            # Update BrokerPosition with correct avg so DB chain stays clean
+            if avg_price and avg_price > 0 and avg_price_source != 'positions (MTM)':
+                if abs(float(pos.average_price) - avg_price) > 0.01:
+                    pos.average_price = Decimal(str(round(avg_price, 2)))
+                    pos.save(update_fields=['average_price'])
+                    logger.info(f"[DB FIX] {pos.symbol}: Updated BrokerPosition avg to {avg_price:.2f} (source={avg_price_source})")
 
             net_qty_lots = net_qty // lot_size if lot_size > 0 else net_qty
             unrealized_pnl = net_qty * (ltp - avg_price) if ltp > 0 else 0.0

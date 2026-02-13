@@ -64,6 +64,9 @@ urlpatterns = [
     path('api/chart-data/<int:suggestion_id>/', chart_views.get_chart_data, name='api_chart_data'),
     path('api/chart-data/contract/', chart_views.get_contract_chart_data, name='api_contract_chart_data'),
 
+    # Position Average Price Override
+    path('api/update-position-avg/', api_views.update_position_avg_price, name='api_update_position_avg'),
+
     # Active Positions Management
     path('api/get-positions/', api_views.get_active_positions, name='api_get_positions'),
     path('api/get-position-details/', api_views.get_position_details, name='api_get_position_details'),

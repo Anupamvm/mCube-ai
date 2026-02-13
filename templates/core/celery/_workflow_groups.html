@@ -1,0 +1,74 @@
+<!-- Workflow Groups: Futures & Options Hero Cards -->
+{% if workflow_groups %}
+<div class="workflow-section">
+    {% for algo_key, wg in workflow_groups.items %}
+    <div class="workflow-card {{ algo_key }}">
+        <div class="workflow-header">
+            <h3>
+                {{ wg.emoji }} {{ wg.display_name }}
+                {% if algo_key == 'futures' %}
+                <form method="post" action="{% url 'core:toggle_core_config' %}" id="wf-futures-toggle-form" style="display: inline; margin-left: 8px;">
+                    {% csrf_token %}
+                    <input type="hidden" name="field" value="enable_futures_trading">
+                    <input type="hidden" name="redirect" value="celery">
+                    <input type="hidden" name="manage_tasks" value="0">
+                    <label class="toggle">
+                        <input type="checkbox" name="toggle" onchange="handleFuturesToggle(this)" {% if trading_config.enable_futures_trading %}checked{% endif %}>
+                        <span class="slider"></span>
+                    </label>
+                </form>
+                {% elif algo_key == 'options' %}
+                <form method="post" action="{% url 'core:update_core_config' %}" id="wf-options-strategy-form" style="display: inline; margin-left: 8px;">
+                    {% csrf_token %}
+                    <input type="hidden" name="redirect" value="celery">
+                    <input type="hidden" name="manage_tasks" value="0">
+                    <input type="hidden" name="old_options_strategy" value="{{ trading_config.options_strategy }}">
+                    <select name="options_strategy" style="padding: 4px 8px; border-radius: 4px; border: 1px solid #e2e8f0; font-size: 12px;" onchange="handleOptionsChange(this)">
+                        <option value="NONE" {% if trading_config.options_strategy == 'NONE' %}selected{% endif %}>Disabled</option>
+                        <option value="AUTO" {% if trading_config.options_strategy == 'AUTO' %}selected{% endif %}>Auto</option>
+                        <option value="STRANGLE" {% if trading_config.options_strategy == 'STRANGLE' %}selected{% endif %}>Strangle</option>
+                        <option value="BROKEN_IRON_CONDOR" {% if trading_config.options_strategy == 'BROKEN_IRON_CONDOR' %}selected{% endif %}>Iron Condor</option>
+                    </select>
+                </form>
+                {% endif %}
+            </h3>
+        </div>
+
+        <div class="workflow-stats">
+            {{ wg.active_count }}/{{ wg.total_count }} active
+        </div>
+
+        <!-- Dependency Chain -->
+        <div class="workflow-chain">
+            {% for node in wg.nodes %}
+            <div class="chain-node {% if node.is_enabled %}active{% else %}inactive{% endif %}" data-task-key="{{ node.key }}" title="{{ node.name }}">
+                <div class="chain-dot"></div>
+                <span class="chain-name">{{ node.name }}</span>
+                <span class="chain-time">{{ node.time_str }}</span>
+                {% if node.shared_with %}
+                <span class="chain-shared-badge">Also: {{ node.shared_with|join:", " }}</span>
+                {% endif %}
+            </div>
+            {% if not forloop.last %}
+            <span class="chain-arrow">&rarr;</span>
+            {% endif %}
+            {% endfor %}
+        </div>
+
+        <!-- Footer: Config Summary -->
+        <div class="workflow-footer">
+            <span>
+                <span class="config-badge" style="background: {% if trading_config.position_sizing_mode == 'TEST' %}#fefcbf{% elif trading_config.position_sizing_mode == 'SIMULATED' %}#e9d8fd{% else %}#c6f6d5{% endif %}; color: {% if trading_config.position_sizing_mode == 'TEST' %}#744210{% elif trading_config.position_sizing_mode == 'SIMULATED' %}#553c9a{% else %}#22543d{% endif %};">
+                    {{ trading_config.get_position_sizing_display_short }}
+                </span>
+            </span>
+            <span>
+                <span class="config-badge" style="background: {% if trading_config.notification_level == 'FULL_CONTROL' %}#ebf8ff{% elif trading_config.notification_level == 'SUPERVISED' %}#fefcbf{% else %}#fed7d7{% endif %}; color: {% if trading_config.notification_level == 'FULL_CONTROL' %}#2c5282{% elif trading_config.notification_level == 'SUPERVISED' %}#744210{% else %}#742a2a{% endif %};">
+                    {{ trading_config.get_notification_level_display_short }}
+                </span>
+            </span>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% endif %}

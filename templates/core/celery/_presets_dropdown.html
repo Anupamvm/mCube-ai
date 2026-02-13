@@ -1,0 +1,38 @@
+<!-- Task Presets Dropdown -->
+<div class="presets-dropdown dropdown" style="display: inline-block;">
+    <button class="btn btn-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false" style="gap: 4px;">
+        Presets
+    </button>
+    <ul class="dropdown-menu" id="presetsDropdownMenu">
+        <li><h6 class="dropdown-header">Quick Presets</h6></li>
+        <li><a class="dropdown-item preset-item" href="#" onclick="applyPreset('full_trading'); return false;">
+            <span class="preset-name">Full Trading Day</span>
+            <span class="preset-builtin-badge">Built-in</span>
+        </a></li>
+        <li><a class="dropdown-item preset-item" href="#" onclick="applyPreset('futures_only'); return false;">
+            <span class="preset-name">Futures Only</span>
+            <span class="preset-builtin-badge">Built-in</span>
+        </a></li>
+        <li><a class="dropdown-item preset-item" href="#" onclick="applyPreset('options_only'); return false;">
+            <span class="preset-name">Options Only</span>
+            <span class="preset-builtin-badge">Built-in</span>
+        </a></li>
+        <li><a class="dropdown-item preset-item" href="#" onclick="applyPreset('data_monitoring'); return false;">
+            <span class="preset-name">Data & Monitoring Only</span>
+            <span class="preset-builtin-badge">Built-in</span>
+        </a></li>
+        <li><a class="dropdown-item preset-item" href="#" onclick="applyPreset('all_off'); return false;">
+            <span class="preset-name">All Off</span>
+            <span class="preset-builtin-badge">Built-in</span>
+        </a></li>
+        <li><hr class="dropdown-divider"></li>
+        <li id="customPresetsSection" style="display: none;">
+            <h6 class="dropdown-header">Custom Presets</h6>
+        </li>
+        <li id="customPresetsList"></li>
+        <li><hr class="dropdown-divider"></li>
+        <li><a class="dropdown-item" href="#" onclick="saveCurrentAsPreset(); return false;" style="color: #667eea;">
+            + Save Current as Preset
+        </a></li>
+    </ul>
+</div>

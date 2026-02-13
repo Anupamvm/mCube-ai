@@ -1068,7 +1068,11 @@ function displayPositions(broker, positions) {
                         <td><strong>${pos.symbol}</strong><br><small style="color: var(--gray);">${pos.product}${pos.lot_size ? ' (lot:' + pos.lot_size + ')' : ''}</small></td>
                         <td><span class="direction-${pos.direction.toLowerCase()}">${pos.direction}</span></td>
                         <td>${pos.quantity}</td>
-                        <td>₹${parseFloat(pos.average_price).toFixed(2)}</td>
+                        <td>
+                            ₹${parseFloat(pos.average_price).toFixed(2)}
+                            <button onclick="showEditAvgModal('${pos.trading_symbol || pos.symbol}', ${parseFloat(pos.average_price)})" style="background:none;border:none;color:var(--gray);cursor:pointer;padding:2px 4px;font-size:0.75rem;" title="Edit avg price">&#9998;</button>
+                            ${pos.avg_price_source === 'manual override' ? '<small style="color:#f59e0b;">(override)</small>' : ''}
+                        </td>
                         <td>${pos.ltp ? '₹' + parseFloat(pos.ltp).toFixed(2) : '<span style="color: var(--gray);">N/A</span>'}</td>
                         <td class="${getPnLClass(pos.total_pnl)}">
                             <strong>${parseFloat(pos.total_pnl) >= 0 ? '+' : ''}₹${formatIndianNumber(Math.abs(parseFloat(pos.total_pnl)).toFixed(0))}</strong>
@@ -2132,6 +2136,45 @@ function handleAverageOverlayClick(event) {
 function closeAverageModal() {
     const modal = document.getElementById('averagePositionModal');
     modal.classList.remove('active');
+}
+
+// ── Edit Average Price Modal ──
+function showEditAvgModal(tradingSymbol, currentAvg) {
+    const newAvg = prompt(`Edit Average Price for ${tradingSymbol}\n\nCurrent: ₹${currentAvg.toFixed(2)}\n\nEnter the correct average price:`, currentAvg.toFixed(2));
+    if (newAvg === null) return;
+
+    const parsed = parseFloat(newAvg);
+    if (isNaN(parsed) || parsed <= 0) {
+        alert('Invalid price. Please enter a positive number.');
+        return;
+    }
+
+    if (!confirm(`Set average price for ${tradingSymbol} to ₹${parsed.toFixed(2)}?`)) return;
+
+    fetch('{% url "trading:api_update_position_avg" %}', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': '{{ csrf_token }}',
+        },
+        body: JSON.stringify({
+            trading_symbol: tradingSymbol,
+            avg_price: parsed,
+        }),
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.success) {
+            alert(`Average price updated to ₹${parsed.toFixed(2)}.\nRefreshing positions...`);
+            loadPositions('neo');
+            loadPositions('breeze');
+        } else {
+            alert('Error: ' + (data.error || 'Unknown error'));
+        }
+    })
+    .catch(err => {
+        alert('Network error: ' + err.message);
+    });
 }
 </script>
 {% endblock %}

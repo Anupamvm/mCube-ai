@@ -1,13 +1,18 @@
 """
 Telegram Bot Command Handler
 
-Interactive Telegram bot for managing trading positions across brokers.
+Interactive Telegram bot for full app control of the mCube trading system.
 
 Available Commands:
 - /start - Interactive main menu with inline keyboards
 - /test - Test bot connectivity
 - /positions - View live positions from all brokers
 - /core - Core trading settings
+- /trade - Manual trade entry wizard
+- /orders - View order book from all brokers
+- /margin - View margin and limits
+- /pnl - Today's P&L summary
+- /analytics - Performance analytics
 
 IMPORTANT: Only ONE instance of this bot should run at a time.
 The bot uses a file lock to prevent multiple instances from polling.
@@ -36,6 +41,7 @@ from asgiref.sync import sync_to_async
 
 from apps.alerts.services.telegram_bot_data import DataMixin
 from apps.alerts.services.telegram_bot_menus import MenuMixin
+from apps.alerts.services.telegram_bot_trade import TradeMixin
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +50,7 @@ BOT_LOCK_FILE = '/tmp/mcube_telegram_bot.lock'
 _lock_file_handle = None
 
 
-class TelegramBotHandler(MenuMixin, DataMixin):
+class TelegramBotHandler(MenuMixin, DataMixin, TradeMixin):
     """
     Telegram bot command handler for position management
     """
@@ -196,6 +202,106 @@ class TelegramBotHandler(MenuMixin, DataMixin):
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
 
+    async def trade_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /trade command - start trade wizard"""
+        if not self.is_authorized(update):
+            await update.message.reply_text("Unauthorized access")
+            return
+        await self._show_trade_broker_selection(update.message, is_command=True)
+
+    async def orders_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /orders command - show order book"""
+        if not self.is_authorized(update):
+            await update.message.reply_text("Unauthorized access")
+            return
+        breeze_data = await self._get_breeze_orders()
+        kotak_data = await self._get_kotak_orders()
+        # Build inline message
+        now = datetime.now()
+        message = f"<b>\U0001f4cb Orders | {now.strftime('%d %b %Y')}</b>\n\n"
+        for label, data in [("ICICI Breeze", breeze_data), ("Kotak Neo", kotak_data)]:
+            orders = data.get('orders', [])
+            message += f"<b>{label} ({len(orders)} orders)</b>\n"
+            for i, o in enumerate(orders[:5]):
+                sym = str(o.get('trading_symbol', o.get('trdSym', '?')))[:15]
+                status = str(o.get('status', o.get('ordSt', '?')))
+                message += f"  {i+1}. {sym} | {status}\n"
+            if not orders:
+                message += "  No orders today\n"
+            message += "\n"
+        keyboard = [[
+            InlineKeyboardButton("\U0001f504 Refresh", callback_data="menu_orders"),
+            InlineKeyboardButton("\u00ab Main Menu", callback_data="back_main"),
+        ]]
+        await update.message.reply_text(message, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard))
+
+    async def margin_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /margin command - show margin/limits"""
+        if not self.is_authorized(update):
+            await update.message.reply_text("Unauthorized access")
+            return
+        breeze = await self._get_breeze_margin()
+        kotak = await self._get_kotak_margin()
+        message = "<b>\U0001f4b3 Margin &amp; Limits</b>\n\n"
+        if breeze.get('success'):
+            message += f"ICICI: \u20b9{breeze['available']:,.0f} free ({breeze['pct']}%)\n"
+        else:
+            message += f"ICICI: {breeze.get('error', 'Unavailable')}\n"
+        if kotak.get('success'):
+            message += f"Kotak: \u20b9{kotak['available']:,.0f} free ({kotak['pct']}%)\n"
+        else:
+            message += f"Kotak: {kotak.get('error', 'Unavailable')}\n"
+        keyboard = [[
+            InlineKeyboardButton("Full Details", callback_data="menu_margin"),
+            InlineKeyboardButton("\u00ab Main Menu", callback_data="back_main"),
+        ]]
+        await update.message.reply_text(message, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard))
+
+    async def pnl_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /pnl command - show today's P&L"""
+        if not self.is_authorized(update):
+            await update.message.reply_text("Unauthorized access")
+            return
+        data = await self._get_daily_pnl_data()
+        def fmt(v):
+            return f"+{v:,.0f}" if v >= 0 else f"{v:,.0f}"
+        message = (
+            f"<b>\U0001f4b0 Today's P&amp;L</b>\n\n"
+            f"Realized: {fmt(data['realized'])}\n"
+            f"Unrealized: {fmt(data['unrealized'])}\n"
+            f"<b>Total: {fmt(data['total'])}</b>\n"
+            f"Trades: {data['trades']} | Win%: {data['win_pct']}"
+        )
+        keyboard = [[
+            InlineKeyboardButton("\U0001f504 Refresh", callback_data="menu_pnl"),
+            InlineKeyboardButton("\u00ab Main Menu", callback_data="back_main"),
+        ]]
+        await update.message.reply_text(message, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard))
+
+    async def analytics_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /analytics command - show performance summary"""
+        if not self.is_authorized(update):
+            await update.message.reply_text("Unauthorized access")
+            return
+        data = await self._get_performance_summary('FY')
+        def fmt_pnl(v):
+            return f"+\u20b9{v:,.0f}" if v >= 0 else f"-\u20b9{abs(v):,.0f}"
+        message = "<b>\U0001f4c9 Performance | FY</b>\n\n"
+        if data.get('total_trades', 0) > 0:
+            message += (
+                f"Trades: {data['total_trades']} | Win: {data['win_rate']}%\n"
+                f"P&L: {fmt_pnl(data['total_pnl'])}\n"
+                f"Futures: {data['futures_count']} ({fmt_pnl(data['futures_pnl'])})\n"
+                f"Options: {data['options_count']} ({fmt_pnl(data['options_pnl'])})\n"
+            )
+        else:
+            message += "No trades found."
+        keyboard = [[
+            InlineKeyboardButton("Full Details", callback_data="menu_analytics"),
+            InlineKeyboardButton("\u00ab Main Menu", callback_data="back_main"),
+        ]]
+        await update.message.reply_text(message, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard))
+
     async def button_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle button callbacks using prefix-based routing."""
         query = update.callback_query
@@ -280,6 +386,123 @@ class TelegramBotHandler(MenuMixin, DataMixin):
         # Quick actions
         if data.startswith("qa_"):
             await self._handle_quick_action(query, data)
+            return
+
+        # =====================================================================
+        # NEW FEATURE CALLBACKS
+        # =====================================================================
+
+        # Trade wizard
+        if data.startswith("trade_"):
+            await self._route_trade_callback(query, data)
+            return
+
+        # Orders
+        if data == "ord_refresh":
+            await self._show_orders_menu(query)
+            return
+        if data.startswith("ord_broker_"):
+            broker = data.replace("ord_broker_", "")
+            await self._show_broker_orders_detail(query, broker)
+            return
+        if data.startswith("ord_cancel_kotak_"):
+            order_id = data.replace("ord_cancel_kotak_", "")
+            result = await self._cancel_kotak_order(order_id)
+            if result.get('success'):
+                await self._show_broker_orders_detail(query, 'kotak')
+            else:
+                await query.edit_message_text(f"Cancel failed: {result.get('error', 'Unknown')}")
+            return
+
+        # SL modification
+        if data.startswith("sl_modify_"):
+            position_id = int(data.replace("sl_modify_", ""))
+            await self._show_sl_modify_menu(query, position_id)
+            return
+        if data.startswith("sl_set_"):
+            parts = data.split("_")
+            position_id = int(parts[2])
+            new_sl = int(parts[3]) / 100.0
+            result = await self._update_position_sl(position_id, new_sl)
+            if result.get('success'):
+                msg = f"\u2705 SL updated: {result['instrument']}\n{result.get('old_sl', 'N/A')} \u2192 {new_sl:,.2f}"
+            else:
+                msg = f"\u274c SL update failed: {result.get('error', 'Unknown')}"
+            keyboard = [[InlineKeyboardButton("\u00ab Back", callback_data="back_to_brokers")]]
+            await query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup(keyboard))
+            return
+
+        # Target modification
+        if data.startswith("tgt_modify_"):
+            position_id = int(data.replace("tgt_modify_", ""))
+            await self._show_target_modify_menu(query, position_id)
+            return
+        if data.startswith("tgt_set_"):
+            parts = data.split("_")
+            position_id = int(parts[2])
+            new_target = int(parts[3]) / 100.0
+            result = await self._update_position_target(position_id, new_target)
+            if result.get('success'):
+                msg = f"\u2705 Target updated: {result['instrument']}\n{result.get('old_target', 'N/A')} \u2192 {new_target:,.2f}"
+            else:
+                msg = f"\u274c Target update failed: {result.get('error', 'Unknown')}"
+            keyboard = [[InlineKeyboardButton("\u00ab Back", callback_data="back_to_brokers")]]
+            await query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup(keyboard))
+            return
+
+        # Margin
+        if data == "margin_refresh":
+            await self._show_margin_menu(query)
+            return
+
+        # Trade history
+        if data.startswith("hist_count_"):
+            count = int(data.replace("hist_count_", ""))
+            await self._show_trade_history_menu(query, count)
+            return
+
+        # Broker login
+        if data == "login_view":
+            await self._show_broker_login_menu(query)
+            return
+        if data == "login_kotak":
+            await query.edit_message_text("\u23f3 Logging in to Kotak Neo...")
+            result = await self._trigger_kotak_login()
+            await self._show_action_result(query, "Kotak Login", result)
+            return
+        if data == "login_breeze":
+            await query.edit_message_text("\u23f3 Initiating Breeze login...\nSend OTP when prompted.")
+            result = await self._trigger_breeze_login()
+            await self._show_action_result(query, "Breeze Login", result)
+            return
+
+        # Analytics
+        if data.startswith("analytics_"):
+            period = data.replace("analytics_", "")
+            await self._show_analytics_menu(query, period)
+            return
+
+        # News/Sentiment
+        if data == "news_view":
+            await self._show_news_sentiment_menu(query)
+            return
+
+        # Task schedule editing
+        if data.startswith("tsched_edit_"):
+            task_key = data.replace("tsched_edit_", "")
+            await self._show_task_schedule_menu(query, task_key)
+            return
+        if data.startswith("tsched_set_"):
+            parts = data.replace("tsched_set_", "").rsplit("_", 2)
+            if len(parts) == 3:
+                task_key = parts[0]
+                hour = int(parts[1])
+                minute = int(parts[2])
+                result = await self._update_task_schedule(task_key, hour, minute)
+                if result.get('success'):
+                    await self._show_task_schedule_menu(query, task_key)
+                else:
+                    await query.edit_message_text(f"Error: {result.get('error', 'Unknown')}")
             return
 
         # =====================================================================
@@ -553,19 +776,18 @@ class TelegramBotHandler(MenuMixin, DataMixin):
 
     async def otp_message_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """
-        Handle plain text messages - check if there's a pending OTP request
-        for Breeze auto-login.
-
-        When Breeze auto-login needs an OTP, it sets a NseFlag to 'pending'.
-        This handler watches for digit-only messages and fulfills the OTP
-        request via NseFlag cross-process communication.
-
-        Note: Kotak Neo uses MPIN-based 2FA and does not require OTP.
+        Handle plain text messages - check for trade wizard input first,
+        then check for pending Breeze OTP request.
         """
         if not self.is_authorized(update):
             return
 
         text = (update.message.text or '').strip()
+
+        # Check if trade wizard needs text input (limit price)
+        consumed = await self._handle_trade_text_input(update, text)
+        if consumed:
+            return
 
         # Check if Breeze has a pending OTP request
         is_pending = await self._is_breeze_otp_pending()
@@ -3533,6 +3755,11 @@ class TelegramBotHandler(MenuMixin, DataMixin):
         application.add_handler(CommandHandler("test", self.test_command))
         application.add_handler(CommandHandler("positions", self.positions_command))
         application.add_handler(CommandHandler("core", self.core_command))
+        application.add_handler(CommandHandler("trade", self.trade_command))
+        application.add_handler(CommandHandler("orders", self.orders_command))
+        application.add_handler(CommandHandler("margin", self.margin_command))
+        application.add_handler(CommandHandler("pnl", self.pnl_command))
+        application.add_handler(CommandHandler("analytics", self.analytics_command))
 
         # Add callback query handler for buttons
         application.add_handler(CallbackQueryHandler(self.button_callback))

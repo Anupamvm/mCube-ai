@@ -41,6 +41,7 @@ class MenuMixin:
             is_command: True if called from a /start command (uses reply_text).
         """
         data = await self._get_main_menu_data()
+        margins = await self._get_margin_summary_for_header()
 
         now = datetime.now()
         date_str = now.strftime('%a %d %b')
@@ -53,6 +54,14 @@ class MenuMixin:
         except (ValueError, TypeError):
             pnl_str = data['current_pnl']
 
+        # Format margin line
+        margin_parts = []
+        if margins.get('breeze_free') is not None:
+            margin_parts.append(f"ICICI: {margins['breeze_free']/100000:.1f}L")
+        if margins.get('kotak_free') is not None:
+            margin_parts.append(f"Kotak: {margins['kotak_free']/100000:.1f}L")
+        margin_line = " | ".join(margin_parts) if margin_parts else ""
+
         header = (
             "<b>mCube Trading Bot</b>\n"
             f"<code>{date_str} | {time_str}</code>\n"
@@ -62,11 +71,17 @@ class MenuMixin:
             f"P&amp;L: {pnl_str} | "
             f"Positions: {data['open_positions']} open"
         )
+        if margin_line:
+            header += f"\n{margin_line} free"
 
         keyboard = [
             [
+                InlineKeyboardButton("\U0001f500 Trade", callback_data="menu_trade"),
+                InlineKeyboardButton("\U0001f4cb Orders", callback_data="menu_orders"),
+            ],
+            [
                 InlineKeyboardButton("\U0001f4ca Positions", callback_data="menu_positions"),
-                InlineKeyboardButton("\U0001f4b0 P&L Today", callback_data="menu_pnl"),
+                InlineKeyboardButton("\U0001f4b0 P&L", callback_data="menu_pnl"),
             ],
             [
                 InlineKeyboardButton("\U0001f4c8 Market", callback_data="menu_market"),
@@ -74,13 +89,14 @@ class MenuMixin:
             ],
             [
                 InlineKeyboardButton("\u2699\ufe0f Tasks", callback_data="menu_tasks"),
-                InlineKeyboardButton("\U0001f39b Settings", callback_data="menu_settings"),
+                InlineKeyboardButton("\U0001f527 Settings", callback_data="menu_settings"),
             ],
             [
-                InlineKeyboardButton("\U0001f3e5 System", callback_data="menu_system"),
+                InlineKeyboardButton("\U0001f3e2 System", callback_data="menu_system"),
                 InlineKeyboardButton("\u26a1 Quick Actions", callback_data="menu_quick"),
             ],
             [
+                InlineKeyboardButton("\U0001f4c9 Analytics", callback_data="menu_analytics"),
                 InlineKeyboardButton("\U0001f504 Refresh", callback_data="menu_refresh"),
             ],
         ]
@@ -151,6 +167,9 @@ class MenuMixin:
         )
 
         keyboard = [
+            [
+                InlineKeyboardButton("\U0001f4f0 News/Sentiment", callback_data="news_view"),
+            ],
             [
                 InlineKeyboardButton("\U0001f504 Refresh", callback_data="mkt_refresh"),
                 InlineKeyboardButton("\u00ab Main Menu", callback_data="back_main"),
@@ -454,7 +473,6 @@ class MenuMixin:
         elif menu == 'tasks':
             await self._show_tasks_menu(query)
         elif menu == 'settings':
-            # Reuse existing core settings flow
             await self._show_core_settings_with_back(query)
         elif menu == 'system':
             await self._show_system_menu(query)
@@ -462,6 +480,17 @@ class MenuMixin:
             await self._show_quick_actions_menu(query)
         elif menu == 'refresh':
             await self._show_main_menu(query)
+        # New menus
+        elif menu == 'trade':
+            await self._show_trade_broker_selection(query)
+        elif menu == 'orders':
+            await self._show_orders_menu(query)
+        elif menu == 'analytics':
+            await self._show_analytics_menu(query)
+        elif menu == 'margin':
+            await self._show_margin_menu(query)
+        elif menu == 'history':
+            await self._show_trade_history_menu(query)
 
     async def _show_core_settings_with_back(self, query):
         """Show core settings with a Main Menu button added."""
@@ -498,6 +527,7 @@ class MenuMixin:
                 f"Confirm: {'ON' if config['require_confirmation'] else 'OFF'}",
                 callback_data="core_toggle_confirm"
             )],
+            [InlineKeyboardButton("\U0001f511 Broker Login", callback_data="login_view")],
             [InlineKeyboardButton("Refresh", callback_data="core_refresh")],
             [InlineKeyboardButton("\u00ab Main Menu", callback_data="back_main")],
         ]
@@ -745,6 +775,535 @@ class MenuMixin:
             [
                 InlineKeyboardButton("\u00ab Back to Tasks", callback_data="back_tasks"),
                 InlineKeyboardButton("\u00ab Main Menu", callback_data="back_main"),
+            ],
+        ]
+
+        await query.edit_message_text(
+            message, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
+    # =========================================================================
+    # ORDERS MENU
+    # =========================================================================
+
+    async def _show_orders_menu(self, query):
+        """Show order book overview from both brokers."""
+        breeze_data = await self._get_breeze_orders()
+        kotak_data = await self._get_kotak_orders()
+
+        now = datetime.now()
+        date_str = now.strftime('%d %b %Y')
+
+        message = f"<b>\U0001f4cb Orders | {date_str}</b>\n\n"
+
+        # ICICI Breeze orders
+        breeze_orders = breeze_data.get('orders', [])
+        message += f"<b>ICICI Breeze ({len(breeze_orders)} orders)</b>\n"
+        if breeze_orders:
+            for i, o in enumerate(breeze_orders[:5]):
+                sym = o.get('trading_symbol', '?')[:15]
+                action = o.get('transaction_type', '?')[:4]
+                qty = o.get('quantity', 0)
+                status = o.get('status', '?')
+                status_icon = {'Executed': '\u2705', 'Pending': '\U0001f7e1', 'Rejected': '\u274c'}.get(status, '\u2753')
+                message += f"  {i+1}. {sym} {action} {qty} | {status} {status_icon}\n"
+        else:
+            if breeze_data.get('success'):
+                message += "  No orders today\n"
+            else:
+                message += f"  {breeze_data.get('error', 'Unavailable')[:40]}\n"
+
+        message += "\n"
+
+        # Kotak Neo orders
+        kotak_orders = kotak_data.get('orders', [])
+        message += f"<b>Kotak Neo ({len(kotak_orders)} orders)</b>\n"
+        if kotak_orders:
+            for i, o in enumerate(kotak_orders[:5]):
+                sym = str(o.get('trdSym', o.get('trading_symbol', '?')))[:15]
+                action = str(o.get('trnsTp', o.get('transaction_type', '?')))[:4]
+                qty = o.get('qty', o.get('quantity', 0))
+                status = str(o.get('ordSt', o.get('status', '?')))
+                status_icon = {'complete': '\u2705', 'open': '\U0001f7e1', 'rejected': '\u274c'}.get(status.lower(), '\u2753')
+                message += f"  {i+1}. {sym} {action} {qty} | {status} {status_icon}\n"
+        else:
+            if kotak_data.get('success'):
+                message += "  No orders today\n"
+            else:
+                message += f"  {kotak_data.get('error', 'Unavailable')[:40]}\n"
+
+        keyboard = [
+            [
+                InlineKeyboardButton("ICICI Details", callback_data="ord_broker_breeze"),
+                InlineKeyboardButton("Kotak Details", callback_data="ord_broker_kotak"),
+            ],
+            [
+                InlineKeyboardButton("\U0001f504 Refresh", callback_data="ord_refresh"),
+                InlineKeyboardButton("\u00ab Main Menu", callback_data="back_main"),
+            ],
+        ]
+
+        await query.edit_message_text(
+            message, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
+    async def _show_broker_orders_detail(self, query, broker: str):
+        """Show detailed order list for a specific broker."""
+        if broker == 'breeze':
+            data = await self._get_breeze_orders()
+            broker_label = 'ICICI Breeze'
+        else:
+            data = await self._get_kotak_orders()
+            broker_label = 'Kotak Neo'
+
+        orders = data.get('orders', [])
+        message = f"<b>\U0001f4cb {broker_label} Orders</b>\n\n"
+
+        if not orders:
+            message += "No orders today."
+        else:
+            for i, o in enumerate(orders[:10]):
+                if broker == 'breeze':
+                    sym = o.get('trading_symbol', '?')
+                    action = o.get('transaction_type', '?')
+                    qty = o.get('quantity', 0)
+                    price = o.get('average_price', o.get('price', 0))
+                    status = o.get('status', '?')
+                    order_id = o.get('order_id', '?')
+                else:
+                    sym = str(o.get('trdSym', o.get('trading_symbol', '?')))
+                    action = str(o.get('trnsTp', o.get('transaction_type', '?')))
+                    qty = o.get('qty', o.get('quantity', 0))
+                    price = o.get('avgPrc', o.get('price', 0))
+                    status = str(o.get('ordSt', o.get('status', '?')))
+                    order_id = str(o.get('nOrdNo', o.get('order_id', '?')))
+
+                try:
+                    price_str = f"{float(price):,.2f}" if price else "—"
+                except (ValueError, TypeError):
+                    price_str = str(price)
+
+                message += (
+                    f"<b>{i+1}. {sym}</b>\n"
+                    f"  {action} | Qty: {qty} | @ {price_str}\n"
+                    f"  Status: {status} | ID: {str(order_id)[:12]}\n\n"
+                )
+
+        keyboard = []
+        # Show cancel buttons for pending orders (Kotak only for now)
+        if broker == 'kotak':
+            for i, o in enumerate(orders[:5]):
+                status = str(o.get('ordSt', '')).lower()
+                if status in ('open', 'pending', 'trigger pending'):
+                    order_id = str(o.get('nOrdNo', ''))
+                    if order_id:
+                        keyboard.append([
+                            InlineKeyboardButton(
+                                f"Cancel #{i+1}", callback_data=f"ord_cancel_kotak_{order_id}"
+                            )
+                        ])
+
+        keyboard.append([
+            InlineKeyboardButton("\U0001f504 Refresh", callback_data=f"ord_broker_{broker}"),
+            InlineKeyboardButton("\u00ab Orders", callback_data="menu_orders"),
+        ])
+        keyboard.append([InlineKeyboardButton("\u00ab Main Menu", callback_data="back_main")])
+
+        await query.edit_message_text(
+            message, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
+    # =========================================================================
+    # MARGIN / LIMITS MENU
+    # =========================================================================
+
+    async def _show_margin_menu(self, query):
+        """Show margin and limits from both brokers."""
+        breeze = await self._get_breeze_margin()
+        kotak = await self._get_kotak_margin()
+
+        message = "<b>\U0001f4b3 Margin &amp; Limits</b>\n\n"
+
+        # ICICI Breeze
+        message += "<b>ICICI Breeze (NFO)</b>\n"
+        if breeze.get('success'):
+            message += (
+                f"  Cash Limit:  \u20b9{breeze['cash_limit']:,.0f}\n"
+                f"  Blocked:     \u20b9{breeze['blocked']:,.0f}\n"
+                f"  Available:   \u20b9{breeze['available']:,.0f} ({breeze['pct']}%)\n"
+            )
+        else:
+            message += f"  {breeze.get('error', 'Unavailable')}\n"
+
+        message += "\n<b>Kotak Neo</b>\n"
+        if kotak.get('success'):
+            message += (
+                f"  Total Margin: \u20b9{kotak['total']:,.0f}\n"
+                f"  Used:         \u20b9{kotak['used']:,.0f}\n"
+                f"  Available:    \u20b9{kotak['available']:,.0f} ({kotak['pct']}%)\n"
+            )
+        else:
+            message += f"  {kotak.get('error', 'Unavailable')}\n"
+
+        # Combined
+        combined = 0
+        if breeze.get('success'):
+            combined += breeze['available']
+        if kotak.get('success'):
+            combined += kotak['available']
+        if combined > 0:
+            message += f"\n<b>Combined Free: \u20b9{combined:,.0f}</b>"
+
+        keyboard = [
+            [
+                InlineKeyboardButton("\U0001f504 Refresh", callback_data="margin_refresh"),
+                InlineKeyboardButton("\u00ab Main Menu", callback_data="back_main"),
+            ],
+        ]
+
+        await query.edit_message_text(
+            message, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
+    # =========================================================================
+    # TRADE HISTORY MENU
+    # =========================================================================
+
+    async def _show_trade_history_menu(self, query, count: int = 10):
+        """Show recent closed trades."""
+        data = await self._get_trade_history(count)
+
+        message = f"<b>\U0001f4c4 Trade History (Last {count})</b>\n\n"
+
+        if not data.get('success') or not data.get('trades'):
+            message += "No closed trades found."
+        else:
+            for i, t in enumerate(data['trades'], 1):
+                instrument = t.get('instrument', '?')[:15]
+                direction = t.get('direction', '?')
+                pnl = float(t.get('net_pnl') or t.get('realized_pnl') or 0)
+                pnl_str = f"+\u20b9{pnl:,.0f}" if pnl >= 0 else f"-\u20b9{abs(pnl):,.0f}"
+                pnl_icon = "\U0001f7e2" if pnl >= 0 else "\U0001f534"
+                exit_date = ''
+                if t.get('exit_time'):
+                    try:
+                        exit_date = t['exit_time'].strftime('%d-%b')
+                    except AttributeError:
+                        exit_date = str(t['exit_time'])[:6]
+
+                message += f"  {pnl_icon} {instrument} {direction} {pnl_str} {exit_date}\n"
+
+            message += (
+                f"\nWin Rate: {data['win_rate']}% ({data['wins']}/{data['total_count']})\n"
+                f"Total P&amp;L: {'+' if data['total_pnl'] >= 0 else ''}\u20b9{data['total_pnl']:,.0f}"
+            )
+
+        keyboard = [
+            [
+                InlineKeyboardButton("Last 5", callback_data="hist_count_5"),
+                InlineKeyboardButton("Last 10", callback_data="hist_count_10"),
+                InlineKeyboardButton("Last 20", callback_data="hist_count_20"),
+            ],
+            [
+                InlineKeyboardButton("\U0001f504 Refresh", callback_data=f"hist_count_{count}"),
+                InlineKeyboardButton("\u00ab Main Menu", callback_data="back_main"),
+            ],
+        ]
+
+        await query.edit_message_text(
+            message, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
+    # =========================================================================
+    # ANALYTICS / PERFORMANCE MENU
+    # =========================================================================
+
+    async def _show_analytics_menu(self, query, period: str = 'FY'):
+        """Show performance analytics summary."""
+        data = await self._get_performance_summary(period)
+
+        period_labels = {'week': 'This Week', 'month': 'This Month', 'FY': 'FY 2025-26'}
+        period_label = period_labels.get(period, period)
+
+        message = f"<b>\U0001f4c9 Performance | {period_label}</b>\n\n"
+
+        if not data.get('success') or data.get('total_trades', 0) == 0:
+            message += "No trades found for this period."
+        else:
+            def fmt_pnl(v):
+                return f"+\u20b9{v:,.0f}" if v >= 0 else f"-\u20b9{abs(v):,.0f}"
+
+            message += (
+                f"Total Trades:  {data['total_trades']}\n"
+                f"Win Rate:      {data['win_rate']}% ({data['wins']}W / {data['losses']}L)\n"
+                f"Total P&amp;L:     {fmt_pnl(data['total_pnl'])}\n"
+                f"Avg Win:       {fmt_pnl(data['avg_win'])}\n"
+                f"Avg Loss:      {fmt_pnl(data['avg_loss'])}\n"
+            )
+
+            if data.get('best_trade_name'):
+                message += f"Best Trade:    {data['best_trade_name']} {fmt_pnl(data['best_trade'])}\n"
+            if data.get('worst_trade_name'):
+                message += f"Worst Trade:   {data['worst_trade_name']} {fmt_pnl(data['worst_trade'])}\n"
+
+            message += (
+                f"\n<b>Strategy Breakdown:</b>\n"
+                f"  Futures: {data['futures_count']} trades, {fmt_pnl(data['futures_pnl'])}\n"
+                f"  Options: {data['options_count']} trades, {fmt_pnl(data['options_pnl'])}\n"
+            )
+
+        keyboard = [
+            [
+                InlineKeyboardButton("This Week", callback_data="analytics_week"),
+                InlineKeyboardButton("This Month", callback_data="analytics_month"),
+                InlineKeyboardButton("FY", callback_data="analytics_FY"),
+            ],
+            [
+                InlineKeyboardButton("\U0001f504 Refresh", callback_data=f"analytics_{period}"),
+                InlineKeyboardButton("\u00ab Main Menu", callback_data="back_main"),
+            ],
+        ]
+
+        await query.edit_message_text(
+            message, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
+    # =========================================================================
+    # BROKER LOGIN MENU
+    # =========================================================================
+
+    async def _show_broker_login_menu(self, query):
+        """Show broker session status and login buttons."""
+        status = await self._get_broker_session_status()
+
+        breeze_icon = "\u2705 Valid" if status['breeze_valid'] else "\u274c Expired"
+        kotak_icon = "\u2705 Valid" if status['kotak_valid'] else "\u274c Expired"
+
+        breeze_since = f" (since {status['breeze_since']})" if status.get('breeze_since') else ""
+        kotak_since = f" (since {status['kotak_since']})" if status.get('kotak_since') else ""
+
+        message = (
+            "<b>\U0001f511 Broker Sessions</b>\n\n"
+            f"ICICI Breeze: {breeze_icon}{breeze_since}\n"
+            f"Kotak Neo:    {kotak_icon}{kotak_since}\n"
+        )
+
+        keyboard = [
+            [
+                InlineKeyboardButton("\U0001f511 Login ICICI", callback_data="login_breeze"),
+                InlineKeyboardButton("\U0001f511 Login Kotak", callback_data="login_kotak"),
+            ],
+            [InlineKeyboardButton("\u00ab Back to Settings", callback_data="menu_settings")],
+        ]
+
+        await query.edit_message_text(
+            message, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
+    # =========================================================================
+    # NEWS / SENTIMENT MENU
+    # =========================================================================
+
+    async def _show_news_sentiment_menu(self, query):
+        """Show market sentiment from analyzed news."""
+        data = await self._get_market_sentiment()
+
+        label = data.get('overall_label', 'N/A')
+        score = data.get('overall_score', 0)
+
+        label_icon = {
+            'BULLISH': '\U0001f7e2', 'BEARISH': '\U0001f534', 'NEUTRAL': '\u26aa', 'NO DATA': '\u2753'
+        }.get(label, '\u2753')
+
+        message = (
+            "<b>\U0001f4f0 Market Sentiment</b>\n\n"
+            f"Overall: {label_icon} {label} (Score: {score})\n\n"
+        )
+
+        articles = data.get('articles', [])
+        if articles:
+            message += "<b>Recent Headlines:</b>\n"
+            for a in articles:
+                title = a.get('title', '?')[:60]
+                s = a.get('sentiment_score')
+                if s is not None:
+                    if s > 0.2:
+                        icon = "\U0001f7e2"
+                    elif s < -0.2:
+                        icon = "\U0001f534"
+                    else:
+                        icon = "\u26aa"
+                else:
+                    icon = "\u26aa"
+                message += f"  {icon} {title}\n"
+        else:
+            message += "No analyzed news today.\n"
+
+        blocking = data.get('blocking_news', False)
+        message += f"\nBlocking News: {'YES' if blocking else 'None'}"
+
+        now = datetime.now()
+        message += f"\nLast Updated: {now.strftime('%I:%M %p').lstrip('0')}"
+
+        keyboard = [
+            [
+                InlineKeyboardButton("\U0001f504 Refresh", callback_data="news_view"),
+                InlineKeyboardButton("\u00ab Back to Market", callback_data="menu_market"),
+            ],
+        ]
+
+        await query.edit_message_text(
+            message, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
+    # =========================================================================
+    # SL / TARGET MODIFICATION MENUS
+    # =========================================================================
+
+    async def _show_sl_modify_menu(self, query, position_id: int):
+        """Show SL modification options for a position."""
+        pos = await self._get_position_detail(position_id)
+        if not pos.get('success'):
+            await query.edit_message_text(f"Error: {pos.get('error', 'Position not found')}")
+            return
+
+        current_sl = pos.get('stop_loss')
+        entry = pos.get('entry_price', 0)
+        current = pos.get('current_price') or entry
+
+        sl_str = f"\u20b9{current_sl:,.2f}" if current_sl else "Not set"
+
+        message = (
+            f"<b>Modify Stop Loss</b>\n\n"
+            f"<b>{pos['instrument']}</b>\n"
+            f"Entry: \u20b9{entry:,.2f} | Current: \u20b9{current:,.2f}\n"
+            f"Current SL: {sl_str}\n\n"
+            "Adjust SL:"
+        )
+
+        # Preset percentage buttons
+        base = current_sl if current_sl else current
+        pct_buttons = [-2, -1, -0.5, 0.5, 1, 2]
+
+        keyboard = []
+        row = []
+        for pct in pct_buttons:
+            new_val = base * (1 + pct / 100)
+            label = f"{'+' if pct > 0 else ''}{pct}%"
+            # Encode: sl_pct_{position_id}_{new_value_x100}
+            encoded = int(new_val * 100)
+            row.append(InlineKeyboardButton(label, callback_data=f"sl_set_{position_id}_{encoded}"))
+            if len(row) == 3:
+                keyboard.append(row)
+                row = []
+        if row:
+            keyboard.append(row)
+
+        keyboard.append([InlineKeyboardButton("\u00ab Back", callback_data="back_to_brokers")])
+
+        await query.edit_message_text(
+            message, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
+    async def _show_target_modify_menu(self, query, position_id: int):
+        """Show target modification options for a position."""
+        pos = await self._get_position_detail(position_id)
+        if not pos.get('success'):
+            await query.edit_message_text(f"Error: {pos.get('error', 'Position not found')}")
+            return
+
+        current_target = pos.get('target')
+        entry = pos.get('entry_price', 0)
+        current = pos.get('current_price') or entry
+
+        tgt_str = f"\u20b9{current_target:,.2f}" if current_target else "Not set"
+
+        message = (
+            f"<b>Modify Target</b>\n\n"
+            f"<b>{pos['instrument']}</b>\n"
+            f"Entry: \u20b9{entry:,.2f} | Current: \u20b9{current:,.2f}\n"
+            f"Current Target: {tgt_str}\n\n"
+            "Adjust Target:"
+        )
+
+        base = current_target if current_target else current
+        pct_buttons = [-2, -1, -0.5, 0.5, 1, 2]
+
+        keyboard = []
+        row = []
+        for pct in pct_buttons:
+            new_val = base * (1 + pct / 100)
+            label = f"{'+' if pct > 0 else ''}{pct}%"
+            encoded = int(new_val * 100)
+            row.append(InlineKeyboardButton(label, callback_data=f"tgt_set_{position_id}_{encoded}"))
+            if len(row) == 3:
+                keyboard.append(row)
+                row = []
+        if row:
+            keyboard.append(row)
+
+        keyboard.append([InlineKeyboardButton("\u00ab Back", callback_data="back_to_brokers")])
+
+        await query.edit_message_text(
+            message, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
+    # =========================================================================
+    # TASK SCHEDULE EDITING MENU
+    # =========================================================================
+
+    async def _show_task_schedule_menu(self, query, task_key: str):
+        """Show schedule editing options for a specific task."""
+        detail = await self._get_task_schedule_detail(task_key)
+        if not detail.get('success'):
+            await query.edit_message_text(f"Error: {detail.get('error', 'Unknown')}")
+            return
+
+        name = detail['display_name']
+        hour = detail['current_hour']
+        minute = detail['current_minute']
+        default_h = detail['default_hour']
+        default_m = detail['default_minute']
+
+        message = (
+            f"<b>\U0001f4c5 Schedule: {name}</b>\n\n"
+            f"Current: <b>{hour:02d}:{minute:02d}</b>\n"
+            f"Default: {default_h:02d}:{default_m:02d}\n"
+        )
+
+        # Calculate +/- 15 min times
+        from datetime import datetime as dt, timedelta
+        current_time = dt(2000, 1, 1, hour, minute)
+        earlier = current_time - timedelta(minutes=15)
+        later = current_time + timedelta(minutes=15)
+
+        eh, em = earlier.hour, earlier.minute
+        lh, lm = later.hour, later.minute
+
+        keyboard = [
+            [
+                InlineKeyboardButton(
+                    f"15 min earlier \u2192 {eh:02d}:{em:02d}",
+                    callback_data=f"tsched_set_{task_key}_{eh}_{em}"
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    f"15 min later \u2192 {lh:02d}:{lm:02d}",
+                    callback_data=f"tsched_set_{task_key}_{lh}_{lm}"
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    f"Reset to default ({default_h:02d}:{default_m:02d})",
+                    callback_data=f"tsched_set_{task_key}_{default_h}_{default_m}"
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    "\u00ab Back",
+                    callback_data=f"task_cat_{detail.get('category', 'data') if detail.get('category') else 'data'}"
+                ),
             ],
         ]
 

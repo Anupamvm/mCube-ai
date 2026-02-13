@@ -1771,3 +1771,20 @@ class BrokerContractPnL(TimeStampedModel):
         if self.total_charges == Decimal('0.00'):
             self.total_charges = self.gst + self.brokerage + self.stt + self.misc_charges
         super().save(*args, **kwargs)
+
+
+class PositionAvgOverride(models.Model):
+    """
+    Manual average price override for positions where the DB chain
+    has become corrupted (e.g., MTM cost used instead of original entry price).
+    """
+    trading_symbol = models.CharField(max_length=100, unique=True)
+    manual_avg_price = models.DecimalField(max_digits=12, decimal_places=2)
+    updated_at = models.DateTimeField(auto_now=True)
+    notes = models.CharField(max_length=200, blank=True)
+
+    class Meta:
+        verbose_name = 'Position Avg Override'
+
+    def __str__(self):
+        return f"{self.trading_symbol} → ₹{self.manual_avg_price}"

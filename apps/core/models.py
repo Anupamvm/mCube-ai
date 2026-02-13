@@ -1446,3 +1446,17 @@ class TradingCoreConfig(TimeStampedModel):
             'SIMULATED': '📝 Simulated',
         }
         return mode_names.get(self.position_sizing_mode, self.position_sizing_mode)
+
+
+class TaskPreset(TimeStampedModel):
+    """Saved presets of task enabled/disabled states for quick switching."""
+    name = models.CharField(max_length=100, unique=True)
+    description = models.TextField(blank=True, default='')
+    is_builtin = models.BooleanField(default=False)
+    task_states = models.JSONField(default=dict, help_text='Map of task_key -> bool (enabled)')
+
+    class Meta:
+        ordering = ['-is_builtin', 'name']
+
+    def __str__(self):
+        return f"{'[Built-in] ' if self.is_builtin else ''}{self.name}"

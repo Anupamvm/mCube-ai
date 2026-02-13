@@ -1,0 +1,68 @@
+<!-- 24-Hour Task Timeline -->
+<div class="timeline-section">
+    <div class="timeline-header">
+        <div style="display: flex; align-items: center; gap: 16px;">
+            <h2>🕐 Task Timeline</h2>
+            <div class="timeline-zoom-toggle">
+                <button class="active" onclick="setTimelineZoom('trading')" id="zoom-trading">Trading Hours</button>
+                <button onclick="setTimelineZoom('full')" id="zoom-full">Full 24h</button>
+            </div>
+        </div>
+        <div class="timeline-legend">
+            <div class="legend-item">
+                <div class="legend-dot" style="background: #3182ce;"></div>
+                <span>Market Data</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-dot" style="background: #805ad5;"></div>
+                <span>Strategy</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-dot" style="background: #d69e2e;"></div>
+                <span>Transactions</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-dot" style="background: #dd6b20;"></div>
+                <span>Monitoring</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-dot" style="background: #e53e3e;"></div>
+                <span>Risk</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-dot" style="background: #38a169;"></div>
+                <span>Reports</span>
+            </div>
+        </div>
+    </div>
+
+    <div class="timeline-container">
+        <div class="timeline-hours" id="timeline-hours">
+            <!-- Hour columns generated via JavaScript -->
+        </div>
+        <div class="timeline-now-line" id="now-line" style="display: none;"></div>
+    </div>
+
+    <div class="timeline-phases">
+        <div class="phase-block phase-closed" style="flex: 7;">Night (00:00-07:00)</div>
+        <div class="phase-block phase-pre">Pre-Market (07:00-09:15)</div>
+        <div class="phase-block phase-market">Trading Hours (09:15-15:30)</div>
+        <div class="phase-block phase-post">Post-Market (15:30-17:00)</div>
+        <div class="phase-block phase-closed" style="flex: 7;">Night (17:00-24:00)</div>
+    </div>
+
+    <div class="timeline-summary">
+        <div class="summary-stat">
+            <div class="count" id="active-task-count">{{ enabled_count }}</div>
+            <div class="label">Active Tasks</div>
+        </div>
+        <div class="summary-stat">
+            <div class="count" id="total-task-count">{{ total_count }}</div>
+            <div class="label">Total Scheduled</div>
+        </div>
+        <div class="summary-stat">
+            <div class="count" id="next-task-time">--:--</div>
+            <div class="label">Next Task</div>
+        </div>
+    </div>
+</div>

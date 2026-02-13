@@ -3994,10 +3994,101 @@ def celery_task_control(request):
     import json
     algo_task_data_json = json.dumps(algo_task_data)
 
+    # Build workflow groups for hero cards
+    # Each workflow group shows all tasks in order with dependency chain info
+    workflow_groups = {}
+    for algo_key, group in ALGORITHM_TASK_GROUPS.items():
+        all_task_keys = []
+        task_tiers = {}
+        for t in group['own_tasks']:
+            all_task_keys.append(t)
+            task_tiers[t] = 'own'
+        for t in group['shared_tasks']:
+            if t not in all_task_keys:
+                all_task_keys.append(t)
+            task_tiers[t] = 'shared'
+        for t in group['monitoring_tasks']:
+            if t not in all_task_keys:
+                all_task_keys.append(t)
+            task_tiers[t] = 'monitoring'
+
+        # Build task nodes with schedule info, sorted by time
+        nodes = []
+        for t_key in all_task_keys:
+            cfg = TASK_DEFAULT_CONFIG.get(t_key, {})
+            task_state = task_state_objects.get(t_key)
+            is_enabled = task_state.is_enabled if task_state else False
+            stype = cfg.get('schedule_type', 'crontab')
+
+            if stype == 'crontab':
+                sort_hour = cfg.get('default_hour', 0)
+                sort_min = cfg.get('default_minute', 0)
+                time_str = f"{sort_hour:02d}:{sort_min:02d}"
+            elif stype == 'interval':
+                sort_hour = 9
+                sort_min = 15
+                secs = cfg.get('default_interval_seconds', 60)
+                time_str = f"Every {secs}s"
+            elif stype == 'recurring':
+                sort_hour = cfg.get('default_recurring_start_hour', 9)
+                sort_min = cfg.get('default_recurring_start_minute', 0)
+                end_h = cfg.get('default_recurring_end_hour', 15)
+                end_m = cfg.get('default_recurring_end_minute', 0)
+                interval = cfg.get('default_recurring_interval_minutes', 30)
+                time_str = f"{sort_hour:02d}:{sort_min:02d}-{end_h:02d}:{end_m:02d}"
+            else:
+                sort_hour = 12
+                sort_min = 0
+                time_str = stype
+
+            # Check which other algo uses this task (for "shared" badge)
+            shared_with = []
+            for other_key, other_group in ALGORITHM_TASK_GROUPS.items():
+                if other_key == algo_key:
+                    continue
+                all_other = other_group['own_tasks'] + other_group['shared_tasks'] + other_group['monitoring_tasks']
+                if t_key in all_other:
+                    shared_with.append(other_group['display_name'])
+
+            nodes.append({
+                'key': t_key,
+                'name': cfg.get('display_name', t_key.replace('-', ' ').title()),
+                'time_str': time_str,
+                'sort_key': sort_hour * 60 + sort_min,
+                'is_enabled': is_enabled,
+                'tier': task_tiers[t_key],
+                'shared_with': shared_with,
+                'schedule_type': stype,
+            })
+
+        nodes.sort(key=lambda x: x['sort_key'])
+
+        active_count = sum(1 for n in nodes if n['is_enabled'])
+
+        # Determine algorithm active state
+        if algo_key == 'futures':
+            algo_active = trading_config.enable_futures_trading if trading_config else False
+        elif algo_key == 'options':
+            algo_active = (trading_config.options_strategy != 'NONE') if trading_config else False
+        else:
+            algo_active = False
+
+        workflow_groups[algo_key] = {
+            'display_name': group['display_name'],
+            'emoji': group.get('emoji', ''),
+            'description': group.get('description', ''),
+            'nodes': nodes,
+            'active_count': active_count,
+            'total_count': len(nodes),
+            'algo_active': algo_active,
+            'algo_key': algo_key,
+        }
+
     context = {
         'dynamic_tasks': dynamic_tasks,
         'static_tasks': static_tasks,
         'task_categories': task_categories,  # Categorized view for new UI
+        'workflow_groups': workflow_groups,  # Workflow hero cards
         'worker_status': worker_status,
         'redis_status': redis_status,
         'enabled_count': enabled_count,
@@ -6063,3 +6154,114 @@ def api_recent_executions(request):
             'success': False,
             'error': str(e)
         }, status=500)
+
+
+# =============================================================================
+# TASK PRESETS
+# =============================================================================
+
+@login_required
+@user_passes_test(is_admin_user)
+def list_presets(request):
+    """List all task presets."""
+    from apps.core.models import TaskPreset
+    presets = list(TaskPreset.objects.values('id', 'name', 'description', 'is_builtin'))
+    return JsonResponse({'success': True, 'presets': presets})
+
+
+@login_required
+@user_passes_test(is_admin_user)
+@require_POST
+def apply_preset(request):
+    """Apply a task preset - toggle tasks to match preset state."""
+    from apps.core.models import TaskPreset, CeleryTaskState
+    from apps.core.task_config import TASK_DEFAULT_CONFIG, ALGORITHM_TASK_GROUPS
+
+    preset_name = request.POST.get('preset_name', '')
+
+    # Built-in presets
+    builtin_presets = {
+        'full_trading': lambda: {k: True for k in TASK_DEFAULT_CONFIG.keys()},
+        'all_off': lambda: {k: False for k in TASK_DEFAULT_CONFIG.keys()},
+        'futures_only': lambda: _build_algo_preset('futures', ALGORITHM_TASK_GROUPS, TASK_DEFAULT_CONFIG),
+        'options_only': lambda: _build_algo_preset('options', ALGORITHM_TASK_GROUPS, TASK_DEFAULT_CONFIG),
+        'data_monitoring': lambda: _build_data_monitoring_preset(TASK_DEFAULT_CONFIG),
+    }
+
+    if preset_name in builtin_presets:
+        task_states = builtin_presets[preset_name]()
+    else:
+        try:
+            preset = TaskPreset.objects.get(name=preset_name)
+            task_states = preset.task_states
+        except TaskPreset.DoesNotExist:
+            return JsonResponse({'success': False, 'error': f'Preset "{preset_name}" not found'})
+
+    # Apply the preset
+    changed = 0
+    for task_key, should_enable in task_states.items():
+        state, _ = CeleryTaskState.objects.get_or_create(task_key=task_key)
+        if state.is_enabled != should_enable:
+            state.is_enabled = should_enable
+            state.save()
+            changed += 1
+
+    # Restart Celery Beat
+    from apps.core.utils.celery_management import ensure_celery_running
+    ensure_celery_running()
+
+    return JsonResponse({
+        'success': True,
+        'message': f'Preset applied: {changed} tasks changed',
+    })
+
+
+@login_required
+@user_passes_test(is_admin_user)
+@require_POST
+def save_preset(request):
+    """Save current task states as a named preset."""
+    from apps.core.models import TaskPreset, CeleryTaskState
+
+    preset_name = request.POST.get('preset_name', '').strip()
+    if not preset_name:
+        return JsonResponse({'success': False, 'error': 'Preset name is required'})
+
+    # Snapshot current states
+    task_states = {}
+    for state in CeleryTaskState.objects.all():
+        task_states[state.task_key] = state.is_enabled
+
+    preset, created = TaskPreset.objects.update_or_create(
+        name=preset_name,
+        defaults={
+            'task_states': task_states,
+            'is_builtin': False,
+        }
+    )
+
+    return JsonResponse({
+        'success': True,
+        'message': f'Preset "{ preset_name}" {"created" if created else "updated"}',
+    })
+
+
+def _build_algo_preset(algo_key, algo_groups, task_config):
+    """Build a preset that enables only tasks for a specific algorithm."""
+    group = algo_groups.get(algo_key, {})
+    enabled_keys = set(
+        group.get('own_tasks', []) +
+        group.get('shared_tasks', []) +
+        group.get('monitoring_tasks', [])
+    )
+    # Also enable data tasks (always needed)
+    for k, cfg in task_config.items():
+        if cfg.get('category') == 'data':
+            enabled_keys.add(k)
+    return {k: (k in enabled_keys) for k in task_config.keys()}
+
+
+def _build_data_monitoring_preset(task_config):
+    """Build a preset with only data + monitoring + risk tasks."""
+    enabled_categories = {'data', 'monitoring', 'risk'}
+    return {k: (cfg.get('category') in enabled_categories) for k, cfg in task_config.items()}

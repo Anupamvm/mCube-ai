@@ -1,0 +1,135 @@
+<!-- Slide-in Logs Panel -->
+<div class="logs-panel" id="logsPanel">
+    <div class="logs-panel-header">
+        <h3 id="logsPanelTitle">Task Logs</h3>
+        <button class="logs-panel-close" onclick="closeLogsPanel()">&times;</button>
+    </div>
+
+    <div class="logs-panel-tabs">
+        <button class="active" onclick="switchLogTab('logs', this)" id="logTabLogs">Logs</button>
+        <button onclick="switchLogTab('activity', this)" id="logTabActivity">Activity</button>
+    </div>
+
+    <!-- Filters -->
+    <div class="logs-panel-filters" id="logsPanelFilters">
+        <select id="panelFilterStatus" onchange="applyPanelLogFilters()">
+            <option value="active">Active</option>
+            <option value="completed" selected>Completed</option>
+            <option value="all">All</option>
+            <option value="success">Success</option>
+            <option value="error">Errors</option>
+        </select>
+        <select id="panelFilterSource" onchange="applyPanelLogFilters()">
+            <option value="all">All Sources</option>
+            <option value="worker">Worker</option>
+            <option value="beat">Beat</option>
+        </select>
+        <select id="panelFilterLevel" onchange="applyPanelLogFilters()">
+            <option value="all">All Levels</option>
+            <option value="info">Info</option>
+            <option value="warning">Warning</option>
+            <option value="error">Error</option>
+        </select>
+        <select id="panelFilterCategory" onchange="applyPanelLogFilters()">
+            <option value="all">All Categories</option>
+            <option value="data">Market Data</option>
+            <option value="strategies">Strategy</option>
+            <option value="transactions">Transactions</option>
+            <option value="monitoring">Monitoring</option>
+            <option value="risk">Risk</option>
+            <option value="reports">Reports</option>
+        </select>
+        <select id="panelFilterLimit" onchange="reloadPanelLogs()">
+            <option value="50">50</option>
+            <option value="100" selected>100</option>
+            <option value="200">200</option>
+        </select>
+        <button class="btn btn-sm btn-secondary" onclick="reloadPanelLogs()" style="padding: 4px 8px; font-size: 11px;">↻</button>
+    </div>
+
+    <!-- Status bar for all logs mode -->
+    <div id="logsPanelStatusBar" style="display: none; padding: 8px 20px; background: #f7fafc; border-bottom: 1px solid #e2e8f0; font-size: 12px;"></div>
+
+    <!-- Logs Content -->
+    <div class="logs-panel-body" id="logsPanelBody">
+        <div class="logs-loading">Select a task or click "All Celery Logs"</div>
+    </div>
+
+    <div class="logs-panel-footer">
+        <label style="display: flex; align-items: center; gap: 4px; cursor: pointer;">
+            <input type="checkbox" id="autoRefreshLogs" onchange="toggleAutoRefreshLogs()">
+            Auto-refresh (10s)
+        </label>
+        <span id="logsPanelCount"></span>
+    </div>
+</div>
+
+<!-- Legacy Logs Modal (kept as fallback for "All Celery Logs") -->
+<div id="logsModal" class="modal-overlay" onclick="closeLogsModal(event)">
+    <div class="modal-content" onclick="event.stopPropagation()" style="max-width: 1100px;">
+        <div class="modal-header">
+            <h3 id="logsModalTitle">Task Logs</h3>
+            <button class="modal-close" onclick="closeLogsModal()">&times;</button>
+        </div>
+        <!-- Filters -->
+        <div id="logsFilters" class="logs-filters" style="display: none;">
+            <div class="filter-group">
+                <label>Status:</label>
+                <select id="filterStatus" onchange="applyLogFilters()">
+                    <option value="active">Active (Running)</option>
+                    <option value="completed" selected>Completed (Success/Failed)</option>
+                    <option value="all">All Logs</option>
+                    <option value="success">Success Only</option>
+                    <option value="error">Errors Only</option>
+                    <option value="received">Received</option>
+                    <option value="scheduled">Scheduled</option>
+                </select>
+            </div>
+            <div class="filter-group">
+                <label>Source:</label>
+                <select id="filterSource" onchange="applyLogFilters()">
+                    <option value="all">All</option>
+                    <option value="worker">Worker</option>
+                    <option value="beat">Beat</option>
+                </select>
+            </div>
+            <div class="filter-group">
+                <label>Level:</label>
+                <select id="filterLevel" onchange="applyLogFilters()">
+                    <option value="all">All</option>
+                    <option value="info">Info</option>
+                    <option value="warning">Warning</option>
+                    <option value="error">Error</option>
+                </select>
+            </div>
+            <div class="filter-group">
+                <label>Category:</label>
+                <select id="filterCategory" onchange="applyLogFilters()">
+                    <option value="all">All</option>
+                    <option value="data">Market Data</option>
+                    <option value="strategies">Strategy Execution</option>
+                    <option value="transactions">Transactions</option>
+                    <option value="monitoring">Position Monitoring</option>
+                    <option value="risk">Risk Management</option>
+                    <option value="reports">Analytics & Reports</option>
+                    <option value="other">Other</option>
+                </select>
+            </div>
+            <div class="filter-group">
+                <label>Limit:</label>
+                <select id="filterLimit" onchange="reloadLogs()">
+                    <option value="50">50</option>
+                    <option value="100" selected>100</option>
+                    <option value="200">200</option>
+                    <option value="500">500</option>
+                </select>
+            </div>
+            <button class="btn btn-sm btn-secondary" onclick="reloadLogs()">Refresh</button>
+        </div>
+        <!-- Status bar for all logs -->
+        <div id="logsStatusBar" style="display: none;"></div>
+        <div class="modal-body" id="logsModalBody">
+            <div class="logs-loading">Loading logs...</div>
+        </div>
+    </div>
+</div>

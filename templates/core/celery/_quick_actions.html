@@ -1,0 +1,33 @@
+<!-- Quick Actions Bar -->
+<div class="action-bar">
+    <div>
+        <strong>Quick Actions:</strong>
+        <span style="color: #718096; margin-left: 10px;">Activate or deactivate all trading tasks at once</span>
+    </div>
+    <div class="btn-group">
+        {% include 'core/celery/_presets_dropdown.html' %}
+        <form method="post" action="{% url 'core:celery_control_all' %}" style="display: inline;">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="start">
+            <button type="submit" class="btn btn-success" onclick="return confirm('Activate ALL scheduled tasks?')">
+                Activate All Tasks
+            </button>
+        </form>
+        <form method="post" action="{% url 'core:celery_control_all' %}" style="display: inline;">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="stop">
+            <button type="submit" class="btn btn-danger" onclick="return confirm('Deactivate ALL scheduled tasks? This will stop all automated trading.')">
+                Deactivate All Tasks
+            </button>
+        </form>
+        <button class="btn btn-warning" onclick="resetAllTaskConfigs()">
+            Reset All Schedules
+        </button>
+        <button class="btn btn-primary" onclick="openLogsPanel('all')">
+            All Celery Logs
+        </button>
+        <a href="{% url 'core:celery_task_control' %}" class="btn btn-secondary">
+            Refresh
+        </a>
+    </div>
+</div>

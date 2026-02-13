@@ -3220,6 +3220,67 @@ def get_available_options_expiries(request):
 
 
 # ============================================================================
+# POSITION AVERAGE PRICE OVERRIDE
+# ============================================================================
+
+@login_required
+@require_POST
+def update_position_avg_price(request):
+    """
+    Manually set the average price for a position.
+    Used to fix DB chain corruption where MTM cost was used instead of entry price.
+    """
+    try:
+        data = json.loads(request.body)
+        trading_symbol = data.get('trading_symbol', '').strip()
+        avg_price = data.get('avg_price')
+
+        if not trading_symbol:
+            return JsonResponse({'success': False, 'error': 'trading_symbol is required'})
+        if avg_price is None:
+            return JsonResponse({'success': False, 'error': 'avg_price is required'})
+
+        try:
+            avg_price = Decimal(str(avg_price))
+            if avg_price <= 0:
+                return JsonResponse({'success': False, 'error': 'avg_price must be positive'})
+        except Exception:
+            return JsonResponse({'success': False, 'error': 'Invalid avg_price value'})
+
+        from apps.brokers.models import PositionAvgOverride, BrokerPosition
+        from apps.core.constants import BROKER_KOTAK
+
+        # Create or update the override
+        override, created = PositionAvgOverride.objects.update_or_create(
+            trading_symbol=trading_symbol,
+            defaults={'manual_avg_price': avg_price, 'notes': f'Set via UI by {request.user}'},
+        )
+
+        # Also update the latest BrokerPosition so the DB chain is fixed going forward
+        latest_pos = BrokerPosition.objects.filter(
+            broker=BROKER_KOTAK,
+            trading_symbol=trading_symbol,
+        ).order_by('-fetched_at').first()
+        if latest_pos:
+            latest_pos.average_price = avg_price
+            latest_pos.save(update_fields=['average_price'])
+
+        logger.info(f"Avg price override {'created' if created else 'updated'}: "
+                    f"{trading_symbol} → ₹{avg_price}")
+
+        return JsonResponse({
+            'success': True,
+            'trading_symbol': trading_symbol,
+            'avg_price': str(avg_price),
+            'created': created,
+        })
+
+    except Exception as e:
+        logger.error(f"Error updating position avg price: {e}", exc_info=True)
+        return JsonResponse({'success': False, 'error': str(e)})
+
+
+# ============================================================================
 # HISTORICAL DATA API VIEWS
 # Import from the dedicated historical_data_views module
 # ============================================================================

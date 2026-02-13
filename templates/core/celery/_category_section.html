@@ -1,0 +1,49 @@
+<!-- Single Category Section (collapsible) -->
+{# Expects: category variable with keys: key, name, icon, color, description, tasks, total, active #}
+<div class="task-section category-section" style="border-top: 4px solid {{ category.color }}; padding: 0;">
+    <!-- Collapsible Header -->
+    <div class="category-collapse-header"
+         data-bs-toggle="collapse"
+         data-bs-target="#category-{{ category.key }}"
+         aria-expanded="false"
+         aria-controls="category-{{ category.key }}">
+        <div class="category-left">
+            <span class="chevron-icon">▶</span>
+            <span style="font-size: 24px;">{{ category.icon }}</span>
+            <div>
+                <h2 style="margin: 0; font-size: 18px; color: {{ category.color }};">{{ category.name }}</h2>
+                <p style="color: #718096; font-size: 12px; margin: 0;">{{ category.description }}</p>
+            </div>
+        </div>
+        <div class="category-right">
+            <span class="badge" style="background: {{ category.color }}20; color: {{ category.color }};">
+                {{ category.active }}/{{ category.total }} Active
+            </span>
+            <form method="post" action="{% url 'core:control_category_tasks' %}" style="display: inline;" onclick="event.stopPropagation();">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="start">
+                <input type="hidden" name="category" value="{{ category.key }}">
+                <button type="submit" class="btn btn-sm btn-success" onclick="return confirm('Activate all {{ category.name }} tasks?')" style="padding: 4px 10px; font-size: 11px;">
+                    All On
+                </button>
+            </form>
+            <form method="post" action="{% url 'core:control_category_tasks' %}" style="display: inline;" onclick="event.stopPropagation();">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="stop">
+                <input type="hidden" name="category" value="{{ category.key }}">
+                <button type="submit" class="btn btn-sm btn-danger" onclick="return confirm('Deactivate all {{ category.name }} tasks?')" style="padding: 4px 10px; font-size: 11px;">
+                    All Off
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Collapsible Body -->
+    <div class="collapse" id="category-{{ category.key }}">
+        <div class="category-collapse-body">
+            {% for task in category.tasks %}
+            {% include 'core/celery/_task_row.html' with task=task category=category %}
+            {% endfor %}
+        </div>
+    </div>
+</div>
