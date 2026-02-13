@@ -347,9 +347,7 @@ def cache_result(timeout: int = 300):
 
 # High-frequency interval tasks that should NOT send Telegram notifications
 _SILENT_TASK_KEYS = frozenset({
-    'monitor-all-positions',
-    'update-position-pnl',
-    'check-exit-conditions',
+    'monitor-and-manage-positions',
     'check-risk-limits-all-accounts',
     'monitor-circuit-breakers',
 })

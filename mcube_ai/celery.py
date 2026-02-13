@@ -176,20 +176,8 @@ def get_static_schedule():
     # POSITION MONITORING TASKS
     # =========================================================================
 
-    'monitor-all-positions': {
-        'task': 'apps.positions.tasks.monitor_all_positions',
-        'schedule': crontab(hour='9-15', minute='*', day_of_week='1-5'),  # Every minute 9 AM-3:59 PM Mon-Fri
-        'options': {'queue': 'monitoring'},
-    },
-
-    'update-position-pnl': {
-        'task': 'apps.positions.tasks.update_position_pnl',
-        'schedule': crontab(hour='9-15', minute='*', day_of_week='1-5'),  # Every minute 9 AM-3:59 PM Mon-Fri
-        'options': {'queue': 'monitoring'},
-    },
-
-    'check-exit-conditions': {
-        'task': 'apps.positions.tasks.check_exit_conditions',
+    'monitor-and-manage-positions': {
+        'task': 'apps.positions.tasks.monitor_and_manage_positions',
         'schedule': crontab(hour='9-15', minute='*', day_of_week='1-5'),  # Every minute 9 AM-3:59 PM Mon-Fri
         'options': {'queue': 'monitoring'},
     },

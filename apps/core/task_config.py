@@ -183,28 +183,12 @@ TASK_DEFAULT_CONFIG = {
     # =========================================================================
     # POSITION MONITORING TASKS
     # =========================================================================
-    'monitor-all-positions': {
-        'display_name': 'Position Monitoring',
-        'description': 'Real-time monitoring of all open positions',
+    'monitor-and-manage-positions': {
+        'display_name': 'Position Monitor & Manager',
+        'description': 'Monitors all positions: updates P&L, checks exit conditions, executes exits',
         'schedule_type': 'interval',
         'category': 'monitoring',
-        'default_interval_seconds': 10,
-        'default_days': [0, 1, 2, 3, 4],
-    },
-    'update-position-pnl': {
-        'display_name': 'P&L Update',
-        'description': 'Updates profit/loss for all positions',
-        'schedule_type': 'interval',
-        'category': 'monitoring',
-        'default_interval_seconds': 15,
-        'default_days': [0, 1, 2, 3, 4],
-    },
-    'check-exit-conditions': {
-        'display_name': 'Exit Conditions Check',
-        'description': 'Checks stop-loss, target, and other exit conditions',
-        'schedule_type': 'interval',
-        'category': 'monitoring',
-        'default_interval_seconds': 30,
+        'default_interval_seconds': 60,
         'default_days': [0, 1, 2, 3, 4],
     },
 
@@ -297,9 +281,7 @@ ALGORITHM_TASK_GROUPS = {
             'close-trading-day',
         ],
         'monitoring_tasks': [
-            'monitor-all-positions',
-            'update-position-pnl',
-            'check-exit-conditions',
+            'monitor-and-manage-positions',
         ],
     },
     'futures': {
@@ -316,9 +298,7 @@ ALGORITHM_TASK_GROUPS = {
             'close-trading-day',
         ],
         'monitoring_tasks': [
-            'monitor-all-positions',
-            'update-position-pnl',
-            'check-exit-conditions',
+            'monitor-and-manage-positions',
         ],
     },
 }
