@@ -91,7 +91,7 @@ def monitor_and_manage_positions():
 
                 # --- Exit Condition Check ---
                 current_time = timezone.now()
-                should_exit, reason, exit_type = should_exit_position(position, current_time)
+                should_exit, reason, exit_price = should_exit_position(position, current_time)
 
                 if should_exit:
                     logger.warning(f"Exit condition triggered for position {position.id}: {reason}")
@@ -109,7 +109,7 @@ def monitor_and_manage_positions():
                                 f"Position: #{position.id}\n"
                                 f"Instrument: {position.instrument}\n"
                                 f"Reason: {reason}\n"
-                                f"Exit Type: {exit_type}\n"
+                                f"Exit Price: {exit_price:,.2f}\n"
                                 f"Current P&L: {position.unrealized_pnl:,.0f}\n\n"
                                 f"Confirmation required",
                                 notification_type='WARNING'
@@ -131,7 +131,7 @@ def monitor_and_manage_positions():
                                 f"Position: #{position.id}\n"
                                 f"Instrument: {position.instrument}\n"
                                 f"Reason: {reason}\n"
-                                f"Exit Type: {exit_type}\n"
+                                f"Exit Price: {exit_price:,.2f}\n"
                                 f"P&L: {position.realized_pnl:,.0f}",
                                 notification_type='SUCCESS' if position.realized_pnl > 0 else 'WARNING'
                             )
