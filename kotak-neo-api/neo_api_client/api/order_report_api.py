@@ -1,5 +1,4 @@
 import requests
-from neo_api_client import rest
 
 
 class OrderReportAPI(object):
@@ -9,10 +8,8 @@ class OrderReportAPI(object):
 
     def ordered_books(self):
         header_params = {
-            'Authorization': "Bearer " + self.api_client.configuration.bearer_token,
             "Sid": self.api_client.configuration.edit_sid,
             "Auth": self.api_client.configuration.edit_token,
-            "neo-fin-key": self.api_client.configuration.get_neo_fin_key(),
             "accept": "application/json"
         }
         query_params = {"sId": self.api_client.configuration.serverId}

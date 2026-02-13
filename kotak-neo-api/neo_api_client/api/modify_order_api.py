@@ -1,26 +1,28 @@
 import neo_api_client
-from neo_api_client import rest
 from neo_api_client.exceptions import ApiException
+from neo_api_client.settings import ORDER_SOURCE
 
 
 class ModifyOrder(object):
     def __init__(self, api_client):
         self.api_client = api_client
         self.rest_client = api_client.rest_client
+        self.order_source = ORDER_SOURCE
 
     def quick_modification(self, order_id, price, order_type, quantity, validity, instrument_token,
                            exchange_segment, product, trading_symbol, transaction_type, trigger_price,
                            dd, market_protection, disclosed_quantity, filled_quantity, amo):
-        header_params = {'Authorization': "Bearer " + self.api_client.configuration.bearer_token,
-                         "Sid": self.api_client.configuration.edit_sid,
-                         "Auth": self.api_client.configuration.edit_token,
-                         "neo-fin-key": self.api_client.configuration.get_neo_fin_key(),
-                         "Content-Type": "application/x-www-form-urlencoded"}
+        header_params = {
+            "Sid": self.api_client.configuration.edit_sid,
+            "Auth": self.api_client.configuration.edit_token,
+            "Content-Type": "application/x-www-form-urlencoded"
+        }
 
         body_params = {"tk": instrument_token, "mp": market_protection, "pc": product, "dd": dd,
                        "dq": disclosed_quantity, "vd": validity, "ts": trading_symbol, "tt": transaction_type,
                        "pr": price, "pt": order_type, "fq": filled_quantity, 'am': amo,
-                       "tp": trigger_price, "qt": quantity, "no": order_id, "es": exchange_segment}
+                       "tp": trigger_price, "qt": quantity, "no": order_id, "es": exchange_segment,
+                       "os": self.order_source,}
 
         query_params = {"sId": self.api_client.configuration.serverId}
         try:
@@ -40,11 +42,11 @@ class ModifyOrder(object):
     def modification_with_orderid(self, order_id, price, order_type, quantity, validity, instrument_token,
                                   exchange_segment, product, trading_symbol, transaction_type, trigger_price,
                                   dd, market_protection, disclosed_quantity, filled_quantity, amo):
-        header_params = {'Authorization': "Bearer " + self.api_client.configuration.bearer_token,
-                         "Sid": self.api_client.configuration.edit_sid,
-                         "Auth": self.api_client.configuration.edit_token,
-                         "neo-fin-key": self.api_client.configuration.get_neo_fin_key(),
-                         "Content-Type": "application/x-www-form-urlencoded"}
+        header_params = {
+            "Sid": self.api_client.configuration.edit_sid,
+            "Auth": self.api_client.configuration.edit_token,
+            "Content-Type": "application/x-www-form-urlencoded"
+        }
 
         order_book_resp = neo_api_client.OrderReportAPI(self.api_client).ordered_books()
         if "data" not in order_book_resp:
@@ -85,7 +87,8 @@ class ModifyOrder(object):
                             "qt": quantity,
                             "no": order_id,
                             "es": exchange_segment,
-                            "am": amo
+                            "am": amo,
+                            "os": self.order_source,
                         }
                         query_params = {"sId": self.api_client.configuration.serverId}
                         try:

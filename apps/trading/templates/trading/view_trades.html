@@ -986,7 +986,8 @@ async function loadPositions(broker) {
             updatePositionsSummary();
         } else if (data.auth_required) {
             // Session expired - show login link
-            const loginUrl = data.login_url + '?next=' + encodeURIComponent(window.location.pathname);
+            const baseLoginUrl = (data.login_url || '/brokers/breeze/login/').split('?')[0];
+            const loginUrl = baseLoginUrl + '?next=' + encodeURIComponent(window.location.pathname);
             container.innerHTML = `
                 <div class="error-message" style="text-align: center; padding: 2rem;">
                     <div style="font-size: 2rem; margin-bottom: 1rem;">🔐</div>

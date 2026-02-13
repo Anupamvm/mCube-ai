@@ -340,38 +340,31 @@
                         </div>
 
                         <div class="form-group">
-                            <label class="form-label" for="kotak_api_secret">Consumer Secret</label>
-                            <input type="password" id="kotak_api_secret" name="kotak_api_secret" class="form-input"
-                                   value="{{ kotak_creds.api_secret|default:'' }}" placeholder="Enter Kotak Consumer Secret">
-                            <span class="help-text">Keep this secret secure</span>
+                            <label class="form-label" for="kotak_ucc">Unique Client Code (UCC)</label>
+                            <input type="text" id="kotak_ucc" name="kotak_ucc" class="form-input"
+                                   value="{{ kotak_creds.ucc|default:'' }}" placeholder="Enter UCC (e.g., A0YPQ)">
+                            <span class="help-text">Your Kotak trading account UCC</span>
                         </div>
 
                         <div class="form-group">
-                            <label class="form-label" for="kotak_username">Mobile Number</label>
-                            <input type="text" id="kotak_username" name="kotak_username" class="form-input"
-                                   value="{{ kotak_creds.username|default:'' }}" placeholder="Enter registered mobile number">
+                            <label class="form-label" for="kotak_mobile_number">Mobile Number</label>
+                            <input type="text" id="kotak_mobile_number" name="kotak_mobile_number" class="form-input"
+                                   value="{{ kotak_creds.mobile_number|default:'' }}" placeholder="Enter registered mobile number">
                             <span class="help-text">Mobile number registered with Kotak</span>
                         </div>
 
                         <div class="form-group">
-                            <label class="form-label" for="kotak_password">Login Password</label>
-                            <input type="password" id="kotak_password" name="kotak_password" class="form-input"
-                                   value="{{ kotak_creds.password|default:'' }}" placeholder="Enter login password">
-                            <span class="help-text">Your Kotak login password</span>
+                            <label class="form-label" for="kotak_totp_secret">TOTP Secret Key</label>
+                            <input type="password" id="kotak_totp_secret" name="kotak_totp_secret" class="form-input"
+                                   value="{{ kotak_creds.totp_secret|default:'' }}" placeholder="Enter TOTP secret">
+                            <span class="help-text">From <a href="https://www.kotakneo.com/platform/kotak-neo-trade-api/totp-registration/" target="_blank">Trade API TOTP registration</a> (separate from app TOTP)</span>
                         </div>
 
                         <div class="form-group">
-                            <label class="form-label" for="kotak_neo_password">Neo Trade Password (MPIN)</label>
+                            <label class="form-label" for="kotak_neo_password">MPIN</label>
                             <input type="password" id="kotak_neo_password" name="kotak_neo_password" class="form-input"
-                                   value="{{ kotak_creds.neo_password|default:'' }}" placeholder="Enter Neo Trade MPIN">
-                            <span class="help-text">4-digit MPIN for Neo Trade</span>
-                        </div>
-
-                        <div class="form-group">
-                            <label class="form-label" for="kotak_pan">PAN Number</label>
-                            <input type="text" id="kotak_pan" name="kotak_pan" class="form-input"
-                                   value="{{ kotak_creds.pan|default:'' }}" placeholder="Enter PAN" maxlength="10" style="text-transform: uppercase;">
-                            <span class="help-text">Your PAN card number</span>
+                                   value="{{ kotak_creds.neo_password|default:'' }}" placeholder="Enter 6-digit MPIN">
+                            <span class="help-text">Your 6-digit Neo Trade MPIN</span>
                         </div>
                     </div>
                 </div>
@@ -513,11 +506,6 @@
     </div>
 
     <script>
-        // Auto-uppercase PAN input
-        document.getElementById('kotak_pan')?.addEventListener('input', function(e) {
-            e.target.value = e.target.value.toUpperCase();
-        });
-
         // Show success animation
         {% if messages %}
         setTimeout(() => {

@@ -561,7 +561,7 @@ async function syncBreezeTrades() {
 
         if (response.status === 401 && data.auth_required) {
             // Redirect to Breeze login
-            window.location.href = data.login_url + '?next=' + encodeURIComponent(window.location.pathname);
+            window.location.href = (data.login_url || '/brokers/breeze/login/').split('?')[0] + '?next=' + encodeURIComponent(window.location.pathname);
             return;
         }
 
@@ -628,7 +628,7 @@ async function syncAllTrades() {
         const data = await response.json();
 
         if (response.status === 401 && data.auth_required) {
-            window.location.href = data.login_url + '?next=' + encodeURIComponent(window.location.pathname);
+            window.location.href = (data.login_url || '/brokers/breeze/login/').split('?')[0] + '?next=' + encodeURIComponent(window.location.pathname);
             return;
         }
 
@@ -666,7 +666,7 @@ async function syncAccount(accountId) {
         const data = await response.json();
 
         if (response.status === 401 && data.auth_required) {
-            window.location.href = data.login_url + '?next=' + encodeURIComponent(window.location.pathname);
+            window.location.href = (data.login_url || '/brokers/breeze/login/').split('?')[0] + '?next=' + encodeURIComponent(window.location.pathname);
             return;
         }
 

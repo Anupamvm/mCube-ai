@@ -116,6 +116,11 @@ class Command(BaseCommand):
             self.stdout.write(f"  API Key: {cred.api_key[:8] + '...' if cred.api_key else 'Not set'}")
             self.stdout.write(f"  Username: {cred.username if cred.username else 'Not set'}")
             self.stdout.write(f"  Session Token: {'Set' if cred.session_token else 'Not set'}")
+            if cred.service == 'kotakneo':
+                self.stdout.write(f"  UCC: {cred.ucc or 'Not set'}")
+                self.stdout.write(f"  Mobile: {cred.mobile_number or 'Not set'}")
+                self.stdout.write(f"  TOTP Secret: {'Set' if cred.totp_secret else 'Not set'}")
+                self.stdout.write(f"  MPIN: {'Set' if cred.neo_password else 'Not set'}")
             self.stdout.write(f"  Created: {cred.created_at}")
             self.stdout.write(f"  Last Updated: {cred.last_session_update or 'Never'}")
             self.stdout.write('')
@@ -174,40 +179,39 @@ class Command(BaseCommand):
             self.stdout.write(self.style.WARNING('⚠️  Auto-login not configured (no username/password)'))
 
     def setup_kotakneo(self):
-        """Setup Kotak Neo credentials"""
-        self.stdout.write(self.style.SUCCESS('\n=== Kotak Neo Setup ===\n'))
+        """Setup Kotak Neo v2 credentials (TOTP + MPIN auth)"""
+        self.stdout.write(self.style.SUCCESS('\n=== Kotak Neo v2 Setup ===\n'))
 
         name = input("Credential name (default: default): ").strip() or "default"
 
         self.stdout.write('\nYou need:')
-        self.stdout.write('1. Consumer Key (from Kotak console)')
-        self.stdout.write('2. Consumer Secret (from Kotak console)')
-        self.stdout.write('3. Mobile Number (login mobile)')
-        self.stdout.write('4. Password (login password)')
-        self.stdout.write('5. MPIN (trading MPIN)')
-        self.stdout.write('6. PAN (optional)')
+        self.stdout.write('1. Consumer Key (from Kotak Neo API portal)')
+        self.stdout.write('2. UCC - Unique Client Code (from profile section)')
+        self.stdout.write('3. Mobile Number (registered mobile)')
+        self.stdout.write('4. TOTP Secret (from TOTP registration on Kotak Neo app)')
+        self.stdout.write('5. MPIN (6-digit trading pin)')
+        self.stdout.write('')
+        self.stdout.write(self.style.WARNING('Note: Consumer Secret, PAN, and Password are NOT needed for v2.'))
 
         api_key = input("\nEnter Consumer Key: ").strip()
         if not api_key:
             raise CommandError("Consumer Key is required")
 
-        api_secret = input("Enter Consumer Secret: ").strip()
-        if not api_secret:
-            raise CommandError("Consumer Secret is required")
+        ucc = input("Enter UCC (Unique Client Code): ").strip()
+        if not ucc:
+            raise CommandError("UCC is required")
 
-        username = input("Enter Mobile Number: ").strip()
-        if not username:
+        mobile_number = input("Enter Mobile Number: ").strip()
+        if not mobile_number:
             raise CommandError("Mobile Number is required")
 
-        password = getpass.getpass("Enter Password: ").strip()
-        if not password:
-            raise CommandError("Password is required")
+        totp_secret = getpass.getpass("Enter TOTP Secret Key: ").strip()
+        if not totp_secret:
+            raise CommandError("TOTP Secret is required for automated login")
 
-        neo_password = getpass.getpass("Enter MPIN: ").strip()
+        neo_password = getpass.getpass("Enter MPIN (6-digit): ").strip()
         if not neo_password:
             raise CommandError("MPIN is required")
-
-        pan = input("Enter PAN (optional): ").strip()
 
         # Create or update credentials
         cred, created = CredentialStore.objects.update_or_create(
@@ -215,11 +219,11 @@ class Command(BaseCommand):
             name=name,
             defaults={
                 'api_key': api_key,
-                'api_secret': api_secret,
-                'username': username,
-                'password': password,
+                'ucc': ucc,
+                'mobile_number': mobile_number,
+                'username': mobile_number,  # Legacy field for compat
+                'totp_secret': totp_secret,
                 'neo_password': neo_password,
-                'pan': pan or None,
             }
         )
 
@@ -227,6 +231,15 @@ class Command(BaseCommand):
             self.stdout.write(self.style.SUCCESS(f'\n✅ Kotak Neo credentials created for "{name}"'))
         else:
             self.stdout.write(self.style.SUCCESS(f'\n✅ Kotak Neo credentials updated for "{name}"'))
+
+        # Verify TOTP secret works
+        try:
+            import pyotp
+            totp = pyotp.TOTP(totp_secret)
+            code = totp.now()
+            self.stdout.write(self.style.SUCCESS(f'✅ TOTP secret verified (current code: {code})'))
+        except Exception as e:
+            self.stdout.write(self.style.ERROR(f'⚠️  TOTP secret may be invalid: {e}'))
 
     def setup_trendlyne(self):
         """Setup Trendlyne credentials"""
@@ -315,6 +328,15 @@ class Command(BaseCommand):
                 status = self.style.SUCCESS('✅ Set')
                 token_status = 'Has token' if cred.session_token else 'No token'
                 self.stdout.write(f"{service.upper():15} {status}  ({token_status})")
+
+                # Show v2 field status for Kotak Neo
+                if service == 'kotakneo':
+                    ucc_ok = '✅' if cred.ucc else '❌'
+                    totp_ok = '✅' if cred.totp_secret else '❌'
+                    mobile_ok = '✅' if cred.mobile_number else '❌'
+                    mpin_ok = '✅' if cred.neo_password else '❌'
+                    key_ok = '✅' if cred.api_key else '❌'
+                    self.stdout.write(f"{'':15}   v2 fields: Key{key_ok} UCC{ucc_ok} Mobile{mobile_ok} TOTP{totp_ok} MPIN{mpin_ok}")
             else:
                 status = self.style.WARNING('⚠️  Not set')
                 self.stdout.write(f"{service.upper():15} {status}")

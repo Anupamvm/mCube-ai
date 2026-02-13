@@ -2617,11 +2617,18 @@ def get_neo_open_positions(include_raw=False) -> dict:
                     avg_price = holdings_avg
                     avg_price_source = 'holdings'
                     logger.info(f"[AVG PRICE] {pos.symbol}: Using Holdings avg {avg_price:.2f} (carry-forward only)")
-                elif today_buy_qty > 0:
-                    # New position opened today
+                elif today_buy_qty > 0 and cf_buy_qty == 0:
+                    # Truly new position opened today (no carry-forward)
                     avg_price = today_buy_avg
                     avg_price_source = 'trade_report'
                     logger.info(f"[AVG PRICE] {pos.symbol}: Using Trade Report avg {avg_price:.2f} (new position today)")
+                elif cf_buy_qty > 0 and broker_avg_price > 0:
+                    # Carry-forward exists but Holdings API has no data (e.g. F&O positions)
+                    # Use broker_avg_price which was already correctly blended in fetch_and_save_kotakneo_data()
+                    avg_price = broker_avg_price
+                    avg_price_source = 'positions (blended from DB)'
+                    logger.info(f"[AVG PRICE] {pos.symbol}: Using DB-blended avg {avg_price:.2f} "
+                               f"(cf_buy_qty={cf_buy_qty}, today_buy_qty={today_buy_qty}, no holdings data)")
                 else:
                     # Fallback to positions API
                     avg_price = broker_avg_price
@@ -2648,10 +2655,17 @@ def get_neo_open_positions(include_raw=False) -> dict:
                     avg_price = holdings_avg
                     avg_price_source = 'holdings'
                     logger.info(f"[AVG PRICE] {pos.symbol}: Using Holdings avg {avg_price:.2f} (carry-forward only)")
-                elif today_sell_qty > 0:
+                elif today_sell_qty > 0 and cf_sell_qty == 0:
+                    # Truly new short position opened today (no carry-forward)
                     avg_price = today_sell_avg
                     avg_price_source = 'trade_report'
                     logger.info(f"[AVG PRICE] {pos.symbol}: Using Trade Report avg {avg_price:.2f} (new position today)")
+                elif cf_sell_qty > 0 and broker_avg_price > 0:
+                    # Carry-forward exists but Holdings API has no data (e.g. F&O positions)
+                    avg_price = broker_avg_price
+                    avg_price_source = 'positions (blended from DB)'
+                    logger.info(f"[AVG PRICE] {pos.symbol}: Using DB-blended avg {avg_price:.2f} "
+                               f"(cf_sell_qty={cf_sell_qty}, today_sell_qty={today_sell_qty}, no holdings data)")
                 else:
                     avg_price = broker_avg_price
                     avg_price_source = 'positions (MTM)'

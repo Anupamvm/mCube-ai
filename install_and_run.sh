@@ -218,11 +218,13 @@ ALLOWED_HOSTS=localhost,127.0.0.1
 # Redis
 REDIS_URL=redis://localhost:6379/0
 
-# Kotak Neo API
-KOTAK_CONSUMER_KEY=NkmJfGnAehLpdDm3wSPFR7iCMj4a
-KOTAK_CONSUMER_SECRET=H8Q60_oBa2PkSOBJXnk7zbOvGqUa
-KOTAK_MOBILE=AAQHA1835B
-KOTAK_PASSWORD=Anupamvm2@
+# Kotak Neo API (v2 — TOTP + MPIN auth)
+# IMPORTANT: TOTP must be registered at the Kotak Neo Trade API portal:
+# https://www.kotakneo.com/platform/kotak-neo-trade-api/totp-registration/
+# This is SEPARATE from the regular Kotak Neo app TOTP.
+KOTAK_CONSUMER_KEY=4259b484-2863-4869-815c-75be1ac81fc3
+KOTAK_UCC=A0YPQ
+KOTAK_MOBILE=9890688965
 
 # ICICI Breeze API
 ICICI_API_KEY=6561_m2784f16J&R88P3429@66Y89^46
@@ -419,17 +421,17 @@ else:
 
 print("\nSetting up CredentialStore for broker APIs...")
 
-# Kotak Neo CredentialStore
+# Kotak Neo CredentialStore (v2 API — TOTP + MPIN auth)
 kotak_creds, created = CredentialStore.objects.update_or_create(
     service='kotakneo',
     name='default',
     defaults={
-        'api_key': 'NkmJfGnAehLpdDm3wSPFR7iCMj4a',
-        'api_secret': 'H8Q60_oBa2PkSOBJXnk7zbOvGqUa',
-        'username': 'AAQHA1835B',  # PAN (used for login)
-        'password': 'Anupamvm2@',
-        'neo_password': 'Anupamvm2@',  # MPIN (update if different)
-        'pan': 'AAQHA1835B',  # PAN number
+        'api_key': '4259b484-2863-4869-815c-75be1ac81fc3',  # Consumer Key
+        'ucc': 'A0YPQ',  # Unique Client Code (zero not O)
+        'mobile_number': '9890688965',  # Registered mobile number
+        'neo_password': '284321',  # MPIN
+        'totp_secret': 'RBOWJJRPMPNPHDL4X6FIGZ3AZ4',  # TOTP secret from Trade API registration
+        'username': '9890688965',  # Mobile number (legacy field, kept for compat)
     }
 )
 

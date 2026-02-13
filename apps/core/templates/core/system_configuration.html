@@ -738,29 +738,24 @@
                                 <span class="help-text">From Kotak Neo API Developer Portal</span>
                             </div>
                             <div class="form-group">
-                                <label class="form-label">Consumer Secret</label>
-                                <input type="password" name="kotak_api_secret" class="form-input"
-                                       value="{{ kotak_creds.api_secret|default:'' }}" placeholder="Enter Consumer Secret">
+                                <label class="form-label">Unique Client Code (UCC)</label>
+                                <input type="text" name="kotak_ucc" class="form-input"
+                                       value="{{ kotak_creds.ucc|default:'' }}" placeholder="e.g., A0YPQ">
                             </div>
                             <div class="form-group">
                                 <label class="form-label">Mobile Number</label>
-                                <input type="text" name="kotak_username" class="form-input"
-                                       value="{{ kotak_creds.username|default:'' }}" placeholder="Registered mobile">
+                                <input type="text" name="kotak_mobile_number" class="form-input"
+                                       value="{{ kotak_creds.mobile_number|default:'' }}" placeholder="Registered mobile">
                             </div>
                             <div class="form-group">
-                                <label class="form-label">Login Password</label>
-                                <input type="password" name="kotak_password" class="form-input"
-                                       value="{{ kotak_creds.password|default:'' }}" placeholder="Kotak login password">
+                                <label class="form-label">TOTP Secret Key</label>
+                                <input type="password" name="kotak_totp_secret" class="form-input"
+                                       value="{{ kotak_creds.totp_secret|default:'' }}" placeholder="From Trade API TOTP registration">
                             </div>
                             <div class="form-group">
-                                <label class="form-label">Neo Trade MPIN</label>
+                                <label class="form-label">MPIN</label>
                                 <input type="password" name="kotak_neo_password" class="form-input"
-                                       value="{{ kotak_creds.neo_password|default:'' }}" placeholder="4-digit MPIN">
-                            </div>
-                            <div class="form-group">
-                                <label class="form-label">PAN Number</label>
-                                <input type="text" name="kotak_pan" class="form-input" id="kotak_pan"
-                                       value="{{ kotak_creds.pan|default:'' }}" placeholder="ABCDE1234F" maxlength="10">
+                                       value="{{ kotak_creds.neo_password|default:'' }}" placeholder="6-digit MPIN">
                             </div>
                         </div>
                     </div>
@@ -1595,11 +1590,6 @@
                 const tabLink = document.querySelector(`[data-tab="${hash}"]`);
                 if (tabLink) tabLink.click();
             }
-        });
-
-        // Auto-uppercase PAN input
-        document.getElementById('kotak_pan')?.addEventListener('input', function(e) {
-            e.target.value = e.target.value.toUpperCase();
         });
 
         // Collapsible sections

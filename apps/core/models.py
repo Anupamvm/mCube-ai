@@ -78,14 +78,21 @@ class CredentialStore(models.Model):
     password = models.CharField(max_length=150, null=True, blank=True)
 
     # Additional fields for specific services
-    pan = models.CharField(max_length=20, null=True, blank=True)  # PAN number
-    neo_password = models.CharField(max_length=100, null=True, blank=True)  # Kotak Neo password
-    sid = models.CharField(max_length=256, null=True, blank=True)  # Session ID
+    pan = models.CharField(max_length=20, null=True, blank=True)  # Legacy v1 — no longer used
+    neo_password = models.CharField(max_length=100, null=True, blank=True)  # Kotak Neo MPIN (6-digit)
+    sid = models.CharField(max_length=256, null=True, blank=True)  # Legacy v1 — no longer used
+
+    # Kotak Neo v2 credentials
+    ucc = models.CharField(max_length=50, null=True, blank=True, help_text="Unique Client Code for Kotak Neo v2")
+    totp_secret = models.CharField(max_length=256, null=True, blank=True, help_text="TOTP secret key for automated login")
+    mobile_number = models.CharField(max_length=20, null=True, blank=True, help_text="Mobile number with country code (e.g., +919999999999)")
 
     # Kotak Neo persisted session fields (for session reuse without re-login)
     neo_edit_token = models.TextField(null=True, blank=True)
     neo_edit_sid = models.CharField(max_length=256, null=True, blank=True)
     neo_server_id = models.CharField(max_length=100, null=True, blank=True)
+    neo_base_url = models.URLField(max_length=256, null=True, blank=True, help_text="Dynamic base URL from v2 totp_validate()")
+    neo_data_center = models.CharField(max_length=50, null=True, blank=True, help_text="Data center from v2 totp_validate()")
 
     # Auto-login tracking: one attempt per day per broker
     AUTO_LOGIN_STATUS_CHOICES = [

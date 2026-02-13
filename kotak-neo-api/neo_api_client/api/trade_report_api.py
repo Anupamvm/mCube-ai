@@ -1,5 +1,4 @@
 import requests
-from neo_api_client import rest
 
 
 class TradeReportAPI(object):
@@ -9,10 +8,8 @@ class TradeReportAPI(object):
 
     def trading_report(self, order_id):
         header_params = {
-            'Authorization': "Bearer " + self.api_client.configuration.bearer_token,
             "Sid": self.api_client.configuration.edit_sid,
             "Auth": self.api_client.configuration.edit_token,
-            "neo-fin-key": self.api_client.configuration.get_neo_fin_key(),
             "accept": "application/json"
         }
         query_params = {"sId": self.api_client.configuration.serverId}
@@ -27,7 +24,6 @@ class TradeReportAPI(object):
             if order_id:
                 output_json = {}
                 if 'data' in trade_report:
-                    output_json['tid'] = trade_report['tid']
                     output_json['stat'] = trade_report['stat']
                     output_json['stCode'] = trade_report['stCode']
                     for item in trade_report['data']:

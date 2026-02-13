@@ -174,15 +174,20 @@ def is_trader_user(user):
 @user_passes_test(is_admin_user, login_url='/brokers/login/')
 def kotakneo_login(request):
     """
-    Handle Kotak Neo MPIN login (Admin only).
+    Handle Kotak Neo v2 credential setup (Admin only).
 
-    Neo uses MPIN-based 2FA (no OTP needed). This view saves the MPIN
-    to credentials for auto-login to use.
+    Neo v2 uses TOTP + MPIN authentication. This view saves all required
+    credentials for auto-login: consumer_key, UCC, TOTP secret, mobile number, MPIN.
     """
     from apps.brokers.utils.auth_manager import reset_auto_login_status
 
     if request.method == 'POST':
-        mpin = request.POST.get('otp')
+        mpin = request.POST.get('mpin')
+        ucc = request.POST.get('ucc')
+        totp_secret = request.POST.get('totp_secret')
+        mobile_number = request.POST.get('mobile_number')
+        consumer_key = request.POST.get('consumer_key')
+
         if mpin:
             try:
                 creds = CredentialStore.objects.filter(service='kotakneo').first()
@@ -190,19 +195,47 @@ def kotakneo_login(request):
                     messages.error(request, "No Kotak Neo credentials found. Please add credentials first.")
                     return render(request, 'brokers/kotakneo_login.html')
 
+                fields_to_update = ['neo_password']
                 creds.neo_password = mpin
-                creds.save(update_fields=['neo_password'])
+
+                if ucc:
+                    creds.ucc = ucc
+                    fields_to_update.append('ucc')
+                if totp_secret:
+                    creds.totp_secret = totp_secret
+                    fields_to_update.append('totp_secret')
+                if mobile_number:
+                    creds.mobile_number = mobile_number
+                    fields_to_update.append('mobile_number')
+                if consumer_key:
+                    creds.api_key = consumer_key
+                    fields_to_update.append('api_key')
+
+                creds.save(update_fields=fields_to_update)
                 # Reset auto-login status so it can be attempted again
                 reset_auto_login_status('kotakneo')
 
-                messages.success(request, "MPIN saved successfully!")
+                messages.success(request, "Credentials saved successfully!")
                 return redirect('brokers:kotakneo_data')
 
             except Exception as e:
-                logger.exception(f"Error saving Kotak Neo MPIN: {e}")
+                logger.exception(f"Error saving Kotak Neo credentials: {e}")
                 messages.error(request, f"Error: {str(e)}")
 
-    return render(request, 'brokers/kotakneo_login.html')
+    # Pre-fill existing values (masked) for display
+    context = {}
+    try:
+        creds = CredentialStore.objects.filter(service='kotakneo').first()
+        if creds:
+            context['has_ucc'] = bool(creds.ucc)
+            context['has_totp'] = bool(creds.totp_secret)
+            context['has_mobile'] = bool(creds.mobile_number)
+            context['has_consumer_key'] = bool(creds.api_key)
+            context['has_mpin'] = bool(creds.neo_password)
+    except Exception:
+        pass
+
+    return render(request, 'brokers/kotakneo_login.html', context)
 
 
 @login_required

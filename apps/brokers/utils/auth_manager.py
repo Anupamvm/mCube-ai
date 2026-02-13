@@ -281,14 +281,17 @@ def extract_sid_from_jwt(token: str) -> Optional[str]:
         return 'unknown'
 
 
-def save_neo_session(edit_token: str, edit_sid: str, server_id: str) -> bool:
+def save_neo_session(edit_token: str, edit_sid: str, server_id: str,
+                     base_url: str = '', data_center: str = '') -> bool:
     """
     Save Kotak Neo session values to CredentialStore for reuse.
 
     Args:
-        edit_token: JWT edit_token from session_2fa (valid until midnight IST)
-        edit_sid: Session ID from session_2fa
-        server_id: hsServerId needed for quotes API
+        edit_token: JWT edit_token from totp_validate (valid until midnight IST)
+        edit_sid: Session ID from totp_validate
+        server_id: hsServerId needed for quotes/websocket
+        base_url: Dynamic base URL from v2 totp_validate response
+        data_center: Data center from v2 totp_validate response
 
     Returns:
         bool: True if save successful
@@ -302,11 +305,16 @@ def save_neo_session(edit_token: str, edit_sid: str, server_id: str) -> bool:
         creds.neo_edit_token = edit_token
         creds.neo_edit_sid = edit_sid
         creds.neo_server_id = server_id
+        creds.neo_base_url = base_url or ''
+        creds.neo_data_center = data_center or ''
         creds.last_session_update = timezone.now()
         creds.save(update_fields=[
-            'neo_edit_token', 'neo_edit_sid', 'neo_server_id', 'last_session_update'
+            'neo_edit_token', 'neo_edit_sid', 'neo_server_id',
+            'neo_base_url', 'neo_data_center', 'last_session_update'
         ])
 
+        if not base_url:
+            logger.warning("Saved Neo session WITHOUT base_url — session restore will fail, forcing re-login")
         logger.info("Saved Neo session to database")
         return True
 
@@ -320,7 +328,7 @@ def restore_neo_session() -> Optional[tuple]:
     Restore a previously saved Kotak Neo session if the JWT is still valid.
 
     Returns:
-        tuple (edit_token, edit_sid, server_id) if valid session exists, None otherwise
+        tuple (edit_token, edit_sid, server_id, base_url, data_center) if valid session exists, None otherwise
     """
     try:
         creds = get_credentials('kotakneo')
@@ -338,13 +346,15 @@ def restore_neo_session() -> Optional[tuple]:
 
         edit_sid = creds.neo_edit_sid
         server_id = creds.neo_server_id
+        base_url = getattr(creds, 'neo_base_url', '') or ''
+        data_center = getattr(creds, 'neo_data_center', '') or ''
 
         if not edit_sid:
             logger.warning("Neo edit_token valid but edit_sid missing")
             return None
 
         logger.info("Restored valid Neo session from database")
-        return (token, edit_sid, server_id)
+        return (token, edit_sid, server_id, base_url, data_center)
 
     except Exception as e:
         logger.error(f"Error restoring Neo session: {e}")
@@ -366,7 +376,12 @@ def clear_neo_session() -> bool:
         creds.neo_edit_token = None
         creds.neo_edit_sid = None
         creds.neo_server_id = None
-        creds.save(update_fields=['neo_edit_token', 'neo_edit_sid', 'neo_server_id'])
+        creds.neo_base_url = None
+        creds.neo_data_center = None
+        creds.save(update_fields=[
+            'neo_edit_token', 'neo_edit_sid', 'neo_server_id',
+            'neo_base_url', 'neo_data_center'
+        ])
 
         logger.info("Cleared saved Neo session from database")
         return True

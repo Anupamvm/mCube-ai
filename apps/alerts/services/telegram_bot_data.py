@@ -557,6 +557,12 @@ class DataMixin:
             if is_valid:
                 return {'success': True, 'message': f'Breeze session already valid: {msg}'}
 
+            # Check market hours and daily limit before attempting refresh
+            from apps.brokers.utils.auth_manager import can_attempt_auto_login
+            can_login, reason = can_attempt_auto_login('breeze')
+            if not can_login:
+                return {'success': False, 'error': f'Breeze login blocked: {reason}'}
+
             # Attempt refresh (subject to daily auto-login limit)
             success, refresh_msg = manager.refresh_session()
             if success:

@@ -110,9 +110,18 @@ def futures_task_status(request, task_id):
     2. Check chord callback (aggregate_futures_results) → if SUCCESS, fetch results
     """
     from celery.result import AsyncResult
+    from mcube_ai.celery import app as celery_app
 
-    result = AsyncResult(task_id)
-    state = result.state
+    try:
+        result = AsyncResult(task_id, app=celery_app)
+        state = result.state
+    except Exception as e:
+        logger.error(f"Cannot check task status (result backend unavailable): {e}")
+        return JsonResponse({
+            'status': 'running',
+            'state': 'PENDING',
+            'message': 'Task dispatched. Results will be sent to Telegram.',
+        })
 
     if state in ('PENDING', 'STARTED', 'RETRY'):
         return JsonResponse({'status': 'running', 'state': state})
@@ -136,7 +145,7 @@ def futures_task_status(request, task_id):
         # The orchestrator returns chord_id — the actual work is in the chord callback
         chord_id = task_result.get('chord_id')
         if chord_id:
-            chord_result = AsyncResult(chord_id)
+            chord_result = AsyncResult(chord_id, app=celery_app)
             chord_state = chord_result.state
 
             if chord_state in ('PENDING', 'STARTED', 'RETRY'):

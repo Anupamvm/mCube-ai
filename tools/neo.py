@@ -99,20 +99,20 @@ class NeoAPI(BrokerInterface if isinstance(BrokerInterface, type) else object):
         self._load_credentials()
     
     def _load_credentials(self):
-        """Load Neo credentials from database"""
+        """Load Neo credentials from database (v2 API)"""
         try:
             from apps.core.models import CredentialStore
             creds = CredentialStore.objects.filter(service='kotakneo').first()
-            
+
             if not creds:
                 raise Exception("Kotak Neo credentials not found in database")
-            
+
             self.consumer_key = creds.api_key
-            self.consumer_secret = creds.api_secret
-            self.mobile_number = creds.username
-            self.password = creds.password
+            self.mobile_number = creds.mobile_number or creds.username
             self.mpin = creds.neo_password  # MPIN stored in neo_password field
-            
+            self.ucc = creds.ucc
+            self.totp_secret = creds.totp_secret
+
         except Exception as e:
             logger.error(f"Error loading Neo credentials: {e}")
             raise
@@ -121,8 +121,8 @@ class NeoAPI(BrokerInterface if isinstance(BrokerInterface, type) else object):
         """
         Try to restore a previously saved session from the database.
 
-        Creates a fresh NeoAPI client, runs session_init() for bearer_token,
-        then injects saved edit_token/edit_sid/serverId — skipping login+2FA entirely.
+        Creates a fresh v2 NeoAPI client (no network calls on init),
+        then injects saved edit_token/edit_sid/serverId/base_url/data_center.
 
         Returns:
             bool: True if session was successfully restored
@@ -133,23 +133,31 @@ class NeoAPI(BrokerInterface if isinstance(BrokerInterface, type) else object):
         if not saved:
             return False
 
-        edit_token, edit_sid, server_id = saved
+        edit_token, edit_sid, server_id, base_url, data_center = saved
 
         try:
             from neo_api_client import NeoAPI as KotakNeoAPI
 
-            # Create client and run session_init (gets bearer_token, no OTP)
+            # v2: no consumer_secret, no session_init() — zero network calls
             self.neo = KotakNeoAPI(
                 consumer_key=self.consumer_key,
-                consumer_secret=self.consumer_secret,
                 environment='prod'
             )
+
+            # v2 requires base_url for all API calls (quotes, orders, etc.)
+            # Without it, get_url_details() returns None and all calls fail.
+            if not base_url:
+                logger.warning("Session restore skipped — base_url missing (incomplete session)")
+                return False
 
             # Inject saved session values into the client configuration
             self.neo.configuration.edit_token = edit_token
             self.neo.configuration.edit_sid = edit_sid
+            self.neo.configuration.base_url = base_url
             if server_id:
                 self.neo.configuration.serverId = server_id
+            if data_center:
+                self.neo.configuration.data_center = data_center
 
             self.session_active = True
             self.last_error = None
@@ -161,13 +169,14 @@ class NeoAPI(BrokerInterface if isinstance(BrokerInterface, type) else object):
 
     def login(self) -> bool:
         """
-        Login to Kotak Neo with single-attempt auto-login using MPIN.
+        Login to Kotak Neo v2 with single-attempt auto-login using TOTP + MPIN.
 
         Flow:
         1. Try restoring saved session (no login needed)
         2. Check daily auto-login limit (one attempt per day)
-        3. Call API login() with PAN + password
-        4. Complete 2FA with stored MPIN (no OTP needed)
+        3. Generate TOTP from stored secret
+        4. Call totp_login() with mobile_number + UCC + TOTP
+        5. Call totp_validate() with MPIN
 
         Returns:
             bool: True if login successful
@@ -190,13 +199,6 @@ class NeoAPI(BrokerInterface if isinstance(BrokerInterface, type) else object):
             return False
 
         from neo_api_client import NeoAPI as KotakNeoAPI
-        from apps.core.models import CredentialStore
-
-        creds = CredentialStore.objects.filter(service='kotakneo').first()
-        if not creds:
-            self.last_error = "Kotak Neo credentials not found in database"
-            logger.error(self.last_error)
-            return False
 
         if not self.mpin:
             self.last_error = "MPIN not configured — cannot auto-login"
@@ -204,58 +206,82 @@ class NeoAPI(BrokerInterface if isinstance(BrokerInterface, type) else object):
             self._notify_neo_login_failed(self.last_error)
             return False
 
+        if not self.totp_secret:
+            self.last_error = "TOTP secret not configured — cannot auto-login"
+            logger.error(self.last_error)
+            self._notify_neo_login_failed(self.last_error)
+            return False
+
+        if not self.ucc:
+            self.last_error = "UCC not configured — cannot auto-login"
+            logger.error(self.last_error)
+            self._notify_neo_login_failed(self.last_error)
+            return False
+
         mark_auto_login_started('kotakneo')
 
         try:
+            import pyotp
+
+            # v2: no consumer_secret, no session_init() — zero network calls on init
             self.neo = KotakNeoAPI(
                 consumer_key=self.consumer_key,
-                consumer_secret=self.consumer_secret,
                 environment='prod'
             )
 
-            # Login with PAN + password (generates view token)
-            logger.info(f"Logging in with PAN: {creds.username[:4]}****")
-            response = self.neo.login(
-                pan=creds.username,
-                password=creds.password
+            # Generate TOTP from stored secret
+            totp = pyotp.TOTP(self.totp_secret)
+            totp_code = totp.now()
+
+            # Step 1: TOTP login (generates view token)
+            logger.info(f"Logging in with TOTP for UCC: {self.ucc}")
+            response = self.neo.totp_login(
+                mobile_number=self.mobile_number,
+                ucc=self.ucc,
+                totp=totp_code
             )
 
             if not response or 'error' in response:
                 error_msg = response.get('error', 'Unknown') if response else 'No response'
-                self.last_error = f"Login API error: {error_msg}"
-                logger.error(f"Neo login failed: {self.last_error}")
+                self.last_error = f"TOTP login error: {error_msg}"
+                logger.error(f"Neo TOTP login failed: {self.last_error}")
                 mark_auto_login_failed('kotakneo')
                 self._notify_neo_login_failed(self.last_error)
                 return False
 
-            # Complete 2FA with stored MPIN (no OTP needed)
-            logger.info("Login API succeeded — completing 2FA with MPIN")
-            session_response = self.neo.session_2fa(OTP=self.mpin)
+            # Step 2: Validate with MPIN
+            logger.info("TOTP login succeeded — validating with MPIN")
+            session_response = self.neo.totp_validate(mpin=self.mpin)
 
             if not session_response or not session_response.get('data'):
-                self.last_error = f"2FA failed: {session_response}"
-                logger.error(f"Neo 2FA failed: {self.last_error}")
+                self.last_error = f"MPIN validation failed: {session_response}"
+                logger.error(f"Neo MPIN validation failed: {self.last_error}")
                 mark_auto_login_failed('kotakneo')
-                self._notify_neo_login_failed(f"2FA failed with MPIN")
+                self._notify_neo_login_failed(f"MPIN validation failed")
                 return False
 
-            # 2FA succeeded
+            # Validation succeeded
             self.session_active = True
             self.last_error = None
 
-            server_id = session_response.get('data', {}).get('hsServerId')
-            logger.info(f"Neo login successful - serverId: {server_id}")
+            data = session_response.get('data', {})
+            server_id = data.get('hsServerId', '')
+            # base_url is set by SDK on configuration; also available in response data
+            base_url = getattr(self.neo.configuration, 'base_url', None) or data.get('baseUrl', '')
+            data_center = getattr(self.neo.configuration, 'data_center', None) or data.get('dataCenter', '')
+            logger.info(f"Neo login successful - serverId: {server_id}, base_url: {base_url}, dataCenter: {data_center}")
+            if not base_url:
+                logger.warning("Neo login succeeded but base_url is empty — API calls may fail")
 
-            if not (hasattr(self.neo.configuration, 'serverId') and self.neo.configuration.serverId):
-                logger.warning("serverId not set in configuration. Quotes API may not work.")
-
-            # Persist session for reuse
+            # Persist session for reuse (including v2 fields)
             try:
                 from apps.brokers.utils.auth_manager import save_neo_session
                 save_neo_session(
                     edit_token=self.neo.configuration.edit_token,
                     edit_sid=self.neo.configuration.edit_sid,
-                    server_id=getattr(self.neo.configuration, 'serverId', '') or ''
+                    server_id=getattr(self.neo.configuration, 'serverId', '') or '',
+                    base_url=base_url,
+                    data_center=data_center,
                 )
             except Exception as save_err:
                 logger.warning(f"Failed to persist Neo session (non-fatal): {save_err}")
@@ -670,28 +696,38 @@ class NeoAPI(BrokerInterface if isinstance(BrokerInterface, type) else object):
     ) -> Optional[Dict]:
         """
         Get current quote for a symbol
-        
+
         Args:
             instrument_token: Instrument token
             exchange: 'NSE' or 'NFO'
-        
+
         Returns:
             dict: Quote data
         """
         try:
             if not self.session_active:
                 self.login()
-            
+
+            # Map exchange to v2 exchange_segment format
+            exchange_map = {'NSE': 'nse_cm', 'NFO': 'nse_fo', 'BSE': 'bse_cm', 'BFO': 'bse_fo'}
+            exchange_segment = exchange_map.get(exchange.upper(), 'nse_cm')
+
+            # v2: instrument_tokens is a list of dicts with exchange_segment + instrument_token
             response = self.neo.quotes(
-                instrument_tokens=[instrument_token],
-                isIndex=False,
-                session_token=None,
-                sid=None
+                instrument_tokens=[{
+                    "exchange_segment": exchange_segment,
+                    "instrument_token": instrument_token
+                }],
+                quote_type="ltp"
             )
-            
-            if response and response.get('data'):
-                return response['data'][0]
-            
+
+            # v2 returns a list directly, or a dict with 'fault'/'error' on failure
+            if isinstance(response, list) and response:
+                return response[0]
+            elif isinstance(response, dict) and response.get('data'):
+                # Fallback for any future format changes
+                return response['data'][0] if isinstance(response['data'], list) else response['data']
+
             return None
             
         except Exception as e:
@@ -719,10 +755,14 @@ class NeoAPI(BrokerInterface if isinstance(BrokerInterface, type) else object):
                 exchange_segment=exchange,
                 symbol=symbol
             )
-            
-            if response and response.get('data'):
+
+            # v2 returns a list directly, not {'data': [...]}
+            if isinstance(response, list):
+                return response
+            elif isinstance(response, dict) and response.get('data'):
+                # Fallback for any future format changes
                 return response['data']
-            
+
             return []
             
         except Exception as e:

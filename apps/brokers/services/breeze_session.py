@@ -221,6 +221,13 @@ class BreezeSessionManager:
         Returns:
             Tuple[bool, str]: (success, message)
         """
+        # Defense-in-depth: check market hours and daily limit before any login attempt
+        # This protects ALL callers (get_client, refresh_session, etc.)
+        can_login, reason = can_attempt_auto_login('breeze')
+        if not can_login:
+            logger.warning(f"Auto-login blocked in _try_auto_login: {reason}")
+            return False, f"Auto-login blocked: {reason}"
+
         # Thread-level lock: prevent concurrent auto-login within the same process
         acquired = self._auto_login_lock.acquire(blocking=False)
         if not acquired:

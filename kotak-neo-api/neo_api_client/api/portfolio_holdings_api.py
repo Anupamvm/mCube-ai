@@ -1,5 +1,4 @@
 import requests
-from neo_api_client import rest
 
 
 class PortfolioAPI(object):
@@ -9,7 +8,6 @@ class PortfolioAPI(object):
 
     def portfolio_holdings(self):
         header_params = {
-            'Authorization': "Bearer " + self.api_client.configuration.bearer_token,
             "Sid": self.api_client.configuration.edit_sid,
             "Auth": self.api_client.configuration.edit_token,
             'accept': '*/*'
@@ -17,7 +15,6 @@ class PortfolioAPI(object):
         params = {"sId": self.api_client.configuration.serverId}
 
         URL = self.api_client.configuration.get_url_details("holdings")
-
         try:
             portfolio_report = self.rest_client.request(
                 url=URL, method='GET',

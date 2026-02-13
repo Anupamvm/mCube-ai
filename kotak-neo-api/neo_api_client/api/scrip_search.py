@@ -2,7 +2,6 @@ import io
 import json
 
 import requests
-from neo_api_client import rest
 from neo_api_client.exceptions import ApiException
 import pandas as pd
 
@@ -14,7 +13,11 @@ class ScripSearch(object):
 
     def scrip_search(self, symbol, exchange_segment, expiry, option_type, strike_price,
                      ignore_50multiple):
-        header_params = {'Authorization': "Bearer " + self.api_client.configuration.bearer_token}
+
+        header_params = {
+            "Authorization": self.api_client.configuration.consumer_key,
+            "Content-Type": "application/x-www-form-urlencoded",
+        }
 
         URL = self.api_client.configuration.get_url_details("scrip_master")
 
@@ -23,6 +26,8 @@ class ScripSearch(object):
                 url=URL, method='GET',
                 headers=header_params
             )
+            if scrip_report.status_code != 200:
+                return scrip_report.json()
 
             data = scrip_report.json()["data"]
             if exchange_segment is not None:
@@ -36,9 +41,13 @@ class ScripSearch(object):
                         {'code': '10300', 'message': "The given segment doesn't have expire and strike price"}]}
 
                 if exchange_segment.endswith('fo'):
-                    if not (exchange_segment == 'mcx' or exchange_segment == 'mcx_fo'):
+                    if not (exchange_segment == 'mcx' or exchange_segment == 'mcx_fo' or exchange_segment == 'bse' or exchange_segment == 'bse_fo'):
                         df['pExpiryDate'] = pd.to_datetime(df['pExpiryDate'], unit='s')
-                        df['pExpiryDate'] = df['pExpiryDate'] + pd.DateOffset(years=10)
+                        # df['pExpiryDate'] = df['pExpiryDate'] + pd.DateOffset(years=10)
+                        df['pExpiryDate'] = df['pExpiryDate'] + pd.to_timedelta(315511200, unit='s')
+                        df['pExpiryDate'] = df['pExpiryDate'].dt.strftime('%d%b%Y')
+                    else:
+                        df['pExpiryDate'] = pd.to_datetime(df['pExpiryDate'], unit='s')
                         df['pExpiryDate'] = df['pExpiryDate'].dt.strftime('%d%b%Y')
                 else:
                     if exchange_segment == 'mcx' or exchange_segment == 'mcx_fo':

@@ -25,19 +25,26 @@ class CredentialStoreAdmin(admin.ModelAdmin):
             'fields': ('api_key', 'api_secret', 'session_token'),
             'classes': ('collapse',)
         }),
-        ('Username/Password Credentials', {
+        ('Kotak Neo v2 Credentials', {
+            'fields': ('ucc', 'mobile_number', 'totp_secret', 'neo_password'),
+            'classes': ('collapse',),
+            'description': 'Used for Kotak Neo v2 TOTP+MPIN authentication'
+        }),
+        ('Breeze / Other Credentials', {
             'fields': ('username', 'password'),
+            'classes': ('collapse',),
         }),
-        ('Additional Fields', {
-            'fields': ('pan', 'neo_password', 'sid'),
-            'classes': ('collapse',)
-        }),
-        ('Neo Session (saved for reuse)', {
-            'fields': ('neo_edit_token', 'neo_edit_sid', 'neo_server_id'),
+        ('Neo v2 Session (saved for reuse)', {
+            'fields': ('neo_edit_token', 'neo_edit_sid', 'neo_server_id', 'neo_base_url', 'neo_data_center'),
             'classes': ('collapse',)
         }),
         ('Auto-Login Tracking', {
             'fields': ('auto_login_status', 'auto_login_date'),
+        }),
+        ('Legacy Fields (v1 — unused)', {
+            'fields': ('pan', 'sid'),
+            'classes': ('collapse',),
+            'description': 'These fields are from v1 API and no longer used. Kept for backward compatibility.'
         }),
         ('Timestamps', {
             'fields': ('created_at', 'last_session_update'),
@@ -47,13 +54,10 @@ class CredentialStoreAdmin(admin.ModelAdmin):
 
     def get_form(self, request, obj=None, **kwargs):
         form = super().get_form(request, obj, **kwargs)
-        # Make password fields use password input widget
-        if 'password' in form.base_fields:
-            form.base_fields['password'].widget.attrs['type'] = 'password'
-        if 'neo_password' in form.base_fields:
-            form.base_fields['neo_password'].widget.attrs['type'] = 'password'
-        if 'api_secret' in form.base_fields:
-            form.base_fields['api_secret'].widget.attrs['type'] = 'password'
+        # Make sensitive fields use password input widget
+        for field_name in ('password', 'neo_password', 'api_secret', 'totp_secret'):
+            if field_name in form.base_fields:
+                form.base_fields[field_name].widget.attrs['type'] = 'password'
         return form
 
 

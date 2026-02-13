@@ -1,9 +1,5 @@
 import json
 
-import requests
-from neo_api_client import rest
-from neo_api_client import req_data_validation
-
 
 class LoginAPI(object):
 
@@ -25,6 +21,10 @@ class LoginAPI(object):
         body_params = {
             "grant_type": "client_credentials",
         }
+        # if not self.api_client.configuration.base_url:
+        #     return {
+        #         "Message": "Error occurred to initialise the session. Base url missing or incorrect value."
+        #     }
         URL = self.api_client.configuration.get_domain(session_init=True) + "oauth2/token"
         session_init = self.rest_client.request(
             url=URL, method='POST',
@@ -38,107 +38,3 @@ class LoginAPI(object):
         else:
             return json.dumps({"data": {"Code": session_init.status_code, "Message": "Error occurred to initialise the "
                                                                                      "session"}})
-
-    def generate_view_token(self, password=None, mobilenumber=None, userid=None, pan=None, mpin=None):
-        """
-        This function generates a view token for a given mobile number and password.
-
-        Args:
-            URL (str): Base URL of the API.
-            mobileNumber (str): Mobile number of the user.
-            password (str): Password of the user.
-
-        Returns:
-            dict: API response with a view token.
-            :param password:
-            :param pan:
-            :param userid:
-            :param mobilenumber:
-        """
-        header_params = {'Authorization': "Bearer " + self.api_client.configuration.bearer_token}
-        body_params = req_data_validation.login_params_validation(mobilenumber=mobilenumber, userid=userid, pan=pan, password=password, mpin=mpin)
-        self.api_client.configuration.login_params = body_params
-        URL = self.api_client.configuration.get_url_details("view_token")
-        generate_view_token = self.rest_client.request(
-            url=URL, method='POST',
-            headers=header_params,
-            body=body_params
-        )
-        if 200 <= generate_view_token.status_code <= 299:
-            view_token_json_resp = json.loads(generate_view_token.text)
-            if mobilenumber and not mobilenumber.startswith("+"):
-                view_token_json_resp["message"] = "since no country code found we have appended +91 as the default " \
-                                                  "country code. Please change it to the correct code if your mobile " \
-                                                  "number is not of indian number "
-            self.api_client.configuration.view_token = view_token_json_resp.get("data").get("token")
-            self.api_client.configuration.sid = view_token_json_resp.get("data").get("sid")
-            return view_token_json_resp
-        else:
-            view_token_json_resp = json.loads(generate_view_token.text)
-            if mobilenumber and not mobilenumber.startswith("+"):
-                view_token_json_resp["Note"] = "since no country code found we have appended +91 as the default " \
-                                               "country code. Please change it to the correct code if your mobile " \
-                                               "number is not of indian number "
-            return view_token_json_resp
-
-    def generate_otp(self):
-        header_params = {'Authorization': "Bearer " + self.api_client.configuration.bearer_token}
-        userId = self.api_client.configuration.extract_userid(self.api_client.configuration.view_token)
-        body_params = {
-            "userId": userId,
-            "sendEmail": True,
-            "isWhitelisted": True
-        }
-        URL = self.api_client.configuration.get_url_details("generate_otp")
-        output_fo = self.rest_client.request(
-            url=URL, method='POST',
-            headers=header_params,
-            body=body_params
-        )
-        return output_fo.text
-
-    def login_2fa(self, OTP):
-        params = self.api_client.configuration.login_params
-        body_params = {}
-
-        # Debug logging
-        print(f"DEBUG login_2fa: OTP length={len(str(OTP))}, login_params keys={list(params.keys()) if params else None}")
-
-        if 'mobileNumber' in params and len(str(OTP)) == 6:
-            print(f"DEBUG: Using mobileNumber path with MPIN")
-            body_params['mobileNumber'] = str(params['mobileNumber'])
-            body_params['mpin'] = str(OTP)
-        elif 'pan' in params and len(str(OTP)) == 6:
-            print(f"DEBUG: Using PAN path with MPIN")
-            body_params['pan'] = str(params['pan'])
-            body_params['mpin'] = str(OTP)
-        else:
-            print(f"DEBUG: Using userId/OTP path (fallback)")
-            body_params['userId'] = str(self.api_client.configuration.userId)
-            body_params['otp'] = str(OTP)
-        header_params = {'Authorization': "Bearer " + self.api_client.configuration.bearer_token,
-                         "sid": self.api_client.configuration.sid,
-                         "Auth": self.api_client.configuration.view_token}
-        URL = self.api_client.configuration.get_url_details("edit_token")
-        login_resp = self.rest_client.request(
-            url=URL, method='POST',
-            headers=header_params,
-            body=body_params
-        )
-        edit_token_json_resp = json.loads(login_resp.text)
-        if 'error' not in edit_token_json_resp:
-            self.api_client.configuration.edit_token = edit_token_json_resp.get("data").get("token")
-            self.api_client.configuration.edit_sid = edit_token_json_resp.get("data").get("sid")
-            self.api_client.configuration.edit_rid = edit_token_json_resp.get("data").get("rid")
-
-            # Set serverId - use hsServerId if available, otherwise fallback to dataCenter
-            hs_server_id = edit_token_json_resp.get("data").get("hsServerId")
-            if hs_server_id:
-                self.api_client.configuration.serverId = hs_server_id
-            else:
-                # Fallback to dataCenter if hsServerId is empty
-                data_center = edit_token_json_resp.get("data").get("dataCenter")
-                self.api_client.configuration.serverId = data_center if data_center else ""
-                if data_center:
-                    print(f"INFO: Using dataCenter '{data_center}' as serverId (hsServerId not provided)")
-        return edit_token_json_resp

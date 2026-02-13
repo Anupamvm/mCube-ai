@@ -40,9 +40,14 @@ function handleBreezeAuthError(data, options = {}) {
 
     console.warn(`${broker} authentication required:`, data.error);
 
+    // Build login URL with current page as redirect target (not the API endpoint)
+    const currentPage = encodeURIComponent(window.location.pathname + window.location.search);
+    const baseLoginUrl = ((data.login_url || '/brokers/breeze/login/').split('?')[0]);
+    const pageLoginUrl = `${baseLoginUrl}?next=${currentPage}`;
+
     if (redirect) {
         // Redirect to login page
-        window.location.href = data.login_url || '/brokers/breeze/login/';
+        window.location.href = pageLoginUrl;
         return true;
     }
 
@@ -54,7 +59,7 @@ function handleBreezeAuthError(data, options = {}) {
 
     // Default: Show alert and return true
     if (confirm(`${broker} session expired. Would you like to re-authenticate now?`)) {
-        window.location.href = data.login_url || '/brokers/breeze/login/';
+        window.location.href = pageLoginUrl;
     }
 
     return true;
@@ -76,9 +81,10 @@ function showBreezeLoginPrompt(container, message, loginUrl, broker = 'Breeze') 
         return;
     }
 
-    // Add current page as next parameter
+    // Add current page as next parameter, stripping any existing query params from loginUrl
     const nextUrl = encodeURIComponent(window.location.pathname + window.location.search);
-    const fullLoginUrl = loginUrl ? `${loginUrl}?next=${nextUrl}` : `/brokers/breeze/login/?next=${nextUrl}`;
+    const baseUrl = loginUrl ? loginUrl.split('?')[0] : '/brokers/breeze/login/';
+    const fullLoginUrl = `${baseUrl}?next=${nextUrl}`;
 
     el.innerHTML = `
         <div class="breeze-auth-prompt" style="text-align: center; padding: 2rem; background: #fef3cd; border-radius: 8px; margin: 1rem 0;">

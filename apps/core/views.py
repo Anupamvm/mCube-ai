@@ -3366,13 +3366,12 @@ def broker_settings(request):
     if request.method == 'POST':
         try:
             # ===== INTEGRATIONS TAB =====
-            # Kotak Neo Credentials
+            # Kotak Neo Credentials (v2 — TOTP + MPIN auth)
             kotak_creds.api_key = request.POST.get('kotak_api_key', '')
-            kotak_creds.api_secret = request.POST.get('kotak_api_secret', '')
-            kotak_creds.username = request.POST.get('kotak_username', '')
-            kotak_creds.password = request.POST.get('kotak_password', '')
+            kotak_creds.ucc = request.POST.get('kotak_ucc', '')
+            kotak_creds.mobile_number = request.POST.get('kotak_mobile_number', '')
+            kotak_creds.totp_secret = request.POST.get('kotak_totp_secret', '')
             kotak_creds.neo_password = request.POST.get('kotak_neo_password', '')
-            kotak_creds.pan = request.POST.get('kotak_pan', '').upper()
             kotak_creds.save()
 
             # ICICI Breeze Credentials

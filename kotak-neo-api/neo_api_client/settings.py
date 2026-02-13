@@ -17,32 +17,70 @@ UAT_URL = {
     "margin": "orderapi/1.0/quick/user/check-margin",
     "scrip_master": "scrip/1.0/masterscrip/file-paths",
     "limits": "orderapi/1.0/quick/user/limits",
-    "logout": "api/1.0/logout"
+    "logout": "api/1.0/logout",
+    "base_url": "algo-user/v5/get-base-url",
+    "totp_verify_user": "api/1.0/login/v6/totp/verify-user",
+    "totp_registration": "api/1.0/login/v6/totp/register",
+    "totp_login": "api/1.0/login/v6/totp/login",
+    "totp_validate": "api/1.0/login/v6/totp/validate",
+    "totp_de_register": "apim/login/2.0/login/v6/totp/deregister",
+    "quotes_neo_symbol": "script-details/1.0/quotes/neosymbol/{neo_symbols}/{quote_type}",
+    "qr_code_get_link": "apim/login/2.0/algo-user/v5/login/authorization/dialog",
+    "qr_code_generate_session": "apim/login/2.0/algo-user/v5/login/generate-session-token"
 }
 
 PROD_URL = {
-    "view_token": "login/1.0/login/v2/validate",
-    "generate_otp": "login/1.0/login/otp/generate",
-    "edit_token": "login/1.0/login/v2/validate",
-    "place_order": "Orders/2.0/quick/order/rule/ms/place",
-    "cancel_order": "Orders/2.0/quick/order/cancel",
-    "modify_order": "Orders/2.0/quick/order/vr/modify",
-    "order_history": "Orders/2.0/quick/order/history",
-    "order_book": "Orders/2.0/quick/user/orders",
-    "trade_report": "Orders/2.0/quick/user/trades",
-    "positions": "Orders/2.0/quick/user/positions",
-    "holdings": "Portfolio/1.0/portfolio/v1/holdings",
-    "margin": "Orders/2.0/quick/user/check-margin",
-    "scrip_master": "Files/1.0/masterscrip/v1/file-paths",
-    "limits": "Orders/2.0/quick/user/limits",
-    "logout": "login/1.0/logout"
+    "view_token": "apim/login/2.0/login/v2/validate",
+    "generate_otp": "apim/login/2.0/login/otp/generate",
+    "edit_token": "apim/login/2.0/login/v2/validate",
+    "place_order": "quick/order/rule/ms/place",
+    "place_order_napi": "Orders/2.0/quick/order/rule/ms/place",
+    "cancel_order": "quick/order/cancel",
+    "cancel_order_napi": "Orders/2.0/quick/order/cancel",
+    "cancel_cover_order": "quick/order/co/exit",
+    "cancel_cover_order_napi": "Orders/2.0/quick/order/co/exit",
+    "cancel_bracket_order": "quick/order/bo/exit",
+    "cancel_bracket_order_napi": "Orders/2.0/quick/order/bo/exit",
+    "modify_order": "quick/order/vr/modify",
+    "modify_order_napi": "Orders/2.0/quick/order/vr/modify",
+    "order_history": "quick/order/history",
+    "order_history_napi": "Orders/2.0/quick/order/history",
+    "order_book": "quick/user/orders",
+    "order_book_napi": "Orders/2.0/quick/user/orders",
+    "trade_report": "quick/user/trades",
+    "trade_report_napi": "Orders/2.0/quick/user/trades",
+    "positions": "quick/user/positions",
+    "positions_napi": "Orders/2.0/quick/user/positions",
+    "holdings": "portfolio/v1/holdings",
+    "holdings_napi": "Portfolio/1.0/portfolio/v1/holdings",
+    "margin": "quick/user/check-margin",
+    "margin_napi": "Orders/2.0/quick/user/check-margin",
+    "scrip_master": "script-details/1.0/masterscrip/file-paths",
+    "scrip_master_napi": "Files/1.0/masterscrip/v2/file-paths",
+    "limits": "quick/user/limits",
+    "limits_napi": "Orders/2.0/quick/user/limits",
+    "logout": "apim/login/2.0/logout",
+    "base_url": "algo-user/v5/get-base-url",
+    "totp_verify_user": "apim/login/2.0/login/v6/totp/verify-user",
+    "totp_registration": "apim/login/2.0/login/v6/totp/register",
+    "totp_login": "login/1.0/tradeApiLogin",
+    "totp_login_napi": "login/1.0/login/v6/totp/login",
+    "totp_validate": "login/1.0/tradeApiValidate",
+    "totp_validate_napi": "login/1.0/login/v6/totp/validate",
+    "totp_de_register": "apim/login/2.0/login/v6/totp/deregister",
+    "quotes_neo_symbol": "/script-details/1.0/quotes/neosymbol/{neo_symbols}/{quote_type}",
+    "quotes_neo_symbol_napi": "apim/quotes/1.0/quotes/neosymbol/{neo_symbols}/{quote_type}",
+    "qr_code_get_link": "apim/login/2.0/algo-user/v5/login/authorization/dialog",
+    "qr_code_get_link_napi": "login/1.0/algo-user/v5/login/authorization/dialog",
+    "qr_code_generate_session": "apim/login/2.0/algo-user/v5/login/generate-session-token",
+    "qr_code_generate_session_napi": "login/1.0/algo-user/v5/login/generate-session-token"
 }
 
 exchange_segment_allowed_values = ["NSE", "nse", "BSE", "bse", "NFO", "nfo", "BFO", "bfo", "CDS", "cds", "BCD", "bcd",
-                                   "nse_cm", "bse_cm", "nse_fo", "bse_fo", "cde_fo", "bcs-fo"]
+                                   "nse_cm", "bse_cm", "nse_fo", "bse_fo", "cde_fo", "bcs-fo", "mcx_fo"]
 
 product_allowed_values = ["NRML", "CNC", "MIS", "INTRADAY", "CO", "BO", "Normal", "Cash and Carry", "Cover Order",
-                          "Bracket Order"]
+                          "Bracket Order", "MTF"]
 
 order_type_allowed_values = ["Limit", "Market", "Stop loss limit", "Stop loss market", "Spread", "Two Leg", "Three leg",
                              "L", "MKT", "SL", "SL-M", "SP", "2L", "3L"]
@@ -50,11 +88,12 @@ order_type_allowed_values = ["Limit", "Market", "Stop loss limit", "Stop loss ma
 exchange_segment = {"nse_cm": "nse_cm", "NSE": "nse_cm", "nse": "nse_cm", "BSE": "bse_cm", "bse": "bse_cm",
                     "bse_cm": "bse_cm", "NFO": "nse_fo", "nse_fo": "nse_fo", "nfo": "nse_fo", "BFO": "bse_fo",
                     "bse_fo": "bse_fo", "bfo": "bse_fo", "CDS": "cde_fo", "cde_fo": "cde_fo", "cds": "cde_fo",
-                    "BCD": "bcs-fo", "bcs-fo": "bcs-fo", "bcd": "bcs-fo",  "MCX": "mcx", "mcx": "mcx", "mcx_fo": "mcx"}
+                    "BCD": "bcs-fo", "bcs-fo": "bcs-fo", "bcd": "bcs-fo",  "MCX": "mcx_fo", "mcx": "mcx_fo",
+                    "mcx_fo": "mcx_fo"}
 
 product = {"Normal": "NRML", "NRML": "NRML", "CNC": "CNC", "cnc": "CNC", "Cash and Carry": "CNC", "MIS": "MIS",
            "mis": "MIS", "INTRADAY": "INTRADAY", "intraday": "INTRADAY", "Cover Order": "CO", "co": "CO",
-           "CO": "CO", "BO": "Bracket Order", "Bracket Order": "Bracket Order", "bo": "Bracket Order"}
+           "CO": "CO", "BO": "BO", "Bracket Order": "BO", "bo": "BO", "mtf": "MTF", "MTF": "MTF"}
 
 order_type = {"Limit": "L", "L": "L", "l": "L", "MKT": "MKT", "mkt": "MKT", "Market": "MKT", "sl": "SL", "SL": "SL",
               "Stop loss limit": "SL", "Stop loss market": "SL-M", "SL-M": "SL-M", "sl-m": "SL-M", "Spread": "SP",
@@ -168,3 +207,5 @@ help_functions = {
     15: 'help("subscribe_to_orderfeed")',
     16: 'help()'
 }
+
+ORDER_SOURCE = 'NEOTRADEAPI'

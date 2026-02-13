@@ -6,14 +6,15 @@ import time
 import neo_api_client
 from neo_api_client.settings import stock_key_mapping, MarketDepthResp, QuotesChannel, \
     ReqTypeValues, index_key_mapping
-from neo_api_client.urls import ORDER_FEED_URL
+from neo_api_client.urls import ORDER_FEED_URL, ORDER_FEED_URL_ADC, \
+    ORDER_FEED_URL_E21, ORDER_FEED_URL_E22, ORDER_FEED_URL_E41, ORDER_FEED_URL_E43
 
 
 # from neo_api_client.logger import logger
 
 
 class NeoWebSocket:
-    def __init__(self, sid, token, server_id):
+    def __init__(self, sid, token, server_id, data_center):
         self.hsiWebsocket = None
         self.is_hsi_open = 0
         self.un_sub_token = False
@@ -39,6 +40,7 @@ class NeoWebSocket:
         self.token_limit_reached = False
         self.hsw_thread = None
         self.hsi_thread = None
+        self.data_center = data_center
 
     def start_hsi_ping_thread(self):
         while self.hsiWebsocket and self.is_hsi_open:
@@ -296,38 +298,6 @@ class NeoWebSocket:
                                                        'scrip_details']:
                 Q_type = False
         return Q_type
-
-    def get_quotes(self, instrument_tokens, quote_type=None, isIndex=None):
-        if self.quote_type_validation(quote_type):
-            self.quotes_index = isIndex
-            # self.quotes_api_callback = callback
-            if self.input_validation(instrument_tokens):
-                for item in instrument_tokens:
-                    key = item['instrument_token']
-                    value = {'instrument_token': item['instrument_token'],
-                             'exchange_segment': item['exchange_segment']}
-                    if key not in [list(x.keys())[0] for x in self.quotes_arr]:
-                        self.quotes_arr.append({key: value, "quote_type": quote_type})
-                    else:
-                        index = [list(x.keys())[0] for x in self.quotes_arr].index(key)
-                        self.quotes_arr[index][key].update(value)
-
-                if self.hsWebsocket and self.is_hsw_open == 1:
-                    self.call_quotes()
-                else:
-                    self.start_websocket_thread()
-
-            else:
-                return Exception("Invalid Inputs")
-        else:
-            try:
-                raise ValueError(json.dumps({"Error": "Quote Type which is given is not matching",
-                                             "Expected Values for quote_type": ['market_depth', 'ohlc', 'ltp',
-                                                                                '52w',
-                                                                                'circuit_limits',
-                                                                                'scrip_details']}))
-            except ValueError as e:
-                print(str(e))
 
     def subscribe_scripts(self, channel_tokens):
         # print("self.channel_tokens.items()", self.channel_tokens)
@@ -650,7 +620,18 @@ class NeoWebSocket:
             #                                      self.on_open, self.on_message, self.on_error, self.on_close)
 
     def start_hsi_websocket(self):
-        url = ORDER_FEED_URL.format(server_id=self.server_id)
+        url = ORDER_FEED_URL
+        if self.data_center:
+            if self.data_center.lower() == 'adc':
+                url = ORDER_FEED_URL_ADC
+            elif self.data_center.lower() == 'e21':
+                url = ORDER_FEED_URL_E21
+            elif self.data_center.lower() == 'e22':
+                url = ORDER_FEED_URL_E22
+            elif self.data_center.lower() == 'e41':
+                url = ORDER_FEED_URL_E41
+            elif self.data_center.lower() == 'e43':
+                url = ORDER_FEED_URL_E43
         self.hsiWebsocket = neo_api_client.HSIWebSocket()
         self.hsiWebsocket.open_connection(url=url, onopen=self.on_hsi_open,
                                           onmessage=self.on_hsi_message,

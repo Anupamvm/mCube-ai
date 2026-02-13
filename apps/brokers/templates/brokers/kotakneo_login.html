@@ -4,27 +4,54 @@
 
 {% block content %}
 <div class="card">
-    <h2>Kotak Neo - Manual Login</h2>
-    <p>Enter your MPIN to authenticate with Kotak Neo API.</p>
+    <h2>Kotak Neo v2 - Credential Setup</h2>
+    <p>Enter your Kotak Neo v2 API credentials for TOTP-based auto-login.</p>
 
     <form method="post">
         {% csrf_token %}
+
         <div class="form-group">
-            <label for="otp">Enter MPIN:</label>
-            <input type="text" id="otp" name="otp" required placeholder="Enter 6-digit MPIN">
+            <label for="consumer_key">Consumer Key (API Key):</label>
+            <input type="text" id="consumer_key" name="consumer_key" placeholder="Enter Consumer Key">
+            {% if has_consumer_key %}<small style="color: green;">Already configured</small>{% endif %}
         </div>
 
-        <button type="submit" class="btn btn-success">Submit MPIN</button>
+        <div class="form-group">
+            <label for="ucc">UCC (Unique Client Code):</label>
+            <input type="text" id="ucc" name="ucc" placeholder="Enter UCC from profile section">
+            {% if has_ucc %}<small style="color: green;">Already configured</small>{% endif %}
+        </div>
+
+        <div class="form-group">
+            <label for="mobile_number">Mobile Number:</label>
+            <input type="text" id="mobile_number" name="mobile_number" placeholder="+919999999999">
+            {% if has_mobile %}<small style="color: green;">Already configured</small>{% endif %}
+        </div>
+
+        <div class="form-group">
+            <label for="totp_secret">TOTP Secret Key:</label>
+            <input type="password" id="totp_secret" name="totp_secret" placeholder="Enter TOTP secret from authenticator setup">
+            {% if has_totp %}<small style="color: green;">Already configured</small>{% endif %}
+        </div>
+
+        <div class="form-group">
+            <label for="mpin">MPIN (6-digit):</label>
+            <input type="password" id="mpin" name="mpin" required placeholder="Enter 6-digit MPIN">
+            {% if has_mpin %}<small style="color: green;">Already configured</small>{% endif %}
+        </div>
+
+        <button type="submit" class="btn btn-success">Save Credentials</button>
     </form>
 </div>
 
 <div class="card">
-    <h3>How it works</h3>
+    <h3>How v2 auto-login works</h3>
     <ol>
-        <li>Ensure your Kotak Neo credentials are configured in the CredentialStore</li>
-        <li>Enter your MPIN above and save it</li>
-        <li>When a task needs Neo access, auto-login uses the stored MPIN automatically</li>
-        <li>No OTP is required — Neo uses MPIN-based 2FA</li>
+        <li>Register for TOTP on the Kotak Neo mobile app or web portal</li>
+        <li>Copy the TOTP secret key shown during registration</li>
+        <li>Enter all credentials above (only MPIN is required; others only if changing)</li>
+        <li>When a task needs Neo access, auto-login generates TOTP automatically and logs in with MPIN</li>
+        <li>One auto-login attempt per day; session is cached and reused</li>
     </ol>
 </div>
 {% endblock %}

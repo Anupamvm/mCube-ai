@@ -2092,6 +2092,15 @@ def execute_futures_algorithm(self, this_month_volume=1000, next_month_volume=80
                 task_logger.info('skipped', "Weekend - markets closed", context={'day': today.strftime('%A')})
                 return {'success': True, 'skipped': True, 'reason': 'Weekend'}
 
+            # Check time of day — prevent execution outside trading window
+            # Wider than strict market hours (9:15-15:30) since task is scheduled at 9:40 AM
+            from apps.core.utils.date_utils import IST
+            from datetime import time as dt_time
+            now_ist = datetime.now(IST)
+            if not (dt_time(8, 0) <= now_ist.time() <= dt_time(16, 0)):
+                task_logger.info('skipped', f"Outside trading window (8 AM - 4 PM IST), current: {now_ist.strftime('%H:%M')}")
+                return {'success': True, 'skipped': True, 'reason': 'Outside trading hours'}
+
             # Check if futures trading is enabled in core config
             from apps.core.models import TradingCoreConfig
             core_config = TradingCoreConfig.get_instance()

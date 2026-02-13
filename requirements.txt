@@ -46,6 +46,7 @@ twilio==8.10.0
 # Utilities
 python-dateutil==2.8.2
 pytz==2023.3
+pyotp>=2.9.0  # TOTP generation for Kotak Neo v2 auto-login
 
 # Development
 pytest==7.4.3

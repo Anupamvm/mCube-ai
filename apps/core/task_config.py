@@ -181,6 +181,18 @@ TASK_DEFAULT_CONFIG = {
     },
 
     # =========================================================================
+    # TRADE CONFIRMATION TASKS
+    # =========================================================================
+    'check-confirmation-timeouts': {
+        'display_name': 'Confirmation Timeout Check',
+        'description': 'Checks for pending trade confirmations that exceeded timeout and triggers revalidation',
+        'schedule_type': 'interval',
+        'category': 'monitoring',
+        'default_interval_seconds': 60,
+        'default_days': [0, 1, 2, 3, 4],
+    },
+
+    # =========================================================================
     # POSITION MONITORING TASKS
     # =========================================================================
     'monitor-and-manage-positions': {

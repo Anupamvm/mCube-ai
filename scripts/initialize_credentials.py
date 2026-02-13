@@ -81,50 +81,49 @@ def initialize_breeze_credentials():
 
 def initialize_kotakneo_credentials():
     """
-    Initialize Kotak Neo credentials from old project format.
+    Initialize Kotak Neo v2 credentials.
 
-    Old mCube3 format:
+    v2 API format:
     - api_key: Consumer Key
-    - api_secret: Consumer Secret
-    - username: Mobile number for login
-    - password: Login password
-    - neo_password: MPIN for trading
-    - pan: PAN number
-    - sid: Session ID (managed by API)
+    - ucc: Unique Client Code
+    - mobile_number: Registered mobile number
+    - totp_secret: TOTP secret from authenticator registration
+    - neo_password: MPIN (6-digit trading pin)
     """
 
     print("\n" + "=" * 60)
-    print("Initializing Kotak Neo Credentials")
+    print("Initializing Kotak Neo v2 Credentials")
     print("=" * 60)
 
     existing = CredentialStore.objects.filter(service='kotakneo').first()
 
     kotakneo_config = {
         'name': 'default',
-        'api_key': 'YOUR_CONSUMER_KEY_HERE',  # Replace with actual key
-        'api_secret': 'YOUR_CONSUMER_SECRET_HERE',  # Replace with actual secret
-        'username': '9999999999',  # Replace with actual mobile number
-        'password': 'YOUR_PASSWORD_HERE',  # Replace with actual password
-        'neo_password': 'YOUR_MPIN_HERE',  # Replace with actual MPIN
-        'pan': 'ABCDE1234F',  # Replace with actual PAN (optional)
-        'sid': None,  # Managed by API
+        'api_key': 'YOUR_CONSUMER_KEY_HERE',  # Replace with actual Consumer Key
+        'ucc': 'YOUR_UCC_HERE',  # Replace with actual UCC
+        'mobile_number': '9999999999',  # Replace with actual mobile number
+        'username': '9999999999',  # Same as mobile_number (legacy compat)
+        'totp_secret': 'YOUR_TOTP_SECRET_HERE',  # Replace with TOTP secret from registration
+        'neo_password': 'YOUR_MPIN_HERE',  # Replace with actual 6-digit MPIN
     }
 
     if existing:
         print(f"✓ Kotak Neo credentials already exist (created: {existing.created_at})")
         print(f"  Name: {existing.name}")
         print(f"  Consumer Key: {existing.api_key[:8]}..." if existing.api_key else "  Consumer Key: Not set")
-        print(f"  Mobile Number: {existing.username if existing.username else 'Not set'}")
-        print(f"  PAN: {existing.pan if existing.pan else 'Not set'}")
+        print(f"  UCC: {existing.ucc if existing.ucc else 'Not set'}")
+        print(f"  Mobile: {existing.mobile_number if existing.mobile_number else 'Not set'}")
+        print(f"  TOTP Secret: {'Set' if existing.totp_secret else 'Not set'}")
+        print(f"  MPIN: {'Set' if existing.neo_password else 'Not set'}")
 
         update = input("\nUpdate Kotak Neo credentials? (y/n): ").lower()
         if update == 'y':
             existing.api_key = kotakneo_config['api_key']
-            existing.api_secret = kotakneo_config['api_secret']
+            existing.ucc = kotakneo_config['ucc']
+            existing.mobile_number = kotakneo_config['mobile_number']
             existing.username = kotakneo_config['username']
-            existing.password = kotakneo_config['password']
+            existing.totp_secret = kotakneo_config['totp_secret']
             existing.neo_password = kotakneo_config['neo_password']
-            existing.pan = kotakneo_config['pan']
             existing.save()
             print("✓ Kotak Neo credentials updated")
     else:
@@ -201,8 +200,6 @@ def show_summary():
             print(f"  API Key: {cred.api_key[:8]}{'...' if len(cred.api_key) > 8 else ''}")
         if cred.username:
             print(f"  Username: {cred.username}")
-        if cred.pan:
-            print(f"  PAN: {cred.pan}")
         if cred.session_token:
             print(f"  Session Token: Set")
         print(f"  Created: {cred.created_at}")

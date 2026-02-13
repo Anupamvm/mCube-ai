@@ -1,4 +1,3 @@
-from neo_api_client import rest
 from neo_api_client.exceptions import ApiException
 
 
@@ -8,11 +7,13 @@ class LogoutAPI(object):
         self.rest_client = api_client.rest_client
 
     def logging_out(self):
-        header_params = {'Authorization': "Bearer " + self.api_client.configuration.bearer_token,
-                         "Sid": self.api_client.configuration.edit_sid,
-                         "Auth": self.api_client.configuration.edit_token,
-                         "accept": "application/json",
-                         "Content-Type": "application/x-www-form-urlencoded"}
+        header_params = {
+            "Authorization": "Bearer " + self.api_client.configuration.bearer_token,
+            "Sid": self.api_client.configuration.edit_sid,
+            "Auth": self.api_client.configuration.edit_token,
+            "accept": "application/json",
+            "Content-Type": "application/x-www-form-urlencoded",
+        }
 
         URL = self.api_client.configuration.get_url_details("logout")
 
