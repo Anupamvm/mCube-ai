@@ -1712,15 +1712,15 @@
                         </tr>
                     </thead>
                     <tbody>
-                        <tr><td><strong>7:00 AM</strong></td><td>morning_data_sync</td><td>Trendlyne data, news sentiment, market snapshot</td></tr>
-                        <tr><td><strong>8:30 AM</strong></td><td>execute_futures_algorithm</td><td>Screen top 50 futures, run 12-factor analysis</td></tr>
-                        <tr><td><strong>8:55 AM</strong></td><td>setup_trading_day</td><td>Initialize trading day, check NSE holidays</td></tr>
-                        <tr><td><strong>9:45 AM</strong></td><td>screen_futures_opportunities</td><td>Top 30 screening, save to FuturesSuggestion</td></tr>
-                        <tr><td><strong>Every 10 min</strong></td><td>check_futures_averaging</td><td>Monitor positions for 1% averaging trigger</td></tr>
-                        <tr><td><strong>Every 15 sec</strong></td><td>update_position_pnl</td><td>Real-time P&L calculation</td></tr>
-                        <tr><td><strong>Every 30 sec</strong></td><td>check_exit_conditions</td><td>Stop-loss and target monitoring</td></tr>
-                        <tr><td><strong>3:25 PM</strong></td><td>close_trading_day</td><td>EOD position reconciliation</td></tr>
-                        <tr><td><strong>4:00 PM</strong></td><td>daily_pnl_report</td><td>Generate daily P&L summary</td></tr>
+                        <tr><td><strong>7:00 AM</strong></td><td>morning-data-sync</td><td>Trendlyne data, news sentiment, market snapshot</td></tr>
+                        <tr><td><strong>8:30 AM</strong></td><td>screen-futures-opportunities</td><td>Pre-market scan: top 50 F&amp;O stocks, 12-factor scoring (read-only)</td></tr>
+                        <tr><td><strong>8:55 AM</strong></td><td>setup-trading-day</td><td>Initialize trading day, verify brokers, check NSE holidays</td></tr>
+                        <tr><td><strong>9:15 AM</strong></td><td>start-trading-day</td><td>Validate market opening, activate live data feed</td></tr>
+                        <tr><td><strong>9:40 AM</strong></td><td>execute-futures-algorithm</td><td>Re-validate with live prices, pick TOP 3 &rarr; Telegram for approval</td></tr>
+                        <tr><td><strong>Every 10 min</strong></td><td>check-futures-averaging</td><td>Monitor positions for 1% averaging trigger (9:30 AM &ndash; 3:00 PM)</td></tr>
+                        <tr><td><strong>Every 1 min</strong></td><td>monitor-and-manage-positions</td><td>Real-time P&amp;L, stop-loss &amp; target monitoring, exit execution</td></tr>
+                        <tr><td><strong>3:25 PM</strong></td><td>close-trading-day</td><td>EOD position evaluation &amp; reconciliation</td></tr>
+                        <tr><td><strong>4:00 PM</strong></td><td>generate-daily-pnl-report</td><td>Generate daily P&amp;L summary</td></tr>
                     </tbody>
                 </table>
 
@@ -2976,100 +2976,328 @@ P&amp;L: +12,450 | Positions: 3 open
         <!-- Background Tasks Section -->
         <section id="background-tasks" class="docs-section">
             <div class="docs-section-header">
-                <h1>⏱️ Background Tasks</h1>
-                <p>Celery Beat scheduled task management</p>
+                <h1>⏱️ Background Tasks &mdash; Your Trading Day, Automated</h1>
+                <p>Every trading day, mCube runs a precise sequence of background tasks that prepare, execute, monitor, and close your trades. This section explains exactly what happens, when, and why.</p>
                 <p style="font-size: 0.85rem; color: #6b7280; margin-top: 8px;">📁 <code>mcube_ai/celery.py</code> | <code>apps/core/task_config.py</code> | <code>apps/core/models.py</code></p>
             </div>
 
-            <div class="docs-card">
-                <h3>📋 Task Categories (6)</h3>
+            <!-- ===== DAILY TIMELINE ===== -->
+            <div class="docs-card" style="background: linear-gradient(135deg, #f0f4ff 0%, #fdf2f8 100%); border: 1px solid #e0e7ff;">
+                <h3>🕐 A Typical Trading Day &mdash; Minute by Minute</h3>
+                <p style="margin-bottom: 16px; color: #4b5563;">This is the exact sequence of automated events on a weekday. Each task is a separate background job managed by Celery Beat.</p>
+
+                <!-- PRE-MARKET -->
+                <h4 style="margin: 20px 0 10px; padding: 8px 14px; background: #fef3c7; border-left: 4px solid #d97706; border-radius: 0 6px 6px 0; color: #92400e;">Phase 1: Pre-Market Preparation (7:00 &ndash; 9:14 AM)</h4>
                 <table class="docs-table">
-                    <thead>
-                        <tr>
-                            <th>Category</th>
-                            <th>Tasks</th>
-                            <th>Schedule Type</th>
-                        </tr>
-                    </thead>
+                    <thead><tr><th style="width:90px;">Time</th><th style="width:240px;">Task</th><th>What Happens</th></tr></thead>
                     <tbody>
                         <tr>
-                            <td><strong>📊 Data</strong></td>
-                            <td>Morning Sync, Pre-Market, Live Market, Post-Market</td>
-                            <td>Crontab &amp; Recurring</td>
+                            <td><strong>7:00 AM</strong></td>
+                            <td>Morning Data Sync</td>
+                            <td>Downloads overnight global market data (SGX Nifty, US indices, Asia), refreshes news feed, and updates index data. This gives the system a full picture of what happened while Indian markets were closed.</td>
                         </tr>
                         <tr>
-                            <td><strong>🎯 Strategies</strong></td>
-                            <td>Setup Day, Start Day, Evaluate Options, Futures Screening, Futures Algorithm</td>
-                            <td>Crontab</td>
+                            <td><strong>8:30 AM</strong></td>
+                            <td>Futures Screening (Passive)</td>
+                            <td>Scans the top 50 F&amp;O stocks by volume and runs the 12-factor scoring model on each. Ranks them by composite score. This is a <em>read-only scan</em> &mdash; no orders are placed. Results are cached for the active algorithm to use at 9:40 AM.</td>
                         </tr>
                         <tr>
-                            <td><strong>💳 Transactions</strong></td>
-                            <td>Start Options, Options Averaging (2), Futures Averaging, Close Day</td>
-                            <td>Crontab &amp; Recurring</td>
+                            <td><strong>8:50 AM</strong></td>
+                            <td>Pre-Market Data Update</td>
+                            <td>Fetches pre-open session data &mdash; opening indications, pre-open prices, and any gap-up/gap-down signals. Updates Trendlyne data for the latest delivery percentages and institutional flows.</td>
                         </tr>
                         <tr>
-                            <td><strong>👁 Monitoring</strong></td>
-                            <td>Position Monitor, P&amp;L Update, Exit Conditions, Breeze Refresh</td>
-                            <td>Interval (10-30s)</td>
+                            <td><strong>8:55 AM</strong></td>
+                            <td>Setup Trading Day</td>
+                            <td>The system's "morning checklist": verifies broker connectivity (Kotak Neo + ICICI Breeze), checks account margins, validates that no stale positions exist from yesterday, determines if today is tradeable (no holidays, no major events), and loads active strategy configurations.</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <!-- MARKET OPEN -->
+                <h4 style="margin: 20px 0 10px; padding: 8px 14px; background: #d1fae5; border-left: 4px solid #059669; border-radius: 0 6px 6px 0; color: #065f46;">Phase 2: Market Open &amp; Strategy Execution (9:15 &ndash; 9:55 AM)</h4>
+                <table class="docs-table">
+                    <thead><tr><th style="width:90px;">Time</th><th style="width:240px;">Task</th><th>What Happens</th></tr></thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>9:15 AM</strong></td>
+                            <td>Start Trading Day</td>
+                            <td>Market has opened. Validates the opening &mdash; checks if the open is within expected range, verifies no flash crash, and confirms broker sessions are live. Activates the live market data feed and monitoring tasks.</td>
                         </tr>
                         <tr>
-                            <td><strong>🛡 Risk</strong></td>
-                            <td>Risk Limits Check, Circuit Breaker Monitor</td>
-                            <td>Interval (30-60s)</td>
+                            <td><strong>9:15 AM</strong></td>
+                            <td>Live Market Data (recurring)</td>
+                            <td>Starts updating live prices every 5 minutes throughout market hours (until 3:30 PM). Feeds real-time data to the position monitor and P&amp;L calculations.</td>
                         </tr>
                         <tr>
-                            <td><strong>📋 Reports</strong></td>
-                            <td>Daily P&amp;L, Benchmark Sync, Data Aggregation, Equity Curves</td>
-                            <td>Crontab</td>
+                            <td><strong>9:30 AM</strong></td>
+                            <td>Evaluate Options Strategy</td>
+                            <td><strong>Options Algorithm decision point.</strong> Analyzes current VIX, overnight global cues, Nifty opening range, and news sentiment. Decides: (a) Should we trade today? (b) Strangle or Broken Iron Condor? (c) What strike distances? Sends the evaluation to Telegram for your review.</td>
+                        </tr>
+                        <tr>
+                            <td><strong>9:40 AM</strong></td>
+                            <td>Start Options Trade</td>
+                            <td><strong>Options execution.</strong> If the evaluation passed and you approved via Telegram, this task places the actual option sell orders (CE + PE, or CE + PE + PE hedge for Iron Condor). Creates the Position record and sets stop-loss/target levels.</td>
+                        </tr>
+                        <tr>
+                            <td><strong>9:40 AM</strong></td>
+                            <td>Screen Futures Opportunities</td>
+                            <td><strong>Futures Algorithm execution.</strong> Uses the pre-market screening results, re-validates with live prices, picks the TOP 3 candidates above score 65, and sends them to Telegram with full analysis. Waits for your approval before placing any order. On approval, executes immediately with batched ordering.</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <!-- AVERAGING WINDOW -->
+                <h4 style="margin: 20px 0 10px; padding: 8px 14px; background: #dbeafe; border-left: 4px solid #2563eb; border-radius: 0 6px 6px 0; color: #1e40af;">Phase 3: Averaging &amp; Active Monitoring (9:40 AM &ndash; 3:00 PM)</h4>
+                <table class="docs-table">
+                    <thead><tr><th style="width:90px;">Time</th><th style="width:240px;">Task</th><th>What Happens</th></tr></thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>9:40&ndash;9:55</strong></td>
+                            <td>Options Averaging (Batch 1)</td>
+                            <td>Every 5 minutes, checks if the options position needs averaging. If the premium has moved against us and conditions are met, proposes an averaging trade via Telegram.</td>
+                        </tr>
+                        <tr>
+                            <td><strong>10:00&ndash;10:30</strong></td>
+                            <td>Options Averaging (Batch 2)</td>
+                            <td>Extended averaging window. Same logic as Batch 1, continuing the averaging opportunity for the first hour after market open.</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Every 10 min</strong></td>
+                            <td>Futures Averaging Check</td>
+                            <td>Runs every 10 minutes from 9:30 AM to 3:00 PM. Checks if any active futures position has dropped 1% from entry. If so, evaluates averaging opportunity (max 3 attempts) using the protocol: 20% &rarr; 50% &rarr; 50% of remaining balance.</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Continuous</strong></td>
+                            <td>Position Monitor &amp; Manager</td>
+                            <td><em>Runs every minute during market hours.</em> The heartbeat of the system. Updates real-time P&amp;L for all active positions, checks stop-loss and target conditions, monitors delta for options positions, and triggers exits when conditions are met.</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Continuous</strong></td>
+                            <td>Confirmation Timeout Check</td>
+                            <td><em>Runs every minute.</em> Watches for pending trade confirmations (sent to Telegram) that haven't been approved within the timeout window. Triggers revalidation &mdash; market conditions may have changed.</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Continuous</strong></td>
+                            <td>Risk Limits Check</td>
+                            <td><em>Runs every minute.</em> Monitors all accounts against their configured risk limits: daily loss limit, weekly loss limit, max drawdown. If any limit is breached, pauses trading for that account and sends a critical alert.</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Continuous</strong></td>
+                            <td>Circuit Breaker Monitor</td>
+                            <td><em>Runs every minute.</em> Watches for exchange-level circuit breakers and trading halts. If Nifty hits a circuit breaker, immediately flags all positions and prevents new entries.</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <!-- DAY CLOSE -->
+                <h4 style="margin: 20px 0 10px; padding: 8px 14px; background: #ede9fe; border-left: 4px solid #7c3aed; border-radius: 0 6px 6px 0; color: #5b21b6;">Phase 4: Day Close &amp; Reporting (3:25 &ndash; 5:00 PM)</h4>
+                <table class="docs-table">
+                    <thead><tr><th style="width:90px;">Time</th><th style="width:240px;">Task</th><th>What Happens</th></tr></thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>3:25 PM</strong></td>
+                            <td>Close Trading Day</td>
+                            <td>Evaluates all open positions for end-of-day exit. Applies the 50% target rule: positions that have achieved at least 50% of target are closed; others may be held overnight. Finalizes the trading day state and disables new entries.</td>
+                        </tr>
+                        <tr>
+                            <td><strong>3:35 PM</strong></td>
+                            <td>Post-Market Data Update</td>
+                            <td>Downloads final closing prices, volume data, and settlement values. Updates all position records with accurate closing P&amp;L.</td>
+                        </tr>
+                        <tr>
+                            <td><strong>4:00 PM</strong></td>
+                            <td>Daily P&amp;L Report</td>
+                            <td>Generates the day's comprehensive P&amp;L report: realized + unrealized gains, per-position breakdown, strategy-level performance. Sends summary to Telegram.</td>
+                        </tr>
+                        <tr>
+                            <td><strong>4:15 PM</strong></td>
+                            <td>Sync Benchmark Data</td>
+                            <td>Downloads benchmark index data (Nifty 50, Bank Nifty) for performance comparison charts on the analytics dashboard.</td>
+                        </tr>
+                        <tr>
+                            <td><strong>4:30 PM</strong></td>
+                            <td>Daily Data Aggregation</td>
+                            <td>Rolls up all trading data into daily summaries for the analytics engine: win rate, average P&amp;L, category performance, strategy metrics.</td>
+                        </tr>
+                        <tr>
+                            <td><strong>5:00 PM</strong></td>
+                            <td>Update Equity Curves</td>
+                            <td>Recalculates portfolio equity curves and NAV for each account. Updates the performance tracking charts visible on the dashboard.</td>
                         </tr>
                     </tbody>
                 </table>
             </div>
 
+            <!-- ===== ALGORITHM TASK GROUPS ===== -->
             <div class="docs-card">
-                <h3>🔄 Task Lifecycle</h3>
-                <ol>
-                    <li><strong>Definition:</strong> All tasks defined in <code>TASK_DEFAULT_CONFIG</code> (<code>apps/core/task_config.py</code>) with schedule defaults</li>
-                    <li><strong>State:</strong> <code>CeleryTaskState</code> model tracks enabled/disabled + optional custom schedules per task</li>
-                    <li><strong>Loading:</strong> <code>load_beat_schedule()</code> in <code>celery.py</code> reads DB state, applies custom schedules via <code>_build_custom_schedule()</code></li>
-                    <li><strong>Runtime Guard:</strong> <code>@task_enabled_guard</code> decorator on every task provides secondary safety check</li>
-                    <li><strong>Logging:</strong> <code>TaskLogger</code> logs execution to <code>BkLog</code> model with category, duration, success/failure</li>
+                <h3>🔗 Algorithm Task Groups &mdash; Which Tasks Belong Together</h3>
+                <p style="margin-bottom: 16px;">Tasks are organized into algorithm groups. When you enable/disable an algorithm via the Celery dashboard, these are the tasks that get toggled together:</p>
+
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+                    <div style="background: #faf5ff; border: 1px solid #e9d5ff; border-radius: 8px; padding: 16px;">
+                        <h4 style="color: #7c3aed; margin: 0 0 12px;">📈 Futures Algorithm</h4>
+                        <p style="font-size: 0.85rem; color: #6b7280; margin-bottom: 10px;">Directional futures trades with 12-factor scoring</p>
+                        <div style="margin-bottom: 8px;">
+                            <strong style="font-size: 0.8rem; color: #4b5563;">Own Tasks (unique to this algo):</strong>
+                            <ul style="margin: 4px 0 0 16px; font-size: 0.85rem;">
+                                <li>Screen Futures Opportunities (9:40 AM)</li>
+                                <li>Futures Averaging Check (every 10 min)</li>
+                            </ul>
+                        </div>
+                        <div style="margin-bottom: 8px;">
+                            <strong style="font-size: 0.8rem; color: #4b5563;">Shared Tasks (with Options):</strong>
+                            <ul style="margin: 4px 0 0 16px; font-size: 0.85rem;">
+                                <li>Setup Trading Day (8:55 AM)</li>
+                                <li>Start Trading Day (9:15 AM)</li>
+                                <li>Close Trading Day (3:25 PM)</li>
+                            </ul>
+                        </div>
+                        <div>
+                            <strong style="font-size: 0.8rem; color: #4b5563;">Monitoring (shared):</strong>
+                            <ul style="margin: 4px 0 0 16px; font-size: 0.85rem;">
+                                <li>Position Monitor &amp; Manager</li>
+                            </ul>
+                        </div>
+                    </div>
+
+                    <div style="background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; padding: 16px;">
+                        <h4 style="color: #2563eb; margin: 0 0 12px;">🎯 Options Algorithm</h4>
+                        <p style="font-size: 0.85rem; color: #6b7280; margin-bottom: 10px;">Weekly Nifty Strangle / Broken Iron Condor</p>
+                        <div style="margin-bottom: 8px;">
+                            <strong style="font-size: 0.8rem; color: #4b5563;">Own Tasks (unique to this algo):</strong>
+                            <ul style="margin: 4px 0 0 16px; font-size: 0.85rem;">
+                                <li>Evaluate Options Strategy (9:30 AM)</li>
+                                <li>Start Options Trade (9:40 AM)</li>
+                                <li>Options Averaging Batch 1 (9:40&ndash;9:55)</li>
+                                <li>Options Averaging Batch 2 (10:00&ndash;10:30)</li>
+                            </ul>
+                        </div>
+                        <div style="margin-bottom: 8px;">
+                            <strong style="font-size: 0.8rem; color: #4b5563;">Shared Tasks (with Futures):</strong>
+                            <ul style="margin: 4px 0 0 16px; font-size: 0.85rem;">
+                                <li>Setup Trading Day (8:55 AM)</li>
+                                <li>Start Trading Day (9:15 AM)</li>
+                                <li>Close Trading Day (3:25 PM)</li>
+                            </ul>
+                        </div>
+                        <div>
+                            <strong style="font-size: 0.8rem; color: #4b5563;">Monitoring (shared):</strong>
+                            <ul style="margin: 4px 0 0 16px; font-size: 0.85rem;">
+                                <li>Position Monitor &amp; Manager</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="callout callout-info" style="margin-top: 16px;">
+                    <p><strong>Shared task rule:</strong> When you disable one algorithm, shared tasks stay active if the other algorithm is still running. They are only disabled when <em>both</em> algorithms are off.</p>
+                </div>
+            </div>
+
+            <!-- ===== TASK CATEGORIES ===== -->
+            <div class="docs-card">
+                <h3>📋 All 6 Task Categories</h3>
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>Category</th>
+                            <th>Purpose</th>
+                            <th>Tasks</th>
+                            <th>Schedule</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><span style="color: #3182ce;">&#9679;</span> <strong>Market Data</strong></td>
+                            <td>Feed the system with current market information</td>
+                            <td>Morning Sync, Pre-Market, Live Market, Post-Market</td>
+                            <td>Fixed times + recurring during market hours</td>
+                        </tr>
+                        <tr>
+                            <td><span style="color: #805ad5;">&#9679;</span> <strong>Strategies</strong></td>
+                            <td>Evaluate market conditions and decide what to trade</td>
+                            <td>Setup Day, Start Day, Evaluate Options, Futures Screening</td>
+                            <td>Fixed times (pre-market &amp; market open)</td>
+                        </tr>
+                        <tr>
+                            <td><span style="color: #d69e2e;">&#9679;</span> <strong>Transactions</strong></td>
+                            <td>Place orders, average positions, close positions</td>
+                            <td>Start Options, Options Averaging (2), Futures Algo, Futures Averaging, Close Day</td>
+                            <td>Fixed times + recurring windows</td>
+                        </tr>
+                        <tr>
+                            <td><span style="color: #dd6b20;">&#9679;</span> <strong>Monitoring</strong></td>
+                            <td>Watch positions and confirmations in real time</td>
+                            <td>Position Monitor, Confirmation Timeouts</td>
+                            <td>Every minute during market hours</td>
+                        </tr>
+                        <tr>
+                            <td><span style="color: #e53e3e;">&#9679;</span> <strong>Risk</strong></td>
+                            <td>Enforce loss limits and circuit breakers</td>
+                            <td>Risk Limits Check, Circuit Breaker Monitor</td>
+                            <td>Every minute during market hours</td>
+                        </tr>
+                        <tr>
+                            <td><span style="color: #38a169;">&#9679;</span> <strong>Reports</strong></td>
+                            <td>Generate end-of-day reports and analytics</td>
+                            <td>Daily P&amp;L, Benchmark Sync, Data Aggregation, Equity Curves</td>
+                            <td>Fixed times (4:00&ndash;5:00 PM)</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- ===== HOW IT WORKS ===== -->
+            <div class="docs-card">
+                <h3>🔄 How Task Scheduling Works</h3>
+                <ol style="line-height: 1.8;">
+                    <li><strong>Definition:</strong> Every task has a default schedule defined in <code>TASK_DEFAULT_CONFIG</code> (<code>apps/core/task_config.py</code>) &mdash; hour, minute, days of week, and category.</li>
+                    <li><strong>Database State:</strong> The <code>CeleryTaskState</code> model tracks whether each task is enabled or disabled, plus any custom schedule overrides you've configured via the UI.</li>
+                    <li><strong>Schedule Loading:</strong> When Celery Beat starts (or restarts), <code>load_beat_schedule()</code> reads the database, includes only enabled tasks, and applies any custom schedules.</li>
+                    <li><strong>Runtime Safety:</strong> Every task function has a <code>@task_enabled_guard</code> decorator that double-checks the enabled state before executing &mdash; even if Beat fires a stale schedule.</li>
+                    <li><strong>Execution Logging:</strong> Every task execution is recorded in the <code>BkLog</code> table with timestamp, duration, success/failure, and category. You can view these in the Celery dashboard under "Recent Executions."</li>
                 </ol>
             </div>
 
+            <!-- ===== TASK CONTROL ===== -->
             <div class="docs-card">
-                <h3>⚙️ Task Control (3 ways)</h3>
+                <h3>⚙️ Controlling Tasks</h3>
                 <table class="docs-table">
                     <thead>
                         <tr>
                             <th>Method</th>
                             <th>Where</th>
-                            <th>How</th>
+                            <th>What You Can Do</th>
                         </tr>
                     </thead>
                     <tbody>
                         <tr>
-                            <td><strong>Web UI</strong></td>
-                            <td>System Configuration page</td>
-                            <td>Toggle, configure schedule, view logs, run now</td>
+                            <td><strong>Celery Dashboard</strong></td>
+                            <td><a href="/system/celery/">/system/celery/</a></td>
+                            <td>Toggle tasks on/off, customize schedules (time, days), view execution logs, run tasks manually, apply presets, see the 24-hour timeline</td>
                         </tr>
                         <tr>
                             <td><strong>Telegram Bot</strong></td>
                             <td><code>/start</code> &rarr; Tasks menu</td>
-                            <td>Toggle, run now, start/stop all by category</td>
+                            <td>Toggle individual tasks, run now, enable/disable entire categories, view active task count</td>
                         </tr>
                         <tr>
-                            <td><strong>API</strong></td>
-                            <td><code>POST /toggle-static-task/</code>, <code>POST /run-task-now/</code></td>
-                            <td>Programmatic control with JSON responses</td>
+                            <td><strong>API Endpoints</strong></td>
+                            <td><code>POST /system/toggle-static-task/</code></td>
+                            <td>Programmatic toggle with JSON response (used by the dashboard internally)</td>
                         </tr>
                     </tbody>
                 </table>
+                <div class="callout callout-info" style="margin-top: 12px;">
+                    <p><strong>Schedule customization:</strong> Click the kebab menu (&#8942;) on any task in the Celery dashboard to customize its schedule. Changes take effect immediately &mdash; Celery Beat is automatically restarted. Use "Reset All Schedules" to revert everything to defaults.</p>
+                </div>
             </div>
 
+            <!-- ===== CELERY BEAT ===== -->
             <div class="docs-card">
                 <h3>🔧 Celery Beat Scheduler</h3>
-                <p>Uses a custom <code>DBReloadScheduler</code> (subclass of <code>PersistentScheduler</code>) that loads the schedule from the database on startup.</p>
+                <p>mCube uses a custom <code>DBReloadScheduler</code> (extends Celery's <code>PersistentScheduler</code>) that loads the task schedule from the database on startup, respecting your enabled/disabled states and custom schedules.</p>
                 <div class="code-block">
                     <code>
 <span class="comment"># CRITICAL: Always use the custom scheduler</span>
@@ -3077,12 +3305,27 @@ python -m celery -A mcube_ai beat \
   --scheduler=mcube_ai.celery:DBReloadScheduler \
   --loglevel=info
 
-<span class="comment"># Or use the helper function (recommended)</span>
-from apps.core.views import ensure_celery_running
-ensure_celery_running()  <span class="comment"># Starts worker + restarts beat</span>
+<span class="comment"># Or let the UI handle it (recommended)</span>
+<span class="comment"># The Celery dashboard auto-starts Beat when you toggle tasks</span>
                     </code>
                 </div>
-                <p style="margin-top: 12px;"><strong>Warning:</strong> Never run two beat processes simultaneously &mdash; tasks will execute twice (duplicate Telegram messages, duplicate trades).</p>
+                <div class="callout callout-warning" style="margin-top: 12px;">
+                    <p><strong>Never run two Beat processes simultaneously.</strong> This causes every task to execute twice &mdash; duplicate orders, duplicate Telegram messages, double position entries. The system detects and prevents this when using the dashboard.</p>
+                </div>
+            </div>
+
+            <!-- ===== TIMELINE DASHBOARD ===== -->
+            <div class="docs-card">
+                <h3>📊 Reading the Task Timeline</h3>
+                <p>The 24-hour timeline on the <a href="/system/celery/">Celery dashboard</a> shows all scheduled tasks as colored dots on a time axis:</p>
+                <ul style="line-height: 1.8;">
+                    <li><strong>Dot color</strong> = task category (blue = data, purple = strategy, yellow = transactions, orange = monitoring, red = risk, green = reports)</li>
+                    <li><strong>Solid dot with pulse</strong> = active task (will execute at scheduled time)</li>
+                    <li><strong>Small dashed outline</strong> = inactive task (disabled, won't run)</li>
+                    <li><strong>Red vertical line</strong> = current time ("NOW")</li>
+                    <li><strong>Hover any dot</strong> to see task name, schedule, status, and last execution result</li>
+                </ul>
+                <p style="margin-top: 8px;">When you toggle a task on or off, its timeline marker updates instantly &mdash; no page reload needed. The "Next Task" counter in the summary also recalculates automatically.</p>
             </div>
         </section>
 

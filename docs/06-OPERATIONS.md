@@ -175,48 +175,88 @@ python manage.py populate_trendlyne --file trendlyne_data/fno_data_2026-01-23.xl
 
 ## Background Tasks (Celery)
 
+mCube automates the entire trading day through background tasks managed by Celery Beat. Every task runs at a specific time, in a specific order, to prepare, execute, monitor, and close your trades.
+
+### How a Trading Day Works
+
+Think of your trading day as four phases. Every phase has specific tasks that fire automatically:
+
+### Phase 1: Pre-Market Preparation (7:00 – 9:14 AM)
+
+The system wakes up and gathers everything it needs before the market opens.
+
+| Time | Task | What Happens |
+|------|------|--------------|
+| **7:00 AM** | `morning-data-sync` | Downloads overnight global market data (SGX Nifty, US indices, Asia), refreshes news, and updates index data. Gives the system a full picture of what happened while Indian markets were closed. |
+| **8:30 AM** | `screen-futures-opportunities` | **Pre-market futures scan.** Scans the top 50 F&O stocks by volume and runs the 12-factor scoring model on each. This is a *read-only* scan — no orders are placed. Results are cached for the active algorithm at 9:40 AM. |
+| **8:50 AM** | `update-pre-market-data` | Fetches pre-open session data — opening indications, pre-open prices, gap-up/gap-down signals. Updates Trendlyne data for delivery percentages and institutional flows. |
+| **8:55 AM** | `setup-trading-day` | The system's "morning checklist": verifies broker connectivity (Kotak Neo + ICICI Breeze), checks account margins, validates no stale positions from yesterday, determines if today is tradeable (no holidays, no major events), loads active strategy configs. |
+
+### Phase 2: Market Open & Strategy Execution (9:15 – 9:55 AM)
+
+Market opens. The system validates the opening, then executes your algorithms.
+
+| Time | Task | What Happens |
+|------|------|--------------|
+| **9:15 AM** | `start-trading-day` | Validates the opening — checks if open is within expected range, no flash crash, broker sessions live. Activates live data feed and monitoring. |
+| **9:15 AM** | `update-live-market-data` | Starts updating live prices every 5 minutes throughout market hours (until 3:30 PM). Feeds data to position monitor and P&L calculations. |
+| **9:30 AM** | `evaluate-options-strategy` | **Options decision point.** Analyzes VIX, overnight cues, Nifty opening range, news sentiment. Decides: (a) trade today? (b) Strangle or Broken Iron Condor? (c) Strike distances? Sends evaluation to Telegram. |
+| **9:40 AM** | `start-options-trade` | **Options execution.** If evaluation passed and you approved via Telegram, places option sell orders (CE + PE, or CE + PE + PE hedge). Creates Position record with stop-loss/target levels. |
+| **9:40 AM** | `execute-futures-algorithm` | **Futures execution.** Uses pre-market screening results, re-validates with live prices, picks TOP 3 candidates above score 65, sends to Telegram with full analysis. On your approval, executes with batched ordering. |
+
+### Phase 3: Averaging & Active Monitoring (9:40 AM – 3:00 PM)
+
+Your positions are now live. The system monitors everything and manages averaging.
+
+| Time | Task | What Happens |
+|------|------|--------------|
+| **9:40–9:55** | `batch-options-averaging` | Every 5 min, checks if options position needs averaging. If premium moved against us and conditions met, proposes averaging trade via Telegram. |
+| **10:00–10:30** | `batch-options-averaging-10am` | Extended averaging window, same logic as above. |
+| **Every 10 min** | `check-futures-averaging` | 9:30 AM to 3:00 PM. Checks if any futures position dropped 1% from entry. Evaluates averaging (max 3 attempts): 20% → 50% → 50% of remaining balance. |
+| **Every minute** | `monitor-and-manage-positions` | **System heartbeat.** Updates real-time P&L for all positions, checks stop-loss/target, monitors delta for options, triggers exits when conditions met. |
+| **Every minute** | `check-confirmation-timeouts` | Watches for pending Telegram confirmations that exceeded timeout. Triggers revalidation — market conditions may have changed. |
+| **Every minute** | `check-risk-limits-all-accounts` | Monitors all accounts against risk limits: daily loss, weekly loss, max drawdown. Breaches pause trading and send critical alerts. |
+| **Every minute** | `monitor-circuit-breakers` | Watches for exchange-level circuit breakers and trading halts. If Nifty hits a circuit breaker, flags all positions and prevents new entries. |
+
+### Phase 4: Day Close & Reporting (3:25 – 5:00 PM)
+
+Market is closing. Positions are evaluated, data is finalized, reports are generated.
+
+| Time | Task | What Happens |
+|------|------|--------------|
+| **3:25 PM** | `close-trading-day` | Evaluates all open positions for exit. Applies 50% target rule: positions at ≥50% of target are closed; others may hold overnight. Disables new entries. |
+| **3:35 PM** | `update-post-market-data` | Downloads final closing prices, volume, settlement values. Updates all position records with accurate closing P&L. |
+| **4:00 PM** | `generate-daily-pnl-report` | Generates comprehensive P&L report: realized + unrealized, per-position breakdown, strategy-level performance. Sends summary to Telegram. |
+| **4:15 PM** | `sync-benchmark-data` | Downloads benchmark index data (Nifty 50, Bank Nifty) for performance comparison charts. |
+| **4:30 PM** | `daily-data-aggregation` | Rolls up all trading data into daily summaries: win rate, average P&L, category performance, strategy metrics. |
+| **5:00 PM** | `update-equity-curves` | Recalculates portfolio equity curves and NAV for each account. Updates performance tracking charts. |
+
 ### Task Categories (6 Categories)
 
-| Category | Tasks | Frequency |
-|----------|-------|-----------|
-| **Data** | market_data, news, pre/post market | Scheduled |
-| **Strategies** | setup_day, evaluate_options, futures_algo | Scheduled |
-| **Transactions** | options_trade, averaging, close_day | Scheduled |
-| **Monitoring** | positions, breeze_session | Every 10-30 sec |
-| **Risk** | risk_limits, circuit_breakers | Every 30-60 sec |
-| **Reports** | daily_pnl, weekly_summary | EOD/EOW |
+| Category | Color | Tasks | Schedule |
+|----------|-------|-------|----------|
+| **Market Data** | 🔵 Blue | Morning Sync, Pre-Market, Live Market, Post-Market | Fixed times + recurring during market hours |
+| **Strategies** | 🟣 Purple | Setup Day, Start Day, Evaluate Options, Futures Screening | Fixed times (pre-market & market open) |
+| **Transactions** | 🟡 Yellow | Options Trade, Options Averaging (2), Futures Algo, Futures Averaging, Close Day | Fixed times + recurring windows |
+| **Monitoring** | 🟠 Orange | Position Monitor, Confirmation Timeouts | Every minute during market hours |
+| **Risk** | 🔴 Red | Risk Limits, Circuit Breakers | Every minute during market hours |
+| **Reports** | 🟢 Green | Daily P&L, Benchmark Sync, Data Aggregation, Equity Curves | Fixed times (4:00–5:00 PM) |
 
-### Daily Trading Schedule (IST)
+### Algorithm Task Groups
 
-**Pre-Market (8:00 - 9:15 AM):**
-| Time | Task | Description |
-|------|------|-------------|
-| 7:00 AM | `morning-data-sync` | Full morning data synchronization |
-| 8:50 AM | `update-pre-market-data` | Fetch pre-market data |
-| 8:55 AM | `setup-trading-day` | Evaluate data, determine tradability |
+Tasks are organized into algorithm groups. When you toggle an algorithm, these tasks move together:
 
-**Market Open (9:15 - 9:45 AM):**
-| Time | Task | Description |
-|------|------|-------------|
-| 9:15 AM | `start-trading-day` | Validate market opening, check news |
-| 9:15-15:30 | `update-live-market-data` | Every 5 minutes during market hours |
-| 9:30 AM | `evaluate-options-strategy` | Decide strangle vs iron condor |
-| 9:40 AM | `start-options-trade` | Begin options trade (with confirmation) |
-| 9:40 AM | `execute-futures-algorithm` | **Screen Futures Opportunities** |
+**Futures Algorithm** — Directional futures trades with 12-factor scoring:
+- *Own tasks:* `execute-futures-algorithm` (9:40 AM), `check-futures-averaging` (every 10 min)
+- *Shared tasks:* `setup-trading-day`, `start-trading-day`, `close-trading-day`
+- *Monitoring:* `monitor-and-manage-positions`
 
-**Averaging Window (9:40 - 10:30 AM):**
-| Time | Task | Description |
-|------|------|-------------|
-| 9:40-10:15 | `batch-options-averaging` | Options averaging every 5 min |
-| 10:00-10:30 | `batch-options-averaging-10am` | Extended averaging window |
-| Every 10 min | `check-futures-averaging` | Futures averaging check |
+**Options Algorithm** — Weekly Nifty Strangle / Broken Iron Condor:
+- *Own tasks:* `evaluate-options-strategy` (9:30 AM), `start-options-trade` (9:40 AM), `batch-options-averaging` (9:40–9:55), `batch-options-averaging-10am` (10:00–10:30)
+- *Shared tasks:* `setup-trading-day`, `start-trading-day`, `close-trading-day`
+- *Monitoring:* `monitor-and-manage-positions`
 
-**Day Close (3:22 - 4:00 PM):**
-| Time | Task | Description |
-|------|------|-------------|
-| 3:22 PM | `close-trading-day` | Close positions with profit conditions |
-| 3:35 PM | `update-post-market-data` | Post-market data update |
-| 4:00 PM | `generate-daily-pnl-report` | Daily P&L report |
+> **Shared task rule:** Disabling one algorithm keeps shared tasks active if the other is still running. They only turn off when *both* algorithms are disabled.
 
 ### Core Trading Configuration (TradingCoreConfig)
 
@@ -237,7 +277,17 @@ The system uses `TradingCoreConfig` to control trading behavior:
 | `SUPERVISED` | Confirm entries/exits only |
 | `AUTONOMOUS` | Auto-execute, notifications only |
 
-Access via: http://localhost:8000/system/celery-tasks/ → Core Trading Config tab
+Access via: http://localhost:8000/system/celery/ → Core Trading Config tab
+
+### Controlling Tasks
+
+| Method | Where | What You Can Do |
+|--------|-------|-----------------|
+| **Celery Dashboard** | `/system/celery/` | Toggle tasks on/off, customize schedules, view logs, run manually, apply presets, see 24-hour timeline |
+| **Telegram Bot** | `/start` → Tasks menu | Toggle tasks, run now, enable/disable categories |
+| **API** | `POST /system/toggle-static-task/` | Programmatic toggle with JSON response |
+
+> Click the kebab menu (⋮) on any task in the Celery dashboard to customize its schedule. Changes take effect immediately. Use "Reset All Schedules" to revert to defaults.
 
 ### Starting Celery (IMPORTANT)
 
@@ -251,9 +301,9 @@ celery -A mcube_ai worker --loglevel=info
 python -m celery -A mcube_ai beat --scheduler=mcube_ai.celery:DBReloadScheduler --loglevel=info
 ```
 
-**WARNING**: Never run multiple Beat instances simultaneously! This causes duplicate task execution.
+**WARNING**: Never run multiple Beat instances simultaneously! This causes duplicate task execution — duplicate orders, duplicate Telegram messages, double position entries.
 
-The system function `ensure_celery_running()` handles this automatically in the UI.
+The Celery dashboard auto-starts Beat when you toggle tasks (recommended approach).
 
 ### Managing Celery
 
@@ -282,17 +332,6 @@ celery -A mcube_ai flower
 ```
 
 Open: http://localhost:5555
-
-### Task Control UI
-
-Access: http://localhost:8000/system/celery-tasks/
-
-Features:
-- Enable/disable individual tasks
-- Configure custom schedules
-- View task logs by category
-- Run tasks manually (bypasses enabled check)
-- Configure Core Trading settings
 
 ---
 
@@ -353,36 +392,36 @@ for acc in BrokerAccount.objects.filter(is_active=True):
 
 ---
 
-## Daily Routine
+## Daily Routine (What You Should Do)
 
-### Morning (8:30 AM - 9:15 AM)
+### Morning (Before 9:15 AM)
 
-1. **Start all services** (Django, Redis, Celery, Telegram)
-2. **Check system health** at `/system/test/`
-3. **Verify Trendlyne data** was fetched at 8:30 AM
-4. **Check broker connectivity** via Telegram `/status`
-5. **Review overnight news** affecting positions
+1. **Start all services** (Django, Redis, Celery worker, Celery Beat, Telegram bot)
+2. **Check system health** at `/system/test/` — verify all 40+ checks pass
+3. **Review overnight news** — morning data sync at 7:00 AM gathers global cues
+4. **Check broker connectivity** via Telegram `/status` — Kotak Neo + ICICI Breeze should be green
+5. **Verify pre-market scan** — futures screening runs at 8:30 AM, check Telegram for scan results
 
 ### Market Hours (9:15 AM - 3:30 PM)
 
-1. **Monitor positions** via Telegram `/positions`
-2. **Watch for alerts** (stop-loss, target, delta)
-3. **Approve trades** when prompted via Telegram
-4. **Check risk limits** with `/risk` command
+1. **Approve trades** — when algorithms send trade suggestions to Telegram, review and approve/reject
+2. **Monitor positions** via Telegram `/positions` — the system updates P&L every minute automatically
+3. **Watch for alerts** — stop-loss hits, averaging proposals, circuit breakers
+4. **Check risk limits** with `/risk` — system monitors automatically, but periodic manual checks are wise
 
-### Evening (3:30 PM - 5:00 PM)
+### Evening (3:25 PM - 5:00 PM)
 
-1. **Review daily P&L** via `/pnl`
-2. **Check daily report** (sent at 4:00 PM)
-3. **Review logs** for any errors
-4. **Plan for next day**
+1. **Review close-day actions** — `close-trading-day` runs at 3:25 PM, check what was closed vs held
+2. **Check daily report** — sent to Telegram at 4:00 PM with full P&L breakdown
+3. **Review logs** for any errors — `tail -f logs/mcube_ai.log`
+4. **Equity curves update** at 5:00 PM — check portfolio performance on the dashboard
 
 ### Weekly
 
-1. **Friday 6 PM:** Review weekly summary
-2. **Check pattern learning** updates
-3. **Review strategy performance**
-4. **Adjust parameters if needed**
+1. **Review strategy performance** — which algorithm performed better this week
+2. **Adjust parameters** — scoring thresholds, strike distances, margin usage
+3. **Check Trendlyne data freshness** — ensure fundamental data is up to date
+4. **Review and clean up** any stale positions or pending confirmations
 
 ---
 

@@ -224,7 +224,7 @@ REDIS_URL=redis://localhost:6379/0
 # This is SEPARATE from the regular Kotak Neo app TOTP.
 KOTAK_CONSUMER_KEY=4259b484-2863-4869-815c-75be1ac81fc3
 KOTAK_UCC=A0YPQ
-KOTAK_MOBILE=9890688965
+KOTAK_MOBILE=+919890688965
 
 # ICICI Breeze API
 ICICI_API_KEY=6561_m2784f16J&R88P3429@66Y89^46
@@ -428,10 +428,10 @@ kotak_creds, created = CredentialStore.objects.update_or_create(
     defaults={
         'api_key': '4259b484-2863-4869-815c-75be1ac81fc3',  # Consumer Key
         'ucc': 'A0YPQ',  # Unique Client Code (zero not O)
-        'mobile_number': '9890688965',  # Registered mobile number
+        'mobile_number': '+919890688965',  # Registered mobile number (Neo v2 requires +91 prefix)
         'neo_password': '284321',  # MPIN
         'totp_secret': 'RBOWJJRPMPNPHDL4X6FIGZ3AZ4',  # TOTP secret from Trade API registration
-        'username': '9890688965',  # Mobile number (legacy field, kept for compat)
+        'username': '+919890688965',  # Mobile number (legacy field, kept for compat)
     }
 )
 

@@ -172,6 +172,7 @@
                     button.title = 'Click to activate';
                 }
                 updateStats(data.is_enabled ? 1 : -1);
+                if (data.task_key) updateTimelineTask(data.task_key, data.is_enabled);
                 showSuccessToast(data.is_enabled ? 'Task Activated' : 'Task Deactivated', data.message || 'Dynamic task toggled successfully', data);
             } else {
                 showErrorToast('Toggle Failed', data.error || 'Failed to toggle task');
@@ -245,6 +246,7 @@
                 }
 
                 updateStats(data.is_enabled ? 1 : -1);
+                updateTimelineTask(taskKey, data.is_enabled);
 
                 // Show improved status toast
                 var displayName = taskKey.replace(/-/g, ' ').replace(/\b\w/g, function(c) { return c.toUpperCase(); });
@@ -1551,6 +1553,7 @@
             tasks.forEach((task, index) => {
                 const marker = document.createElement('div');
                 marker.className = 'task-marker';
+                marker.dataset.taskKey = task.key;
 
                 // Position based on minute and stack index - spread horizontally within hour
                 const minuteOffset = (task.time.minute / 60) * 80 + 10; // 10-90% range
@@ -1560,8 +1563,13 @@
                 marker.style.top = `${topPosition}px`;
 
                 const dot = document.createElement('div');
-                dot.className = `task-dot ${task.isActive ? 'active' : ''}`;
-                dot.style.background = task.isActive ? task.color : '#a0aec0';
+                dot.className = `task-dot ${task.isActive ? 'active' : 'inactive'}`;
+                if (task.isActive) {
+                    dot.style.background = task.color;
+                } else {
+                    dot.style.background = 'transparent';
+                    dot.style.borderColor = task.color;
+                }
 
                 // Calculate next execution time
                 const taskHour = task.time.hour;
@@ -1655,6 +1663,127 @@
         // Show current time indicator
         updateNowLine();
         setInterval(updateNowLine, 60000); // Update every minute
+    }
+
+    function updateTimelineTask(taskKey, isEnabled) {
+        // Find all markers with this task key
+        var markers = document.querySelectorAll('.task-marker[data-task-key="' + taskKey + '"]');
+        if (!markers.length) return;
+
+        // Find the task data in taskSchedule to get its color
+        var taskData = null;
+        for (var i = 0; i < taskSchedule.length; i++) {
+            if (taskSchedule[i].key === taskKey) {
+                taskData = taskSchedule[i];
+                // Also update the in-memory data so future tooltip rebuilds are correct
+                taskSchedule[i].isActive = isEnabled;
+                break;
+            }
+        }
+
+        markers.forEach(function(marker) {
+            var dot = marker.querySelector('.task-dot');
+            if (!dot) return;
+
+            var color = (taskData && taskData.color) || '#a0aec0';
+
+            if (isEnabled) {
+                dot.className = 'task-dot active';
+                dot.style.background = color;
+                dot.style.borderColor = 'white';
+            } else {
+                dot.className = 'task-dot inactive';
+                dot.style.background = 'transparent';
+                dot.style.borderColor = color;
+            }
+
+            // Rebuild tooltip content with updated status
+            if (taskData) {
+                var taskHour = taskData.scheduleHour;
+                var taskMinute = taskData.scheduleMinute || 0;
+                var taskTime = String(taskHour).padStart(2, '0') + ':' + String(taskMinute).padStart(2, '0');
+
+                var nextExecDisplay = '';
+                if (isEnabled) {
+                    var now = new Date();
+                    var todayTask = new Date();
+                    todayTask.setHours(taskHour, taskMinute, 0, 0);
+                    if (todayTask > now) {
+                        var diffMs = todayTask - now;
+                        var diffMins = Math.round(diffMs / 60000);
+                        if (diffMins < 60) {
+                            nextExecDisplay = '<div class="tooltip-next">\u23F1 Runs in <strong>' + diffMins + ' min</strong></div>';
+                        } else {
+                            var hours = Math.floor(diffMins / 60);
+                            var mins = diffMins % 60;
+                            nextExecDisplay = '<div class="tooltip-next">\u23F1 Runs in <strong>' + hours + 'h ' + mins + 'm</strong></div>';
+                        }
+                    } else {
+                        nextExecDisplay = '<div class="tooltip-next">\u23F1 Next run <strong>tomorrow ' + taskTime + '</strong></div>';
+                    }
+                }
+
+                var lastExecDisplay = '';
+                if (taskData.lastExecution) {
+                    var statusIcon = taskData.lastExecution.success ? '\u2705' : '\u274C';
+                    var statusClass = taskData.lastExecution.success ? 'success' : 'failed';
+                    var duration = taskData.lastExecution.durationMs ? ' (' + taskData.lastExecution.durationMs + 'ms)' : '';
+                    lastExecDisplay = '<div class="tooltip-last-exec ' + statusClass + '">' +
+                        '<div class="exec-header">' + statusIcon + ' Last run: ' + taskData.lastExecution.timestampDisplay + duration + '</div>' +
+                        (taskData.lastExecution.message ? '<div class="exec-message">' + taskData.lastExecution.message + '</div>' : '') +
+                        '</div>';
+                } else {
+                    lastExecDisplay = '<div class="tooltip-last-exec none">No execution history</div>';
+                }
+
+                var tooltipContent =
+                    '<div class="tooltip-header">' +
+                        '<div class="tooltip-title">' + taskData.name + '</div>' +
+                        '<div class="tooltip-category" style="background: ' + color + '20; color: ' + color + ';">' + (taskData.categoryName || taskData.category) + '</div>' +
+                    '</div>' +
+                    (taskData.description ? '<div class="tooltip-desc">' + taskData.description + '</div>' : '') +
+                    '<div class="tooltip-schedule">' +
+                        '<span class="schedule-time">\uD83D\uDD50 ' + taskTime + '</span>' +
+                        '<span class="tooltip-status ' + (isEnabled ? 'active' : 'inactive') + '">' +
+                            (isEnabled ? '\u25CF Active' : '\u25CB Inactive') +
+                        '</span>' +
+                    '</div>' +
+                    nextExecDisplay +
+                    lastExecDisplay;
+
+                marker.dataset.tooltipContent = tooltipContent;
+            }
+        });
+
+        // Recalculate next task time
+        recalcNextTask();
+    }
+
+    function recalcNextTask() {
+        var now = new Date();
+        var currentMinutes = now.getHours() * 60 + now.getMinutes();
+        var nextTaskTime = null;
+
+        taskSchedule.forEach(function(task) {
+            if (!task.isActive) return;
+            var hour = task.scheduleHour;
+            var minute = task.scheduleMinute || 0;
+            if (hour === null || hour === undefined) return;
+            var taskMinutes = hour * 60 + minute;
+            if (taskMinutes > currentMinutes) {
+                if (!nextTaskTime || taskMinutes < nextTaskTime.minutes) {
+                    nextTaskTime = {
+                        minutes: taskMinutes,
+                        display: String(hour).padStart(2, '0') + ':' + String(minute).padStart(2, '0')
+                    };
+                }
+            }
+        });
+
+        var nextTaskEl = document.getElementById('next-task-time');
+        if (nextTaskEl) {
+            nextTaskEl.textContent = nextTaskTime ? nextTaskTime.display : '--:--';
+        }
     }
 
     function updateNowLine() {
@@ -2188,4 +2317,5 @@
     window.saveCurrentPreset = saveCurrentPreset;
     window.saveCurrentAsPreset = saveCurrentPreset; // alias for template
     window.updateStatusBarCounts = updateStatusBarCounts;
+    window.updateTimelineTask = updateTimelineTask;
 })();

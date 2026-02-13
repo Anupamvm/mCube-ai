@@ -447,27 +447,35 @@ def should_refresh_session(service: str) -> Tuple[bool, str]:
 # AUTO-LOGIN DAILY TRACKING HELPERS
 # =============================================================================
 
-def can_attempt_auto_login(service: str) -> Tuple[bool, str]:
+def can_attempt_auto_login(service: str, manual: bool = False) -> Tuple[bool, str]:
     """
     Check if auto-login is allowed today for a broker service.
 
     Returns (True, reason) if login can be attempted, (False, reason) otherwise.
     Only one auto-login attempt per day per broker is allowed.
     Auto-login is blocked outside the trading window (7:00 AM - 5:00 PM IST on trading days).
+
+    Args:
+        service: Broker service name (e.g. 'kotakneo')
+        manual: If True, skip trading window and daily limit checks (UI-triggered login)
     """
     try:
-        # Block auto-login outside trading window (covers data sync at 7 AM through reports at 5 PM)
-        from apps.core.utils.date_utils import is_trading_day, IST
-        now_ist = datetime.now(IST)
-        if not is_trading_day(now_ist.date()):
-            return False, "Auto-login not allowed on non-trading days"
-        from datetime import time as dt_time
-        if not (dt_time(7, 0) <= now_ist.time() <= dt_time(17, 0)):
-            return False, "Auto-login not allowed outside trading window (7 AM - 5 PM IST)"
+        if not manual:
+            # Block auto-login outside trading window (covers data sync at 7 AM through reports at 5 PM)
+            from apps.core.utils.date_utils import is_trading_day, IST
+            now_ist = datetime.now(IST)
+            if not is_trading_day(now_ist.date()):
+                return False, "Auto-login not allowed on non-trading days"
+            from datetime import time as dt_time
+            if not (dt_time(7, 0) <= now_ist.time() <= dt_time(17, 0)):
+                return False, "Auto-login not allowed outside trading window (7 AM - 5 PM IST)"
 
         creds = get_credentials(service)
         if not creds:
             return False, f"No credentials found for {service}"
+
+        if manual:
+            return True, "Manual login — bypassing daily limit"
 
         today = date.today()
 

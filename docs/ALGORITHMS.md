@@ -272,11 +272,12 @@ BROKEN_IC_CONFIG = {
 ### What is This Strategy?
 
 This strategy trades stock futures (not options) with AI validation:
-1. **Screen stocks** using 9 technical/fundamental factors
-2. **Validate with LLM** before taking the trade
-3. **Average down** if position goes against us (controlled risk)
+1. **Pre-market scan** (8:30 AM) — screen stocks using 12 technical/fundamental factors
+2. **Active execution** (9:40 AM) — re-validate with live prices, send TOP 3 to Telegram
+3. **Validate with LLM** before taking the trade
+4. **Average down** if position goes against us (controlled risk)
 
-### The 9-Factor Composite Score
+### The 12-Factor Composite Score (300 points scaled to 100)
 
 ```
 Factor Analysis Algorithm:
@@ -370,15 +371,27 @@ Range: 0-100
 ### Algorithm Flow
 
 ```
-Every Market Day (9:30 AM - 2:00 PM)
+Every Market Day — Two-Phase Process
       |
       v
+--- PHASE 1: PRE-MARKET SCAN (8:30 AM) ---
+   |
+   |  screen-futures-opportunities task runs
+   |  Scans top 50 F&O stocks by volume
+   |  Runs 12-factor scoring model (300 points scaled to 100)
+   |  Results cached for Phase 2
+   |
+--- PHASE 2: EXECUTION (9:40 AM) ---
+   |
+   |  execute-futures-algorithm task runs
+   |  Re-validates with live prices
+   |
 1. SCREEN ALL F&O STOCKS
    |
    |  For each stock in F&O list (~180 stocks):
-   |    Calculate 9-factor composite score
+   |    Calculate 12-factor composite score
    |
-   |  Filter: composite_score >= 70
+   |  Filter: composite_score >= 65
    |
    |  Result: List of potential candidates
    |
@@ -386,7 +399,7 @@ Every Market Day (9:30 AM - 2:00 PM)
 2. RANK CANDIDATES
    |
    |  Sort by composite_score (descending)
-   |  Take top 5 candidates
+   |  Take top 3 candidates (configurable)
    |
    v
 3. CHECK ACCOUNT CONSTRAINTS
@@ -502,20 +515,20 @@ Every Market Day (9:30 AM - 2:00 PM)
 ```
 Averaging Algorithm:
 
-When position is in loss:
+When position is in loss (checked every 10 minutes, 9:30 AM - 3:00 PM):
 
 1. CHECK AVERAGING CONDITIONS
    |
-   |  loss_pct = (current_price - entry_price) / entry_price * 100
+   |  loss_pct = (current_price - avg_price) / avg_price * 100
+   |
+   |  Trigger: loss_pct >= 1% from current average price
+   |  Max 2 additional entries (3 total)
    |
    |  First Average:
-   |    Trigger: loss_pct >= 5%
-   |    Additional: 20% of original margin
-   |    Max 2 times
+   |    Additional: 20% of remaining balance
    |
    |  Second Average:
-   |    Trigger: loss_pct >= 10% (from new average)
-   |    Additional: 50% of remaining margin
+   |    Additional: 50% of remaining balance
    |    Final attempt
    |
    v
@@ -547,18 +560,19 @@ When position is in loss:
 
 ```python
 FUTURES_CONFIG = {
-    'min_composite_score': 70,      # Minimum score to consider
+    'min_composite_score': 65,      # Minimum score to qualify (configurable via UI)
+    'top_contracts': 50,            # Number of top-volume contracts to scan
+    'batch_size': 3,                # Contracts per parallel analysis batch
+    'this_month_volume': 1000,      # Min volume for current month contracts
+    'next_month_volume': 800,       # Min volume for next month contracts
     'llm_confidence_threshold': 70, # Minimum LLM confidence
-    'stop_loss_pct': 3,             # 3% stop-loss
-    'target_pct': 5,                # 5% target
+    'stop_loss_pct': 2,             # 2% stop-loss (initial)
+    'stop_loss_after_avg': 0.5,     # 0.5% stop-loss (after averaging)
     'max_lots': 5,                  # Maximum lots per position
     'margin_usage': 50,             # Use 50% of available margin
     'averaging_enabled': True,
-    'max_averages': 2,
-    'first_avg_trigger': 5,         # Average at 5% loss
-    'first_avg_size': 20,           # Add 20% margin
-    'second_avg_trigger': 10,       # Second average at 10%
-    'second_avg_size': 50,          # Add 50% remaining margin
+    'max_averages': 2,              # 2 additional entries (3 total)
+    'avg_trigger': 1,               # Average at 1% loss from avg price
 }
 ```
 
@@ -842,7 +856,7 @@ tail -f logs/mcube.log | grep -E "(strangle|futures|position)"
 |-----------|------|------|------|
 | Short Strangle | Thursday expiry | Sell CE + PE | Unlimited |
 | Broken IC | Thursday expiry | Sell CE + PE, Buy PE hedge | Limited downside |
-| LLM Futures | Daily | Long futures with AI validation | Controlled with SL |
+| LLM Futures | Daily (scan 8:30 AM, execute 9:40 AM) | Long/Short futures with 12-factor + AI validation | Controlled with SL + averaging |
 
 All algorithms share:
 - ONE POSITION PER ACCOUNT rule

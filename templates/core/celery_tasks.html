@@ -131,7 +131,25 @@ window.CELERY_CONFIG = {
     algoTaskData: {{ algo_task_data_json|safe }},
     taskSchedule: [
         {% for category in task_categories %}{% for task in category.tasks %}{% if task.schedule_hour != None %}
-        {key: '{{ task.key }}', name: '{{ task.display_name|escapejs }}', hour: {{ task.schedule_hour }}, minute: {{ task.schedule_minute|default:0 }}, enabled: {{ task.is_enabled|yesno:"true,false" }}, category: '{{ category.key }}', scheduleType: '{{ task.schedule_type }}'},
+        {
+            key: '{{ task.key }}',
+            name: '{{ task.display_name|escapejs }}',
+            scheduleHour: {{ task.schedule_hour }},
+            scheduleMinute: {{ task.schedule_minute|default:0 }},
+            isActive: {{ task.is_enabled|yesno:"true,false" }},
+            color: '{{ category.color }}',
+            category: '{{ category.key }}',
+            categoryName: '{{ category.name|escapejs }}',
+            description: '{{ task.description|escapejs }}',
+            scheduleType: '{{ task.schedule_type }}',
+            schedule: '{{ task.schedule|escapejs }}',
+            lastExecution: {% if task.last_execution %}{
+                success: {{ task.last_execution.success|yesno:"true,false" }},
+                timestampDisplay: '{{ task.last_execution.timestamp_display }}',
+                durationMs: {{ task.last_execution.duration_ms|default:"null" }},
+                message: '{{ task.last_execution.message|escapejs }}'
+            }{% else %}null{% endif %}
+        },
         {% endif %}{% endfor %}{% endfor %}
     ],
     enabledCount: {{ enabled_count }},

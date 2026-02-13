@@ -1161,6 +1161,15 @@
         animation: pulse-dot 2s infinite;
     }
 
+    .task-dot.inactive {
+        width: 12px;
+        height: 12px;
+        opacity: 0.5;
+        border: 1.5px dashed;
+        background: transparent !important;
+        animation: none;
+    }
+
     @keyframes pulse-dot {
         0%, 100% { box-shadow: 0 2px 8px rgba(0,0,0,0.3); }
         50% { box-shadow: 0 2px 16px rgba(255,255,255,0.5); }

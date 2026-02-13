@@ -603,9 +603,9 @@ def verify_kotak_login(request):
             messages.error(request, "Kotak Neo credentials not found")
             return redirect('core:system_test')
 
-        # Attempt login
+        # Attempt login (manual=True bypasses trading window + daily limit)
         neo = NeoAPI()
-        success = neo.login()
+        success = neo.login(manual=True)
 
         if success:
             # Fetch account data to verify connection
@@ -681,7 +681,8 @@ def verify_kotak_login(request):
                 messages.success(request, f"✅ Kotak Neo login successful for {creds.username}!")
         else:
             request.session['kotak_login_verified'] = False
-            messages.error(request, f"❌ Kotak Neo login failed for {creds.username}")
+            error_detail = neo.last_error or "Unknown error"
+            messages.error(request, f"❌ Kotak Neo login failed: {error_detail}")
 
     except Exception as e:
         messages.error(request, f"❌ Kotak Neo login error: {str(e)}")
@@ -736,15 +737,26 @@ def verify_breeze_login(request):
         # Get session token from form
         session_token = request.POST.get('session_token', '').strip()
         if not session_token:
-            messages.error(request, "Session token is required")
-            return redirect('core:verify_breeze_login')
-
-        # Store new session token
-        creds.session_token = session_token
-        creds.last_session_update = timezone.now()
-        creds.save()
-        skip_save = False
-        logger.info(f"Saved new session token for Breeze: {creds.session_token[:10] if creds.session_token else 'None'}...")
+            # No token submitted - check if we have a valid one from today
+            has_valid_token = (
+                creds.session_token and
+                creds.last_session_update and
+                creds.last_session_update.date() == timezone.now().date()
+            )
+            if has_valid_token:
+                logger.info("Breeze POST without token but valid token exists from today, using existing")
+                session_token = creds.session_token
+                skip_save = True
+            else:
+                messages.error(request, "Session token is required - no valid token from today")
+                return redirect('core:verify_breeze_login')
+        else:
+            # Store new session token
+            creds.session_token = session_token
+            creds.last_session_update = timezone.now()
+            creds.save()
+            skip_save = False
+            logger.info(f"Saved new session token for Breeze: {creds.session_token[:10] if creds.session_token else 'None'}...")
 
     else:
         return redirect('core:system_test')
@@ -3789,10 +3801,15 @@ def celery_task_control(request):
     }
 
     def categorize_task(task_key, queue):
-        """Determine category based on task key and queue"""
+        """Determine category based on task config, queue, or keywords"""
+        # First check explicit category in TASK_DEFAULT_CONFIG
+        cfg = TASK_DEFAULT_CONFIG.get(task_key, {})
+        if cfg.get('category') in TASK_CATEGORIES:
+            return cfg['category']
+
         key_lower = task_key.lower()
 
-        # First try to match by queue
+        # Then try to match by queue
         if queue in TASK_CATEGORIES:
             return queue
 
@@ -3863,21 +3880,29 @@ def celery_task_control(request):
                 schedule_hour = task_state.recurring_start_hour
                 schedule_minute = getattr(task_state, 'recurring_start_minute', 0) or 0
         else:
-            # Fall back to static config
-            schedule = config.get('schedule')
-            if hasattr(schedule, 'hour') and hasattr(schedule, 'minute'):
-                try:
-                    if hasattr(schedule.hour, '__iter__') and not isinstance(schedule.hour, str):
-                        schedule_hour = min(schedule.hour) if schedule.hour else None
-                    else:
-                        schedule_hour = int(schedule.hour) if str(schedule.hour).isdigit() else None
+            # Fall back to TASK_DEFAULT_CONFIG defaults first, then celery schedule object
+            if default_config.get('default_hour') is not None:
+                schedule_hour = default_config['default_hour']
+                schedule_minute = default_config.get('default_minute', 0)
+            elif default_config.get('default_recurring_start_hour') is not None:
+                schedule_hour = default_config['default_recurring_start_hour']
+                schedule_minute = default_config.get('default_recurring_start_minute', 0)
+            else:
+                # Last resort: parse from celery schedule object
+                schedule = config.get('schedule')
+                if hasattr(schedule, 'hour') and hasattr(schedule, 'minute'):
+                    try:
+                        if hasattr(schedule.hour, '__iter__') and not isinstance(schedule.hour, str):
+                            schedule_hour = min(schedule.hour) if schedule.hour else None
+                        else:
+                            schedule_hour = int(schedule.hour) if str(schedule.hour).isdigit() else None
 
-                    if hasattr(schedule.minute, '__iter__') and not isinstance(schedule.minute, str):
-                        schedule_minute = min(schedule.minute) if schedule.minute else 0
-                    else:
-                        schedule_minute = int(schedule.minute) if str(schedule.minute).isdigit() else 0
-                except (ValueError, TypeError):
-                    pass
+                        if hasattr(schedule.minute, '__iter__') and not isinstance(schedule.minute, str):
+                            schedule_minute = min(schedule.minute) if schedule.minute else 0
+                        else:
+                            schedule_minute = int(schedule.minute) if str(schedule.minute).isdigit() else 0
+                    except (ValueError, TypeError):
+                        pass
 
         task_info = {
             'key': key,
@@ -4854,16 +4879,16 @@ def reset_task_config(request):
             if not task_state:
                 continue
 
-            task_state.schedule_hour = defaults.get('default_hour')
-            task_state.schedule_minute = defaults.get('default_minute')
+            task_state.schedule_hour = defaults.get('default_hour') if defaults.get('default_hour') is not None else 9
+            task_state.schedule_minute = defaults.get('default_minute') if defaults.get('default_minute') is not None else 0
             task_state.interval_seconds = defaults.get('default_interval_seconds') or 60
-            task_state.recurring_start_hour = defaults.get('default_recurring_start_hour')
-            task_state.recurring_start_minute = defaults.get('default_recurring_start_minute')
-            task_state.recurring_end_hour = defaults.get('default_recurring_end_hour')
-            task_state.recurring_end_minute = defaults.get('default_recurring_end_minute')
-            task_state.recurring_interval_minutes = defaults.get('default_recurring_interval_minutes')
+            task_state.recurring_start_hour = defaults.get('default_recurring_start_hour') if defaults.get('default_recurring_start_hour') is not None else 9
+            task_state.recurring_start_minute = defaults.get('default_recurring_start_minute') if defaults.get('default_recurring_start_minute') is not None else 0
+            task_state.recurring_end_hour = defaults.get('default_recurring_end_hour') if defaults.get('default_recurring_end_hour') is not None else 15
+            task_state.recurring_end_minute = defaults.get('default_recurring_end_minute') if defaults.get('default_recurring_end_minute') is not None else 30
+            task_state.recurring_interval_minutes = defaults.get('default_recurring_interval_minutes') if defaults.get('default_recurring_interval_minutes') is not None else 5
             task_state.days_of_week = defaults.get('default_days', [0, 1, 2, 3, 4])
-            task_state.task_params = defaults.get('default_task_params')
+            task_state.task_params = defaults.get('default_task_params') or {}
             task_state.schedule_type = defaults.get('schedule_type', 'crontab')
             task_state.use_custom_schedule = False
             task_state.last_toggled_at = timezone.now()
@@ -5943,6 +5968,7 @@ def api_task_timeline(request):
         - Today's scheduled tasks with execution status
     """
     from apps.core.models import BkLog, CeleryTaskState
+    from apps.core.task_config import TASK_DEFAULT_CONFIG
     from mcube_ai.celery import get_static_schedule
     from datetime import timedelta
     from django.utils import timezone
@@ -5999,20 +6025,28 @@ def api_task_timeline(request):
                     hour = task_state.recurring_start_hour
                     minute = getattr(task_state, 'recurring_start_minute', 0) or 0
             else:
-                schedule = config.get('schedule')
-                if hasattr(schedule, 'hour') and hasattr(schedule, 'minute'):
-                    try:
-                        if hasattr(schedule.hour, '__iter__') and not isinstance(schedule.hour, str):
-                            hour = min(schedule.hour) if schedule.hour else None
-                        else:
-                            hour = int(schedule.hour) if str(schedule.hour).isdigit() else None
+                default_config = TASK_DEFAULT_CONFIG.get(key, {})
+                if default_config.get('default_hour') is not None:
+                    hour = default_config['default_hour']
+                    minute = default_config.get('default_minute', 0)
+                elif default_config.get('default_recurring_start_hour') is not None:
+                    hour = default_config['default_recurring_start_hour']
+                    minute = default_config.get('default_recurring_start_minute', 0)
+                else:
+                    schedule = config.get('schedule')
+                    if hasattr(schedule, 'hour') and hasattr(schedule, 'minute'):
+                        try:
+                            if hasattr(schedule.hour, '__iter__') and not isinstance(schedule.hour, str):
+                                hour = min(schedule.hour) if schedule.hour else None
+                            else:
+                                hour = int(schedule.hour) if str(schedule.hour).isdigit() else None
 
-                        if hasattr(schedule.minute, '__iter__') and not isinstance(schedule.minute, str):
-                            minute = min(schedule.minute) if schedule.minute else 0
-                        else:
-                            minute = int(schedule.minute) if str(schedule.minute).isdigit() else 0
-                    except (ValueError, TypeError):
-                        pass
+                            if hasattr(schedule.minute, '__iter__') and not isinstance(schedule.minute, str):
+                                minute = min(schedule.minute) if schedule.minute else 0
+                            else:
+                                minute = int(schedule.minute) if str(schedule.minute).isdigit() else 0
+                        except (ValueError, TypeError):
+                            pass
 
             if hour is not None:
                 display_name = task_state.display_name if task_state and task_state.display_name else key.replace('-', ' ').title()

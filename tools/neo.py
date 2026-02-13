@@ -108,7 +108,9 @@ class NeoAPI(BrokerInterface if isinstance(BrokerInterface, type) else object):
                 raise Exception("Kotak Neo credentials not found in database")
 
             self.consumer_key = creds.api_key
-            self.mobile_number = creds.mobile_number or creds.username
+            raw_mobile = creds.mobile_number or creds.username
+            # Neo v2 API requires +91 prefix
+            self.mobile_number = raw_mobile if raw_mobile.startswith('+') else f'+91{raw_mobile}'
             self.mpin = creds.neo_password  # MPIN stored in neo_password field
             self.ucc = creds.ucc
             self.totp_secret = creds.totp_secret
@@ -167,7 +169,7 @@ class NeoAPI(BrokerInterface if isinstance(BrokerInterface, type) else object):
             logger.warning(f"Session restore failed during client init: {e}")
             return False
 
-    def login(self) -> bool:
+    def login(self, manual: bool = False) -> bool:
         """
         Login to Kotak Neo v2 with single-attempt auto-login using TOTP + MPIN.
 
@@ -177,6 +179,9 @@ class NeoAPI(BrokerInterface if isinstance(BrokerInterface, type) else object):
         3. Generate TOTP from stored secret
         4. Call totp_login() with mobile_number + UCC + TOTP
         5. Call totp_validate() with MPIN
+
+        Args:
+            manual: If True, bypass trading window and daily limit (UI-triggered)
 
         Returns:
             bool: True if login successful
@@ -191,8 +196,8 @@ class NeoAPI(BrokerInterface if isinstance(BrokerInterface, type) else object):
             mark_auto_login_success, mark_auto_login_failed,
         )
 
-        # Check daily limit
-        can_login, reason = can_attempt_auto_login('kotakneo')
+        # Check daily limit (manual=True bypasses window + daily cap)
+        can_login, reason = can_attempt_auto_login('kotakneo', manual=manual)
         if not can_login:
             self.last_error = f"Auto-login blocked: {reason}"
             logger.warning(f"Neo login blocked: {reason}")
