@@ -603,6 +603,11 @@ def verify_kotak_login(request):
             messages.error(request, "Kotak Neo credentials not found")
             return redirect('core:system_test')
 
+        # User-initiated login from web UI — reset any previous failed status
+        # so the auto-login guard doesn't block this explicit attempt
+        from apps.brokers.utils.auth_manager import reset_auto_login_status
+        reset_auto_login_status('kotakneo')
+
         # Attempt login (manual=True bypasses trading window + daily limit)
         neo = NeoAPI()
         success = neo.login(manual=True)
@@ -2571,309 +2576,62 @@ def test_telegram():
             'message': f'Error: {str(e)}',
         })
 
-    # Test 2: Test simple message (with response validation)
-    try:
-        from apps.alerts.services import get_telegram_client
-        telegram_client = get_telegram_client()
+    # Tests 2-8: Check that message methods exist and are callable (no actual sends on page load).
+    # Actual messages are sent only when user clicks the explicit trigger buttons.
+    message_tests = [
+        ('Send Simple Message', 'send_message', '/system/test/trigger-telegram-simple/', 'Send Test'),
+        ('Send Priority Message (CRITICAL)', 'send_priority_message', '/system/test/trigger-telegram-critical/', 'Trigger'),
+        ('Position Alert - Stop-Loss Hit', 'send_position_alert', '/system/test/trigger-telegram-sl-alert/', 'Send Alert'),
+        ('Position Alert - Target Hit', 'send_position_alert', '/system/test/trigger-telegram-target-alert/', 'Send Alert'),
+        ('Risk Alert - Warning', 'send_risk_alert', '/system/test/trigger-telegram-risk-alert/', 'Send Alert'),
+        ('Risk Alert - Circuit Breaker (Emergency)', 'send_risk_alert', '/system/test/trigger-telegram-circuit-breaker/', 'Send Alert'),
+        ('Daily Trading Summary', 'send_daily_summary', '/system/test/trigger-telegram-summary/', 'Send Summary'),
+    ]
 
-        if telegram_client.is_enabled():
-            test_message = "Test message from mCube System Test Page"
-            success, response = telegram_client.send_message(test_message)
+    for test_name, method_name, trigger_url, trigger_label in message_tests:
+        try:
+            from apps.alerts.services import get_telegram_client
+            telegram_client = get_telegram_client()
 
+            if telegram_client.is_enabled():
+                has_method = hasattr(telegram_client, method_name) and callable(getattr(telegram_client, method_name))
+                tests.append({
+                    'name': test_name,
+                    'status': 'pass' if has_method else 'fail',
+                    'message': f'Ready — use button to send' if has_method else f'Method {method_name} not found',
+                    'trigger_url': trigger_url,
+                    'trigger_label': trigger_label,
+                })
+            else:
+                tests.append({
+                    'name': test_name,
+                    'status': 'warning',
+                    'message': 'Telegram not configured',
+                    'trigger_url': trigger_url,
+                    'trigger_label': 'Test (Configure First)',
+                })
+        except Exception as e:
             tests.append({
-                'name': 'Send Simple Message',
-                'status': 'pass' if success else 'fail',
-                'message': response if success else f'Send failed: {response}',
-                'trigger_url': '/system/test/trigger-telegram-simple/',
-                'trigger_label': 'Send Again',
+                'name': test_name,
+                'status': 'fail',
+                'message': f'Error: {str(e)}',
             })
-        else:
-            tests.append({
-                'name': 'Send Simple Message',
-                'status': 'warning',
-                'message': 'Skipped - Telegram not configured',
-                'trigger_url': '/system/test/trigger-telegram-simple/',
-                'trigger_label': 'Test (Configure First)',
-            })
-    except Exception as e:
-        tests.append({
-            'name': 'Send Simple Message',
-            'status': 'fail',
-            'message': f'Error: {str(e)}',
-        })
 
-    # Test 3: Test priority message (CRITICAL)
-    try:
-        from apps.alerts.services import get_telegram_client
-        telegram_client = get_telegram_client()
-
-        if telegram_client.is_enabled():
-            test_message = "This is a critical test message"
-            success, response = telegram_client.send_priority_message(test_message, priority='CRITICAL')
-
-            tests.append({
-                'name': 'Send Priority Message (CRITICAL)',
-                'status': 'pass' if success else 'fail',
-                'message': 'Critical alert sent' if success else f'Failed: {response}',
-                'trigger_url': '/system/test/trigger-telegram-critical/',
-                'trigger_label': 'Trigger',
-            })
-        else:
-            tests.append({
-                'name': 'Send Priority Message (CRITICAL)',
-                'status': 'warning',
-                'message': 'Skipped - Telegram not configured',
-                'trigger_url': '/system/test/trigger-telegram-critical/',
-                'trigger_label': 'Test (Configure First)',
-            })
-    except Exception as e:
-        tests.append({
-            'name': 'Send Priority Message (CRITICAL)',
-            'status': 'fail',
-            'message': f'Error: {str(e)}',
-        })
-
-    # Test 4: Test position alert (SL_HIT)
-    try:
-        from apps.alerts.services import get_telegram_client
-        telegram_client = get_telegram_client()
-
-        if telegram_client.is_enabled():
-            position_data = {
-                'account_name': 'DEMO_ACCOUNT',
-                'instrument': 'NIFTY24NOV2424000CE',
-                'direction': 'LONG',
-                'quantity': 10,
-                'entry_price': 100.00,
-                'current_price': 210.00,
-                'stop_loss': 200.00,
-                'target': 50.00,
-                'unrealized_pnl': -55000.00,
-                'message': 'STOP-LOSS BREACHED - IMMEDIATE ACTION REQUIRED'
-            }
-            success, response = telegram_client.send_position_alert('SL_HIT', position_data)
-
-            tests.append({
-                'name': 'Position Alert - Stop-Loss Hit',
-                'status': 'pass' if success else 'fail',
-                'message': 'SL_HIT alert sent with full position details' if success else f'Failed: {response}',
-                'trigger_url': '/system/test/trigger-telegram-sl-alert/',
-                'trigger_label': 'Send Alert',
-            })
-        else:
-            tests.append({
-                'name': 'Position Alert - Stop-Loss Hit',
-                'status': 'warning',
-                'message': 'Skipped - Telegram not configured',
-                'trigger_url': '/system/test/trigger-telegram-sl-alert/',
-                'trigger_label': 'Test (Configure First)',
-            })
-    except Exception as e:
-        tests.append({
-            'name': 'Position Alert - Stop-Loss Hit',
-            'status': 'fail',
-            'message': f'Error: {str(e)}',
-        })
-
-    # Test 5: Test position alert (TARGET_HIT)
-    try:
-        from apps.alerts.services import get_telegram_client
-        telegram_client = get_telegram_client()
-
-        if telegram_client.is_enabled():
-            position_data = {
-                'account_name': 'DEMO_ACCOUNT',
-                'instrument': 'NIFTY24NOV2424000CE',
-                'direction': 'LONG',
-                'quantity': 10,
-                'entry_price': 100.00,
-                'current_price': 35.00,
-                'stop_loss': 150.00,
-                'target': 50.00,
-                'unrealized_pnl': 37500.00,
-                'message': 'Target achieved! Consider booking profits.'
-            }
-            success, response = telegram_client.send_position_alert('TARGET_HIT', position_data)
-
-            tests.append({
-                'name': 'Position Alert - Target Hit',
-                'status': 'pass' if success else 'fail',
-                'message': 'TARGET_HIT alert sent' if success else f'Failed: {response}',
-                'trigger_url': '/system/test/trigger-telegram-target-alert/',
-                'trigger_label': 'Send Alert',
-            })
-        else:
-            tests.append({
-                'name': 'Position Alert - Target Hit',
-                'status': 'warning',
-                'message': 'Skipped - Telegram not configured',
-                'trigger_url': '/system/test/trigger-telegram-target-alert/',
-                'trigger_label': 'Test (Configure First)',
-            })
-    except Exception as e:
-        tests.append({
-            'name': 'Position Alert - Target Hit',
-            'status': 'fail',
-            'message': f'Error: {str(e)}',
-        })
-
-    # Test 6: Test risk alert (WARNING)
-    try:
-        from apps.alerts.services import get_telegram_client
-        telegram_client = get_telegram_client()
-
-        if telegram_client.is_enabled():
-            risk_data = {
-                'account_name': 'DEMO_ACCOUNT',
-                'action_required': 'WARNING',
-                'trading_allowed': True,
-                'active_circuit_breakers': 0,
-                'warnings': [
-                    {'type': 'DAILY_LOSS', 'utilization': 75.5},
-                    {'type': 'WEEKLY_LOSS', 'utilization': 45.0}
-                ],
-                'message': 'Daily loss limit at 75.5%. Exercise caution with new positions.'
-            }
-            success, response = telegram_client.send_risk_alert(risk_data)
-
-            tests.append({
-                'name': 'Risk Alert - Warning',
-                'status': 'pass' if success else 'fail',
-                'message': 'Risk warning sent' if success else f'Failed: {response}',
-                'trigger_url': '/system/test/trigger-telegram-risk-alert/',
-                'trigger_label': 'Send Alert',
-            })
-        else:
-            tests.append({
-                'name': 'Risk Alert - Warning',
-                'status': 'warning',
-                'message': 'Skipped - Telegram not configured',
-                'trigger_url': '/system/test/trigger-telegram-risk-alert/',
-                'trigger_label': 'Test (Configure First)',
-            })
-    except Exception as e:
-        tests.append({
-            'name': 'Risk Alert - Warning',
-            'status': 'fail',
-            'message': f'Error: {str(e)}',
-        })
-
-    # Test 7: Test risk alert (EMERGENCY - Circuit Breaker)
-    try:
-        from apps.alerts.services import get_telegram_client
-        telegram_client = get_telegram_client()
-
-        if telegram_client.is_enabled():
-            risk_data = {
-                'account_name': 'DEMO_ACCOUNT',
-                'action_required': 'EMERGENCY_EXIT',
-                'trading_allowed': False,
-                'active_circuit_breakers': 1,
-                'breached_limits': [
-                    {'type': 'DAILY_LOSS', 'current': 55000, 'limit': 50000}
-                ],
-                'message': 'CIRCUIT BREAKER ACTIVATED! Daily loss limit exceeded. All trading stopped.'
-            }
-            success, response = telegram_client.send_risk_alert(risk_data)
-
-            tests.append({
-                'name': 'Risk Alert - Circuit Breaker (Emergency)',
-                'status': 'pass' if success else 'fail',
-                'message': 'Emergency alert sent (trading disabled)' if success else f'Failed: {response}',
-                'trigger_url': '/system/test/trigger-telegram-circuit-breaker/',
-                'trigger_label': 'Send Alert',
-            })
-        else:
-            tests.append({
-                'name': 'Risk Alert - Circuit Breaker (Emergency)',
-                'status': 'warning',
-                'message': 'Skipped - Telegram not configured',
-                'trigger_url': '/system/test/trigger-telegram-circuit-breaker/',
-                'trigger_label': 'Test (Configure First)',
-            })
-    except Exception as e:
-        tests.append({
-            'name': 'Risk Alert - Circuit Breaker (Emergency)',
-            'status': 'fail',
-            'message': f'Error: {str(e)}',
-        })
-
-    # Test 8: Test daily summary
-    try:
-        from apps.alerts.services import get_telegram_client
-        from datetime import date
-        telegram_client = get_telegram_client()
-
-        if telegram_client.is_enabled():
-            summary_data = {
-                'date': date.today().strftime('%Y-%m-%d'),
-                'total_pnl': 15750.00,
-                'realized_pnl': 12000.00,
-                'unrealized_pnl': 3750.00,
-                'total_trades': 5,
-                'winning_trades': 3,
-                'losing_trades': 2,
-                'win_rate': 60.0,
-                'active_positions': 1,
-                'capital_deployed': 250000,
-                'margin_available': 750000,
-                'max_drawdown': 2.5,
-                'daily_loss_limit_used': 31.5
-            }
-            success, response = telegram_client.send_daily_summary(summary_data)
-
-            tests.append({
-                'name': 'Daily Trading Summary',
-                'status': 'pass' if success else 'fail',
-                'message': 'Daily summary sent with complete statistics' if success else f'Failed: {response}',
-                'trigger_url': '/system/test/trigger-telegram-summary/',
-                'trigger_label': 'Send Summary',
-            })
-        else:
-            tests.append({
-                'name': 'Daily Trading Summary',
-                'status': 'warning',
-                'message': 'Skipped - Telegram not configured',
-                'trigger_url': '/system/test/trigger-telegram-summary/',
-                'trigger_label': 'Test (Configure First)',
-            })
-    except Exception as e:
-        tests.append({
-            'name': 'Daily Trading Summary',
-            'status': 'fail',
-            'message': f'Error: {str(e)}',
-        })
-
-    # Test 9: Alert Manager integration (database storage)
+    # Test 9: Alert Manager integration (database check only — no Telegram send on page load)
     try:
         from apps.alerts.services import get_alert_manager
         alert_manager = get_alert_manager()
 
-        # Create a test system alert
-        test_alert = alert_manager.create_system_alert(
-            alert_type='SYSTEM_TEST',
-            title='System Test Alert',
-            message='Testing AlertManager integration with database storage',
-            priority='INFO',
-            send_telegram=True
-        )
+        # Just verify AlertManager is accessible and DB model works
+        from apps.alerts.models import Alert
+        alert_count = Alert.objects.count()
+        latest_alert = Alert.objects.order_by('-created_at').first()
 
-        if test_alert:
-            # Verify alert was stored
-            from apps.alerts.models import Alert
-            stored_alert = Alert.objects.filter(id=test_alert.id).first()
-
-            tests.append({
-                'name': 'AlertManager - Database Integration',
-                'status': 'pass' if stored_alert else 'fail',
-                'message': f'Alert stored in DB (ID: {test_alert.id}) with {test_alert.logs.count()} delivery logs' if stored_alert else 'Alert not found in database',
-            })
-        else:
-            tests.append({
-                'name': 'AlertManager - Database Integration',
-                'status': 'fail',
-                'message': 'Failed to create alert',
-            })
+        tests.append({
+            'name': 'AlertManager - Database Integration',
+            'status': 'pass',
+            'message': f'{alert_count} alerts in DB. Latest: {latest_alert.alert_type if latest_alert else "None"}',
+        })
     except Exception as e:
         tests.append({
             'name': 'AlertManager - Database Integration',

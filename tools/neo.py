@@ -109,8 +109,11 @@ class NeoAPI(BrokerInterface if isinstance(BrokerInterface, type) else object):
 
             self.consumer_key = creds.api_key
             raw_mobile = creds.mobile_number or creds.username
-            # Neo v2 API requires +91 prefix
-            self.mobile_number = raw_mobile if raw_mobile.startswith('+') else f'+91{raw_mobile}'
+            # v2 API requires +91 country code prefix for mobile number
+            if raw_mobile and not raw_mobile.startswith('+'):
+                self.mobile_number = f'+91{raw_mobile}'
+            else:
+                self.mobile_number = raw_mobile
             self.mpin = creds.neo_password  # MPIN stored in neo_password field
             self.ucc = creds.ucc
             self.totp_secret = creds.totp_secret
@@ -169,16 +172,37 @@ class NeoAPI(BrokerInterface if isinstance(BrokerInterface, type) else object):
             logger.warning(f"Session restore failed during client init: {e}")
             return False
 
+    MAX_LOGIN_ATTEMPTS = 3
+    LOGIN_RETRY_DELAY_SECONDS = 10  # Wait between retries (TOTP codes valid for 30s)
+
+    def _has_error(self, response: dict) -> bool:
+        """Check if an API response contains an error (handles both 'error' and 'Error' keys)."""
+        if not response:
+            return True
+        return 'error' in response or 'Error' in response
+
+    def _get_error_msg(self, response: dict) -> str:
+        """Extract error message from API response."""
+        if not response:
+            return 'No response'
+        return response.get('error', response.get('Error', 'Unknown'))
+
     def login(self, manual: bool = False) -> bool:
         """
-        Login to Kotak Neo v2 with single-attempt auto-login using TOTP + MPIN.
+        Login to Kotak Neo v2 with auto-login using TOTP + MPIN.
+
+        Neo uses automated TOTP + MPIN (no manual OTP required), so we retry
+        up to 3 times within a single login session to handle TOTP timing
+        edge cases and transient network issues.
 
         Flow:
         1. Try restoring saved session (no login needed)
-        2. Check daily auto-login limit (one attempt per day)
-        3. Generate TOTP from stored secret
-        4. Call totp_login() with mobile_number + UCC + TOTP
-        5. Call totp_validate() with MPIN
+        2. Check daily auto-login limit
+        3. Retry up to 3 times:
+           a. Generate fresh TOTP from stored secret
+           b. Call totp_login() with mobile_number + UCC + TOTP
+           c. Call totp_validate() with MPIN
+        4. Only mark as failed after all retries exhausted
 
         Args:
             manual: If True, bypass trading window and daily limit (UI-triggered)
@@ -186,6 +210,8 @@ class NeoAPI(BrokerInterface if isinstance(BrokerInterface, type) else object):
         Returns:
             bool: True if login successful
         """
+        import time
+
         # Try restoring a saved session first (avoids login+2FA entirely)
         if self.try_restore_session():
             logger.info("Session restored from database — skipping login/2FA")
@@ -225,97 +251,107 @@ class NeoAPI(BrokerInterface if isinstance(BrokerInterface, type) else object):
 
         mark_auto_login_started('kotakneo')
 
-        try:
-            import pyotp
+        import pyotp
+        last_error = None
 
-            # v2: no consumer_secret, no session_init() — zero network calls on init
-            self.neo = KotakNeoAPI(
-                consumer_key=self.consumer_key,
-                environment='prod'
-            )
-
-            # Generate TOTP from stored secret
-            totp = pyotp.TOTP(self.totp_secret)
-            totp_code = totp.now()
-
-            # Step 1: TOTP login (generates view token)
-            logger.info(f"Logging in with TOTP for UCC: {self.ucc}")
-            response = self.neo.totp_login(
-                mobile_number=self.mobile_number,
-                ucc=self.ucc,
-                totp=totp_code
-            )
-
-            if not response or 'error' in response:
-                error_msg = response.get('error', 'Unknown') if response else 'No response'
-                self.last_error = f"TOTP login error: {error_msg}"
-                logger.error(f"Neo TOTP login failed: {self.last_error}")
-                mark_auto_login_failed('kotakneo')
-                self._notify_neo_login_failed(self.last_error)
-                return False
-
-            # Step 2: Validate with MPIN
-            logger.info("TOTP login succeeded — validating with MPIN")
-            session_response = self.neo.totp_validate(mpin=self.mpin)
-
-            if not session_response or not session_response.get('data'):
-                self.last_error = f"MPIN validation failed: {session_response}"
-                logger.error(f"Neo MPIN validation failed: {self.last_error}")
-                mark_auto_login_failed('kotakneo')
-                self._notify_neo_login_failed(f"MPIN validation failed")
-                return False
-
-            # Validation succeeded
-            self.session_active = True
-            self.last_error = None
-
-            data = session_response.get('data', {})
-            server_id = data.get('hsServerId', '')
-            # base_url is set by SDK on configuration; also available in response data
-            base_url = getattr(self.neo.configuration, 'base_url', None) or data.get('baseUrl', '')
-            data_center = getattr(self.neo.configuration, 'data_center', None) or data.get('dataCenter', '')
-            logger.info(f"Neo login successful - serverId: {server_id}, base_url: {base_url}, dataCenter: {data_center}")
-            if not base_url:
-                logger.warning("Neo login succeeded but base_url is empty — API calls may fail")
-
-            # Persist session for reuse (including v2 fields)
+        for attempt in range(1, self.MAX_LOGIN_ATTEMPTS + 1):
             try:
-                from apps.brokers.utils.auth_manager import save_neo_session
-                save_neo_session(
-                    edit_token=self.neo.configuration.edit_token,
-                    edit_sid=self.neo.configuration.edit_sid,
-                    server_id=getattr(self.neo.configuration, 'serverId', '') or '',
-                    base_url=base_url,
-                    data_center=data_center,
+                # Fresh client each attempt to avoid stale state
+                self.neo = KotakNeoAPI(
+                    consumer_key=self.consumer_key,
+                    environment='prod'
                 )
-            except Exception as save_err:
-                logger.warning(f"Failed to persist Neo session (non-fatal): {save_err}")
 
-            mark_auto_login_success('kotakneo')
-            self._notify_neo_login_success()
-            return True
+                # Generate fresh TOTP for each attempt (handles 30s window edge cases)
+                totp = pyotp.TOTP(self.totp_secret)
+                totp_code = totp.now()
 
-        except Exception as e:
-            self.last_error = self._format_exception(e)
-            self.session_active = False
-            logger.error(f"Neo login error: {self.last_error}", exc_info=True)
-            mark_auto_login_failed('kotakneo')
-            self._notify_neo_login_failed(self.last_error)
-            return False
+                # Step 1: TOTP login (generates view token)
+                logger.info(f"Neo login attempt {attempt}/{self.MAX_LOGIN_ATTEMPTS} — TOTP for UCC: {self.ucc}")
+                response = self.neo.totp_login(
+                    mobile_number=self.mobile_number,
+                    ucc=self.ucc,
+                    totp=totp_code
+                )
+
+                if self._has_error(response):
+                    last_error = f"TOTP login error: {self._get_error_msg(response)}"
+                    logger.warning(f"Neo attempt {attempt} TOTP login failed: {last_error}")
+                    if attempt < self.MAX_LOGIN_ATTEMPTS:
+                        logger.info(f"Retrying in {self.LOGIN_RETRY_DELAY_SECONDS}s...")
+                        time.sleep(self.LOGIN_RETRY_DELAY_SECONDS)
+                    continue
+
+                # Step 2: Validate with MPIN
+                logger.info(f"Attempt {attempt}: TOTP login succeeded — validating with MPIN")
+                session_response = self.neo.totp_validate(mpin=self.mpin)
+
+                if self._has_error(session_response) or not session_response.get('data'):
+                    last_error = f"MPIN validation failed: {self._get_error_msg(session_response) if self._has_error(session_response) else session_response}"
+                    logger.warning(f"Neo attempt {attempt} MPIN validation failed: {last_error}")
+                    if attempt < self.MAX_LOGIN_ATTEMPTS:
+                        logger.info(f"Retrying in {self.LOGIN_RETRY_DELAY_SECONDS}s...")
+                        time.sleep(self.LOGIN_RETRY_DELAY_SECONDS)
+                    continue
+
+                # === Login succeeded ===
+                self.session_active = True
+                self.last_error = None
+
+                data = session_response.get('data', {})
+                server_id = data.get('hsServerId', '')
+                base_url = getattr(self.neo.configuration, 'base_url', None) or data.get('baseUrl', '')
+                data_center = getattr(self.neo.configuration, 'data_center', None) or data.get('dataCenter', '')
+                logger.info(f"Neo login successful on attempt {attempt} - serverId: {server_id}, base_url: {base_url}, dataCenter: {data_center}")
+                if not base_url:
+                    logger.warning("Neo login succeeded but base_url is empty — API calls may fail")
+
+                # Persist session for reuse
+                try:
+                    from apps.brokers.utils.auth_manager import save_neo_session
+                    save_neo_session(
+                        edit_token=self.neo.configuration.edit_token,
+                        edit_sid=self.neo.configuration.edit_sid,
+                        server_id=getattr(self.neo.configuration, 'serverId', '') or '',
+                        base_url=base_url,
+                        data_center=data_center,
+                    )
+                except Exception as save_err:
+                    logger.warning(f"Failed to persist Neo session (non-fatal): {save_err}")
+
+                mark_auto_login_success('kotakneo')
+                if attempt > 1:
+                    self._notify_neo_login_success(f" (succeeded on attempt {attempt}/{self.MAX_LOGIN_ATTEMPTS})")
+                else:
+                    self._notify_neo_login_success()
+                return True
+
+            except Exception as e:
+                last_error = self._format_exception(e)
+                logger.error(f"Neo login attempt {attempt} error: {last_error}", exc_info=True)
+                if attempt < self.MAX_LOGIN_ATTEMPTS:
+                    logger.info(f"Retrying in {self.LOGIN_RETRY_DELAY_SECONDS}s...")
+                    time.sleep(self.LOGIN_RETRY_DELAY_SECONDS)
+
+        # All attempts exhausted
+        self.last_error = last_error
+        self.session_active = False
+        mark_auto_login_failed('kotakneo')
+        self._notify_neo_login_failed(f"{last_error} (failed all {self.MAX_LOGIN_ATTEMPTS} attempts)")
+        return False
 
     def _notify_neo_login_failed(self, reason: str):
         """Send Telegram notification that Neo auto-login failed."""
         self._send_telegram(
             f"Kotak Neo Auto-Login Failed\n\n"
             f"Reason: {reason}\n\n"
-            f"No more auto-login attempts today.\n"
             f"Please login manually via the web UI."
         )
 
-    def _notify_neo_login_success(self):
+    def _notify_neo_login_success(self, suffix: str = ''):
         """Send Telegram notification that Neo auto-login succeeded."""
         self._send_telegram(
-            f"Kotak Neo Login Successful\n\n"
+            f"Kotak Neo Login Successful{suffix}\n\n"
             f"Session established and saved."
         )
 
