@@ -14,10 +14,10 @@ This document explains how mCube is built and how all components work together.
     │  │    Frontend (Templates + Bootstrap 5 + HTMX)    │    │
     │  └─────────────────────────────────────────────────┘    │
     │  ┌─────────────────────────────────────────────────┐    │
-    │  │           Django Backend (11 Apps)               │    │
+    │  │           Django Backend (13 Apps)               │    │
     │  │    core | accounts | positions | strategies |    │    │
     │  │    risk | data | llm | analytics | alerts |      │    │
-    │  │    brokers | trading                             │    │
+    │  │    brokers | trading | algo_test                  │    │
     │  └─────────────────────────────────────────────────┘    │
     │  ┌─────────────────────────────────────────────────┐    │
     │  │    Celery Workers + Django Background Tasks      │    │
@@ -57,18 +57,19 @@ mCube-ai/
 │   ├── urls.py
 │   └── celery.py
 │
-├── apps/               # Django applications (11 apps)
-│   ├── core/          # Shared utilities, credentials
+├── apps/               # Django applications (13 apps)
+│   ├── core/          # Shared utilities, credentials, TradingCoreConfig, TradingContext
 │   ├── accounts/      # Broker accounts
 │   ├── positions/     # Position tracking
-│   ├── strategies/    # Trading strategies
+│   ├── strategies/    # Trading strategies, dynamic scheduler
 │   ├── risk/          # Risk management
-│   ├── data/          # Market data, Trendlyne
-│   ├── llm/           # LLM validation
+│   ├── data/          # Market data, Trendlyne, GNews
+│   ├── llm/           # LLM validation, analyst reports
 │   ├── analytics/     # P&L tracking
-│   ├── alerts/        # Telegram bot
-│   ├── brokers/       # Broker integrations, orders
-│   └── trading/       # Trading workflows
+│   ├── alerts/        # Telegram bot (4-file mixin architecture, ~7.5K LOC)
+│   ├── brokers/       # Broker integrations, orders, session management
+│   ├── trading/       # Trading workflows, trade confirmation service
+│   └── algo_test/     # Algorithm testing
 │
 ├── templates/          # HTML templates
 ├── static/             # CSS, JS assets
@@ -82,6 +83,11 @@ mCube-ai/
 
 ### core
 Shared utilities, CredentialStore model, trading state management, system test page.
+**Key services:**
+- `TradingCoreConfig` — Singleton model for centralized trading control (position sizing modes: TEST/MANUAL/AUTO/SIMULATED, notification levels: FULL_CONTROL/SUPERVISED/AUTONOMOUS)
+- `TradingContext` (`apps/core/services/trading_context.py`) — Unified context for Celery tasks & web views (account retrieval, trading day validation, config access)
+- `CeleryTaskState` — Enable/disable + custom schedule per task, 6 categories (data, strategies, transactions, monitoring, risk, reports)
+- `@task_enabled_guard` decorator — Runtime safety check for all scheduled tasks
 
 ### accounts
 BrokerAccount model with capital allocation and risk limits.
@@ -91,27 +97,43 @@ Position tracking with entry/exit, P&L calculation, MonitorLog for position chec
 
 ### strategies
 Kotak strangle and ICICI futures strategy implementations.
+- `DynamicScheduler` for `TradingScheduleConfig`-based task scheduling
+- Enhanced futures analyzer with 12-component parallel analysis
 
 ### risk
 RiskLimit model, circuit breakers, real-time monitoring.
 
 ### data
 Trendlyne integration, market data, security master, news articles.
+- GNews API with 8-hour cache (`CACHE_TTL = 28800`)
+- Three-layer caching: GNews API → NewsArticle DB → In-memory (30 min)
 
 ### llm
 Ollama/vLLM client, trade validation, RAG queries, news sentiment analysis.
+- Analyst report analyzer with 8-hour DB cache
 
 ### analytics
 Daily/weekly P&L tracking, performance analysis.
 
 ### alerts
-Telegram bot integration with 14 commands.
+Telegram bot — full app control via 4-file mixin architecture (~7,573 LOC):
+- `telegram_bot.py` — Main handler + callback router (~3,880 LOC)
+- `telegram_bot_menus.py` — MenuMixin (30 methods)
+- `telegram_bot_data.py` — DataMixin (37+ `@sync_to_async` methods)
+- `telegram_bot_trade.py` — TradeMixin (25 methods, 10-step manual trade wizard)
+- 9 slash commands, 12-button main menu, 21 callback routing prefixes
 
 ### brokers
-Broker API integrations (Kotak Neo, ICICI Breeze), order placement, Order and Execution models.
+Broker API integrations (Kotak Neo v2, ICICI Breeze), order placement, Order and Execution models.
+- Neo v2: TOTP + MPIN auth (no OTP), session persistence via `base_url`
+- Breeze: Singleton session manager with auto-login (Selenium + Telegram OTP)
+- Auto-login safety: one attempt per day per broker
 
 ### trading
 Trading workflows, trade suggestions, approval system.
+- `TradeConfirmationService` — Telegram confirmation flow (futures, options, exit)
+- Two-step futures approval: selection screen → detail view → execute with batching
+- Order batching: orders > 10 lots split, 10-second delay, stop execution button
 
 ---
 
@@ -197,6 +219,15 @@ password = CharField()
 neo_password = CharField()        # Kotak MPIN
 pan = CharField()
 sid = CharField()                 # Session ID
+# Kotak Neo v2 fields
+ucc = CharField()                 # Unique Client Code
+totp_secret = CharField()         # TOTP secret for automated login
+mobile_number = CharField()       # Mobile number
+neo_base_url = URLField()         # API base URL (required for v2 API calls)
+neo_data_center = CharField()     # Data center
+# Auto-login tracking
+auto_login_status = CharField()   # none|in_progress|success|failed
+auto_login_date = DateField()     # Date of last attempt
 ```
 
 ---

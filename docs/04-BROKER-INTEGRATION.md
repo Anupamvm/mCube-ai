@@ -26,18 +26,20 @@ mCube integrates with two brokers:
    - **API Key**: Your application's unique identifier
    - **API Secret**: Secret for authentication
 
-### Kotak Neo API
+### Kotak Neo API (v2)
 
 1. Go to https://api.kotakneo.com
 2. Sign in with your Kotak Securities account
 3. Navigate to API Management
 4. Create a new API app to get:
-   - **Consumer Key**: Application ID
-   - **Consumer Secret**: Application secret
-5. Keep ready your trading:
+   - **Consumer Key**: Application ID (no Consumer Secret needed in v2)
+5. Register for TOTP at https://www.kotakneo.com/platform/kotak-neo-trade-api/totp-registration/
+   - This is separate from any app-level TOTP you may already have
+6. Keep ready your trading credentials:
+   - **UCC**: Unique Client Code (from Kotak account)
    - **Mobile Number**: Account login mobile
-   - **Password**: Account login password
-   - **MPIN**: Trading PIN for order placement
+   - **TOTP Secret**: From TOTP registration (used for automated login)
+   - **MPIN**: Trading PIN for 2FA validation
 
 ---
 
@@ -76,16 +78,18 @@ CredentialStore.objects.create(
     session_token='YOUR_SESSION_TOKEN'  # Optional
 )
 
-# Add Kotak Neo credentials
+# Add Kotak Neo v2 credentials
 CredentialStore.objects.create(
     service='kotakneo',
     name='kotakneo_prod',
     api_key='YOUR_CONSUMER_KEY',
-    api_secret='YOUR_CONSUMER_SECRET',
-    username='9999999999',  # Mobile number
-    password='YOUR_PASSWORD',
-    neo_password='YOUR_MPIN',
-    pan='ABCDE1234F'  # Optional
+    # api_secret not needed in v2
+    username='9999999999',       # Mobile number
+    neo_password='YOUR_MPIN',    # MPIN for 2FA validation
+    ucc='YOUR_UCC',              # Unique Client Code
+    totp_secret='YOUR_TOTP_SECRET',  # For automated TOTP generation
+    mobile_number='9999999999',  # Mobile number (also stored separately)
+    pan='ABCDE1234F'             # Optional
 )
 ```
 
@@ -188,15 +192,17 @@ strangle_result = client.place_strangle_order(
 )
 ```
 
-### Direct Kotak Neo Usage
+### Direct Kotak Neo Usage (v2)
 
 ```python
 from tools.neo import NeoAPI
 
-# Initialize
+# Initialize (no network calls on init)
 api = NeoAPI()
 
-# Login
+# Login — uses TOTP + MPIN (no OTP needed)
+# Auth flow: totp_login(mobile, ucc, totp) → totp_validate(mpin)
+# Session persisted via base_url + data_center in CredentialStore
 api.login()
 
 # Get margin
@@ -205,8 +211,12 @@ margin = api.get_available_margin()
 # Get positions
 positions = api.get_positions()
 
-# Search for symbol
+# Search for symbol (v2 returns list directly, not {'data': [...]})
 results = api.search_scrip(symbol='NIFTY', exchange='NSE')
+
+# Get quotes (v2 returns list directly, uses pSymbol as instrument_token)
+# instrument_tokens format: [{"exchange_segment": "nse_fo", "instrument_token": "2885"}]
+quote = api.get_quote('NIFTY')
 
 # Place order
 order_id = api.place_order(
@@ -222,6 +232,10 @@ order_id = api.place_order(
 # Logout
 api.logout()
 ```
+
+> **Note:** Neo v2 auto-login is limited to **one attempt per day** per broker to prevent
+> account blocking. Session is restored from saved `base_url` + `data_center` when possible.
+> If `base_url` is missing, a fresh login is forced.
 
 ---
 
@@ -332,21 +346,39 @@ class CredentialStore(models.Model):
     password = models.CharField()
 
     # Kotak Neo specific
-    neo_password = models.CharField()  # MPIN
+    neo_password = models.CharField()        # MPIN
     pan = models.CharField()
-    sid = models.CharField()  # Session ID
+    sid = models.CharField()                 # Session ID
+
+    # Kotak Neo v2 fields
+    ucc = models.CharField()                 # Unique Client Code
+    totp_secret = models.CharField()         # TOTP secret for automated login
+    mobile_number = models.CharField()       # Mobile number
+    neo_base_url = models.URLField()         # API base URL (from totp_validate response)
+    neo_data_center = models.CharField()     # Data center (from totp_validate response)
+    neo_edit_token = models.TextField()      # Edit token for session
+    neo_edit_sid = models.CharField()        # Edit SID for session
+    neo_server_id = models.CharField()       # Server ID for session
+
+    # Auto-login tracking (one attempt per day per broker)
+    auto_login_status = models.CharField()   # none|in_progress|success|failed
+    auto_login_date = models.DateField()     # Date of last auto-login attempt
 ```
 
 ### Field Mapping
 
-| Purpose | ICICI Breeze | Kotak Neo |
-|---------|--------------|-----------|
-| App ID | `api_key` | `api_key` |
-| App Secret | `api_secret` | `api_secret` |
-| Session | `session_token` | `sid` |
-| Login ID | - | `username` (mobile) |
-| Password | - | `password` |
+| Purpose | ICICI Breeze | Kotak Neo v2 |
+|---------|--------------|--------------|
+| App ID | `api_key` | `api_key` (Consumer Key) |
+| App Secret | `api_secret` | *(not needed in v2)* |
+| Session | `session_token` | `neo_edit_token` + `neo_edit_sid` |
+| Login ID | - | `mobile_number` |
+| UCC | - | `ucc` |
+| TOTP Secret | - | `totp_secret` |
 | Trading PIN | - | `neo_password` (MPIN) |
+| API Base URL | - | `neo_base_url` (required for all v2 API calls) |
+| Data Center | - | `neo_data_center` |
+| Auto-Login | - | `auto_login_status` + `auto_login_date` |
 
 ---
 
@@ -376,23 +408,49 @@ finally:
 
 ### Session Expiry
 
-- Session tokens expire after inactivity
-- APIs automatically prompt for re-login
-- Store new session token after successful login
+- Session tokens expire after inactivity (typically daily)
+- Breeze: Uses Selenium + Telegram OTP flow for auto-login
+- Kotak Neo v2: Uses TOTP + MPIN (no OTP needed, fully automated)
 
-### Refresh Session
+### Auto-Login Safety (One Attempt Per Day)
 
-```bash
-# Re-setup credentials with new session
-python manage.py setup_credentials --setup-breeze
-```
+To prevent account blocking from repeated failed login attempts:
+- Each broker gets **one auto-login attempt per day**
+- Tracked via `auto_login_status` (none → in_progress → success/failed)
+- Reset daily via `auto_login_date` comparison
+- Helpers in `apps/brokers/utils/auth_manager.py`:
+  - `can_attempt_auto_login(service)` — check if attempt allowed
+  - `mark_auto_login_started(service)` — mark in-progress
+  - `mark_auto_login_success(service)` / `mark_auto_login_failed(service)`
+  - `reset_auto_login_status(service)` — manual reset
 
-Or programmatically:
+### Breeze Session
 
 ```python
-cred = CredentialStore.objects.filter(service='breeze').first()
-cred.session_token = new_token
-cred.save()
+# Auto-login with Selenium + Telegram OTP
+from apps.brokers.services.breeze_session import BreezeSessionManager
+
+manager = BreezeSessionManager()  # Singleton
+client = manager.get_client()     # Auto-refreshes if needed
+
+# Lock mechanism prevents concurrent logins:
+# - breeze_auto_login_lock in NseFlag (300s expiry)
+# - validate_existing_token() creates BreezeConnect directly (no recursion)
+```
+
+### Kotak Neo v2 Session
+
+```python
+from tools.neo import NeoAPI
+
+api = NeoAPI()
+api.login()  # Tries session restore first, then fresh login
+
+# Session restoration:
+# 1. Checks saved base_url + data_center in CredentialStore
+# 2. If base_url missing → forces fresh login
+# 3. Fresh login: totp_login() → totp_validate() → save session
+# 4. Rate limiting: max 3 attempts with 10s delay between retries
 ```
 
 ---

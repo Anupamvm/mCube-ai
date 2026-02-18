@@ -23,12 +23,15 @@ The brokers app handles all communication with broker APIs (Kotak Neo and ICICI 
 | `models.py` | Order, Execution, HistoricalPrice models |
 | `interfaces.py` | Abstract broker interface |
 | `base.py` | Base classes for broker abstraction |
-| `integrations/breeze.py` | ICICI Breeze integration (1458 lines) |
-| `integrations/kotak_neo.py` | Kotak Neo integration (1924 lines) |
+| `integrations/breeze.py` | ICICI Breeze integration (~1,962 lines) |
+| `integrations/kotak_neo.py` | Kotak Neo integration (~2,822 lines) |
 | `integrations/breeze_module/` | Modular Breeze components |
 | `integrations/neo/` | Modular Neo components |
+| `services/breeze_session.py` | Breeze session manager (singleton, auto-login with Selenium + Telegram OTP) |
+| `services/breeze_auto_login.py` | Breeze auto-login with lock mechanism (~1,003 lines) |
 | `services/order_sync.py` | Order synchronization |
-| `utils/` | Auth manager, security master |
+| `utils/auth_manager.py` | Credential management + auto-login tracking helpers |
+| `utils/security_master.py` | Instrument master lookup |
 | `admin.py` | Django admin interface |
 
 ---
@@ -190,17 +193,39 @@ margin = get_nfo_margin()
 
 ---
 
-## Kotak Neo Integration
+## Kotak Neo Integration (v2 — TOTP + MPIN Auth)
 
-**File**: `integrations/kotak_neo.py`
+**File**: `integrations/kotak_neo.py` + `tools/neo.py`
 
-### Authentication
+### Authentication (v2)
+
+The Kotak Neo API was upgraded from v1 to v2 in Feb 2026:
+- **Old (v1):** `login(pan, password)` + `session_2fa(OTP)` — required consumer_secret
+- **New (v2):** `totp_login(mobile, ucc, totp)` + `totp_validate(mpin)` — no OTP needed, fully automated
 
 ```python
-from apps.brokers.integrations.kotak_neo import get_kotak_neo_client
+from tools.neo import NeoAPI
 
-# Get authenticated client (handles 2FA automatically)
-client = get_kotak_neo_client()
+# Initialize (zero network calls on init — no consumer_secret needed)
+api = NeoAPI()
+
+# Login — tries session restore first, then fresh TOTP+MPIN login
+# Session persistence: saves base_url + data_center from totp_validate response
+# base_url is REQUIRED for all non-auth API calls
+api.login()
+
+# Auto-login is limited to one attempt per day to prevent account blocking
+# 3 retries with 10-second delay between attempts
+```
+
+### v2 API Response Changes
+
+```python
+# Quotes: v2 returns list directly (not {'data': [...]})
+# Uses pSymbol as instrument_token
+# instrument_tokens format: [{"exchange_segment": "nse_fo", "instrument_token": "2885"}]
+
+# search_scrip: v2 returns list directly (wrapper handles both formats)
 ```
 
 ### Key Functions
@@ -341,14 +366,34 @@ instrument = get_futures_instrument('RELIANCE', '30-JAN-2026')
 
 ### Auth Manager (`utils/auth_manager.py`)
 
-Centralized authentication handling.
+Centralized authentication handling + auto-login safety tracking.
 
 ```python
-from apps.brokers.utils.auth_manager import AuthManager
+from apps.brokers.utils.auth_manager import (
+    can_attempt_auto_login,      # Check if daily attempt allowed
+    mark_auto_login_started,     # Mark attempt in-progress
+    mark_auto_login_success,     # Mark successful login
+    mark_auto_login_failed,      # Mark failed login
+    reset_auto_login_status,     # Manual reset
+    save_neo_session,            # Persist Neo v2 session (base_url, data_center, tokens)
+    restore_neo_session,         # Restore saved session
+)
+```
 
-auth = AuthManager()
-auth.login_breeze()
-auth.login_neo()
+### Breeze Session Manager (`services/breeze_session.py`)
+
+Singleton session manager with auto-login and lock mechanism.
+
+```python
+from apps.brokers.services.breeze_session import BreezeSessionManager
+
+manager = BreezeSessionManager()  # Singleton (_instance pattern)
+client = manager.get_client()     # Returns authenticated BreezeConnect
+
+# Lock mechanism prevents concurrent logins:
+# - breeze_auto_login_lock flag in NseFlag (300s expiry)
+# - validate_existing_token() creates BreezeConnect directly (no recursion)
+# - caller_holds_lock param prevents deadlock
 ```
 
 ---
@@ -431,8 +476,15 @@ python manage.py setup_credentials --test-kotakneo
    - Neo: Embedded in symbol `'NIFTY26JAN...'`
 
 3. **Rate Limits**: Use batch functions for large orders
+   - Kotak API rate-limits after multiple failed login attempts; wait ~90s between retries
 
 4. **Session Expiry**: Tokens expire, need daily re-login
+   - Neo v2: Session restored via saved `base_url` + `data_center`; fails early if `base_url` missing
+   - Breeze: Singleton session manager with Selenium + Telegram OTP auto-login
+
+5. **Auto-Login Safety**: One attempt per day per broker
+   - Tracked via `CredentialStore.auto_login_status` + `auto_login_date`
+   - Prevents account blocking from repeated failed attempts
 
 ---
 

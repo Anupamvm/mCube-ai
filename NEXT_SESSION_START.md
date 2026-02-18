@@ -1,6 +1,6 @@
 # Next Session Quick Start Guide
 
-**Last Updated:** February 9, 2026
+**Last Updated:** February 17, 2026
 **Full Plan:** See `IMPROVEMENT_PLAN.md` (1047 lines, 8-week roadmap)
 
 ---
@@ -10,16 +10,16 @@
 | Area | Status | Next Action |
 |------|--------|-------------|
 | Test Coverage | <1% | Create test infrastructure |
-| Code Duplication | 6+ patterns | Extract `json_serial` first |
+| Code Duplication | 5 copies of json_serial | Extract to `apps/core/utils/json_helpers.py` |
 | Security | OK | `api_positions` already has decorators |
-| Monster Files | 3 files >3K lines | Plan to split, not started |
+| Monster Files | core/views.py (6K), trading/views.py (3.2K) | Plan to split (telegram bot ALREADY split into 4-file mixin) |
 
 ---
 
 ## Week 1 Priority Tasks (Immediate)
 
 ### Task 1: Extract `json_serial` to Utility (2h)
-**Problem:** 3+ identical copies in `apps/trading/views.py` (lines 499, 971, 2058)
+**Problem:** 5 identical copies — 4 in `apps/trading/views.py` (lines 499, 971, 2058, 2449) + 1 in `analysis_service.py`
 
 **Action:**
 ```bash
@@ -43,9 +43,8 @@ def json_serial(obj):
 ```
 
 **Then update imports in:**
-- `apps/trading/views.py` (3 locations)
-- `apps/trading/services/suggestion_service.py`
-- `apps/trading/services/analysis_service.py`
+- `apps/trading/views.py` (4 locations: lines 499, 971, 2058, 2449)
+- `apps/trading/services/analysis_service.py` (line 29)
 
 ---
 
@@ -109,10 +108,10 @@ coverage==7.3.2
 
 | File | Lines | Purpose |
 |------|-------|---------|
-| `IMPROVEMENT_PLAN.md` | 1047 | Full 8-week plan |
+| `IMPROVEMENT_PLAN.md` | 1122 | Full 8-week plan |
 | `apps/trading/views.py` | 3191 | Has 533-line function to extract |
-| `apps/alerts/services/telegram_bot.py` | 3181 | Needs split into 3 files |
-| `apps/core/views.py` | 5740 | Needs split into 4 modules |
+| `apps/alerts/services/telegram_bot.py` | 3880 | Already split into 4-file mixin (DONE) |
+| `apps/core/views.py` | 6025 | Needs split into 4 modules |
 | `apps/core/task_config.py` | - | Task display names & categories |
 
 ---

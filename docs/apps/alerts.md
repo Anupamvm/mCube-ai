@@ -8,19 +8,32 @@ The alerts app handles all notifications via Telegram. It includes an interactiv
 
 ## What This App Does
 
-1. **Telegram Bot** - Interactive bot with 14 commands
+1. **Telegram Bot** - Full interactive trading control with 9 slash commands, 12-button main menu, 21 callback routing prefixes
 2. **Alert Delivery** - Sends notifications for trades, risks, P&L
-3. **Trade Approval** - Approve/reject trades via Telegram
-4. **System Control** - Pause/resume trading remotely
+3. **Trade Approval** - Two-step futures approval flow + options confirm/reject via Telegram
+4. **System Control** - Pause/resume trading, task management, broker login, all remotely
+5. **Manual Trading** - 10-step trade wizard for placing orders directly from Telegram
 
 ---
 
 ## Files Overview
 
+### Telegram Bot (Mixin Pattern — ~7,573 LOC across 4 files)
+
+| File | LOC | Purpose |
+|------|-----|---------|
+| `services/telegram_bot.py` | ~3,880 | Main `TelegramBotHandler` class + callback router + position/trade/core handlers |
+| `services/telegram_bot_menus.py` | ~1,312 | `MenuMixin` — all menu rendering + callback handler methods (30 methods) |
+| `services/telegram_bot_data.py` | ~1,486 | `DataMixin` — `@sync_to_async` data fetchers for all menus (37+ methods) |
+| `services/telegram_bot_trade.py` | ~895 | `TradeMixin` — Manual 10-step trade wizard (25 methods) |
+
+**Class Hierarchy:** `TelegramBotHandler(MenuMixin, DataMixin, TradeMixin)`
+
+### Other Files
+
 | File | Purpose |
 |------|---------|
 | `models.py` | Alert and AlertLog models |
-| `services/telegram_bot.py` | Interactive bot handler (39KB) |
 | `services/telegram_client.py` | Low-level Telegram API |
 | `services/alert_manager.py` | Alert orchestration |
 | `services/telegram_helpers.py` | Async database helpers |
@@ -81,41 +94,47 @@ retry_count = IntegerField()
 
 ---
 
-## Telegram Bot Commands
-
-### System Status
+## Telegram Bot Commands (9 slash commands)
 
 | Command | Description |
 |---------|-------------|
-| `/start` | Welcome message |
-| `/help` | List all commands |
-| `/status` | System overview (trading status, accounts, positions) |
-| `/accounts` | Account balances and margin |
-| `/logs` | Recent system logs (last 20 lines) |
+| `/start` | Interactive main menu with live header (VIX, P&L, positions, margin) + 12-button grid |
+| `/test` | Connectivity test |
+| `/positions` | Broker picker → position management |
+| `/core` | Core trading settings |
+| `/trade` | Manual 10-step trade wizard |
+| `/orders` | Order book view |
+| `/margin` | Margin & limits view |
+| `/pnl` | P&L today |
+| `/analytics` | Performance analytics |
 
-### Position Management
+## Main Menu (12 Buttons)
 
-| Command | Description |
-|---------|-------------|
-| `/positions` | All active positions (live from broker) |
-| `/position <id>` | Specific position details |
-| `/close <id>` | Close specific position (with confirmation) |
-| `/closeall` | Emergency close all positions |
+```
+Row 1: [Trade]          [Orders]
+Row 2: [Positions]      [P&L]
+Row 3: [Market]         [Risk]
+Row 4: [Tasks]          [Settings]
+Row 5: [System]         [Quick Actions]
+Row 6: [Analytics]      [Refresh]
+```
 
-### P&L Tracking
+### Sub-Menus
 
-| Command | Description |
-|---------|-------------|
-| `/pnl` | Today's P&L summary |
-| `/pnl_week` | This week's P&L |
-
-### Risk Management
-
-| Command | Description |
-|---------|-------------|
-| `/risk` | Risk limits and utilization |
-| `/pause` | Pause automated trading |
-| `/resume` | Resume trading |
+| Menu | Features |
+|------|----------|
+| **Trade** | 10-step wizard: broker → type → symbol → expiry → option type → strike → direction → lots → order type → confirm |
+| **Orders** | View orders from both brokers, cancel pending Kotak orders |
+| **Positions** | Broker picker (ICICI/Kotak/All), close/average, SL/target modification with preset % buttons |
+| **P&L** | DailyPnL (realized/unrealized/total, trade stats) |
+| **Market** | NseFlag snapshot (VIX, tradable, delta) + news/sentiment analysis |
+| **Risk** | RiskLimit utilization + CircuitBreaker count |
+| **Tasks** | Category overview → per-task toggle/run, schedule editing (±15 min or custom time) |
+| **Settings** | Core trading settings + broker login (Kotak auto TOTP / Breeze OTP) |
+| **System** | Celery worker/beat, Redis, Breeze/Kotak sessions, error count |
+| **Quick Actions** | Pause/resume trading, close all, refresh Breeze, run futures algo, data sync |
+| **Analytics** | Performance summary with period toggle (week/month/FY) |
+| **Refresh** | Refresh main menu data |
 
 ---
 
@@ -131,24 +150,41 @@ python manage.py run_telegram_bot
 
 ---
 
-## Bot Architecture
+## Bot Architecture (Mixin Pattern)
 
 ```
-User sends message
+User sends command or clicks button
       ↓
-TelegramBotHandler receives
+TelegramBotHandler(MenuMixin, DataMixin, TradeMixin)
       ↓
-Check authorization (chat ID)
+Check authorization (chat ID whitelist)
       ↓
-Parse command
-      ↓
-Execute handler (async)
-├── Database queries (@sync_to_async)
-├── Broker API calls (if needed)
-└── Format response (HTML)
-      ↓
-Send reply to user
+┌─── Slash commands → command handlers (start, trade, orders, etc.)
+└─── Button clicks → button_callback()
+                         ↓
+                    query.answer() (once at top)
+                         ↓
+                    _route_callback() — 21 prefix-based routes
+                         ↓
+         ┌── menu_* → MenuMixin._handle_menu_nav()
+         ├── trade_* → TradeMixin._route_trade_callback()
+         ├── tt_*/tr_* → MenuMixin task toggle/run
+         ├── sl_*/tgt_* → MenuMixin SL/target modification
+         ├── ord_* → MenuMixin order book
+         ├── qa_* → MenuMixin quick actions (with confirmation)
+         ├── select_futures_*/confirm_futures_* → two-step trade approval
+         └── ... (21 total prefix routes)
+                         ↓
+               DataMixin fetches data (@sync_to_async)
+                         ↓
+               edit_message_text (inline update)
 ```
+
+### Key Design Decisions
+- `button_callback()` calls `query.answer()` once before routing — handlers only use `edit_message_text`
+- Trade wizard state persisted in Django cache (not DB) for speed
+- File lock (`/tmp/mcube_telegram_bot.lock`) prevents multiple bot instances
+- Callback data strings all under 64 bytes (Telegram limit)
 
 ---
 
@@ -353,10 +389,12 @@ This is typically called by a Celery task periodically.
 ## How to Study This App
 
 1. **Start with `models.py`** - Understand Alert structure
-2. **Read `telegram_bot.py`** - Learn the command handlers
-3. **Study `alert_manager.py`** - Alert creation flow
-4. **Check `telegram_helpers.py`** - Async patterns
-5. **Review `telegram_trade_notifier.py`** - Trade notifications
+2. **Read `telegram_bot.py`** - Main handler, `_route_callback()` dispatcher, command handlers
+3. **Study `telegram_bot_menus.py`** - MenuMixin with all menu rendering (30 methods)
+4. **Study `telegram_bot_data.py`** - DataMixin with all DB queries (37+ methods, all `@sync_to_async`)
+5. **Study `telegram_bot_trade.py`** - TradeMixin with 10-step manual trade wizard (25 methods)
+6. **Check `alert_manager.py`** - Alert creation flow
+7. **Review `telegram_trade_notifier.py`** - Trade notification formatting
 
 ---
 

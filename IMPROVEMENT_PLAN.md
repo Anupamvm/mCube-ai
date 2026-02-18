@@ -311,13 +311,11 @@ class TestFuturesWorkflow:
 
 ### 2.1.1 Extract Duplicate `json_serial` Function
 
-**Current State:** 6+ identical copies across codebase
+**Current State:** 5 identical copies across codebase (verified Feb 17, 2026)
 
 **Files Affected:**
-- `apps/trading/views.py` (lines 499, 971, 2058)
-- `apps/trading/services/suggestion_service.py` (line 22)
-- `apps/trading/services/analysis_service.py` (line 29)
-- Multiple view modules
+- `apps/trading/views.py` (lines 499, 971, 2058, 2449) — **4 copies**
+- `apps/trading/services/analysis_service.py` (line 29) — **1 copy**
 
 **Action:**
 ```python
@@ -342,12 +340,15 @@ json.dumps(data, default=json_serial)
 
 ### 2.1.2 Replace Bare `except:` Statements
 
-**Current State:** 149 bare `pass` after exceptions, 6 bare `except:` without logging
+**Current State:** 38 bare `except:` occurrences across 19 files (verified Feb 17, 2026)
 
-**Files with critical issues:**
-- `apps/brokers/integrations/kotak_neo.py`
-- `apps/strategies/tasks_strangle.py`
-- `apps/data/providers/trendlyne.py`
+**Top offender files:**
+- `apps/data/providers/trendlyne.py` (5 occurrences — worst)
+- `apps/core/views.py` (4 occurrences)
+- `apps/alerts/services/telegram_bot.py` (3 occurrences)
+- `apps/strategies/strategies/icici_futures.py` (3 occurrences)
+- `apps/strategies/tasks_strangle.py` (2 occurrences)
+- `apps/brokers/integrations/kotak_neo.py` (1 occurrence)
 
 **Action:**
 ```python
@@ -395,20 +396,18 @@ return JsonResponse({
 
 ### 2.2.1 Split Monster Files
 
-#### A. Telegram Bot (3,181 lines → 3 files)
+#### A. Telegram Bot — ~~DONE~~ (SUPERSEDED)
 
-**Current:** `apps/alerts/services/telegram_bot.py` - 92 functions
-
-**Target Structure:**
+**Status:** Already split into 4-file mixin architecture (~7,573 LOC total):
 ```
 apps/alerts/services/
-├── telegram_bot.py           # Core bot handler, routing (~800 lines)
-├── telegram_icici_handler.py # ICICI position management (~900 lines)
-├── telegram_kotak_handler.py # Kotak position management (~700 lines)
-└── telegram_utils.py         # Shared formatting, helpers (~300 lines)
+├── telegram_bot.py           # Main handler + callback router (~3,880 LOC)
+├── telegram_bot_menus.py     # MenuMixin - menu rendering (~1,312 LOC)
+├── telegram_bot_data.py      # DataMixin - @sync_to_async fetchers (~1,486 LOC)
+└── telegram_bot_trade.py     # TradeMixin - manual trade wizard (~895 LOC)
 ```
 
-**Effort:** 8 hours
+**Effort:** Already complete — no further work needed
 
 #### B. Core Views (5,740 lines → 4 files)
 
@@ -986,15 +985,15 @@ def analyze_component_effectiveness():
 
 | File | Lines | Priority | Actions |
 |------|-------|----------|---------|
-| `apps/alerts/services/telegram_bot.py` | 3,181 | CRITICAL | Split into 3 files |
-| `apps/core/views.py` | 5,740 | CRITICAL | Split into 4 files |
+| `apps/alerts/services/telegram_bot.py` | 3,880 | ~~DONE~~ | ~~Split into 3 files~~ Already split into 4-file mixin pattern |
+| `apps/core/views.py` | 6,025 | CRITICAL | Split into 4 files |
 | `apps/trading/views.py` | 3,191 | CRITICAL | Extract 3 services |
 | `apps/trading/futures_analyzer.py` | 3,340 | HIGH | Consolidate with enhanced_futures_analyzer |
-| `apps/strategies/analyzers/enhanced_futures_analyzer.py` | 2,117 | HIGH | Merge with futures_analyzer |
-| `apps/trading/services/suggestion_service.py` | - | HIGH | Remove duplicate json_serial |
+| `apps/strategies/analyzers/enhanced_futures_analyzer.py` | 2,118 | HIGH | Merge with futures_analyzer |
 | `apps/trading/services/analysis_service.py` | - | HIGH | Remove duplicate json_serial |
-| `apps/brokers/services/breeze_auto_login.py` | 1,004 | MEDIUM | Add retry logic |
-| `apps/brokers/integrations/breeze.py` | 1,963 | MEDIUM | Add rate limiting |
+| `apps/brokers/services/breeze_auto_login.py` | 1,003 | MEDIUM | Add retry logic |
+| `apps/brokers/integrations/breeze.py` | 1,962 | MEDIUM | Add rate limiting |
+| `apps/brokers/integrations/kotak_neo.py` | 2,822 | MEDIUM | Add rate limiting |
 | `apps/core/utils/decorators.py` | - | MEDIUM | Add type hints |
 
 ---

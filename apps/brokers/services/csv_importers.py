@@ -1,8 +1,8 @@
 """
 CSV Importers for Broker Trade History
 
-Parses F&O trade history from CSV files:
-- Kotak Neo: Gain/Loss CSV (Derivatives section)
+Parses F&O trade history from CSV/Excel files:
+- Kotak Neo: Gain/Loss CSV or Excel (Derivatives section)
 - ICICI Breeze: FNO Portfolio CSV
 """
 
@@ -15,6 +15,7 @@ from datetime import datetime, date
 from decimal import Decimal, InvalidOperation
 from typing import Dict, List, Optional, Tuple
 
+from django.core.files.uploadedfile import InMemoryUploadedFile, TemporaryUploadedFile
 from django.db import transaction
 
 from apps.brokers.models import BrokerContractPnL, CSVImportLog
@@ -103,6 +104,63 @@ def parse_int(value: str, default: int = 0) -> int:
     except (ValueError, TypeError):
         logger.warning(f"Could not parse int: {value}")
         return default
+
+
+def convert_excel_to_csv_file(excel_file) -> InMemoryUploadedFile:
+    """
+    Convert an Excel (.xlsx/.xls) file to a CSV-like in-memory file
+    that can be processed by existing CSV importers.
+
+    Preserves the original filename pattern (replacing extension with .csv)
+    so that FY extraction from filename still works.
+
+    Args:
+        excel_file: Django UploadedFile (InMemoryUploadedFile or TemporaryUploadedFile)
+
+    Returns:
+        InMemoryUploadedFile with CSV content, original filename with .csv extension
+    """
+    import openpyxl
+
+    original_name = excel_file.name
+    csv_name = re.sub(r'\.(xlsx?|xls)$', '.csv', original_name, flags=re.IGNORECASE)
+
+    logger.info(f"Converting Excel file '{original_name}' to CSV format")
+
+    # Read Excel file
+    excel_file.seek(0)
+    wb = openpyxl.load_workbook(excel_file, data_only=True, read_only=True)
+    ws = wb.active
+
+    # Write rows to CSV buffer
+    csv_buffer = io.StringIO()
+    writer = csv.writer(csv_buffer)
+
+    for row in ws.iter_rows(values_only=True):
+        # Convert None to empty string, numbers/dates to string
+        csv_row = []
+        for cell in row:
+            if cell is None:
+                csv_row.append('')
+            else:
+                csv_row.append(str(cell))
+        writer.writerow(csv_row)
+
+    wb.close()
+
+    # Create InMemoryUploadedFile from CSV content
+    csv_content = csv_buffer.getvalue().encode('utf-8-sig')
+    csv_file = InMemoryUploadedFile(
+        file=io.BytesIO(csv_content),
+        field_name='csv_files',
+        name=csv_name,
+        content_type='text/csv',
+        size=len(csv_content),
+        charset='utf-8',
+    )
+
+    logger.info(f"Excel conversion complete: {ws.max_row} rows, {len(csv_content)} bytes CSV")
+    return csv_file
 
 
 class KotakFNOImporter:

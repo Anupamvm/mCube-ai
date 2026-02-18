@@ -43,26 +43,30 @@ class CSVUploadForm(forms.Form):
         help_text='Select the type of CSV file you are uploading'
     )
 
+    ALLOWED_EXTENSIONS = ('.csv', '.xlsx', '.xls')
+
     csv_files = MultipleFileField(
         widget=MultipleFileInput(attrs={
             'class': 'form-control',
-            'accept': '.csv',
+            'accept': '.csv,.xlsx,.xls',
             'id': 'csv-file-input',
             'multiple': True,
         }),
-        help_text='Upload one or more CSV files from your broker'
+        help_text='Upload CSV or Excel files from your broker'
     )
 
     def clean_csv_files(self):
-        """Validate the uploaded CSV files."""
+        """Validate the uploaded files (CSV or Excel)."""
         files = self.cleaned_data.get('csv_files', [])
         validated_files = []
 
         for file in files:
             if file:
                 # Check file extension
-                if not file.name.lower().endswith('.csv'):
-                    raise forms.ValidationError(f'Only CSV files are allowed. "{file.name}" is not a CSV file.')
+                if not file.name.lower().endswith(self.ALLOWED_EXTENSIONS):
+                    raise forms.ValidationError(
+                        f'Only CSV and Excel files are allowed. "{file.name}" is not supported.'
+                    )
 
                 # Check file size (max 10MB)
                 if file.size > 10 * 1024 * 1024:
@@ -71,6 +75,6 @@ class CSVUploadForm(forms.Form):
                 validated_files.append(file)
 
         if not validated_files:
-            raise forms.ValidationError('Please select at least one CSV file.')
+            raise forms.ValidationError('Please select at least one file.')
 
         return validated_files

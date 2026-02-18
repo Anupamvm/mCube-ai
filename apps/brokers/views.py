@@ -1436,7 +1436,7 @@ def api_upload_csv(request):
     """
     import json
     from apps.brokers.forms import CSVUploadForm
-    from apps.brokers.services.csv_importers import KotakFNOImporter, BreezeFNOImporter
+    from apps.brokers.services.csv_importers import KotakFNOImporter, BreezeFNOImporter, convert_excel_to_csv_file
 
     try:
         form = CSVUploadForm(request.POST, request.FILES)
@@ -1472,7 +1472,13 @@ def api_upload_csv(request):
         all_errors = []
 
         for csv_file in csv_files:
-            logger.info(f"Processing {file_type} CSV upload: {csv_file.name}")
+            original_name = csv_file.name
+            logger.info(f"Processing {file_type} upload: {original_name}")
+
+            # Convert Excel files to CSV on the fly
+            if original_name.lower().endswith(('.xlsx', '.xls')):
+                logger.info(f"Detected Excel file, converting to CSV: {original_name}")
+                csv_file = convert_excel_to_csv_file(csv_file)
 
             # Create a new importer instance for each file
             importer = importer_class()

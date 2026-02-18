@@ -41,7 +41,7 @@ The core app is the foundation of mCube. It provides shared utilities, credentia
 Stores API credentials for all external services.
 
 ```python
-# Fields
+# Core Fields
 service = CharField()           # breeze, kotakneo, trendlyne, telegram
 name = CharField()              # Human-readable name
 api_key = CharField()           # API key
@@ -52,6 +52,20 @@ password = CharField()          # Password
 neo_password = CharField()      # MPIN for Kotak Neo
 pan = CharField()               # PAN card
 sid = CharField()               # Session ID
+
+# Kotak Neo v2 Fields (added Feb 2026)
+ucc = CharField()               # Unique Client Code
+totp_secret = CharField()       # TOTP secret for automated login
+mobile_number = CharField()     # Mobile number
+neo_base_url = URLField()       # API base URL (from totp_validate response, REQUIRED for all v2 API calls)
+neo_data_center = CharField()   # Data center (from totp_validate response)
+neo_edit_token = TextField()    # Edit token for session
+neo_edit_sid = CharField()      # Edit SID
+neo_server_id = CharField()     # Server ID
+
+# Auto-Login Tracking (one attempt per day per broker)
+auto_login_status = CharField() # none|in_progress|success|failed
+auto_login_date = DateField()   # Date of last auto-login attempt
 ```
 
 **Usage**:
@@ -248,9 +262,81 @@ logger.success("Monitoring complete", context={'positions': 5})
 logger.failure("Error occurred", error=exception)
 ```
 
+### Task Guard Decorator (`utils/decorators.py`)
+
+```python
+from apps.core.utils.decorators import task_enabled_guard
+
+@task_enabled_guard('fetch-trendlyne-data-daily')
+def fetch_trendlyne_data(self):
+    # Only runs if task is enabled in CeleryTaskState
+    pass
+
+# Supports list of task keys (runs if ANY key is enabled)
+@task_enabled_guard(['batch-options-averaging', 'batch-options-averaging-10am'])
+def batch_averaging(self):
+    pass
+
+# Manual "Run Now" bypasses the guard
+# run_task_now() passes _bypass_guard=True kwarg
+```
+
+### Task Config (`task_config.py`)
+
+`TASK_DEFAULT_CONFIG` defines display names, categories, and defaults for all tasks.
+
+**6 Task Categories:**
+- `data` (Market Data)
+- `strategies` (Strategy Execution)
+- `transactions` (Transactions) — start-options-trade, batch-options-averaging, close-trading-day, etc.
+- `monitoring` (Position Monitoring)
+- `risk` (Risk Management)
+- `reports` (Analytics & Reports)
+
 ---
 
 ## Services
+
+### TradingContext (`services/trading_context.py`) — NEW (Feb 2026)
+
+Unified context service for Celery tasks & web views. Ensures both use the SAME APIs.
+
+```python
+from apps.core.services.trading_context import get_trading_context
+
+ctx = get_trading_context(task_name='my_task')
+
+# Check trading eligibility
+if not ctx.is_trading_allowed():
+    return ctx.skip_result()
+
+# Access config
+config = ctx.config  # TradingCoreConfig singleton
+lots = config.get_lots_for_trade(margin_per_lot=50000)
+needs_confirm = config.requires_confirmation('futures_entry')
+is_paper = config.is_simulated()
+
+# Account retrieval
+kotak_account = ctx.get_kotak_account()
+```
+
+### TradingCoreConfig (in `models.py`) — NEW (Feb 2026)
+
+Singleton model for centralized trading control.
+
+```python
+# Position Sizing Modes
+# TEST (1 Lot Each) | MANUAL (Fixed Lots) | AUTO (Margin-Based) | SIMULATED (Paper Trade)
+
+# Notification Levels
+# FULL_CONTROL (Confirm Everything) | SUPERVISED (Confirm Major) | AUTONOMOUS (Notifications Only)
+
+# Helper Methods
+config = TradingCoreConfig.get_instance()
+config.get_lots_for_trade(margin_per_lot)  # Calculate lots based on mode
+config.requires_confirmation(action_type)  # Check if action needs approval
+config.is_simulated()                       # Check if paper trading
+```
 
 ### Expiry Selector (`services/expiry_selector.py`)
 

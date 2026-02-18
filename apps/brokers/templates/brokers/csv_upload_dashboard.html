@@ -602,9 +602,9 @@
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
                 </svg>
-                <h3>Drop CSV files here</h3>
-                <p>or click to browse (multiple files supported)</p>
-                <input type="file" id="csv-file-input" name="csv_files" accept=".csv" multiple required>
+                <h3>Drop CSV or Excel files here</h3>
+                <p>or click to browse (.csv, .xlsx supported)</p>
+                <input type="file" id="csv-file-input" name="csv_files" accept=".csv,.xlsx,.xls" multiple required>
             </div>
 
             <div class="files-preview" id="files-preview">
@@ -699,7 +699,7 @@
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
             </svg>
-            <p>No imports yet. Upload a CSV file to get started.</p>
+            <p>No imports yet. Upload a CSV or Excel file to get started.</p>
         </div>
         {% endif %}
     </div>
@@ -737,11 +737,12 @@ dropZone.addEventListener('drop', (e) => {
     e.preventDefault();
     dropZone.classList.remove('dragover');
 
-    const files = Array.from(e.dataTransfer.files).filter(f => f.name.toLowerCase().endsWith('.csv'));
+    const allowedExts = ['.csv', '.xlsx', '.xls'];
+    const files = Array.from(e.dataTransfer.files).filter(f => allowedExts.some(ext => f.name.toLowerCase().endsWith(ext)));
     if (files.length > 0) {
         addFiles(files);
     } else {
-        alert('Please upload CSV files only');
+        alert('Please upload CSV or Excel files only');
     }
 });
 
@@ -827,7 +828,7 @@ uploadForm.addEventListener('submit', async (e) => {
     e.preventDefault();
 
     if (selectedFiles.length === 0) {
-        alert('Please select at least one CSV file');
+        alert('Please select at least one file');
         return;
     }
 

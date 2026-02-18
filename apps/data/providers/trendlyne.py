@@ -669,10 +669,14 @@ class TrendlyneProvider(BaseWebScraper):
 
     def _download_pdf(self, pdf_url: str, symbol: str, report_date: str, author: str) -> Optional[str]:
         """
-        Download PDF report to local storage
+        Download PDF report to local storage using authenticated Selenium session.
+
+        Trendlyne PDF URLs require authentication and redirect to S3 pre-signed URLs.
+        We use the Selenium driver (already logged in) to follow the redirect,
+        then download the actual PDF from the S3 URL.
 
         Args:
-            pdf_url: URL to download PDF from
+            pdf_url: URL to download PDF from (Trendlyne URL)
             symbol: Stock symbol
             report_date: Date of report (YYYY-MM-DD)
             author: Author/brokerage name
@@ -685,6 +689,7 @@ class TrendlyneProvider(BaseWebScraper):
 
         try:
             import requests
+            import time
 
             # Create directory for analyst reports
             reports_dir = os.path.join(self.download_dir, 'analyst_reports', symbol.upper())
@@ -695,25 +700,51 @@ class TrendlyneProvider(BaseWebScraper):
             filename = f"{symbol}_{report_date}_{safe_author}.pdf"
             local_path = os.path.join(reports_dir, filename)
 
-            # Skip if already downloaded
-            if os.path.exists(local_path):
-                self.logger.info(f"PDF already exists: {local_path}")
-                return local_path
+            # Skip if already downloaded and is a valid PDF
+            if os.path.exists(local_path) and os.path.getsize(local_path) > 5000:
+                with open(local_path, 'rb') as f:
+                    if f.read(5) == b'%PDF-':
+                        self.logger.info(f"Valid PDF already exists: {local_path}")
+                        return local_path
+                # Existing file is not a valid PDF (e.g. HTML login page), delete and re-download
+                self.logger.warning(f"Existing file is not a valid PDF, re-downloading: {local_path}")
+                os.remove(local_path)
 
-            # Download PDF
-            self.logger.info(f"Downloading PDF: {pdf_url[:80]}...")
-            response = requests.get(pdf_url, timeout=30, headers={
-                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
-            })
+            # Use authenticated Selenium session to get S3 redirect URL
+            if hasattr(self, 'driver') and self.driver:
+                self.logger.info(f"Downloading PDF via authenticated session: {pdf_url[:80]}...")
+                self.driver.get(pdf_url)
+                time.sleep(2)
+                s3_url = self.driver.current_url
 
-            if response.status_code == 200 and response.content:
-                with open(local_path, 'wb') as f:
-                    f.write(response.content)
-                self.logger.info(f"PDF saved: {local_path}")
-                return local_path
+                # Download from S3 (pre-signed URL, no auth needed)
+                response = requests.get(s3_url, timeout=30)
+                if response.status_code == 200 and len(response.content) > 5000 and response.content[:5] == b'%PDF-':
+                    with open(local_path, 'wb') as f:
+                        f.write(response.content)
+                    self.logger.info(f"PDF saved ({len(response.content)} bytes): {local_path}")
+                    return local_path
+                else:
+                    self.logger.warning(
+                        f"PDF download failed: status={response.status_code}, "
+                        f"size={len(response.content)}, "
+                        f"is_pdf={response.content[:5] == b'%PDF-' if response.content else False}"
+                    )
+                    return None
             else:
-                self.logger.warning(f"PDF download failed with status {response.status_code}")
-                return None
+                # Fallback: direct download (may not work for authenticated URLs)
+                self.logger.warning(f"No Selenium driver available, trying direct download: {pdf_url[:80]}...")
+                response = requests.get(pdf_url, timeout=30, headers={
+                    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
+                })
+                if response.status_code == 200 and len(response.content) > 5000 and response.content[:5] == b'%PDF-':
+                    with open(local_path, 'wb') as f:
+                        f.write(response.content)
+                    self.logger.info(f"PDF saved via direct download ({len(response.content)} bytes): {local_path}")
+                    return local_path
+                else:
+                    self.logger.warning(f"Direct PDF download failed or returned non-PDF content")
+                    return None
 
         except Exception as e:
             self.logger.error(f"Error downloading PDF: {e}")

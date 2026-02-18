@@ -2,8 +2,8 @@
 
 **Complete Module-by-Module Documentation for Understanding and Modifying the Codebase**
 
-**Version:** 2.0
-**Last Updated:** January 2026
+**Version:** 3.0
+**Last Updated:** February 2026
 **Document Type:** Developer Reference Manual
 
 ---
@@ -117,18 +117,19 @@ mCube-ai/
 │   ├── urls.py                    # Root URL routing
 │   └── wsgi.py / asgi.py
 │
-├── apps/                          # 11 Django Applications
-│   ├── core/                      # Foundation: credentials, scheduling, utilities
+├── apps/                          # 13 Django Applications (~150K LOC)
+│   ├── core/                      # Foundation: credentials, scheduling, TradingContext, TradingCoreConfig
 │   ├── accounts/                  # Broker accounts & margin management
 │   ├── positions/                 # Position lifecycle management
-│   ├── strategies/                # Trading algorithms
-│   ├── brokers/                   # Broker API integrations
-│   ├── data/                      # Market data & analysis
-│   ├── llm/                       # AI/LLM validation & RAG
-│   ├── trading/                   # Trade suggestions & approval
+│   ├── strategies/                # Trading algorithms, dynamic scheduler
+│   ├── brokers/                   # Broker API integrations (Neo v2, Breeze)
+│   ├── data/                      # Market data, Trendlyne, GNews (3-layer caching)
+│   ├── llm/                       # AI/LLM validation, analyst reports (8h cache)
+│   ├── trading/                   # Trade suggestions, TradeConfirmationService
 │   ├── risk/                      # Risk management & circuit breakers
 │   ├── analytics/                 # Performance tracking & learning
-│   └── alerts/                    # Telegram bot & notifications
+│   ├── alerts/                    # Telegram bot (4-file mixin, ~7.5K LOC)
+│   └── algo_test/                 # Algorithm testing
 │
 ├── tools/                         # Standalone utilities
 │   ├── neo.py                     # Kotak Neo API wrapper
@@ -235,20 +236,31 @@ class MyModel(TimeStampedModel):
 ---
 
 #### `CredentialStore`
-**Location:** `apps/core/models.py:52-94`
-**Purpose:** Secure storage for API credentials
+**Location:** `apps/core/models.py:52-111`
+**Purpose:** Secure storage for API credentials + session state + auto-login tracking
 
 **Fields:**
 | Field | Type | Description |
 |-------|------|-------------|
 | `service` | CharField | Service name (breeze, kotakneo, telegram, etc.) |
 | `name` | CharField | Credential set name (default: "default") |
-| `api_key` | CharField | API key |
-| `api_secret` | CharField | API secret |
+| `api_key` | CharField | API key (Consumer Key for Neo v2) |
+| `api_secret` | CharField | API secret (not used for Neo v2) |
 | `session_token` | CharField | Session token (refreshed daily) |
 | `username` | CharField | Username for login |
 | `password` | CharField | Password for login |
 | `pan` | CharField | PAN number (for broker auth) |
+| `neo_password` | CharField | MPIN for Kotak Neo 2FA |
+| `ucc` | CharField | Unique Client Code (Neo v2) |
+| `totp_secret` | CharField | TOTP secret for automated login (Neo v2) |
+| `mobile_number` | CharField | Mobile number (Neo v2) |
+| `neo_base_url` | URLField | API base URL from totp_validate (REQUIRED for v2 API calls) |
+| `neo_data_center` | CharField | Data center from totp_validate |
+| `neo_edit_token` | TextField | Edit token for session persistence |
+| `neo_edit_sid` | CharField | Edit SID for session persistence |
+| `neo_server_id` | CharField | Server ID for session persistence |
+| `auto_login_status` | CharField | none\|in_progress\|success\|failed |
+| `auto_login_date` | DateField | Date of last auto-login attempt |
 
 **How to use:**
 ```python
@@ -261,8 +273,9 @@ api_secret = creds.api_secret
 ```
 
 **Where credentials come from:**
-- Populated via admin interface or `scripts/initialize_credentials.py`
-- Session tokens updated daily by broker login tasks
+- Populated via admin interface, web UI (`kotakneo_login` view), or management commands
+- Session tokens updated daily by auto-login tasks
+- Neo v2 session: `base_url` + `data_center` saved from `totp_validate()` response
 
 ---
 
@@ -1504,31 +1517,38 @@ def suggest_parameter_adjustments() -> List[ParameterAdjustment]:
 ## 14. Alerts App (`apps/alerts`)
 
 ### 14.1 Purpose
-Telegram bot and notifications.
+Full interactive trading control via Telegram bot + alert notifications.
 
-### 14.2 Services
+### 14.2 Telegram Bot Architecture (4-file Mixin Pattern — ~7,573 LOC)
 
-#### `telegram_bot.py`
-**Location:** `apps/alerts/services/telegram_bot.py`
-**Purpose:** Telegram bot with 14 commands
+| File | LOC | Purpose |
+|------|-----|---------|
+| `services/telegram_bot.py` | ~3,880 | Main `TelegramBotHandler` + callback router |
+| `services/telegram_bot_menus.py` | ~1,312 | `MenuMixin` — 30 menu rendering methods |
+| `services/telegram_bot_data.py` | ~1,486 | `DataMixin` — 37+ `@sync_to_async` data fetchers |
+| `services/telegram_bot_trade.py` | ~895 | `TradeMixin` — 10-step manual trade wizard |
 
-**Commands:**
+**Class:** `TelegramBotHandler(MenuMixin, DataMixin, TradeMixin)`
+
+**Commands (9):**
 | Command | Description |
 |---------|-------------|
-| `/start` | Welcome message |
-| `/help` | List all commands |
-| `/status` | System overview |
-| `/positions` | All active positions |
-| `/position <id>` | Specific position details |
-| `/accounts` | Account balances |
-| `/risk` | Risk limits status |
+| `/start` | Main menu with 12-button grid + live header (VIX, P&L, margin) |
+| `/test` | Connectivity test |
+| `/positions` | Broker picker → position management |
+| `/core` | Core trading settings |
+| `/trade` | Manual trade wizard |
+| `/orders` | Order book view |
+| `/margin` | Margin & limits |
 | `/pnl` | Today's P&L |
-| `/pnl_week` | Weekly P&L |
-| `/close <id>` | Close specific position |
-| `/closeall` | Emergency close all |
-| `/pause` | Pause trading |
-| `/resume` | Resume trading |
-| `/logs` | Recent system events |
+| `/analytics` | Performance analytics |
+
+**Callback Routing (21 prefixes):**
+`menu_*`, `pnl_*`, `mkt_*`, `risk_*`, `sys_*`, `task_cat_*`, `task_all_*`, `algo_*`, `tt_*`, `tr_*`, `qa_*`, `trade_*`, `ord_*`, `sl_*`, `tgt_*`, `margin_*`, `hist_*`, `login_*`, `news_*`, `tsched_*`, `select_futures_*`/`confirm_futures_*`
+
+**Key Design:** `button_callback()` calls `query.answer()` once at top; handlers only use `edit_message_text`.
+
+### 14.3 Alert Manager
 
 #### `alert_manager.py`
 **Purpose:** Route alerts to appropriate channels
@@ -1551,6 +1571,21 @@ def send_alert(message, priority='INFO'):
 
 ### 15.1 Configuration
 **Location:** `mcube_ai/celery.py`
+
+**Key Components:**
+- `get_static_schedule()` — Defines ~20 static tasks
+- `load_beat_schedule()` — Reads DB, filters disabled tasks, applies custom schedules
+- `_build_custom_schedule()` — Builds per-hour crontabs from `CeleryTaskState`
+- `DBReloadScheduler` — Custom `PersistentScheduler` subclass that reloads from DB
+
+**CRITICAL:** Always start beat with `--scheduler=mcube_ai.celery:DBReloadScheduler`
+
+**Task Guard:** All tasks use `@task_enabled_guard` decorator for runtime enable/disable check.
+
+**6 Task Categories:** data, strategies, transactions, monitoring, risk, reports
+
+**Global Time Limits:** `task_time_limit=300` (5 min hard), `task_soft_time_limit=240` (4 min soft)
+**Futures batch:** `soft_time_limit=540` (9 min), `time_limit=720` (12 min), `MAX_BATCH_SECONDS=480`
 
 ### 15.2 Daily Task Schedule
 
@@ -1930,4 +1965,4 @@ celery -A mcube_ai inspect active        # Check active tasks
 
 ---
 
-*Document maintained by mCube development team. Last updated January 2026.*
+*Document maintained by mCube development team. Last updated February 2026.*
