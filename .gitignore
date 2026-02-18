@@ -65,6 +65,7 @@ chroma_db/
 /logs/*.log
 /data/chromadb/*
 /data/backups/*
+/data/SecurityMaster/*
 
 # Trendlyne data (PDFs downloaded locally, not shared between machines)
 apps/data/tldata/analyst_reports/

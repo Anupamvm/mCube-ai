@@ -7,9 +7,9 @@ import os
 import sys
 import django
 
-# Setup Django
-sys.path.insert(0, '/Users/anupammangudkar/PyProjects/mCube-ai')
-os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'mCube.settings')
+# Setup Django - compute project root relative to this script
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'mcube_ai.settings')
 django.setup()
 
 from apps.brokers.integrations.kotak_neo import map_neo_symbol_to_breeze, get_ltp_from_neo

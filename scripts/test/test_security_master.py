@@ -8,7 +8,9 @@ import os
 def test_security_master_parsing():
     """Test reading SBIN December futures from SecurityMaster"""
 
-    security_master_path = '/Users/anupammangudkar/Downloads/SecurityMaster/FONSEScripMaster.txt'
+    # Use project-relative path (data/SecurityMaster/) instead of hardcoded user path
+    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+    security_master_path = os.path.join(project_root, 'data', 'SecurityMaster', 'FONSEScripMaster.txt')
     symbol = 'SBIN'
     expiry_date = '30-Dec-2025'
 

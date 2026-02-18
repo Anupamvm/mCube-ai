@@ -7,7 +7,8 @@
 # Usage: ./scripts/startbk.sh
 # =============================================================================
 
-PROJECT_DIR="/Users/anupammangudkar/Projects/mCube-ai"
+# Dynamically determine project directory (parent of scripts/)
+PROJECT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )/.." && pwd )"
 LOG_DIR="$PROJECT_DIR/logs"
 PID_DIR="$PROJECT_DIR/logs/pids"
 
@@ -53,7 +54,7 @@ echo ""
 # Check if Redis is running
 if ! redis-cli ping > /dev/null 2>&1; then
     echo -e "${RED}[ERROR] Redis is not running!${NC}"
-    echo "Start Redis first with: brew services start redis (or redis-server)"
+    echo "Start Redis first with: brew services start redis (macOS) or sudo systemctl start redis-server (Ubuntu)"
     exit 1
 fi
 echo -e "${GREEN}[OK] Redis is running${NC}"
@@ -68,9 +69,12 @@ stop_existing() {
 # Stop existing processes first
 stop_existing
 
-# Start Celery Beat (Scheduler)
+# Remove stale celerybeat-schedule.db so beat starts fresh from DB config
+rm -f "$PROJECT_DIR/celerybeat-schedule.db"
+
+# Start Celery Beat (Scheduler) with DBReloadScheduler
 echo -e "${YELLOW}Starting Celery Beat (Scheduler)...${NC}"
-nohup celery -A mcube_ai beat --loglevel=info >> "$LOG_DIR/celery_beat.log" 2>&1 &
+nohup "$PROJECT_DIR/venv/bin/python" -m celery -A mcube_ai beat --scheduler=mcube_ai.celery:DBReloadScheduler --loglevel=info >> "$LOG_DIR/celery_beat.log" 2>&1 &
 BEAT_PID=$!
 echo $BEAT_PID > "$PID_DIR/celery_beat.pid"
 sleep 2
@@ -83,7 +87,7 @@ fi
 
 # Start Celery Worker with all queues
 echo -e "${YELLOW}Starting Celery Worker (all queues, concurrency=$CELERY_CONCURRENCY)...${NC}"
-nohup celery -A mcube_ai worker \
+nohup "$PROJECT_DIR/venv/bin/python" -m celery -A mcube_ai worker \
     --queues=data,strategies,monitoring,risk,reports,celery \
     --loglevel=info \
     --concurrency=$CELERY_CONCURRENCY >> "$LOG_DIR/celery_worker.log" 2>&1 &

@@ -4807,7 +4807,7 @@ def ensure_celery_running():
             'beat_restarted': False,
             'worker_pid': None,
             'beat_pid': None,
-            'message': 'Redis not running. Run: brew install redis && brew services start redis',
+            'message': 'Redis not running. macOS: brew install redis && brew services start redis | Ubuntu: sudo apt install redis-server && sudo systemctl start redis-server',
             'error_type': 'redis_not_running'
         }
 

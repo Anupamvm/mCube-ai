@@ -313,13 +313,15 @@ mkdir -p llm_models
 mkdir -p static
 mkdir -p media
 mkdir -p templates
+mkdir -p data/SecurityMaster
 
 echo "✓ Created directories:"
-echo "  - logs/       (for application logs)"
-echo "  - llm_models/ (for LLM model files)"
-echo "  - static/     (for static files)"
-echo "  - media/      (for uploaded media)"
-echo "  - templates/  (for Django templates)"
+echo "  - logs/               (for application logs)"
+echo "  - llm_models/         (for LLM model files)"
+echo "  - static/             (for static files)"
+echo "  - media/              (for uploaded media)"
+echo "  - templates/          (for Django templates)"
+echo "  - data/SecurityMaster (for ICICI SecurityMaster files)"
 
 # ============================================================================
 # STEP 8: Run Django makemigrations
@@ -687,7 +689,7 @@ APPLESCRIPT
     osascript <<APPLESCRIPT
     tell application "Terminal"
         activate
-        do script "cd '$SCRIPT_DIR' && echo '============================================' && echo 'mCube Celery Beat (Scheduler)' && echo '============================================' && echo 'Logs: logs/celery_beat.log' && echo '' && ./venv/bin/python -m celery -A mcube_ai beat -l info 2>&1 | tee -a logs/celery_beat.log"
+        do script "cd '$SCRIPT_DIR' && echo '============================================' && echo 'mCube Celery Beat (Scheduler)' && echo '============================================' && echo 'Logs: logs/celery_beat.log' && echo '' && rm -f celerybeat-schedule.db && ./venv/bin/python -m celery -A mcube_ai beat --scheduler=mcube_ai.celery:DBReloadScheduler -l info 2>&1 | tee -a logs/celery_beat.log"
         set custom title of front window to "mCube - Celery Beat"
     end tell
 APPLESCRIPT
@@ -708,45 +710,45 @@ else
         echo "Opening gnome-terminal windows for each service..."
 
         # Django Server
-        gnome-terminal --title="mCube - Django Server" -- bash -c "cd '$SCRIPT_DIR' && source venv/bin/activate && python manage.py runserver 0.0.0.0:8000; exec bash"
+        gnome-terminal --title="mCube - Django Server" -- bash -c "cd '$SCRIPT_DIR' && ./venv/bin/python manage.py runserver 0.0.0.0:8000; exec bash"
         sleep 1
 
         # Telegram Bot
-        gnome-terminal --title="mCube - Telegram Bot" -- bash -c "cd '$SCRIPT_DIR' && source venv/bin/activate && python manage.py run_telegram_bot; exec bash"
+        gnome-terminal --title="mCube - Telegram Bot" -- bash -c "cd '$SCRIPT_DIR' && ./venv/bin/python manage.py run_telegram_bot; exec bash"
         sleep 1
 
         # Celery Worker (with tee to log file)
-        gnome-terminal --title="mCube - Celery Worker" -- bash -c "cd '$SCRIPT_DIR' && source venv/bin/activate && celery -A mcube_ai worker -l info -Q data,strategies,monitoring,risk,reports,celery --concurrency=$CELERY_CONCURRENCY 2>&1 | tee -a logs/celery_worker.log; exec bash"
+        gnome-terminal --title="mCube - Celery Worker" -- bash -c "cd '$SCRIPT_DIR' && ./venv/bin/python -m celery -A mcube_ai worker -l info -Q data,strategies,monitoring,risk,reports,celery --concurrency=$CELERY_CONCURRENCY 2>&1 | tee -a logs/celery_worker.log; exec bash"
         sleep 1
 
         # Celery Beat (with tee to log file)
-        gnome-terminal --title="mCube - Celery Beat" -- bash -c "cd '$SCRIPT_DIR' && source venv/bin/activate && celery -A mcube_ai beat -l info 2>&1 | tee -a logs/celery_beat.log; exec bash"
+        gnome-terminal --title="mCube - Celery Beat" -- bash -c "cd '$SCRIPT_DIR' && rm -f celerybeat-schedule.db && ./venv/bin/python -m celery -A mcube_ai beat --scheduler=mcube_ai.celery:DBReloadScheduler -l info 2>&1 | tee -a logs/celery_beat.log; exec bash"
 
         echo "✓ All services started in gnome-terminal windows"
 
     elif command -v konsole &> /dev/null; then
         echo "Opening konsole windows for each service..."
 
-        konsole --new-tab -e bash -c "cd '$SCRIPT_DIR' && source venv/bin/activate && python manage.py runserver 0.0.0.0:8000" &
+        konsole --new-tab -e bash -c "cd '$SCRIPT_DIR' && ./venv/bin/python manage.py runserver 0.0.0.0:8000" &
         sleep 1
-        konsole --new-tab -e bash -c "cd '$SCRIPT_DIR' && source venv/bin/activate && python manage.py run_telegram_bot" &
+        konsole --new-tab -e bash -c "cd '$SCRIPT_DIR' && ./venv/bin/python manage.py run_telegram_bot" &
         sleep 1
-        konsole --new-tab -e bash -c "cd '$SCRIPT_DIR' && source venv/bin/activate && celery -A mcube_ai worker -l info -Q data,strategies,monitoring,risk,reports,celery --concurrency=$CELERY_CONCURRENCY 2>&1 | tee -a logs/celery_worker.log" &
+        konsole --new-tab -e bash -c "cd '$SCRIPT_DIR' && ./venv/bin/python -m celery -A mcube_ai worker -l info -Q data,strategies,monitoring,risk,reports,celery --concurrency=$CELERY_CONCURRENCY 2>&1 | tee -a logs/celery_worker.log" &
         sleep 1
-        konsole --new-tab -e bash -c "cd '$SCRIPT_DIR' && source venv/bin/activate && celery -A mcube_ai beat -l info 2>&1 | tee -a logs/celery_beat.log" &
+        konsole --new-tab -e bash -c "cd '$SCRIPT_DIR' && rm -f celerybeat-schedule.db && ./venv/bin/python -m celery -A mcube_ai beat --scheduler=mcube_ai.celery:DBReloadScheduler -l info 2>&1 | tee -a logs/celery_beat.log" &
 
         echo "✓ All services started in konsole windows"
 
     elif command -v xterm &> /dev/null; then
         echo "Opening xterm windows for each service..."
 
-        xterm -title "mCube - Django Server" -e bash -c "cd '$SCRIPT_DIR' && source venv/bin/activate && python manage.py runserver 0.0.0.0:8000" &
+        xterm -title "mCube - Django Server" -e bash -c "cd '$SCRIPT_DIR' && ./venv/bin/python manage.py runserver 0.0.0.0:8000" &
         sleep 1
-        xterm -title "mCube - Telegram Bot" -e bash -c "cd '$SCRIPT_DIR' && source venv/bin/activate && python manage.py run_telegram_bot" &
+        xterm -title "mCube - Telegram Bot" -e bash -c "cd '$SCRIPT_DIR' && ./venv/bin/python manage.py run_telegram_bot" &
         sleep 1
-        xterm -title "mCube - Celery Worker" -e bash -c "cd '$SCRIPT_DIR' && source venv/bin/activate && celery -A mcube_ai worker -l info -Q data,strategies,monitoring,risk,reports,celery --concurrency=$CELERY_CONCURRENCY 2>&1 | tee -a logs/celery_worker.log" &
+        xterm -title "mCube - Celery Worker" -e bash -c "cd '$SCRIPT_DIR' && ./venv/bin/python -m celery -A mcube_ai worker -l info -Q data,strategies,monitoring,risk,reports,celery --concurrency=$CELERY_CONCURRENCY 2>&1 | tee -a logs/celery_worker.log" &
         sleep 1
-        xterm -title "mCube - Celery Beat" -e bash -c "cd '$SCRIPT_DIR' && source venv/bin/activate && celery -A mcube_ai beat -l info 2>&1 | tee -a logs/celery_beat.log" &
+        xterm -title "mCube - Celery Beat" -e bash -c "cd '$SCRIPT_DIR' && rm -f celerybeat-schedule.db && ./venv/bin/python -m celery -A mcube_ai beat --scheduler=mcube_ai.celery:DBReloadScheduler -l info 2>&1 | tee -a logs/celery_beat.log" &
 
         echo "✓ All services started in xterm windows"
 
@@ -764,7 +766,8 @@ else
         nohup ./venv/bin/python -m celery -A mcube_ai worker -l info -Q data,strategies,monitoring,risk,reports,celery --concurrency=$CELERY_CONCURRENCY > logs/celery_worker.log 2>&1 &
         echo "  ✓ Celery worker started (PID: $!) - log: logs/celery_worker.log"
 
-        nohup ./venv/bin/python -m celery -A mcube_ai beat -l info > logs/celery_beat.log 2>&1 &
+        rm -f celerybeat-schedule.db
+        nohup ./venv/bin/python -m celery -A mcube_ai beat --scheduler=mcube_ai.celery:DBReloadScheduler -l info > logs/celery_beat.log 2>&1 &
         echo "  ✓ Celery beat started (PID: $!) - log: logs/celery_beat.log"
 
         echo ""

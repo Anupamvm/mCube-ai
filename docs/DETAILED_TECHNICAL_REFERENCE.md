@@ -1019,7 +1019,7 @@ apps/brokers/
 │   ├── order_sync.py          # Order status sync
 │   ├── trade_sync.py          # Trade history sync
 │   ├── breeze_session.py      # Session management
-│   └── csv_importers.py       # Historical trade import
+│   └── csv_importers.py       # CSV/Excel trade history import (Kotak + Breeze)
 └── utils/
     ├── auth_manager.py        # Credential management
     ├── security_master.py     # Instrument master

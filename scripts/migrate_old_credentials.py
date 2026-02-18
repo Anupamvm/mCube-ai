@@ -165,10 +165,9 @@ def main():
     print("║" + "  Migrate Credentials from Old mCube3 Project".center(68) + "║")
     print("╚" + "=" * 68 + "╝\n")
 
-    # Default path to old database
-    old_project_path = Path(
-        "/Users/anupammangudkar/Projects/mCube-ai/old_mCubeProject"
-    )
+    # Default path to old database (relative to project root)
+    project_root = Path(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+    old_project_path = project_root / "old_mCubeProject"
 
     old_db_path = old_project_path / "mCube3/mCube3/db.sqlite3"
 

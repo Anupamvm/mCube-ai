@@ -35,8 +35,8 @@ from django.core.cache import cache
 
 logger = logging.getLogger(__name__)
 
-# Default SecurityMaster file path
-DEFAULT_SECURITY_MASTER_PATH = '/Users/anupammangudkar/Downloads/SecurityMaster/FONSEScripMaster.txt'
+# Default SecurityMaster file path (project-relative, works on macOS and Linux)
+DEFAULT_SECURITY_MASTER_PATH = str(Path(settings.BASE_DIR) / 'data' / 'SecurityMaster' / 'FONSEScripMaster.txt')
 
 # Cache timeout: 6 hours (SecurityMaster is updated once daily at 8 AM)
 CACHE_TIMEOUT = 6 * 60 * 60
@@ -141,7 +141,7 @@ def get_security_master_path() -> str:
     Priority:
     1. Django setting SECURITY_MASTER_PATH (if configured)
     2. Environment variable SECURITY_MASTER_PATH
-    3. Default path: ~/Downloads/SecurityMaster/FONSEScripMaster.txt
+    3. Default path: <project>/data/SecurityMaster/FONSEScripMaster.txt
 
     Returns:
         str: Path to SecurityMaster file

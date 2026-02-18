@@ -9,6 +9,9 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
+# Dynamically determine project directory (parent of scripts/)
+PROJECT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )/.." && pwd )"
+
 echo -e "${YELLOW}=== Stopping mCube-ai Background Services ===${NC}"
 
 # Stop Celery processes gracefully
@@ -20,6 +23,6 @@ sleep 2
 pkill -9 -f "celery.*mcube_ai" 2>/dev/null
 
 # Clean up PID files
-rm -f /Users/anupammangudkar/Projects/mCube-ai/logs/pids/*.pid 2>/dev/null
+rm -f "$PROJECT_DIR/logs/pids/"*.pid 2>/dev/null
 
 echo -e "${GREEN}[OK] All Celery services stopped${NC}"

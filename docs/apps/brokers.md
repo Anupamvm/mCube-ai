@@ -13,6 +13,7 @@ The brokers app handles all communication with broker APIs (Kotak Neo and ICICI 
 3. **Order Placement** - Place market/limit orders
 4. **Position Sync** - Sync positions from broker
 5. **Batch Operations** - Handle large orders in batches
+6. **Trade History Import** - Upload CSV/Excel Gain/Loss reports for P&L tracking
 
 ---
 
@@ -29,9 +30,11 @@ The brokers app handles all communication with broker APIs (Kotak Neo and ICICI 
 | `integrations/neo/` | Modular Neo components |
 | `services/breeze_session.py` | Breeze session manager (singleton, auto-login with Selenium + Telegram OTP) |
 | `services/breeze_auto_login.py` | Breeze auto-login with lock mechanism (~1,003 lines) |
+| `services/csv_importers.py` | CSV/Excel importers for trade history (Kotak + Breeze) |
 | `services/order_sync.py` | Order synchronization |
 | `utils/auth_manager.py` | Credential management + auto-login tracking helpers |
 | `utils/security_master.py` | Instrument master lookup |
+| `forms.py` | CSVUploadForm (CSV/Excel file validation) |
 | `admin.py` | Django admin interface |
 
 ---
@@ -430,6 +433,69 @@ except BreezeAPIError as e:
     # API error with details
     print(f"Error: {e.message}, Status: {e.status_code}")
 ```
+
+---
+
+## Trade History Import (CSV/Excel Upload)
+
+**URL**: `/brokers/csv-upload/`
+
+Upload broker Gain/Loss reports to track contract-level P&L across financial years. Supports both CSV and Excel (.xlsx) files.
+
+### Supported File Types
+
+| File Type | Broker | Source |
+|-----------|--------|--------|
+| `kotak_fno` | Kotak Neo | Gain/Loss report (all sections: Equity, MF, ETF, Derivatives) |
+| `breeze_fno` | ICICI Breeze | FNO Portfolio CSV |
+
+### How It Works
+
+1. User uploads CSV or Excel file via drag-and-drop UI
+2. **Excel files** are automatically converted to CSV on the fly using `openpyxl` (`convert_excel_to_csv_file()`)
+3. The appropriate importer (`KotakFNOImporter` or `BreezeFNOImporter`) parses the file
+4. **Incremental upload**: Records are matched by `(broker, trading_symbol, fy)` unique constraint
+   - **New** contracts are created
+   - **Changed** contracts are updated (latest report wins)
+   - **Unchanged** contracts are skipped (no DB write)
+   - Re-uploading the same file produces zero duplicates
+
+### Key Files
+
+| File | Purpose |
+|------|---------|
+| `services/csv_importers.py` | `KotakFNOImporter`, `BreezeFNOImporter`, `convert_excel_to_csv_file()` |
+| `forms.py` | `CSVUploadForm` — validates .csv/.xlsx/.xls, max 10MB |
+| `views.py` (lines 1388-1523) | `csv_upload_dashboard`, `api_upload_csv`, `api_delete_import_batch`, `api_import_logs`, `api_imported_pnl_summary` |
+| `templates/brokers/csv_upload_dashboard.html` | Upload UI with drag-and-drop, results, import history |
+
+### Models
+
+**`CSVImportLog`** — Audit trail for each import (batch_id, file_type, status, record counts, errors)
+
+**`BrokerContractPnL`** — Per-contract P&L with full charge breakdown:
+- Identity: `broker`, `trading_symbol`, `symbol`, `segment`, `security_type`, `fy`
+- Financial: `quantity`, `buy_amount`, `sell_amount`, `gross_pnl`, `net_pnl`
+- Charges: `gst`, `brokerage`, `stt`, `misc_charges`, `total_charges`
+- Contract: `expiry_date`, `strike_price`, `option_type`
+- Unique constraint: `(broker, trading_symbol, fy)`
+
+### Kotak CSV/Excel Format
+
+```
+Row 1-4: Client info (Name, Code, Period, Type)
+Row 5:   Empty
+Row 6:   Column headers (Script Name, Security Type, ISIN, Qty, Buy/Sell Amt, P&L, Charges...)
+Row 7:   Sub-headers
+Row 8+:  Section markers (Equity, Mutual Funds, ETF, Derivatives) followed by data rows
+         Disclaimer at end
+```
+
+Contract name formats:
+- **Futures**: `BANKNIFTY 25NOV25 XX 0` (SYMBOL DDMMMYY XX 0)
+- **Options**: `NIFTY 02DEC25 CE 26850` (SYMBOL DDMMMYY CE/PE STRIKE)
+
+FY extracted from filename: `Gain_Loss_A0YPQ_20250401_20260331.csv` → FY `2025-26`
 
 ---
 
