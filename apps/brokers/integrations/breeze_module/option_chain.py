@@ -174,6 +174,34 @@ def fetch_and_save_nifty_option_chain_all_expiries():
     new_records = []
     total_saved = 0
 
+    def _fetch_calls_puts(expiry_str):
+        """Fetch CE and PE data from Breeze for a single expiry string. Returns (calls, puts)."""
+        calls_data = []
+        puts_data = []
+        try:
+            calls_resp = breeze.get_option_chain_quotes(
+                stock_code="NIFTY", exchange_code="NFO", product_type="options",
+                expiry_date=expiry_str, right="call",
+            )
+            if calls_resp and calls_resp.get("Success"):
+                calls_data = calls_resp["Success"]
+            else:
+                logger.warning(f"No calls data for {expiry_str}: {calls_resp.get('Error', 'Unknown error')}")
+        except Exception as e:
+            logger.warning(f"Failed to fetch calls for {expiry_str}: {e}")
+        try:
+            puts_resp = breeze.get_option_chain_quotes(
+                stock_code="NIFTY", exchange_code="NFO", product_type="options",
+                expiry_date=expiry_str, right="put",
+            )
+            if puts_resp and puts_resp.get("Success"):
+                puts_data = puts_resp["Success"]
+            else:
+                logger.warning(f"No puts data for {expiry_str}: {puts_resp.get('Error', 'Unknown error')}")
+        except Exception as e:
+            logger.warning(f"Failed to fetch puts for {expiry_str}: {e}")
+        return calls_data, puts_data
+
     # STEP 2: Fetch LIVE option chain data from ICICI Breeze API
     for expiry_str in expiry_list:
         try:
@@ -181,38 +209,30 @@ def fetch_and_save_nifty_option_chain_all_expiries():
 
             expiry_date_obj = datetime.strptime(expiry_str, "%d-%b-%Y").date()
 
-            calls_data = []
-            puts_data = []
+            calls_data, puts_data = _fetch_calls_puts(expiry_str)
 
-            try:
-                calls_resp = breeze.get_option_chain_quotes(
-                    stock_code="NIFTY",
-                    exchange_code="NFO",
-                    product_type="options",
-                    expiry_date=expiry_str,
-                    right="call",
+            # If Breeze returns no data for this date, it's likely a trading holiday.
+            # Try ±1 day then ±2 days to find the holiday-adjusted expiry.
+            if not calls_data and not puts_data:
+                logger.warning(
+                    f"No data from Breeze for {expiry_str} — may be a holiday. "
+                    f"Trying adjacent dates..."
                 )
-                if calls_resp and calls_resp.get("Success"):
-                    calls_data = calls_resp["Success"]
+                for delta in [-1, 1, -2, 2]:
+                    adj_date = expiry_date_obj + timedelta(days=delta)
+                    adj_str = adj_date.strftime("%d-%b-%Y")
+                    adj_calls, adj_puts = _fetch_calls_puts(adj_str)
+                    if adj_calls or adj_puts:
+                        logger.info(
+                            f"Found data for {adj_str} (delta {delta:+d} from {expiry_str}) — "
+                            f"treating as holiday-adjusted expiry"
+                        )
+                        calls_data = adj_calls
+                        puts_data = adj_puts
+                        expiry_date_obj = adj_date
+                        break
                 else:
-                    logger.warning(f"No calls data for {expiry_str}: {calls_resp.get('Error', 'Unknown error')}")
-            except Exception as e:
-                logger.warning(f"Failed to fetch calls for {expiry_str}: {e}")
-
-            try:
-                puts_resp = breeze.get_option_chain_quotes(
-                    stock_code="NIFTY",
-                    exchange_code="NFO",
-                    product_type="options",
-                    expiry_date=expiry_str,
-                    right="put",
-                )
-                if puts_resp and puts_resp.get("Success"):
-                    puts_data = puts_resp["Success"]
-                else:
-                    logger.warning(f"No puts data for {expiry_str}: {puts_resp.get('Error', 'Unknown error')}")
-            except Exception as e:
-                logger.warning(f"Failed to fetch puts for {expiry_str}: {e}")
+                    logger.warning(f"No option chain data available for {expiry_str} or any adjacent date — skipping")
 
             # Process call options
             for call in calls_data:

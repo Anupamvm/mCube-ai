@@ -118,19 +118,33 @@ else
     echo "✓ Python $PYTHON_VERSION is installed"
 fi
 
-# Check for python3-venv on Linux (required for creating virtual environments)
+# Check for python3-venv and build tools on Linux
 if [[ "$OSTYPE" != "darwin"* ]]; then
-    if ! python3 -c "import venv" &> /dev/null; then
-        echo "python3-venv not found. Installing..."
-        if command -v apt-get &> /dev/null; then
-            sudo apt-get update && sudo apt-get install -y python3-venv python3-pip
-            echo "✓ python3-venv installed"
-        elif command -v yum &> /dev/null; then
-            sudo yum install -y python3-venv python3-pip
-            echo "✓ python3-venv installed"
+    if command -v apt-get &> /dev/null; then
+        NEED_APT=false
+        python3 -c "import venv" &> /dev/null || NEED_APT=true
+        # Check for gcc (needed to compile cryptography, Pillow, lxml, etc.)
+        command -v gcc &> /dev/null || NEED_APT=true
+
+        if [ "$NEED_APT" = true ]; then
+            echo "Installing required system packages (venv, build tools)..."
+            sudo apt-get update -qq
+            sudo apt-get install -y python3-venv python3-pip python3-dev \
+                build-essential libffi-dev libssl-dev libpq-dev
+            echo "✓ System packages installed"
         else
+            echo "✓ System packages already installed"
+        fi
+    elif command -v yum &> /dev/null; then
+        if ! python3 -c "import venv" &> /dev/null; then
+            echo "Installing required system packages..."
+            sudo yum install -y python3-venv python3-pip python3-devel gcc libffi-devel openssl-devel
+            echo "✓ System packages installed"
+        fi
+    else
+        if ! python3 -c "import venv" &> /dev/null; then
             echo "❌ Could not install python3-venv automatically."
-            echo "   Please install it manually: sudo apt-get install python3-venv python3-pip"
+            echo "   Please install it manually: sudo apt-get install python3-venv python3-dev build-essential"
             exit 1
         fi
     fi
@@ -209,11 +223,19 @@ source venv/bin/activate
 echo ""
 echo "Step 2/10: Setting up .env file..."
 echo "--------------------------------------------"
-cat > .env << 'ENVEOF'
+# Detect server IP for ALLOWED_HOSTS (covers remote browser access to the server)
+SERVER_IP=$(hostname -I 2>/dev/null | awk '{print $1}' || ip route get 1 2>/dev/null | awk '{print $NF; exit}' || echo "")
+ALLOWED_HOSTS_VALUE="localhost,127.0.0.1"
+if [ -n "$SERVER_IP" ]; then
+    ALLOWED_HOSTS_VALUE="localhost,127.0.0.1,$SERVER_IP"
+    echo "  Detected server IP: $SERVER_IP (added to ALLOWED_HOSTS)"
+fi
+
+cat > .env << ENVEOF
 # Django
 SECRET_KEY=django-insecure-mcube-ai-secret-key-change-in-production
 DEBUG=True
-ALLOWED_HOSTS=localhost,127.0.0.1
+ALLOWED_HOSTS=${ALLOWED_HOSTS_VALUE}
 
 # Redis
 REDIS_URL=redis://localhost:6379/0
@@ -443,8 +465,8 @@ else:
     print('✓ Updated Kotak Neo CredentialStore')
 
 # ICICI Breeze CredentialStore (API credentials + Login credentials for auto-login)
-# Only set defaults for new entries - don't overwrite existing session tokens
-breeze_creds, created = CredentialStore.objects.get_or_create(
+# Always update API credentials; session_token is NOT in defaults so it is preserved.
+breeze_creds, created = CredentialStore.objects.update_or_create(
     service='breeze',
     name='default',
     defaults={
@@ -458,25 +480,7 @@ breeze_creds, created = CredentialStore.objects.get_or_create(
 if created:
     print('✓ Created ICICI Breeze CredentialStore (with auto-login credentials)')
 else:
-    # Update only API key/secret if missing, preserve session_token and login credentials
-    updated = False
-    if not breeze_creds.api_key:
-        breeze_creds.api_key = '6561_m2784f16J&R88P3429@66Y89^46'
-        updated = True
-    if not breeze_creds.api_secret:
-        breeze_creds.api_secret = 'l6_(162788u1p629549_)499O158881c'
-        updated = True
-    if not breeze_creds.username:
-        breeze_creds.username = '9890688965'
-        updated = True
-    if not breeze_creds.password:
-        breeze_creds.password = 'Anupamvm2@'
-        updated = True
-    if updated:
-        breeze_creds.save()
-        print('✓ Updated ICICI Breeze CredentialStore (filled missing fields)')
-    else:
-        print('✓ ICICI Breeze CredentialStore exists (preserved existing credentials)')
+    print('✓ Updated ICICI Breeze CredentialStore (session_token preserved)')
 
 # ============================================================================
 # Trendlyne Credentials (Market Data Provider)
@@ -609,7 +613,10 @@ pkill -f "telegram_bot" 2>/dev/null || true
 
 # Delete existing Telegram webhook (prevents conflicts)
 echo "Clearing Telegram webhook..."
-curl -s "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/deleteWebhook" > /dev/null 2>&1 || true
+_TG_TOKEN=$(grep "^TELEGRAM_BOT_TOKEN=" "$SCRIPT_DIR/.env" 2>/dev/null | cut -d'=' -f2-)
+if [ -n "$_TG_TOKEN" ]; then
+    curl -s "https://api.telegram.org/bot${_TG_TOKEN}/deleteWebhook" > /dev/null 2>&1 || true
+fi
 
 # IMPORTANT: Telegram polling only allows ONE bot instance globally
 echo ""

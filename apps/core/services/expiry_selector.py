@@ -10,8 +10,8 @@ CRITICAL EXPIRY RULES:
 """
 
 import logging
-from datetime import date
-from typing import Dict, Tuple
+from datetime import date, timedelta
+from typing import Dict, Optional, Tuple
 
 from apps.core.utils import (
     get_current_weekly_expiry,
@@ -22,6 +22,50 @@ from apps.core.utils import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _find_available_expiry(target: date, instrument: str) -> Tuple[date, Optional[str]]:
+    """
+    Check if target expiry has option chain data in the DB.
+    If not (likely a trading holiday), search ±1 then ±2 days.
+
+    Returns:
+        (resolved_date, adjustment_note)
+        adjustment_note is None when the target itself has data.
+    """
+    try:
+        from apps.data.models import OptionChain
+
+        def _has_data(d: date) -> bool:
+            return (
+                OptionChain.objects.filter(
+                    underlying=instrument.upper(), expiry_date=d,
+                    option_type='CE', ltp__gt=0,
+                ).exists()
+                and OptionChain.objects.filter(
+                    underlying=instrument.upper(), expiry_date=d,
+                    option_type='PE', ltp__gt=0,
+                ).exists()
+            )
+
+        if _has_data(target):
+            return target, None
+
+        for delta in [-1, 1, -2, 2]:
+            candidate = target + timedelta(days=delta)
+            if _has_data(candidate):
+                note = (
+                    f"{target} has no option data (possible holiday) — "
+                    f"using adjusted expiry {candidate} ({delta:+d} day)"
+                )
+                logger.warning(note)
+                return candidate, note
+
+    except Exception as e:
+        logger.debug(f"DB check for expiry {target} skipped: {e}")
+
+    # No nearby data found — return original, caller will handle gracefully
+    return target, None
 
 
 def select_expiry_for_options(
@@ -54,22 +98,25 @@ def select_expiry_for_options(
 
     # Check if current expiry meets minimum days requirement
     if days_to_current >= min_days:
+        resolved, note = _find_available_expiry(current_expiry, instrument)
+        days_remaining = get_days_to_expiry(resolved)
         logger.info(
             f"✅ Using CURRENT expiry for {instrument}: "
-            f"{current_expiry} ({days_to_current} days remaining)"
+            f"{resolved} ({days_remaining} days remaining)"
         )
-
-        return current_expiry, {
-            'selected_expiry': current_expiry,
-            'days_remaining': days_to_current,
+        return resolved, {
+            'selected_expiry': resolved,
+            'days_remaining': days_remaining,
             'expiry_type': 'CURRENT_WEEK',
-            'reason': f'Current expiry acceptable ({days_to_current} days >= {min_days} days)',
-            'skipped': False
+            'reason': f'Current expiry acceptable ({days_remaining} days >= {min_days} days)',
+            'skipped': False,
+            'holiday_adjustment': note,
         }
 
-    # Current expiry too close, skip to next week
+    # Current expiry too close — skip to next week
     next_expiry = get_next_weekly_expiry(instrument)
-    days_to_next = get_days_to_expiry(next_expiry)
+    resolved, note = _find_available_expiry(next_expiry, instrument)
+    days_to_next = get_days_to_expiry(resolved)
 
     logger.warning(
         f"⚠️ Current expiry too close for {instrument}: "
@@ -77,17 +124,18 @@ def select_expiry_for_options(
     )
     logger.info(
         f"✅ Skipping to NEXT WEEK expiry: "
-        f"{next_expiry} ({days_to_next} days remaining)"
+        f"{resolved} ({days_to_next} days remaining)"
     )
 
-    return next_expiry, {
-        'selected_expiry': next_expiry,
+    return resolved, {
+        'selected_expiry': resolved,
         'days_remaining': days_to_next,
         'expiry_type': 'NEXT_WEEK',
         'reason': f'Skipped current expiry (only {days_to_current} days < {min_days} days minimum)',
         'skipped': True,
         'current_expiry': current_expiry,
-        'days_to_current': days_to_current
+        'days_to_current': days_to_current,
+        'holiday_adjustment': note,
     }
 
 

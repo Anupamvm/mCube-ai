@@ -870,7 +870,10 @@ def trigger_nifty_strangle(request):
             ).values_list('strike', flat=True)
 
             if not available_call_strikes or not available_put_strikes:
-                raise ValueError(f"No option data available for expiry {expiry_date}")
+                raise ValueError(
+                    f"No option chain data in database for expiry {expiry_date}. "
+                    "Please refresh Breeze session at /brokers/breeze/login/ and retry."
+                )
 
             # IMPORTANT: Check if psychologically-adjusted strikes exist in database
             # We should NOT compromise on psychological safety by using non-adjusted strikes
