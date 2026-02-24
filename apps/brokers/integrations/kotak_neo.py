@@ -199,14 +199,21 @@ def fetch_and_save_kotakneo_data():
     if not resp or not isinstance(resp, dict):
         raise Exception(f"Neo positions() returned invalid response: {type(resp)}")
     if resp.get('stat') == 'Not_Ok' or 'Error' in resp or 'Error Message' in resp:
-        error_msg = resp.get('Error Message') or resp.get('Error') or resp.get('message') or str(resp)
-        logger.error(f"Neo positions() API error: {error_msg}")
-        raise NeoAuthenticationError(
-            f"Neo API error: {error_msg}",
-            error_type='session',
-            is_retryable=True
-        )
-    raw_positions = resp.get('data', [])
+        err_msg = resp.get('errMsg', '')
+        # stCode 5203 = "No Data" — no open positions today, not an auth error
+        if 'no data' in err_msg.lower() or resp.get('stCode') == 5203:
+            logger.info("Neo positions() returned no data (no open positions)")
+            raw_positions = []
+        else:
+            error_msg = resp.get('Error Message') or resp.get('Error') or resp.get('message') or str(resp)
+            logger.error(f"Neo positions() API error: {error_msg}")
+            raise NeoAuthenticationError(
+                f"Neo API error: {error_msg}",
+                error_type='session',
+                is_retryable=True
+            )
+    else:
+        raw_positions = resp.get('data', [])
 
     # ── Fetch trade_report() for ACTUAL trade execution prices ──
     # positions() cfBuyAmt/cfBuyQty gives MTM settlement price (resets daily),

@@ -724,14 +724,21 @@ def verify_breeze_login(request):
         )
 
         if has_valid_token:
-            # Token is valid for today, attempt auto-login without asking for token
-            logger.info("Breeze has valid token from today, attempting auto-login")
+            # Token is valid for today, attempt login (auto-login triggers if token is invalid)
+            logger.info("Breeze has valid token from today, attempting login")
             session_token = creds.session_token
-            # Don't save again, just use existing token
+            skip_save = True
+        elif creds.username and creds.password:
+            # No valid token, but auto-login credentials available
+            # Trigger Selenium + OTP auto-login flow
+            logger.info("Breeze token missing/expired — triggering auto-login (Selenium + OTP)")
+            from apps.brokers.utils.auth_manager import reset_auto_login_status
+            reset_auto_login_status('breeze')
+            session_token = None
             skip_save = True
         else:
-            # Token missing or expired, show form
-            logger.info("Breeze token missing or expired, showing form")
+            # No auto-login credentials, show manual token form
+            logger.info("Breeze token missing or expired, no auto-login creds — showing form")
             context = {
                 'username': creds.username,
                 'api_key': creds.api_key,

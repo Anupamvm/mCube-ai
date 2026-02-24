@@ -39,6 +39,7 @@ from apps.brokers.utils.auth_manager import (
     mark_auto_login_started,
     mark_auto_login_success,
     mark_auto_login_failed,
+    reset_auto_login_status,
 )
 
 logger = logging.getLogger(__name__)
@@ -215,19 +216,16 @@ class BreezeSessionManager:
         concurrent auto-login attempts (which would open multiple browsers
         and send multiple OTPs).
 
+        Note: Daily limit and market hours checks are done by the CALLER
+        (get_client, refresh_session) before calling this method. This method
+        focuses on locking and executing the login itself.
+
         Args:
             task_name: Description of what triggered this login (shown in Telegram OTP request)
 
         Returns:
             Tuple[bool, str]: (success, message)
         """
-        # Defense-in-depth: check market hours and daily limit before any login attempt
-        # This protects ALL callers (get_client, refresh_session, etc.)
-        can_login, reason = can_attempt_auto_login('breeze')
-        if not can_login:
-            logger.warning(f"Auto-login blocked in _try_auto_login: {reason}")
-            return False, f"Auto-login blocked: {reason}"
-
         # Thread-level lock: prevent concurrent auto-login within the same process
         acquired = self._auto_login_lock.acquire(blocking=False)
         if not acquired:
@@ -377,22 +375,45 @@ class BreezeSessionManager:
         except Exception as e:
             error_str = str(e).lower()
 
-            # Check if it's a session error
-            if any(kw in error_str for kw in ['session', 'expired', 'unauthorized', 'invalid', 'resource not available']):
-                # Only attempt auto-login if we haven't already tried in this call
-                if auto_refresh and not auto_login_attempted and creds.username and creds.password:
-                    can_login, reason = can_attempt_auto_login('breeze')
-                    if can_login:
-                        mark_auto_login_started('breeze')
-                        success, login_msg = self._try_auto_login(task_name="session error recovery")
-                        if success:
-                            mark_auto_login_success('breeze')
-                            # Retry with new credentials
-                            creds = self.get_credentials()
-                            return self._create_client(creds)
+            # Check if it's a session/auth error
+            if any(kw in error_str for kw in ['session', 'expired', 'unauthorized', 'invalid', 'resource not available', 'authenticate', 'credential']):
+                logger.warning(f"Breeze session token rejected by API: {e}")
+
+                # Token is invalid — clear it from DB to prevent future false-valid checks
+                try:
+                    creds.session_token = ''
+                    creds.last_session_update = None
+                    creds.save(update_fields=['session_token', 'last_session_update'])
+                    logger.info("Cleared invalid Breeze session token from DB")
+                except Exception as clear_err:
+                    logger.error(f"Failed to clear invalid token from DB: {clear_err}")
+
+                # Attempt auto-login recovery
+                if auto_refresh and not auto_login_attempted:
+                    if creds.username and creds.password:
+                        # Token is proven invalid — reset daily limit to allow a fresh attempt
+                        # regardless of whether previous auto-login succeeded or failed
+                        prev_status = getattr(creds, 'auto_login_status', '')
+                        if prev_status in ('success', 'failed'):
+                            logger.info(f"Resetting auto-login status (was '{prev_status}'): token invalid, need fresh login")
+                            reset_auto_login_status('breeze')
+
+                        can_login, reason = can_attempt_auto_login('breeze')
+                        if can_login:
+                            mark_auto_login_started('breeze')
+                            success, login_msg = self._try_auto_login(task_name="session error recovery")
+                            if success:
+                                mark_auto_login_success('breeze')
+                                # Retry with new credentials
+                                creds = self.get_credentials()
+                                return self._create_client(creds)
+                            else:
+                                mark_auto_login_failed('breeze')
+                                self._notify_login_failed('breeze')
                         else:
-                            mark_auto_login_failed('breeze')
-                            self._notify_login_failed('breeze')
+                            logger.warning(f"Auto-login blocked after session error: {reason}")
+                    else:
+                        logger.warning("Cannot attempt auto-login: Breeze username/password not configured")
 
                 raise BreezeAuthenticationError(
                     f"Session expired: {e}",
