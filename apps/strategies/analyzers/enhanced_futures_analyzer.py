@@ -35,9 +35,8 @@ Phase 2 Enhancements:
 """
 
 import logging
-from decimal import Decimal
-from typing import Dict, List, Optional, Tuple
-from datetime import datetime, timedelta
+from typing import Dict
+from datetime import timedelta
 from django.utils import timezone
 
 logger = logging.getLogger(__name__)
@@ -45,7 +44,6 @@ logger = logging.getLogger(__name__)
 
 class HardRejectError(Exception):
     """Raised when a hard reject filter fails"""
-    pass
 
 
 class EnhancedFuturesAnalyzer:
@@ -718,7 +716,7 @@ class EnhancedFuturesAnalyzer:
         macd = tl.day_macd
         macd_signal = tl.day_macd_signal_line
         if macd is not None and macd_signal is not None:
-            macd_diff = macd - macd_signal
+            macd - macd_signal
             if self.direction == 'LONG':
                 if macd > 0 and macd > macd_signal:
                     macd_score = 10  # Bullish and above signal
@@ -1349,8 +1347,6 @@ class EnhancedFuturesAnalyzer:
         details = {}
 
         try:
-            from apps.llm.services.news_impact_analyzer import analyze_news_for_trade
-            from apps.strategies.filters.news_sentiment import check_market_news_sentiment
             from apps.data.models import NewsArticle
 
             # Get stock-specific news from last 24 hours
@@ -1774,7 +1770,7 @@ class EnhancedFuturesAnalyzer:
             # Calculate changes
             day_change = current_momentum - prev_day_momentum
             week_change = current_momentum - prev_week_momentum
-            day_over_day_acceleration = day_change - (prev_day_momentum - prev_week_momentum)
+            day_change - (prev_day_momentum - prev_week_momentum)
 
             details['day_change'] = round(day_change, 2)
             details['week_change'] = round(week_change, 2)

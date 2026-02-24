@@ -9,9 +9,7 @@ Analyzes Trendlyne data to generate trading signals based on:
 - F&O metrics
 """
 
-from django.db.models import Avg, Sum, Q
-from decimal import Decimal
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 from .models import TLStockData, ContractData, ContractStockData
 
@@ -583,7 +581,7 @@ class TechnicalIndicatorAnalyzer:
                         's1_source': cons_support.get('s1_source'),
                         'methods_used': sr_data.get('methods_used', [])
                     }
-            except Exception as e:
+            except Exception:
                 # Fall through to Trendlyne data
                 pass
 

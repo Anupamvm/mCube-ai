@@ -8,8 +8,6 @@ from django.db import models
 from django.utils import timezone
 from decimal import Decimal
 from apps.core.models import TimeStampedModel
-from apps.brokers.models import NiftyOptionChain  # Reuse existing model
-
 
 class NiftyMarketData(TimeStampedModel):
     """

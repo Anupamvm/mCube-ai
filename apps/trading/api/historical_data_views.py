@@ -6,7 +6,7 @@ and storing it in the database.
 """
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime
 from decimal import Decimal
 
 from django.contrib.auth.decorators import login_required
@@ -16,7 +16,7 @@ from django.views.decorators.csrf import csrf_exempt
 
 from apps.brokers.models import HistoricalPrice
 from apps.brokers.integrations.breeze import get_breeze_client
-from apps.brokers.exceptions import BreezeAuthenticationError, BreezeAPIError
+from apps.brokers.exceptions import BreezeAuthenticationError
 
 logger = logging.getLogger(__name__)
 
@@ -174,7 +174,7 @@ def get_breeze_historical_data(request):
         try:
             from_date = datetime.strptime(from_date_str, '%Y-%m-%d').date()
             to_date = datetime.strptime(to_date_str, '%Y-%m-%d').date()
-        except ValueError as e:
+        except ValueError:
             return JsonResponse({
                 'success': False,
                 'error': 'Invalid date format',

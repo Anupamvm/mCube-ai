@@ -6,8 +6,7 @@ for futures trading using ICICI Breeze API for real-time margin data.
 """
 
 import logging
-from decimal import Decimal
-from typing import Dict, List, Optional, Tuple
+from typing import Dict
 from datetime import datetime
 
 logger = logging.getLogger(__name__)

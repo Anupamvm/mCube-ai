@@ -19,14 +19,14 @@ Features:
 import logging
 import json
 from typing import Dict, List, Optional, Tuple
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from django.db import transaction
 from django.utils import timezone
 
 from apps.data.models import NewsArticle, KnowledgeBase
 from apps.llm.services.ollama_client import get_ollama_client, generate_embedding
-from apps.llm.services.vector_store import get_vector_store, COLLECTION_NEWS, COLLECTION_KNOWLEDGE
+from apps.llm.services.vector_store import get_vector_store, COLLECTION_NEWS
 
 logger = logging.getLogger(__name__)
 

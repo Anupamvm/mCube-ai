@@ -8,7 +8,7 @@ Uses aggregated contract-level P&L from broker CSV imports.
 import logging
 from datetime import date
 from decimal import Decimal
-from django.db.models import Sum, Count, Q, Case, When, Value, IntegerField, Max
+from django.db.models import Sum, Count, Q, Max
 
 from apps.brokers.models import BrokerContractPnL
 

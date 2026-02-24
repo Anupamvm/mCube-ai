@@ -1,7 +1,6 @@
 from django.test import TestCase
 from decimal import Decimal
 from apps.algo_test.services import OptionsAlgorithmCalculator, FuturesAlgorithmCalculator
-from datetime import datetime
 
 
 class OptionsAlgorithmTestCase(TestCase):

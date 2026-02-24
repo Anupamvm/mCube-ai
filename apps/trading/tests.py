@@ -10,12 +10,10 @@ Tests for:
 from django.test import TestCase, Client
 from django.contrib.auth.models import User
 from django.utils import timezone
-from decimal import Decimal
-from datetime import timedelta, date
+from datetime import timedelta
 
 from apps.trading.models import TradeSuggestion, TradeSuggestionLog
 from apps.trading.services import TradeSuggestionService
-from apps.accounts.models import BrokerAccount
 
 
 class TradeSuggestionModelTests(TestCase):
@@ -220,7 +218,7 @@ class TradeSuggestionApprovalWorkflowTests(TestCase):
         self.assertEqual(self.suggestion.status, 'PENDING')
 
         # Approve suggestion
-        response = self.client.post(f'/trading/suggestion/{self.suggestion.id}/approve/')
+        self.client.post(f'/trading/suggestion/{self.suggestion.id}/approve/')
 
         # Reload suggestion
         self.suggestion.refresh_from_db()

@@ -27,16 +27,13 @@ Hard Reject Filters (must pass all):
 
 import logging
 from decimal import Decimal
-from typing import Dict, List, Optional, Tuple
-from datetime import datetime, date, timedelta
-from django.utils import timezone
+from typing import Dict, Tuple
 
 logger = logging.getLogger(__name__)
 
 
 class HardRejectError(Exception):
     """Raised when a hard reject filter fails"""
-    pass
 
 
 class EnhancedStrangleAnalyzer:
@@ -710,7 +707,7 @@ class EnhancedStrangleAnalyzer:
         call_oi_buildup = self._option_chain_data.get('call_oi_buildup', 'NEUTRAL')
         put_oi_buildup = self._option_chain_data.get('put_oi_buildup', 'NEUTRAL')
         max_pain = self._option_chain_data.get('max_pain')
-        total_oi = self._option_chain_data.get('total_oi', 0)
+        self._option_chain_data.get('total_oi', 0)
 
         score = 0
 

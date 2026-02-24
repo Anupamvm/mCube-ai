@@ -16,10 +16,8 @@ from decimal import Decimal
 from typing import Dict, Tuple
 
 from apps.positions.models import Position
-from apps.core.utils import get_current_ist_time, is_market_hours
+from apps.core.utils import get_current_ist_time
 from apps.core.constants import (
-    KOTAK_EXIT_TIME,
-    MANDATORY_EXIT_TIME,
     WEEKDAY_THURSDAY,
     WEEKDAY_FRIDAY,
 )
@@ -233,7 +231,6 @@ def check_expiry_exit(position: Position, current_time) -> Dict[str, any]:
         dict: Exit decision
     """
 
-    from datetime import timedelta
 
     # Check if expiry is today or tomorrow
     days_to_expiry = (position.expiry_date - current_time.date()).days

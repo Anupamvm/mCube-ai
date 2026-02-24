@@ -6,11 +6,11 @@ Calculates performance metrics from BrokerContractPnL records
 """
 
 import logging
-from datetime import date, timedelta
+from datetime import date
 from decimal import Decimal
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
-from django.db.models import Sum, Count, Avg, Q, F
+from django.db.models import Sum, Count, Q
 
 from apps.accounts.models import BrokerAccount
 from apps.brokers.models import BrokerContractPnL

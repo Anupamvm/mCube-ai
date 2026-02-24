@@ -242,8 +242,8 @@ class StranglePositionSizer:
 
             # Max loss per lot = unlimited for naked short strangle
             # But we'll use strike values as proxy
-            max_loss_per_lot_ce = (Decimal(str(call_strike)) - call_premium) * self.NIFTY_LOT_SIZE
-            max_loss_per_lot_pe = (Decimal(str(put_strike)) - put_premium) * self.NIFTY_LOT_SIZE
+            (Decimal(str(call_strike)) - call_premium) * self.NIFTY_LOT_SIZE
+            (Decimal(str(put_strike)) - put_premium) * self.NIFTY_LOT_SIZE
 
             # Premium collected per lot
             premium_per_lot = total_premium * self.NIFTY_LOT_SIZE

@@ -4,7 +4,6 @@ Management command to view trading system status
 
 from django.core.management.base import BaseCommand
 from apps.core.models import NseFlag, DayReport
-from datetime import datetime, timedelta
 import pytz
 
 IST = pytz.timezone('Asia/Kolkata')

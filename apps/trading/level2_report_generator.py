@@ -6,7 +6,7 @@ Generates comprehensive analysis reports for trader decision-making
 
 import logging
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 from apps.trading.data_aggregator import TrendlyneDataAggregator
 from apps.trading.level2_analyzers import FinancialPerformanceAnalyzer, ValuationDeepDive

@@ -223,7 +223,6 @@ class BaseBrokerAPI(ABC):
             >>> if broker.authenticate():
             ...     print("Logged in successfully")
         """
-        pass
 
     @abstractmethod
     def get_margin(self) -> BrokerMargin:
@@ -244,7 +243,6 @@ class BaseBrokerAPI(ABC):
             >>> margin = broker.get_margin()
             >>> print(f"Available: ₹{margin.available_margin:,.2f}")
         """
-        pass
 
     @abstractmethod
     def get_positions(self) -> List[BrokerPosition]:
@@ -267,7 +265,6 @@ class BaseBrokerAPI(ABC):
             >>> for pos in positions:
             ...     print(f"{pos.symbol}: {pos.quantity} @ {pos.avg_price}")
         """
-        pass
 
     @abstractmethod
     def place_order(
@@ -306,7 +303,6 @@ class BaseBrokerAPI(ABC):
             >>> if result.success:
             ...     print(f"Order ID: {result.order_id}")
         """
-        pass
 
     @abstractmethod
     def get_client(self) -> Any:
@@ -324,7 +320,6 @@ class BaseBrokerAPI(ABC):
             >>> # Use Neo-specific methods
             >>> neo_client.quotes(...)
         """
-        pass
 
     def is_authenticated(self) -> bool:
         """

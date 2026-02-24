@@ -536,7 +536,6 @@ def api_positions_data(request):
     """
     try:
         from apps.positions.services.position_sync import get_position_summary
-        from apps.core.utils.formatting import format_indian_currency
 
         summary = get_position_summary()
 
@@ -2040,8 +2039,6 @@ def api_suggestions_time_patterns(request):
 def api_patterns_yearly_comparison(request):
     """API endpoint for yearly income comparison chart - F&O (Derivatives) only."""
     from apps.analytics.services.trading_patterns import TradingPatternsAnalyzer, get_available_fys
-    from apps.brokers.models import BrokerContractPnL
-    from django.db.models import Sum, Count
 
     try:
         broker = request.GET.get('broker')

@@ -19,12 +19,8 @@ provides a clear, sustained directional bias.
 import logging
 from decimal import Decimal
 from typing import Dict, List
-from datetime import datetime, timedelta
 
-from django.utils import timezone
 
-from apps.data.models import TLStockData
-from apps.brokers.models import HistoricalPrice
 
 logger = logging.getLogger(__name__)
 

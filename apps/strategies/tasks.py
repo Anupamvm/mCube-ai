@@ -46,7 +46,6 @@ from decimal import Decimal
 from datetime import date, datetime, timedelta
 from celery import shared_task
 from django.utils import timezone
-from django.db.models import Sum
 
 # Models
 from apps.accounts.models import BrokerAccount
@@ -55,14 +54,12 @@ from apps.positions.models import Position
 # Strategy entry functions
 from apps.strategies.strategies.kotak_strangle import execute_kotak_strangle_entry
 from apps.strategies.strategies.icici_futures import (
-    screen_futures_opportunities,
-    execute_icici_futures_entry
+    screen_futures_opportunities
 )
 
 # Position services
 from apps.positions.services.delta_monitor import monitor_delta
 from apps.positions.services.averaging_manager import (
-    should_average_position,
     get_averaging_recommendation
 )
 from apps.positions.services.exit_manager import should_exit_position
@@ -71,7 +68,7 @@ from apps.positions.services.exit_manager import should_exit_position
 from apps.alerts.services.telegram_client import send_telegram_notification
 from apps.core.utils.task_logger import TaskLogger
 from apps.core.utils.decorators import task_enabled_guard
-from apps.core.services.trading_context import TradingContext, get_trading_context
+from apps.core.services.trading_context import get_trading_context
 
 logger = logging.getLogger(__name__)
 
@@ -192,14 +189,12 @@ def evaluate_kotak_strangle_exit(profit_threshold=10000, mandatory=False):
         if position.unrealized_pnl >= Decimal(str(profit_threshold)):
             should_exit = True
             reason = f"Profit target reached: ₹{position.unrealized_pnl:,.0f} >= ₹{profit_threshold:,.0f}"
-            exit_type = "PROFIT_TARGET"
             logger.info(f"✅ Profit threshold reached: ₹{position.unrealized_pnl:,.0f}")
 
         if mandatory:
             # Friday - exit regardless
             should_exit = True
             reason = "Mandatory Friday EOD exit (before weekly expiry)"
-            exit_type = "EOD_MANDATORY"
 
         if should_exit:
             # Close position
@@ -472,7 +467,7 @@ def start_trading_day(self):
     task_logger.start("Starting trading day - validating market opening")
 
     try:
-        from apps.strategies.models import TradingDaySetup, MarketOpeningState
+        from apps.strategies.models import TradingDaySetup
         from apps.data.models import NewsArticle
 
         today = date.today()
@@ -770,9 +765,7 @@ def start_options_trade(self):
     try:
         from apps.strategies.models import TradingDaySetup
         from apps.core.models import TradingCoreConfig
-        from apps.trading.models import TradeSuggestion
         from apps.trading.services.trade_confirmation import get_confirmation_service
-        from apps.data.models import ContractStockData
 
         today = date.today()
 
@@ -1330,15 +1323,12 @@ def close_trading_day(self):
             is_force_close = current_time >= force_close_time
 
             # Decide whether to close
-            should_close = False
             close_reason = ""
 
             if is_force_close:
-                should_close = True
                 close_reason = "Force close at 3:28 PM"
                 close_results['forced'] += 1
             elif position_pnl >= MIN_PROFIT:
-                should_close = True
                 close_reason = f"Profit target met: ₹{position_pnl:,.0f}"
             else:
                 close_results['skipped'] += 1

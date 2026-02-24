@@ -13,7 +13,6 @@ Features:
 
 import json
 import os
-import time
 from datetime import datetime
 from django.conf import settings
 

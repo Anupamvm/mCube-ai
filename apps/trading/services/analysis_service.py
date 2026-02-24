@@ -18,21 +18,11 @@ The enhanced analysis includes:
 """
 
 import logging
-from datetime import datetime, date, timedelta
+from datetime import datetime
 from decimal import Decimal
-from typing import Optional, Dict, Any, Union
-import json
+from typing import Optional, Dict, Any
 
 logger = logging.getLogger(__name__)
-
-
-def json_serial(obj):
-    """JSON serializer for objects not serializable by default json code."""
-    if isinstance(obj, (datetime, date)):
-        return obj.isoformat()
-    if isinstance(obj, Decimal):
-        return float(obj)
-    raise TypeError(f"Type {type(obj)} not serializable")
 
 
 def clean_numeric_value(obj):
@@ -632,7 +622,7 @@ def format_analysis_for_response(
     Returns:
         dict: Formatted response for frontend
     """
-    basic_analysis = analysis_result.get('analysis', {})
+    analysis_result.get('analysis', {})
     metrics = analysis_result.get('metrics', {})
 
     # Format expiry

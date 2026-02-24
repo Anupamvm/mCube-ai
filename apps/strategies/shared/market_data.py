@@ -12,7 +12,7 @@ Error Handling:
 """
 
 from decimal import Decimal
-from datetime import datetime, timedelta, date
+from datetime import datetime, timedelta
 from typing import Tuple, Optional, Dict
 import logging
 import traceback

@@ -16,6 +16,7 @@ from django.db.models import Q
 
 from apps.data.models import ContractData
 from apps.core.models import CredentialStore
+from apps.core.utils import json_serial
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +40,6 @@ def manual_triggers_refactored(request):
         HttpResponse: Rendered template with data freshness info and preloaded results
     """
     import json
-    from decimal import Decimal
     from django.utils import timezone
     from apps.data.models import TLStockData
     from apps.trading.models import TradeSuggestion
@@ -177,7 +177,7 @@ def manual_triggers_refactored(request):
 
         # ===== COLLECT ALL SUGGESTIONS WITH SOURCE TAGS =====
         today_start = timezone.localtime(timezone.now()).replace(hour=0, minute=0, second=0, microsecond=0)
-        now_local = timezone.localtime(timezone.now())
+        timezone.localtime(timezone.now())
 
         # Today's automated results
         todays_auto = TradeSuggestion.objects.filter(
@@ -271,13 +271,6 @@ def manual_triggers_refactored(request):
     except Exception as e:
         logger.warning(f"Error loading unified futures opportunities: {e}")
 
-    # Helper function to serialize for JSON
-    def json_serial(obj):
-        if isinstance(obj, datetime):
-            return obj.isoformat()
-        if isinstance(obj, Decimal):
-            return float(obj)
-        raise TypeError(f"Type {type(obj)} not serializable")
 
     context = {
         'data_freshness': data_freshness,

@@ -12,8 +12,7 @@ This ensures the algorithm has sufficient data for robust decision making.
 
 import logging
 from datetime import datetime, date, timedelta
-from typing import Dict, List, Optional, Tuple
-from decimal import Decimal
+from typing import Dict, List, Optional
 
 from apps.brokers.integrations.breeze import get_nifty50_historical_days
 from apps.brokers.models import HistoricalPrice

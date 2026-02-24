@@ -5,10 +5,9 @@ This module provides order placement functions using SecurityMaster for correct 
 """
 
 import logging
-from typing import Dict, Optional
+from typing import Dict
 
 from .client import get_breeze_client
-from .expiry import get_next_nifty_expiry
 
 logger = logging.getLogger(__name__)
 

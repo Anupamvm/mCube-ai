@@ -14,7 +14,6 @@ import time
 import logging
 from typing import Callable, Any, Dict, Optional
 from django.http import JsonResponse
-from django.contrib.auth.decorators import login_required
 
 logger = logging.getLogger(__name__)
 

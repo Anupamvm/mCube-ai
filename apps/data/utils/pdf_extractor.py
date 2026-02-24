@@ -7,7 +7,7 @@ Used for processing analyst research reports.
 
 import logging
 import os
-from typing import Optional, Tuple
+from typing import Tuple
 
 from django.conf import settings
 

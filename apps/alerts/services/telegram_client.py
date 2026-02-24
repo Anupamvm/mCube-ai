@@ -12,9 +12,8 @@ Features:
 
 import logging
 import os
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Optional, Tuple
 import requests
-from decimal import Decimal
 
 logger = logging.getLogger(__name__)
 

@@ -10,8 +10,8 @@ Monitors candidates and detects optimal entry points based on:
 
 import logging
 from decimal import Decimal
-from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Tuple
+from datetime import timedelta
+from typing import Dict, List, Optional
 from django.utils import timezone
 
 from apps.data.analyzers import (

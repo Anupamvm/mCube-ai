@@ -16,7 +16,7 @@ import logging
 from decimal import Decimal
 from typing import Optional, Dict, Any, Union
 
-from .margin_service import get_available_margin, get_margin_per_lot, get_margin_summary
+from .margin_service import get_margin_summary
 
 logger = logging.getLogger(__name__)
 

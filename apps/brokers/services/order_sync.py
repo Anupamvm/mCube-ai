@@ -35,7 +35,7 @@ def sync_orders_from_broker():
                 if account.broker == 'KOTAK':
                     # Sync from Kotak Neo
                     from apps.brokers.integrations.kotak_neo import get_order_book
-                    orders_data = get_order_book(account)
+                    get_order_book(account)
 
                     # Update orders in database
                     # (Implementation depends on your order model structure)
@@ -50,7 +50,7 @@ def sync_orders_from_broker():
                 elif account.broker == 'BREEZE':
                     # Sync from ICICI Breeze
                     from apps.brokers.integrations.breeze import get_order_book
-                    orders_data = get_order_book(account)
+                    get_order_book(account)
 
                     Order.objects.filter(
                         account=account,

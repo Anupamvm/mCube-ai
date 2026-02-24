@@ -12,8 +12,7 @@ Calculates:
 
 import logging
 from decimal import Decimal
-from typing import Dict, List, Tuple
-from datetime import datetime, date
+from typing import Dict
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +80,7 @@ class OptionsRiskCalculator:
             call_loss = (target_price - Decimal(str(call_strike))) * quantity if target_price > call_strike else Decimal('0')
 
             # For short put, we still have premium
-            put_profit = put_premium * quantity
+            put_premium * quantity
 
             # Total profit/loss
             total_pl = (total_premium * quantity) - call_loss
@@ -100,7 +99,7 @@ class OptionsRiskCalculator:
             target_price = current_price * (Decimal('1') - Decimal(str(move_pct)) / Decimal('100'))
 
             # For short call, we still have premium
-            call_profit = call_premium * quantity
+            call_premium * quantity
 
             # For short put, loss increases as price goes down
             put_loss = (Decimal(str(put_strike)) - target_price) * quantity if target_price < put_strike else Decimal('0')

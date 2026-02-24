@@ -7,7 +7,7 @@ Page views for trade history and performance reporting.
 import json
 import logging
 import csv
-from datetime import date, datetime
+from datetime import date
 from django.shortcuts import render, get_object_or_404
 from django.http import HttpResponse
 from django.contrib.auth.decorators import login_required
@@ -16,8 +16,6 @@ from django.core.paginator import Paginator
 from apps.trading.models import TakenTrade
 from apps.trading.services.trade_action_service import TradeActionService
 from apps.brokers.models import BrokerTradeHistory, BrokerContractPnL
-from apps.brokers.services.trade_sync import TradeSyncService
-from apps.analytics.services.fy_analytics import FYAnalyticsService
 from apps.analytics.services.broker_analytics import BrokerAnalyticsService
 from apps.accounts.models import BrokerAccount
 
@@ -39,7 +37,7 @@ def trade_history(request):
     user = request.user
 
     # Get filter parameters
-    status_filter = request.GET.get('status', '')
+    request.GET.get('status', '')
     from_date = request.GET.get('from_date', '')
     to_date = request.GET.get('to_date', '')
     strategy = request.GET.get('strategy', '')

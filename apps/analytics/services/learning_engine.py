@@ -14,9 +14,9 @@ Key Features:
 
 import logging
 from decimal import Decimal
-from datetime import datetime, timedelta
+from datetime import timedelta
 from django.utils import timezone
-from django.db.models import Avg, Sum, Count, Q
+from django.db.models import Sum
 
 from apps.analytics.models import (
     LearningSession,

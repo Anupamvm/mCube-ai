@@ -7,7 +7,7 @@ trade statistics for reporting.
 """
 
 import logging
-from datetime import date, datetime
+from datetime import date
 from decimal import Decimal
 from django.db import transaction
 from django.db.models import Sum, Count, Avg, Max, Min, Q
@@ -382,7 +382,6 @@ class FYAnalyticsService:
                 'win_rate': float
             }, ...]
         """
-        from apps.trading.models import TradeSuggestion
 
         fy_start, fy_end, _ = FYAnalyticsService.get_fy_dates(fy_year)
 

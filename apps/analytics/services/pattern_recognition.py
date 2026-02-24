@@ -14,12 +14,8 @@ Pattern Types:
 
 import logging
 from decimal import Decimal
-from datetime import timedelta
-from django.db.models import Avg, Count, Q
-from django.utils import timezone
 
 from apps.analytics.models import TradePerformance, LearningPattern
-from apps.positions.models import Position
 
 logger = logging.getLogger(__name__)
 

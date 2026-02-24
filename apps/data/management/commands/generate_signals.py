@@ -4,7 +4,6 @@ Management command to generate trading signals from Trendlyne data
 
 from django.core.management.base import BaseCommand
 from apps.data.signals import SignalGenerator
-from apps.data.models import TLStockData
 
 
 class Command(BaseCommand):

@@ -11,7 +11,7 @@ import io
 import time
 import calendar
 import requests
-from datetime import datetime, date
+from datetime import date
 
 from .client import _get_authenticated_client
 
@@ -159,7 +159,7 @@ def _retry_with_fresh_auth():
     Returns the fresh client or None if auth fails.
     """
     try:
-        from tools.neo import get_neo_api, _cached_instance, _cache_lock
+        from tools.neo import get_neo_api, _cache_lock
         import tools.neo as neo_module
 
         # Invalidate the process-level cached instance to force fresh login

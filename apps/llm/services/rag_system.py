@@ -14,11 +14,9 @@ Features:
 
 import logging
 from typing import Dict, List, Optional, Tuple
-from datetime import datetime, timedelta
 
 from apps.llm.services.ollama_client import get_ollama_client, generate_embedding
 from apps.llm.services.vector_store import get_vector_store, COLLECTION_KNOWLEDGE, COLLECTION_NEWS
-from apps.data.models import NewsArticle, InvestorCall, KnowledgeBase
 
 logger = logging.getLogger(__name__)
 

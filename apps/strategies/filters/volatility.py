@@ -15,12 +15,9 @@ Rationale:
 import logging
 from decimal import Decimal
 from typing import Dict, Tuple, List
-from datetime import datetime, timedelta
 import statistics
 
-from django.utils import timezone
 
-from apps.brokers.models import HistoricalPrice
 
 logger = logging.getLogger(__name__)
 

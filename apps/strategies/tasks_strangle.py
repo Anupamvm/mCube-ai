@@ -15,7 +15,7 @@ All timings configurable via TradingScheduleConfig model
 
 import logging
 from decimal import Decimal
-from datetime import datetime, date, time, timedelta
+from datetime import date, time
 from celery import shared_task
 from django.utils import timezone
 from django.db.models import Sum
@@ -23,11 +23,9 @@ from django.db.models import Sum
 from apps.accounts.models import BrokerAccount
 from apps.positions.models import Position
 from apps.strategies.models import (
-    TradingScheduleConfig,
     MarketOpeningState,
     SGXNiftyData,
-    DailyTradingAnalysis,
-    TradingInsight
+    DailyTradingAnalysis
 )
 from apps.strategies.strategies.kotak_strangle import execute_kotak_strangle_entry
 from apps.alerts.services.telegram_client import send_telegram_notification

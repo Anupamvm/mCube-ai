@@ -15,7 +15,6 @@ Features:
 import logging
 import requests
 from typing import Dict, List, Optional
-from datetime import datetime, timedelta
 from django.core.cache import cache
 from apps.core.models import CredentialStore
 

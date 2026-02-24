@@ -17,7 +17,6 @@ Usage:
 from django.core.management.base import BaseCommand, CommandError
 from apps.core.models import CredentialStore
 import getpass
-import sys
 
 
 class Command(BaseCommand):
@@ -350,7 +349,6 @@ class Command(BaseCommand):
             if not cred:
                 raise CommandError('Breeze credentials not found. Run --setup-breeze first')
 
-            from apps.brokers.integrations.breeze import BreezeAPIClient
 
             api = BreezeAPI()
 

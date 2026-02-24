@@ -7,9 +7,8 @@ of task timings without code changes.
 """
 
 import logging
-from datetime import datetime, time
+from datetime import time
 from celery.schedules import crontab
-from django.utils import timezone
 
 from apps.strategies.models import TradingScheduleConfig
 

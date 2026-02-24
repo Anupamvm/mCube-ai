@@ -6,7 +6,7 @@ Handles approval/rejection of trade suggestions via Telegram and executes approv
 
 import logging
 from decimal import Decimal
-from typing import Dict, Optional, Tuple
+from typing import Optional, Tuple
 from django.utils import timezone
 from django.db import transaction
 
@@ -144,7 +144,7 @@ class TradeApprovalHandler:
         try:
             # Get position details from suggestion
             pos_details = suggestion.position_details
-            algo_reasoning = suggestion.algorithm_reasoning
+            suggestion.algorithm_reasoning
 
             # Determine account based on strategy
             if suggestion.strategy == 'icici_futures':

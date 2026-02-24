@@ -7,7 +7,6 @@ This module contains middleware for enhanced error handling and logging.
 import logging
 import traceback
 from django.http import JsonResponse, HttpResponse
-from django.shortcuts import render
 from django.conf import settings
 from django.template import TemplateDoesNotExist, TemplateSyntaxError
 

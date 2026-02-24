@@ -10,9 +10,8 @@ This is market participant-driven S/R, reflecting where big money has placed bet
 """
 
 import logging
-from typing import Dict, Optional, List, Tuple
-from datetime import datetime, date, timedelta
-from django.db.models import Sum
+from typing import Dict, Optional, List
+from datetime import datetime, date
 
 from apps.data.models import ContractData
 

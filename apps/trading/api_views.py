@@ -7,8 +7,6 @@ and order placement via ICICI Breeze API.
 
 import json
 import logging
-import time
-import uuid
 from decimal import Decimal
 from datetime import datetime
 
@@ -17,7 +15,6 @@ from django.views.decorators.http import require_POST, require_GET, require_http
 from django.views.decorators.csrf import csrf_exempt
 from django.http import JsonResponse
 from django.db import transaction
-from django.utils.decorators import method_decorator
 from django.core.cache import cache
 
 from apps.brokers.integrations.breeze import get_breeze_client, get_nfo_margin
@@ -2238,7 +2235,7 @@ def close_live_position(request):
         broker = data.get('broker', '').lower()
         symbol = data.get('symbol')
         quantity = data.get('quantity')  # Can be positive (LONG) or negative (SHORT)
-        exchange = data.get('exchange', 'NFO')
+        data.get('exchange', 'NFO')
         product = data.get('product', 'NRML')
         direction = data.get('direction', 'LONG').upper()
 
@@ -2948,7 +2945,7 @@ def analyze_position_averaging(request):
 
         # Get Neo client if needed (for future margin calculations)
         if broker == 'neo':
-            neo = get_kotak_neo_client()
+            get_kotak_neo_client()
 
         # Run averaging analysis
         analysis_result = analyzer.analyze_position_for_averaging(
@@ -3163,7 +3160,7 @@ def get_available_options_expiries(request):
         - instrument: NIFTY, BANKNIFTY, FINNIFTY
         - current_expiry: Current expiry in YYYY-MM-DD format
     """
-    from datetime import date, timedelta
+    from datetime import date
     from apps.data.models import OptionChain
 
     instrument = request.GET.get('instrument', '').upper()
@@ -3284,7 +3281,7 @@ def update_position_avg_price(request):
 # HISTORICAL DATA API VIEWS
 # Import from the dedicated historical_data_views module
 # ============================================================================
-from apps.trading.api.historical_data_views import (
+from apps.trading.api.historical_data_views import (  # noqa: F401
     get_breeze_historical_data,
     get_stored_historical_data,
     prepare_historical_data,

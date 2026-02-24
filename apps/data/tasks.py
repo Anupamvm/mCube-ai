@@ -9,7 +9,7 @@ from django.utils import timezone
 
 from .providers.trendlyne import get_all_trendlyne_data
 from .importers import TrendlyneDataImporter, ContractStockDataImporter
-from .broker_integration import ScheduledDataUpdater, MarketDataUpdater
+from .broker_integration import ScheduledDataUpdater
 from .signals import SignalGenerator
 
 # Import TaskLogger and task guard

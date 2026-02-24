@@ -11,7 +11,7 @@ This module provides validation functions for:
 import logging
 from datetime import datetime, date
 from decimal import Decimal
-from typing import Dict, List, Tuple
+from typing import List, Tuple
 
 from apps.core.constants import (
     NIFTY_STRIKE_INTERVAL,

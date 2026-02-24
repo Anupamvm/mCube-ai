@@ -9,7 +9,6 @@ Sends alerts via:
 
 import asyncio
 from typing import Optional
-from django.conf import settings
 
 
 def send_telegram_notification(message: str, chat_id: Optional[str] = None) -> bool:

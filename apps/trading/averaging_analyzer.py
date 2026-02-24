@@ -18,9 +18,7 @@ Additional Pro Trader Criteria:
 """
 
 import logging
-from datetime import datetime, timedelta
-from typing import Dict, Any, Optional, Tuple
-from decimal import Decimal
+from typing import Dict, Any, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -643,7 +641,6 @@ class AveragingAnalyzer:
         """
         try:
             from apps.brokers.models import HistoricalPrice
-            from django.db.models import Q
             from datetime import date, timedelta, datetime as dt
 
             # Get last 200 days of data

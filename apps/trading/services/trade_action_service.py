@@ -12,7 +12,7 @@ from decimal import Decimal
 from django.utils import timezone
 from django.db import transaction
 
-from apps.trading.models import TradeSuggestion, TakenTrade, TradeSuggestionLog
+from apps.trading.models import TakenTrade, TradeSuggestionLog
 
 logger = logging.getLogger(__name__)
 
@@ -451,9 +451,7 @@ class TradeActionService:
             }
         """
         from apps.brokers.models import BrokerTradeHistory
-        from django.db.models import Sum
         from collections import defaultdict
-        from datetime import datetime
 
         created_trades = []
         errors = []

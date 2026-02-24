@@ -27,8 +27,7 @@ Target: Net delta close to 0 (delta-neutral)
 
 import logging
 from decimal import Decimal
-from typing import Dict, Optional
-from datetime import datetime
+from typing import Dict
 
 from django.utils import timezone
 
@@ -338,8 +337,7 @@ def generate_adjustment_recommendation(
     # Determine which side is dominant
     if net_delta > 0:
         # Net long delta (put side stronger)
-        bias = "BULLISH"
-        action = "sell additional calls or buy back some puts"
+        pass
 
         # Calculate adjustment quantity (rough approximation)
         adjustment_qty = int(abs(net_delta / call_delta)) if call_delta != 0 else 0
@@ -368,8 +366,7 @@ Current Market: ₹{current_spot:,.0f}
 
     elif net_delta < 0:
         # Net short delta (call side stronger)
-        bias = "BEARISH"
-        action = "sell additional puts or buy back some calls"
+        pass
 
         # Calculate adjustment quantity
         adjustment_qty = int(abs(net_delta / put_delta)) if put_delta != 0 else 0

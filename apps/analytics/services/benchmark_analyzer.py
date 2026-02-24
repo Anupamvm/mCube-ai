@@ -9,15 +9,12 @@ Provides benchmark comparison and alpha/beta calculations:
 """
 
 import logging
-import math
 from datetime import date, datetime, timedelta
 from decimal import Decimal
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Optional
 
 import numpy as np
 from django.db import transaction
-from django.db.models import Avg, Sum
-from django.utils import timezone
 
 from apps.accounts.models import BrokerAccount
 from apps.analytics.models import (
@@ -280,7 +277,7 @@ class BenchmarkAnalyzer:
 
             # Calculate alpha using CAPM
             # Alpha = Portfolio Return - (Risk-free rate + Beta * (Market Return - Risk-free rate))
-            daily_rf = float(self.RISK_FREE_RATE) / self.TRADING_DAYS_PER_YEAR
+            float(self.RISK_FREE_RATE) / self.TRADING_DAYS_PER_YEAR
             annualized_rf = float(self.RISK_FREE_RATE) * 100
 
             period_rf = annualized_rf * (period_days / 365)

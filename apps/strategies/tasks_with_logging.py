@@ -21,12 +21,10 @@ from apps.accounts.models import BrokerAccount
 from apps.positions.models import Position
 from apps.strategies.strategies.kotak_strangle import execute_kotak_strangle_entry
 from apps.strategies.strategies.icici_futures import (
-    screen_futures_opportunities,
-    execute_icici_futures_entry
+    screen_futures_opportunities
 )
 from apps.positions.services.delta_monitor import monitor_delta
 from apps.positions.services.averaging_manager import (
-    should_average_position,
     get_averaging_recommendation
 )
 from apps.positions.services.exit_manager import should_exit_position
@@ -179,7 +177,6 @@ def evaluate_kotak_strangle_exit(self, profit_threshold=10000, mandatory=False):
         if position.unrealized_pnl >= Decimal(str(profit_threshold)):
             should_exit = True
             reason = f"Profit target reached: ₹{position.unrealized_pnl:,.0f} >= ₹{profit_threshold:,.0f}"
-            exit_type = "PROFIT_TARGET"
             task_logger.info('profit_threshold', f"Profit threshold reached: ₹{position.unrealized_pnl:,.0f}",
                            context={'current_pnl': float(position.unrealized_pnl),
                                   'threshold': profit_threshold})
@@ -188,7 +185,6 @@ def evaluate_kotak_strangle_exit(self, profit_threshold=10000, mandatory=False):
             # Friday - exit regardless
             should_exit = True
             reason = "Mandatory Friday EOD exit (before weekly expiry)"
-            exit_type = "EOD_MANDATORY"
             task_logger.warning('mandatory_exit', "Mandatory exit triggered")
 
         if should_exit:

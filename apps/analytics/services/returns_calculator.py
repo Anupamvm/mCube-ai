@@ -11,17 +11,16 @@ Calculates various return metrics and risk-adjusted performance measures:
 
 import logging
 import math
-from datetime import date, datetime, timedelta
+from datetime import date
 from decimal import Decimal
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 from django.db import transaction
-from django.db.models import Avg, Sum, Count, Min, Max, Q
-from django.utils import timezone
+from django.db.models import Avg, Sum
 
 from apps.accounts.models import BrokerAccount
-from apps.analytics.models import DailyEquityCurve, AccountReturns, DailyPnL, BenchmarkData
+from apps.analytics.models import DailyEquityCurve, AccountReturns, BenchmarkData
 from apps.positions.models import Position
 from apps.trading.models import TakenTrade
 

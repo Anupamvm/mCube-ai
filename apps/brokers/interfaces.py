@@ -15,7 +15,7 @@ Example:
 """
 
 from abc import ABC, abstractmethod
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -118,46 +118,38 @@ class BrokerInterface(ABC):
         Returns:
             bool: True if login successful, False otherwise
         """
-        pass
 
     @abstractmethod
     def logout(self) -> bool:
         """Logout from the broker and close session"""
-        pass
 
     # ===== Margin & Funds =====
 
     @abstractmethod
     def get_margin(self) -> MarginData:
         """Get current margin/funds information"""
-        pass
 
     @abstractmethod
     def get_available_margin(self) -> float:
         """Get available margin as float"""
-        pass
 
     @abstractmethod
     def check_margin_sufficient(self, required: float) -> bool:
         """Check if sufficient margin is available for a trade"""
-        pass
 
     # ===== Positions =====
 
     @abstractmethod
     def get_positions(self) -> List[Position]:
         """Get all open positions"""
-        pass
 
     @abstractmethod
     def has_open_positions(self) -> bool:
         """Check if any positions are open"""
-        pass
 
     @abstractmethod
     def get_position_pnl(self) -> float:
         """Calculate total P&L from all positions"""
-        pass
 
     # ===== Orders =====
 
@@ -184,48 +176,40 @@ class BrokerInterface(ABC):
         Returns:
             str: Order ID if successful, None otherwise
         """
-        pass
 
     @abstractmethod
     def get_orders(self) -> List[Order]:
         """Get all orders for the day"""
-        pass
 
     @abstractmethod
     def cancel_order(self, order_id: str) -> bool:
         """Cancel an order by ID"""
-        pass
 
     # ===== Quotes & Data =====
 
     @abstractmethod
     def get_quote(self, symbol: str, **kwargs) -> Optional[Quote]:
         """Get current quote for a symbol"""
-        pass
 
     @abstractmethod
     def search_symbol(self, symbol: str, **kwargs) -> List[Dict]:
         """Search for a symbol in broker's database"""
-        pass
 
     # ===== Market Status =====
 
     @abstractmethod
     def is_market_open(self) -> bool:
         """Check if market is currently open"""
-        pass
 
     # ===== WebSocket (Optional) =====
 
     @abstractmethod
     def subscribe_live_feed(self, symbols: List[str], **kwargs) -> bool:
         """Subscribe to live price feed for symbols"""
-        pass
 
     @abstractmethod
     def unsubscribe_live_feed(self, symbols: List[str]) -> bool:
         """Unsubscribe from live price feed"""
-        pass
 
 
 class BrokerFactory:
@@ -341,24 +325,19 @@ def best_broker_for_trade(symbol: str, quantity: int, required_margin: float) ->
 
 class BrokerError(Exception):
     """Base exception for broker-related errors"""
-    pass
 
 
 class BrokerAuthError(BrokerError):
     """Raised when authentication fails"""
-    pass
 
 
 class BrokerConnectionError(BrokerError):
     """Raised when connection to broker fails"""
-    pass
 
 
 class InsufficientMarginError(BrokerError):
     """Raised when margin is insufficient for trade"""
-    pass
 
 
 class InvalidOrderError(BrokerError):
     """Raised when order parameters are invalid"""
-    pass

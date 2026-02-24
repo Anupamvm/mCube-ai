@@ -6,7 +6,7 @@ Automatically triggers updates when data is stale.
 """
 
 import logging
-from datetime import datetime, timedelta
+from datetime import timedelta
 from typing import Dict, Optional
 from django.utils import timezone
 from django.core.cache import cache

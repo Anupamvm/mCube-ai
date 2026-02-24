@@ -4,7 +4,7 @@ Trade Validators using Trendlyne Data
 Validates trade setups before execution using comprehensive checks
 """
 
-from typing import Tuple, Dict, Optional, List
+from typing import Tuple, Dict, List
 from dataclasses import dataclass
 
 from .analyzers import (

@@ -299,7 +299,6 @@ class BreezeAutoLogin:
         try:
             from selenium import webdriver
             from selenium.webdriver.chrome.options import Options
-            from selenium.common.exceptions import WebDriverException
 
             options = Options()
 
@@ -328,7 +327,7 @@ class BreezeAutoLogin:
 
     def _get_login_url(self) -> str:
         """Build the Breeze login URL with API key."""
-        from urllib.parse import quote, unquote
+        from urllib.parse import quote
 
         api_key = self.credentials.api_key
         logger.info(f"Raw API key from database: {api_key}")

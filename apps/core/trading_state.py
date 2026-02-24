@@ -8,7 +8,7 @@ like pause/resume. For production, this should be moved to Redis or database.
 """
 
 import logging
-from typing import Dict, Optional
+from typing import Dict
 from datetime import datetime
 
 logger = logging.getLogger(__name__)

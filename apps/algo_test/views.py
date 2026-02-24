@@ -4,10 +4,9 @@ Algorithm Testing Views
 Views for algorithm testing and analysis
 """
 
-from django.shortcuts import render, redirect
+from django.shortcuts import render
 from django.contrib.auth.decorators import login_required
 from django.http import JsonResponse
-from django.views.decorators.http import require_POST
 from decimal import Decimal
 from datetime import datetime
 import json

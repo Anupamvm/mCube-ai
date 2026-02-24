@@ -10,7 +10,6 @@ from typing import Dict, Optional
 from apps.brokers.utils.common import parse_float as _parse_float
 
 from .client import get_breeze_client
-from .quotes import get_nifty_quote
 from .margin import get_nfo_margin
 from .data_fetcher import fetch_and_save_breeze_data
 from .expiry import get_next_nifty_expiry
@@ -31,7 +30,6 @@ class BreezeAPI:
 
     def __init__(self):
         """Initialize Breeze API wrapper"""
-        from apps.core.models import CredentialStore
         self.breeze = None
 
     def login(self) -> bool:

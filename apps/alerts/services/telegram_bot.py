@@ -23,9 +23,8 @@ import os
 import html
 import fcntl
 import atexit
-from decimal import Decimal
 from datetime import datetime
-from typing import Optional, List, Dict, Tuple
+from typing import List, Dict
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -1044,7 +1043,7 @@ class TelegramBotHandler(MenuMixin, DataMixin, TradeMixin):
                 return
 
             from apps.trading.services.trade_confirmation import get_confirmation_service
-            service = get_confirmation_service()
+            get_confirmation_service()
 
             from apps.core.models import TradingCoreConfig
             config = await sync_to_async(TradingCoreConfig.get_instance)()
@@ -1593,7 +1592,6 @@ class TelegramBotHandler(MenuMixin, DataMixin, TradeMixin):
         User can click "Stop Execution" button to cancel remaining batches.
         """
         import requests
-        import os
         from django.db import close_old_connections
 
         # Close stale DB connections for thread safety
@@ -1601,7 +1599,7 @@ class TelegramBotHandler(MenuMixin, DataMixin, TradeMixin):
 
         try:
             from apps.trading.services.trade_confirmation import get_confirmation_service
-            from apps.trading.models import TradeSuggestion, OrderExecutionControl
+            from apps.trading.models import TradeSuggestion
             from apps.core.models import NseFlag
 
             # Get suggestion
@@ -1764,7 +1762,6 @@ class TelegramBotHandler(MenuMixin, DataMixin, TradeMixin):
         """Skip all pending futures suggestions"""
         try:
             from apps.core.models import NseFlag
-            from apps.trading.models import TradeSuggestion
 
             # Get pending suggestion IDs
             suggestion_ids_str = await sync_to_async(NseFlag.get)('pending_futures_suggestions', '')
@@ -1947,7 +1944,7 @@ class TelegramBotHandler(MenuMixin, DataMixin, TradeMixin):
 
         try:
             from apps.trading.models import TradeSuggestion
-            from apps.trading.services.margin_service import get_available_margin, get_margin_per_lot
+            from apps.trading.services.margin_service import get_available_margin
 
             suggestion = TradeSuggestion.objects.get(id=suggestion_id)
 

@@ -9,12 +9,10 @@ Usage:
 from decimal import Decimal
 from datetime import date, timedelta
 from django.core.management.base import BaseCommand
-from django.utils import timezone
 
 from apps.accounts.models import BrokerAccount
 from apps.positions.models import Position
 from apps.strategies.models import StrategyConfig
-from apps.risk.models import RiskLimit
 
 # Import all services
 from apps.accounts.services.margin_manager import (
@@ -29,12 +27,9 @@ from apps.positions.services.position_manager import (
     update_position_price,
     close_position,
     get_position_summary,
-    average_position,
 )
 from apps.positions.services.exit_manager import (
     check_exit_conditions,
-    should_exit_position,
-    get_recommended_exit_action,
 )
 from apps.core.services.expiry_selector import (
     select_expiry_for_options,

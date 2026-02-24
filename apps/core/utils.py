@@ -4,7 +4,6 @@ Core utility functions for mCube Trading System
 Includes number formatting, date utilities, and other helpers
 """
 
-import re
 
 
 def format_indian_number(number, decimals=2):

@@ -12,8 +12,7 @@ NO ASSUMPTIONS - All data from real historical prices.
 """
 
 import logging
-from decimal import Decimal
-from typing import Dict, Optional, List, Tuple
+from typing import Dict
 from datetime import datetime, date, timedelta
 
 from apps.brokers.models import HistoricalPrice

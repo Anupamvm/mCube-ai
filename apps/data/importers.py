@@ -6,10 +6,8 @@ Handles importing scraped data into Django models
 
 import os
 import pandas as pd
-from datetime import datetime
 from django.conf import settings
 from django.db import transaction
-from decimal import Decimal
 
 from .models import TLStockData, ContractData, ContractStockData
 
@@ -329,7 +327,7 @@ class ContractStockDataImporter:
         Calculate stock-level F&O metrics from ContractData
         and save to ContractStockData
         """
-        from django.db.models import Sum, Avg, Count
+        from django.db.models import Sum, Avg
 
         stocks = ContractData.objects.values_list('symbol', flat=True).distinct()
 

@@ -12,14 +12,12 @@ Think like a quant + discretionary trader hybrid.
 """
 
 import logging
-from datetime import datetime, timedelta, date
-from decimal import Decimal
-from typing import Dict, List, Optional, Any, Tuple
-from collections import defaultdict
+from datetime import date
+from typing import Dict, List, Any, Tuple
 import statistics
 
-from django.db.models import Sum, Count, Avg, Max, Min, F, Q, StdDev, Variance
-from django.db.models.functions import ExtractWeekDay, ExtractHour, ExtractMonth, TruncMonth, TruncWeek
+from django.db.models import Sum, Count, Avg, Max, Min, Q, StdDev
+from django.db.models.functions import ExtractMonth, TruncWeek
 from django.utils import timezone
 
 logger = logging.getLogger(__name__)

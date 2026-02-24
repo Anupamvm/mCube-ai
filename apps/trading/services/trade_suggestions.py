@@ -5,7 +5,6 @@ Trading Services - Trade Suggestion Generation
 from django.contrib.auth.models import User
 from django.utils import timezone
 from datetime import timedelta
-from decimal import Decimal
 import logging
 
 from apps.trading.models import TradeSuggestion, TradeSuggestionLog

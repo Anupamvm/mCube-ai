@@ -9,20 +9,18 @@ This module provides integration with Kotak Neo broker API for:
 
 import logging
 import re
-from datetime import datetime, timedelta
+from datetime import datetime
 from decimal import Decimal, InvalidOperation
 try:
-    from neo_api_client import NeoAPI
+    pass
 except ImportError:
     # Use local wrapper if neo_api_client not installed
-    from tools.neo import NeoAPI
+    pass
 from django.utils import timezone
 from django.core.cache import cache
-from apps.core.models import CredentialStore
 from apps.core.constants import BROKER_KOTAK
 from apps.brokers.models import BrokerLimit, BrokerPosition, PositionAvgOverride
-from apps.brokers.utils.common import parse_float as _parse_float, parse_decimal
-from apps.brokers.utils.auth_manager import get_credentials
+from apps.brokers.utils.common import parse_float as _parse_float
 
 logger = logging.getLogger(__name__)
 
@@ -190,7 +188,6 @@ def fetch_and_save_kotakneo_data():
         logger.error(f"Error saving Kotak Neo limits: {type(e).__name__}: {e}")
         logger.error(f"Traceback: {traceback.format_exc()}")
         # Continue with positions even if limits fail
-        pass
 
     # Fetch & save positions
     resp = client.positions()
@@ -1572,7 +1569,6 @@ def map_breeze_symbol_to_neo(breeze_symbol: str, expiry_date=None, client=None) 
         Neo symbol: NIFTY 02 DEC 2025 27050 CE
     """
     import re
-    from datetime import datetime
 
     try:
         # Use provided client or get new one
@@ -2001,7 +1997,6 @@ def close_position_in_batches(
         ... )
     """
     import time
-    import threading
 
     logger.info(f"Starting batch position closing: {total_quantity} qty in batches")
 
@@ -2512,7 +2507,7 @@ def get_neo_open_positions(include_raw=False) -> dict:
         except NeoAuthenticationError:
             # Session might be stale — invalidate cached instance and retry once
             logger.warning("Neo session error on positions fetch — invalidating cache and retrying")
-            from tools.neo import _cache_lock, _cached_instance
+            from tools.neo import _cache_lock
             import tools.neo as neo_module
             with _cache_lock:
                 neo_module._cached_instance = None

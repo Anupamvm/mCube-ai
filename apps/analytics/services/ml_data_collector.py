@@ -11,12 +11,12 @@ Provides functions to:
 """
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime
 from decimal import Decimal
 from typing import Optional, Dict, Any, List
 
 from django.db import transaction
-from django.db.models import Avg, Count, Sum, Q
+from django.db.models import Avg, Count
 from django.utils import timezone
 from django.contrib.auth.models import User
 
@@ -25,7 +25,7 @@ from apps.analytics.models import (
     MarketContextSnapshot,
     UserBehaviorProfile,
 )
-from apps.trading.models import TradeSuggestion, TakenTrade
+from apps.trading.models import TradeSuggestion
 
 logger = logging.getLogger(__name__)
 

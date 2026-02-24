@@ -8,13 +8,12 @@ P&L scenarios, and averaging analysis for futures trading.
 import logging
 import re
 from datetime import datetime
-from decimal import Decimal
 
 from django.contrib.auth.decorators import login_required
 from django.views.decorators.http import require_POST, require_http_methods
 from django.http import JsonResponse
 
-from apps.brokers.integrations.breeze import get_breeze_client, get_nfo_margin
+from apps.brokers.integrations.breeze import get_breeze_client
 from apps.brokers.integrations.kotak_neo import get_kotak_neo_client
 from apps.accounts.models import BrokerAccount
 from apps.data.models import ContractData
@@ -466,7 +465,7 @@ def analyze_position_averaging(request):
 
         # Get Neo client if needed (for future margin calculations)
         if broker == 'neo':
-            neo = get_kotak_neo_client()
+            get_kotak_neo_client()
 
         # Run averaging analysis
         analysis_result = analyzer.analyze_position_for_averaging(

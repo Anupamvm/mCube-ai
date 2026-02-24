@@ -25,7 +25,7 @@ Example:
 
 import logging
 import jwt
-from datetime import datetime, date, timedelta
+from datetime import datetime, date
 from typing import Optional, Tuple
 from django.utils import timezone
 from apps.core.models import CredentialStore

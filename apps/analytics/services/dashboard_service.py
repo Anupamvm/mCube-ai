@@ -11,12 +11,11 @@ Provides data for the analytics dashboard:
 """
 
 import logging
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 from decimal import Decimal
-from typing import Dict, List, Optional, Any
+from typing import Dict, Optional, Any
 
 from django.db.models import Avg, Sum, Count, Max, Min, Q
-from django.utils import timezone
 from django.contrib.auth.models import User
 
 from apps.accounts.models import BrokerAccount
@@ -24,12 +23,10 @@ from apps.analytics.models import (
     DailyEquityCurve,
     AccountReturns,
     DailyPnL,
-    BenchmarkData,
     PortfolioBeta,
     UserDecisionLog,
 )
 from apps.trading.models import TakenTrade, TradeSuggestion
-from apps.positions.models import Position
 
 logger = logging.getLogger(__name__)
 

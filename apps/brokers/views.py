@@ -8,16 +8,16 @@ from functools import wraps
 from urllib.parse import urlencode
 
 from django.shortcuts import render, redirect
-from django.http import JsonResponse, HttpResponse
+from django.http import JsonResponse
 from django.contrib import messages
 from django.contrib.auth import authenticate, login as auth_login, logout as auth_logout
-from django.contrib.auth.decorators import login_required, permission_required, user_passes_test
+from django.contrib.auth.decorators import login_required, user_passes_test
 from django.views.decorators.http import require_http_methods
 from django.core.paginator import Paginator
 from django.db import models
 
 from apps.core.models import CredentialStore
-from apps.brokers.models import BrokerLimit, BrokerPosition, OptionChainQuote, HistoricalPrice, NiftyOptionChain
+from apps.brokers.models import BrokerLimit, BrokerPosition, HistoricalPrice
 from apps.brokers.exceptions import BreezeAuthenticationError
 from apps.data.models import OptionChain
 from apps.brokers.integrations.kotak_neo import (
@@ -29,9 +29,7 @@ from apps.brokers.integrations.breeze import (
     save_breeze_token,
     fetch_and_save_breeze_data,
     get_nifty_quote,
-    get_and_save_option_chain_quotes,
     get_nifty50_historical_days,
-    get_next_nifty_expiry,
     fetch_and_save_nifty_option_chain_all_expiries
 )
 
@@ -1129,13 +1127,10 @@ def validate_future_trade(request):
     5. Generating sample Telegram notification
     """
     from apps.strategies.strategies.icici_futures import (
-        screen_futures_opportunities,
-        execute_icici_futures_entry
+        screen_futures_opportunities
     )
     from apps.data.models import ContractData, TLStockData
     from apps.accounts.models import BrokerAccount
-    from decimal import Decimal
-    import json
     from datetime import datetime
 
     validation_steps = []
@@ -1434,7 +1429,6 @@ def api_upload_csv(request):
     Duplicate detection happens at the data level - same contracts are updated, not duplicated.
     Users can freely re-upload any files.
     """
-    import json
     from apps.brokers.forms import CSVUploadForm
     from apps.brokers.services.csv_importers import KotakFNOImporter, BreezeFNOImporter, convert_excel_to_csv_file
 

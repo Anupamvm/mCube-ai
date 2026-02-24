@@ -20,8 +20,8 @@ Flow:
 
 import logging
 from decimal import Decimal
-from typing import Optional, Dict, List, Tuple
-from datetime import datetime, timedelta
+from typing import Dict, List, Tuple
+from datetime import datetime
 from django.utils import timezone
 
 logger = logging.getLogger(__name__)
@@ -231,7 +231,7 @@ class TradeConfirmationService:
         """
         from apps.core.models import TradingCoreConfig
 
-        config = TradingCoreConfig.get_instance()
+        TradingCoreConfig.get_instance()
 
         symbol = suggestion.instrument
         direction = suggestion.direction
@@ -685,7 +685,6 @@ class TradeConfirmationService:
         """
         try:
             from apps.accounts.models import BrokerAccount
-            from apps.trading.models import TradeSuggestion
 
             # Determine strategy type
             strategy = suggestion.strategy_type

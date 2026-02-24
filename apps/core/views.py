@@ -14,7 +14,6 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 from tools.neo import _parse_float
 from apps.core.utils import format_currency
-from apps.brokers.integrations.breeze import BreezeAPI
 
 logger = logging.getLogger(__name__)
 
@@ -427,7 +426,7 @@ def trigger_trendlyne_full_cycle(request):
 
                 callback = DjangoLogCallback()
                 fetcher = TrendlyneDataFetcher(callback)
-                result = fetcher.fetch_fno_data()
+                fetcher.fetch_fno_data()
 
                 # Get summary statistics
                 from apps.data.models import (
@@ -500,7 +499,7 @@ def trigger_market_snapshot_download(request):
                 fetcher = TrendlyneDataFetcher(callback)
 
                 # The fetch_fno_data method fetches ALL data including stock data
-                result = fetcher.fetch_fno_data()
+                fetcher.fetch_fno_data()
 
                 from apps.data.models import TLStockData
                 record_count = TLStockData.objects.count()
@@ -1145,7 +1144,7 @@ def test_trendlyne():
 
     # Test 3: ChromeDriver availability
     try:
-        import chromedriver_autoinstaller
+        pass
         # Just check if the module can be imported
         tests.append({
             'name': 'ChromeDriver (Selenium)',
@@ -1250,7 +1249,7 @@ def test_trendlyne():
     try:
         import os
         from django.conf import settings
-        from datetime import datetime, timedelta
+        from datetime import datetime
 
         data_dir = os.path.join(settings.BASE_DIR, 'trendlyne_data')
 
@@ -1443,9 +1442,7 @@ def test_trendlyne():
 
     # Test 8: Selenium and BeautifulSoup packages
     try:
-        from selenium import webdriver
-        from bs4 import BeautifulSoup
-        import pandas as pd
+        pass
 
         tests.append({
             'name': 'Scraping Dependencies',
@@ -1461,13 +1458,7 @@ def test_trendlyne():
 
     # Test 9: Trendlyne Tool Module
     try:
-        from apps.data.tools import trendlyne
-        from apps.data.tools.trendlyne import (
-            get_all_trendlyne_data,
-            getFnOData,
-            getMarketSnapshotData,
-            getTrendlyneForecasterData
-        )
+        pass
 
         tests.append({
             'name': 'Trendlyne Tool Module',
@@ -1807,7 +1798,6 @@ def test_positions():
     # Test 2: One position per account rule
     try:
         from apps.positions.models import Position
-        from apps.accounts.models import BrokerAccount
 
         # Check if the method exists
         if hasattr(Position, 'has_active_position'):
@@ -1900,13 +1890,12 @@ def test_accounts(request=None):
     # Test 2: Kotak Neo Login Verification
     try:
         from apps.core.models import CredentialStore
-        from datetime import datetime
         kotak_creds = CredentialStore.objects.filter(service='kotakneo').first()
 
         if kotak_creds:
             # Check session for verification status
             kotak_verified = request.session.get('kotak_login_verified', False) if request else False
-            kotak_time = request.session.get('kotak_login_time', '') if request else ''
+            request.session.get('kotak_login_time', '') if request else ''
 
             if kotak_verified:
                 # Get account data from session
@@ -1951,7 +1940,7 @@ def test_accounts(request=None):
         if breeze_creds:
             # Check session for verification status
             breeze_verified = request.session.get('breeze_login_verified', False) if request else False
-            breeze_time = request.session.get('breeze_login_time', '') if request else ''
+            request.session.get('breeze_login_time', '') if request else ''
 
             if breeze_verified:
                 # Get account data from session
@@ -2501,7 +2490,7 @@ def test_background_tasks():
         available_tasks = []
         for module_name in task_modules:
             try:
-                module = importlib.import_module(module_name)
+                importlib.import_module(module_name)
                 available_tasks.append(module_name.split('.')[-2])
             except:
                 pass
@@ -2627,7 +2616,7 @@ def test_telegram():
     # Test 9: Alert Manager integration (database check only — no Telegram send on page load)
     try:
         from apps.alerts.services import get_alert_manager
-        alert_manager = get_alert_manager()
+        get_alert_manager()
 
         # Just verify AlertManager is accessible and DB model works
         from apps.alerts.models import Alert
@@ -2648,7 +2637,7 @@ def test_telegram():
 
     # Test 10: Alert log verification (response tracking)
     try:
-        from apps.alerts.models import Alert, AlertLog
+        from apps.alerts.models import Alert
 
         # Get the most recent alert
         latest_alert = Alert.objects.order_by('-created_at').first()
@@ -3824,7 +3813,7 @@ def celery_task_control(request):
                 sort_min = cfg.get('default_recurring_start_minute', 0)
                 end_h = cfg.get('default_recurring_end_hour', 15)
                 end_m = cfg.get('default_recurring_end_minute', 0)
-                interval = cfg.get('default_recurring_interval_minutes', 30)
+                cfg.get('default_recurring_interval_minutes', 30)
                 time_str = f"{sort_hour:02d}:{sort_min:02d}-{end_h:02d}:{end_m:02d}"
             else:
                 sort_hour = 12
@@ -4178,7 +4167,7 @@ def update_core_config(request):
 
 
 # Task configuration - imported from task_config.py to avoid circular imports
-from apps.core.task_config import TASK_DEFAULT_CONFIG, TASK_CONFIG_FIELDS
+from apps.core.task_config import TASK_DEFAULT_CONFIG
 
 
 @login_required
@@ -4391,7 +4380,7 @@ def save_task_config(request):
                         setattr(task_state, field_name, new_value)
                         updated_fields.append(field_name)
                         logger.info(f"Task {task_key}: {field_name} = {new_value} (was {old_value})")
-                except (ValueError, TypeError) as e:
+                except (ValueError, TypeError):
                     logger.warning(f"Invalid value for {field_name}: {request.POST[field_name]}")
 
         # Handle task_params (task-specific parameters from task_param_fields)
@@ -4420,7 +4409,7 @@ def save_task_config(request):
                             logger.info(f"Task {task_key}: task_params.{field_name} = {new_value} (was {old_value})")
                         else:
                             current_task_params[field_name] = new_value  # Ensure it's set even if unchanged
-                    except (ValueError, TypeError) as e:
+                    except (ValueError, TypeError):
                         logger.warning(f"Invalid value for task_params.{field_name}: {request.POST[field_name]}")
 
             task_state.task_params = current_task_params
@@ -5006,7 +4995,6 @@ def restart_celery_beat():
 def toggle_static_task(request):
     """Toggle a static Celery task on/off."""
     from apps.core.models import CeleryTaskState
-    from django.contrib import messages
 
     if request.method != 'POST':
         return JsonResponse({'success': False, 'error': 'POST required'}, status=405)
@@ -5531,7 +5519,7 @@ def background_tasks_control(request):
     """
     from apps.strategies.models import TradingScheduleConfig
     from apps.core.models import CeleryTaskState
-    from mcube_ai.celery import get_all_tasks_for_display, get_static_schedule
+    from mcube_ai.celery import get_static_schedule
     import redis
 
     # =========================================================================

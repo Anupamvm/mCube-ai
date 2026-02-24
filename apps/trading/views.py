@@ -10,12 +10,12 @@ from django.http import JsonResponse
 from django.views.decorators.http import require_POST
 from django.contrib import messages
 from django.utils import timezone
-from django.db.models import Q
 import logging
 
 from apps.trading.models import TradeSuggestion, TradeSuggestionLog
 from apps.positions.models import Position
 from apps.brokers.integrations.breeze import get_india_vix
+from apps.core.utils import json_serial
 
 logger = logging.getLogger(__name__)
 
@@ -255,7 +255,7 @@ def suggestion_history(request):
     View history of all trade suggestions and decisions with pagination and filters
     """
     from django.core.paginator import Paginator, EmptyPage, PageNotAnInteger
-    from datetime import datetime, timedelta
+    from datetime import datetime
 
     suggestions = TradeSuggestion.objects.filter(user=request.user).order_by('-created_at')
 
@@ -416,8 +416,7 @@ def manual_triggers_refactored(request):
     Now pre-loads the latest futures algorithm results so they display immediately on page load.
     """
     import json
-    from datetime import datetime, timedelta
-    from decimal import Decimal
+    from datetime import timedelta
 
     # Fetch the latest futures suggestions (created within last 7 days)
     # Include both SUGGESTED and TAKEN status (both were shortlisted by algorithm)
@@ -495,13 +494,6 @@ def manual_triggers_refactored(request):
             'batch_time': most_recent.created_at.strftime('%Y-%m-%d %H:%M:%S'),
         }
 
-    # Helper function to serialize for JSON
-    def json_serial(obj):
-        if isinstance(obj, (datetime,)):
-            return obj.isoformat()
-        if isinstance(obj, Decimal):
-            return float(obj)
-        raise TypeError(f"Type {type(obj)} not serializable")
 
     context = {
         'preloaded_results': json.dumps(preloaded_results, default=json_serial) if preloaded_results else 'null',
@@ -960,20 +952,11 @@ def trigger_futures_algorithm(request):
         if passed_results:
             from apps.trading.models import TradeSuggestion
             from django.utils import timezone
-            from apps.trading.position_sizer import PositionSizer
             from apps.brokers.integrations.breeze import get_breeze_client
             from apps.data.models import ContractData
             import json
-            from datetime import date, datetime, timedelta
+            from datetime import datetime, timedelta
             from decimal import Decimal
-
-            # Helper to serialize dates and decimals for JSON
-            def json_serial(obj):
-                if isinstance(obj, (datetime, date)):
-                    return obj.isoformat()
-                if isinstance(obj, Decimal):
-                    return float(obj)
-                raise TypeError(f"Type {type(obj)} not serializable")
 
             # Initialize Breeze client for margin fetching
             try:
@@ -1683,8 +1666,7 @@ def trigger_nifty_strangle(request):
         # Find nearest available strikes since calculated strikes might not exist
         # IMPORTANT: Use the psychologically-adjusted strikes (call_strike, put_strike are already adjusted at this point)
         try:
-            from django.db.models import F, Func
-            from django.db.models.functions import Abs
+            pass
 
             # Get all available call strikes for this expiry
             available_call_strikes = OptionChain.objects.filter(
@@ -2055,15 +2037,6 @@ def trigger_nifty_strangle(request):
         from datetime import timedelta
         from django.utils import timezone
         import json
-        from datetime import date, datetime
-
-        # Helper to serialize dates and decimals for JSON
-        def json_serial(obj):
-            if isinstance(obj, (datetime, date)):
-                return obj.isoformat()
-            if isinstance(obj, Decimal):
-                return float(obj)
-            raise TypeError(f"Type {type(obj)} not serializable")
 
         # Convert algorithm reasoning to JSON-safe format
         algorithm_reasoning_safe = json.loads(
@@ -2267,7 +2240,7 @@ def verify_future_trade(request):
 
                 if margin_response.get('success'):
                     margin_per_lot = margin_response.get('margin_per_lot', 0)
-                    total_margin_for_one = margin_response.get('total_margin', 0)
+                    margin_response.get('total_margin', 0)
 
                     logger.info(f"Breeze margin for {stock_symbol}: ₹{margin_per_lot:,.0f} per lot")
 
@@ -2283,7 +2256,7 @@ def verify_future_trade(request):
                             # - amount_allocated: Currently allocated
                             # - block_by_trade: Blocked by active trades
                             cash_limit = float(margin_data.get('cash_limit', 0))
-                            amount_allocated = float(margin_data.get('amount_allocated', 0))
+                            float(margin_data.get('amount_allocated', 0))
                             block_by_trade = float(margin_data.get('block_by_trade', 0))
 
                             # Available margin = cash_limit - block_by_trade
@@ -2446,15 +2419,7 @@ def verify_future_trade(request):
             from datetime import timedelta
             from django.utils import timezone
             import json
-            from datetime import date, datetime
-
-            # Helper to serialize dates and decimals for JSON
-            def json_serial(obj):
-                if isinstance(obj, (datetime, date)):
-                    return obj.isoformat()
-                if isinstance(obj, Decimal):
-                    return float(obj)
-                raise TypeError(f"Type {type(obj)} not serializable")
+            from datetime import datetime
 
             # Convert data to JSON-safe format
             algorithm_reasoning_safe = json.loads(
@@ -2630,7 +2595,6 @@ def confirm_manual_execution(request):
     from apps.brokers.models import Order
     from apps.accounts.models import BrokerAccount
     from apps.brokers.integrations.breeze import get_breeze_client
-    from apps.brokers.integrations.kotak_neo import get_kotak_client
 
     try:
         # Get trade data
@@ -2692,7 +2656,7 @@ def confirm_manual_execution(request):
             try:
                 if broker_code == 'ICICI':
                     # Place order with Breeze
-                    breeze = get_breeze_client()
+                    get_breeze_client()
                     # Note: Actual order placement logic depends on Breeze API
                     # This is a placeholder - implement based on your broker API
                     order_result = {
@@ -2795,7 +2759,6 @@ def execute_strangle_orders(request):
     from apps.brokers.integrations.kotak_neo import place_strangle_orders_in_batches
     from apps.positions.models import Position
     from apps.accounts.models import BrokerAccount
-    from apps.brokers.models import Order
 
     try:
         # Parse JSON body (frontend sends JSON, not form data)
@@ -2848,7 +2811,7 @@ def execute_strangle_orders(request):
             })
 
         # Get position details
-        position_details = suggestion.position_details
+        suggestion.position_details
 
         # Get broker account
         broker_account = BrokerAccount.objects.filter(

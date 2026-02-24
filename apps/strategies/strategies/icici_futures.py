@@ -46,21 +46,19 @@ ENHANCED Screening Process (300 pts scaled to 100) - Phase 2:
 
 import logging
 from decimal import Decimal
-from datetime import time, date
+from datetime import time
 from typing import Dict, List, Tuple, Optional
 
-from django.utils import timezone
 
 from apps.strategies.core.base_strategy import BaseStrategy
-from apps.strategies.core.result_types import StrategyConfig, EntryResult
-from apps.strategies.shared.entry_filters import get_default_filters, run_filters
+from apps.strategies.core.result_types import StrategyConfig
+from apps.strategies.shared.entry_filters import get_default_filters
 from apps.strategies.filters.sector_filter import analyze_sector
 from apps.data.analyzers import (
     OpenInterestAnalyzer,
     TrendlyneScoreAnalyzer,
     VolumeAnalyzer,
-    DMAAnalyzer,
-    TechnicalIndicatorAnalyzer
+    DMAAnalyzer
 )
 from apps.llm.services.trade_validator import validate_trade
 from apps.data.models import ContractStockData

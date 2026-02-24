@@ -13,9 +13,7 @@ import html
 from decimal import Decimal
 from typing import Dict, Optional
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ContextTypes
 
-from apps.core.models import CredentialStore
 from django.conf import settings
 import os
 

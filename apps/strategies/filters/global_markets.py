@@ -19,9 +19,7 @@ making it risky to establish market-neutral positions during turbulent times.
 import logging
 from decimal import Decimal
 from typing import Dict
-from datetime import datetime, timedelta
 
-from django.utils import timezone
 
 logger = logging.getLogger(__name__)
 

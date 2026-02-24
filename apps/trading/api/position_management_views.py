@@ -195,7 +195,6 @@ def close_position(request):
     """
     try:
         from apps.brokers.utils.security_master import get_futures_instrument
-        from apps.accounts.models import BrokerAccount
 
         # Parse JSON body
         data = json.loads(request.body)
@@ -456,7 +455,7 @@ def close_live_position(request):
         broker = data.get('broker', '').lower()
         symbol = data.get('symbol')
         quantity = data.get('quantity')
-        exchange = data.get('exchange', 'NFO')
+        data.get('exchange', 'NFO')
         product = data.get('product', 'NRML')
         direction = data.get('direction', 'LONG').upper()
 
@@ -972,7 +971,6 @@ def analyze_position_averaging(request):
 
     try:
         from apps.trading.averaging_analyzer import AveragingAnalyzer
-        from apps.brokers.integrations.kotak_neo import get_kotak_neo_client
 
         data = json.loads(request.body)
         broker = data.get('broker', '').lower()

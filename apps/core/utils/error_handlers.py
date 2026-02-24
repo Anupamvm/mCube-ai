@@ -102,7 +102,6 @@ class AuthenticationException(Exception):
 
     Use this when broker authentication fails or sessions expire.
     """
-    pass
 
 
 class ConfigurationException(Exception):
@@ -111,7 +110,6 @@ class ConfigurationException(Exception):
 
     Use this when required settings/config are missing or invalid.
     """
-    pass
 
 
 class RateLimitException(Exception):
@@ -120,7 +118,6 @@ class RateLimitException(Exception):
 
     Use this when broker APIs return rate limit errors (429).
     """
-    pass
 
 
 class PermissionDeniedException(Exception):
@@ -129,7 +126,6 @@ class PermissionDeniedException(Exception):
 
     Use this when operations are forbidden (403).
     """
-    pass
 
 
 # ============================================================================

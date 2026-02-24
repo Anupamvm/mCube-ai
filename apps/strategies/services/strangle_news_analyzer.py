@@ -9,7 +9,7 @@ Provides market sentiment analysis for:
 
 import logging
 from decimal import Decimal
-from datetime import datetime, timedelta
+from datetime import timedelta
 from typing import Dict, List, Optional, Tuple
 
 from django.utils import timezone

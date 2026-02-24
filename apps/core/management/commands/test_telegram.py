@@ -9,17 +9,13 @@ Usage:
 """
 
 from decimal import Decimal
-from datetime import date, timedelta
+from datetime import date
 from django.core.management.base import BaseCommand
-from django.utils import timezone
 
 from apps.accounts.models import BrokerAccount
-from apps.positions.models import Position
 from apps.alerts.services import (
     get_telegram_client,
     get_alert_manager,
-    send_position_alert,
-    send_risk_alert,
 )
 
 

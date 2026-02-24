@@ -18,12 +18,11 @@ On-demand Tasks (Celery):
 
 import logging
 from decimal import Decimal
-from datetime import timedelta
 from celery import shared_task
 from django.utils import timezone
 from django.db.models import Sum
 
-from apps.analytics.models import LearningSession, LearningPattern
+from apps.analytics.models import LearningSession
 from apps.analytics.services.learning_engine import LearningEngine
 from apps.positions.models import Position
 from apps.accounts.models import BrokerAccount

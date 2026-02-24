@@ -5,9 +5,7 @@ Comprehensive analyzers for fundamental, valuation, institutional, technical, an
 """
 
 import logging
-from typing import Dict, List, Optional, Tuple
-from decimal import Decimal
-from datetime import datetime, timedelta, date
+from typing import Dict, List
 
 logger = logging.getLogger(__name__)
 
@@ -279,7 +277,7 @@ class FinancialPerformanceAnalyzer:
         prof_score = analysis['profitability']['quality_score']
         revenue_momentum = analysis['revenue_analysis']['momentum']
         cash_gen = analysis['cash_flow_analysis']['cash_generation']
-        piotroski_grade = analysis['balance_sheet_strength']['piotroski_grade']
+        analysis['balance_sheet_strength']['piotroski_grade']
 
         if prof_score > 70 and revenue_momentum == 'ACCELERATING' and cash_gen == 'STRONG':
             return "🟢 FUNDAMENTALLY STRONG: Company shows excellent financial health across all parameters"
@@ -658,14 +656,14 @@ def analyze_sector_strength(symbol: str) -> Dict:
         score = 50  # Default neutral
 
         # Check sector performance metrics
-        sector_pe = stock_data.sector_pe_ttm or 0
+        stock_data.sector_pe_ttm or 0
         sector_roe = stock_data.sector_return_on_equity_roe or 0
         sector_revenue_growth = stock_data.sector_revenue_growth_qtr_yoy_pct or 0
         sector_profit_growth = stock_data.sector_net_profit_growth_qtr_yoy_pct or 0
 
         # Stock vs sector metrics
-        stock_pe = stock_data.pe_ttm_price_to_earnings or 0
-        stock_roe = stock_data.roe_annual_pct or 0
+        stock_data.pe_ttm_price_to_earnings or 0
+        stock_data.roe_annual_pct or 0
         stock_revenue_growth = stock_data.revenue_growth_qtr_yoy_pct or 0
         stock_profit_growth = stock_data.net_profit_qtr_growth_yoy_pct or 0
 

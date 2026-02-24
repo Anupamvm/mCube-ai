@@ -14,13 +14,10 @@ from typing import Optional
 import pytz
 
 from apps.core.constants import (
-    MARKET_OPEN_TIME,
-    MARKET_CLOSE_TIME,
     TRADING_DAYS,
     WEEKDAY_TUESDAY,
     WEEKDAY_WEDNESDAY,
     WEEKDAY_THURSDAY,
-    WEEKDAY_FRIDAY,
 )
 
 logger = logging.getLogger(__name__)

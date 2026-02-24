@@ -24,9 +24,9 @@ This eliminates duplicate code across:
 """
 
 import logging
-from datetime import date, datetime, timedelta
+from datetime import date
 from decimal import Decimal
-from typing import Optional, Dict, Tuple, List
+from typing import Optional, Dict
 from django.utils import timezone
 from django.db.models import QuerySet
 

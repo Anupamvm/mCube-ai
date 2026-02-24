@@ -12,6 +12,7 @@ import logging
 from django.contrib.auth.decorators import login_required
 from django.views.decorators.http import require_POST
 from django.http import JsonResponse
+from apps.core.utils import json_serial
 
 logger = logging.getLogger(__name__)
 
@@ -850,8 +851,7 @@ def trigger_nifty_strangle(request):
         # Find nearest available strikes since calculated strikes might not exist
         # IMPORTANT: Use the psychologically-adjusted strikes (call_strike, put_strike are already adjusted at this point)
         try:
-            from django.db.models import F, Func
-            from django.db.models.functions import Abs
+            pass
 
             # Get all available call strikes for this expiry
             available_call_strikes = OptionChain.objects.filter(
@@ -1223,15 +1223,6 @@ def trigger_nifty_strangle(request):
         from datetime import timedelta
         from django.utils import timezone
         import json
-        from datetime import date, datetime
-
-        # Helper to serialize dates and decimals for JSON
-        def json_serial(obj):
-            if isinstance(obj, (datetime, date)):
-                return obj.isoformat()
-            if isinstance(obj, Decimal):
-                return float(obj)
-            raise TypeError(f"Type {type(obj)} not serializable")
 
         # Convert algorithm reasoning to JSON-safe format
         algorithm_reasoning_safe = json.loads(

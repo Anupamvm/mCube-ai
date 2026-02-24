@@ -9,9 +9,9 @@ This module provides functions for aggregating P&L data at multiple levels:
 """
 
 from decimal import Decimal
-from datetime import datetime, timedelta
+from datetime import timedelta
 from typing import Dict, List, Any
-from django.db.models import Sum, Count, Q, Avg
+from django.db.models import Sum, Count, Q
 from django.utils import timezone
 
 

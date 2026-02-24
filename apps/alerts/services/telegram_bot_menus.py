@@ -577,7 +577,7 @@ class MenuMixin:
         action = data.replace('task_all_', '')
         enable = action == 'start'
 
-        result = await self._bulk_toggle_tasks(enable)
+        await self._bulk_toggle_tasks(enable)
         await self._show_tasks_menu(query)
 
     # =========================================================================

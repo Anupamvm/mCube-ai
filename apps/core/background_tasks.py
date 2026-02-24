@@ -14,9 +14,8 @@ Uses Celery for all background task processing.
 import datetime as dt
 import pytz
 from celery import shared_task
-from django.utils import timezone
 
-from .models import TradingSchedule, NseFlag, BkLog, DayReport, TodaysPosition
+from .models import TradingSchedule, NseFlag, BkLog, DayReport
 
 IST = pytz.timezone('Asia/Kolkata')
 
@@ -129,7 +128,6 @@ def setup_day_task():
 
     try:
         # Import here to avoid circular imports
-        from apps.data.broker_integration import MarketDataUpdater
         from apps.data.trendlyne import get_all_trendlyne_data
         from tools.yahoofin import get_nse_vix
 

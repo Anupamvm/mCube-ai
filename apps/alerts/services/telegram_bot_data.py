@@ -6,9 +6,8 @@ All methods use close_old_connections() for thread safety.
 """
 
 import logging
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 from decimal import Decimal
-from typing import Optional
 
 from asgiref.sync import sync_to_async
 
@@ -1282,7 +1281,7 @@ class DataMixin:
 
         try:
             from apps.trading.models import TakenTrade
-            from django.db.models import Sum, Count, Q, Avg, Max, Min
+            from django.db.models import Sum, Q, Avg, Max, Min
 
             # Build date filter
             today = date.today()

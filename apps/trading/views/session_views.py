@@ -18,7 +18,7 @@ from django.views.decorators.http import require_POST
 from django.utils import timezone
 
 from apps.core.models import CredentialStore
-from apps.core.utils import handle_exceptions, validate_input
+from apps.core.utils import handle_exceptions
 
 logger = logging.getLogger(__name__)
 

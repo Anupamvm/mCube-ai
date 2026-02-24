@@ -15,7 +15,7 @@ Functions:
 import re
 import logging
 from decimal import Decimal, InvalidOperation
-from typing import Union, Optional
+from typing import Union
 
 logger = logging.getLogger(__name__)
 
@@ -192,70 +192,6 @@ def safe_int(val: Union[str, int, float, None], default: int = 0) -> int:
         return default
 
 
-def format_indian_currency(amount: Union[int, float, Decimal], include_symbol: bool = True) -> str:
-    """
-    Format number as Indian currency (with lakhs and crores).
-
-    Indian number format uses:
-    - First comma after 3 digits from right
-    - Subsequent commas after every 2 digits
-    - Example: 12,34,567.89 (12 lakh 34 thousand)
-
-    Args:
-        amount: Amount to format
-        include_symbol: Include ₹ symbol (default: True)
-
-    Returns:
-        str: Formatted currency string
-
-    Example:
-        >>> format_indian_currency(1234567.89)
-        '₹12,34,567.89'
-        >>> format_indian_currency(1234567.89, include_symbol=False)
-        '12,34,567.89'
-        >>> format_indian_currency(1000000)
-        '₹10,00,000.00'
-
-    Notes:
-        - Always shows 2 decimal places
-        - Handles negative numbers correctly
-    """
-    # Handle negative numbers
-    is_negative = amount < 0
-    amount = abs(amount)
-
-    # Convert to string with 2 decimal places
-    amount_str = f"{amount:.2f}"
-    integer_part, decimal_part = amount_str.split('.')
-
-    # Format integer part with Indian grouping
-    if len(integer_part) <= 3:
-        formatted_int = integer_part
-    else:
-        # Take last 3 digits
-        last_three = integer_part[-3:]
-        remaining = integer_part[:-3]
-
-        # Add commas every 2 digits from right
-        groups = []
-        while remaining:
-            groups.insert(0, remaining[-2:])
-            remaining = remaining[:-2]
-
-        formatted_int = ','.join(groups) + ',' + last_three
-
-    # Combine with decimal part
-    result = f"{formatted_int}.{decimal_part}"
-
-    # Add negative sign if needed
-    if is_negative:
-        result = f"-{result}"
-
-    # Add currency symbol
-    if include_symbol:
-        result = f"₹{result}"
-
-    return result
 
 
 def safe_divide(numerator: float, denominator: float, default: float = 0.0) -> float:

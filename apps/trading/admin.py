@@ -5,7 +5,6 @@ Trading Admin Configuration - Manage trade suggestions and approvals
 from django.contrib import admin
 from django.utils.html import format_html
 from django.urls import reverse
-from django.db.models import Q
 from apps.trading.models import TradeSuggestion, TradeSuggestionLog, PositionSize
 
 

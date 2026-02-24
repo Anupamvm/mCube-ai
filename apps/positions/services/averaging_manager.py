@@ -21,13 +21,10 @@ Important: Averaging is ONLY for futures, NOT for options
 import logging
 from decimal import Decimal
 from typing import Dict, Tuple
-from datetime import datetime
 
-from django.utils import timezone
 from django.db import transaction
 
 from apps.positions.models import Position
-from apps.accounts.models import BrokerAccount
 from apps.alerts.services.telegram_client import send_telegram_notification
 
 logger = logging.getLogger(__name__)
@@ -205,7 +202,7 @@ def execute_averaging(position: Position, current_price: Decimal) -> Tuple[bool,
         original_quantity = position.quantity
         original_entry_price = position.entry_price
         original_margin = position.margin_used
-        original_entry_value = position.entry_value
+        position.entry_value
 
         # AVERAGING RULE: Add equal quantity at current price
         # Example: If original qty = 100, add another 100 at current price

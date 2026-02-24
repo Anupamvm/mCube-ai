@@ -80,8 +80,7 @@ def adjust_strikes_for_sr(
         if use_conservative:
             # Use consolidated conservative S/R (combines Pivot + OI)
             from apps.strategies.services.consolidated_sr_calculator import (
-                get_conservative_sr,
-                check_strike_vs_conservative_sr
+                get_conservative_sr
             )
 
             sr_data = get_conservative_sr('NIFTY', float(spot_price))
@@ -224,7 +223,6 @@ def adjust_strikes_for_premium(
             'warnings': list
         }
     """
-    from apps.strategies.shared.market_data import get_option_premium_for_strike
 
     result = {
         'call_strike': call_strike,

@@ -15,11 +15,11 @@ Business logic will be moved to service layer in Phase 2.2.
 
 import csv
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime
 from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
-from django.http import HttpResponse, JsonResponse
+from django.http import HttpResponse
 from django.views.decorators.http import require_POST
 from django.utils import timezone
 from django.core.paginator import Paginator, EmptyPage, PageNotAnInteger

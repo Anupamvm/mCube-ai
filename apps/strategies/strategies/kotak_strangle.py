@@ -28,7 +28,7 @@ from datetime import time, date
 from typing import Dict, Tuple, Optional
 
 from apps.strategies.core.base_strategy import BaseStrategy
-from apps.strategies.core.result_types import StrategyConfig, EntryResult
+from apps.strategies.core.result_types import StrategyConfig
 from apps.strategies.shared.strike_calculator import calculate_strangle_strikes
 from apps.strategies.shared.market_data import get_nifty_price, get_vix, get_option_premiums
 from apps.trading.risk_calculator import OptionsRiskCalculator, SupportResistanceCalculator

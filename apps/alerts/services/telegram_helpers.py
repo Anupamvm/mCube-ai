@@ -147,9 +147,6 @@ def fetch_live_positions():
     from apps.brokers.integrations.breeze import fetch_and_save_breeze_data
     from apps.brokers.integrations.kotak_neo import fetch_and_save_kotakneo_data
     from apps.accounts.models import BrokerAccount
-    from apps.positions.models import Position
-    from django.utils import timezone
-    from decimal import Decimal
 
     breeze_positions = []
     kotak_positions = []

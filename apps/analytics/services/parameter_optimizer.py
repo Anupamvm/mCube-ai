@@ -14,7 +14,6 @@ from decimal import Decimal
 from django.utils import timezone
 
 from apps.analytics.models import LearningPattern, ParameterAdjustment, TradePerformance
-from apps.core.constants import KOTAK_STRANGLE_PARAMS, ICICI_FUTURES_PARAMS
 
 logger = logging.getLogger(__name__)
 

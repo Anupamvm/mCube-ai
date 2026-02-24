@@ -8,7 +8,6 @@ Usage:
     python manage.py convert_trendlyne_xlsx
 """
 
-import os
 import pandas as pd
 from pathlib import Path
 from django.core.management.base import BaseCommand

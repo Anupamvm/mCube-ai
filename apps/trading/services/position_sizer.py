@@ -10,7 +10,7 @@ Calculates optimal lot sizes for futures and options trades based on:
 
 import logging
 from decimal import Decimal
-from typing import Dict, Optional, Tuple
+from typing import Dict
 from datetime import datetime
 
 logger = logging.getLogger(__name__)

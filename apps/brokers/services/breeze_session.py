@@ -24,16 +24,13 @@ import logging
 import threading
 import time
 from typing import Optional, Tuple
-from datetime import datetime
 
-from django.utils import timezone
 from breeze_connect import BreezeConnect
 
 from apps.core.models import CredentialStore
 from apps.brokers.exceptions import BreezeAuthenticationError
 from apps.brokers.utils.auth_manager import (
     get_credentials,
-    save_session_token,
     is_session_valid_breeze,
     can_attempt_auto_login,
     mark_auto_login_started,

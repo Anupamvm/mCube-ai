@@ -11,12 +11,10 @@ This module provides integration with ICICI Breeze broker API for:
 """
 
 import logging
-import re
 import requests
 import json
-import hashlib
 import calendar
-from datetime import datetime, timezone as dt_timezone, timedelta, date
+from datetime import datetime, timedelta, date
 from typing import List, Optional, Dict
 from django.core.cache import cache
 
@@ -24,10 +22,9 @@ from django.utils import timezone as dj_timezone
 from decimal import Decimal
 
 from apps.core.constants import BROKER_ICICI
-from apps.brokers.models import BrokerLimit, BrokerPosition, OptionChainQuote, HistoricalPrice, NiftyOptionChain
-from apps.data.models import OptionChain
-from apps.brokers.exceptions import BreezeAuthenticationError, BreezeAPIError
-from apps.brokers.utils.common import parse_float as _parse_float, parse_decimal
+from apps.brokers.models import BrokerLimit, BrokerPosition, OptionChainQuote, HistoricalPrice
+from apps.brokers.exceptions import BreezeAuthenticationError
+from apps.brokers.utils.common import parse_float as _parse_float
 from apps.brokers.utils.auth_manager import (
     get_credentials,
     save_session_token,
@@ -580,7 +577,7 @@ def get_nfo_margin():
               Returns None if API call fails
     """
     try:
-        breeze = get_breeze_client()
+        get_breeze_client()
 
         # Use centralized credential loading
         creds = get_credentials('breeze')
@@ -1573,7 +1570,7 @@ def get_trade_list(from_date: str = None, to_date: str = None, exchange_code: st
                             break
                         except ValueError:
                             continue
-                except Exception as e:
+                except Exception:
                     logger.warning(f"Could not parse trade datetime: {trade_datetime_str}")
 
             # Extract symbol info
@@ -1697,58 +1694,3 @@ def get_trade_list(from_date: str = None, to_date: str = None, exchange_code: st
         return {'success': False, 'error': str(e), 'trades': []}
 
 
-def get_trade_list_via_orders(from_date: str = None, to_date: str = None, exchange_code: str = 'NFO') -> dict:
-    """
-    Fallback method: Fetch trades by filtering executed orders.
-
-    Use this if the native get_trade_list() doesn't return data.
-    """
-    try:
-        # Get all orders first
-        order_result = get_order_list(from_date, to_date, exchange_code)
-
-        if not order_result.get('success'):
-            return {
-                'success': False,
-                'error': order_result.get('error', 'Failed to fetch orders'),
-                'trades': []
-            }
-
-        orders = order_result.get('orders', [])
-
-        # Filter for executed/filled orders
-        executed_statuses = ['executed', 'filled', 'complete', 'traded']
-        trades = []
-
-        for order in orders:
-            status = str(order.get('status', '')).lower()
-            if any(s in status for s in executed_statuses):
-                # This is an executed order, treat as a trade
-                trade = {
-                    'trade_id': f"{order.get('order_id', '')}_{order.get('order_datetime', '')}",
-                    'order_id': order.get('order_id', ''),
-                    'trading_symbol': order.get('trading_symbol', ''),
-                    'symbol': order.get('trading_symbol', ''),
-                    'exchange': order.get('exchange', 'NFO'),
-                    'transaction_type': order.get('transaction_type', ''),
-                    'quantity': order.get('filled_quantity') or order.get('quantity', 0),
-                    'price': order.get('average_price') or order.get('price', 0),
-                    'trade_datetime': order.get('order_datetime'),
-                    'trade_date': order.get('order_date'),
-                    'trade_time': order.get('order_datetime').time() if order.get('order_datetime') else None,
-                    'product': order.get('product', ''),
-                    'expiry_date': order.get('expiry_date', ''),
-                    'strike_price': order.get('strike_price', ''),
-                    'option_type': 'CE' if order.get('right', '').lower() == 'call' else (
-                        'PE' if order.get('right', '').lower() == 'put' else ''
-                    ),
-                    'raw_data': order.get('raw_data', {})
-                }
-                trades.append(trade)
-
-        logger.info(f"Found {len(trades)} executed trades from {len(orders)} orders (via order filtering)")
-        return {'success': True, 'trades': trades}
-
-    except Exception as e:
-        logger.exception(f"Error fetching Breeze trade list via orders: {e}")
-        return {'success': False, 'error': str(e), 'trades': []}

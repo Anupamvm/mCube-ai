@@ -8,16 +8,14 @@ Automated tasks for risk monitoring and enforcement:
 """
 
 import logging
-from decimal import Decimal
 from celery import shared_task
 from django.utils import timezone
 
 from apps.accounts.models import BrokerAccount
-from apps.risk.models import RiskLimit, CircuitBreaker
+from apps.risk.models import CircuitBreaker
 from apps.risk.services.risk_manager import (
     check_risk_limits,
     enforce_risk_limits,
-    activate_circuit_breaker,
     get_risk_status
 )
 from apps.alerts.services.telegram_client import send_telegram_notification

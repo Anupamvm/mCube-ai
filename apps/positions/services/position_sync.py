@@ -7,7 +7,7 @@ Includes both open positions and trade history.
 
 import logging
 from decimal import Decimal
-from datetime import date, timedelta
+from datetime import date
 from django.utils import timezone
 
 from apps.core.constants import (
@@ -104,7 +104,6 @@ def sync_positions_from_brokers(clear_existing=False, include_history=True):
 def sync_kotak_positions(account):
     """Sync positions from Kotak Neo API."""
     from apps.positions.models import Position
-    from apps.brokers.models import BrokerPosition
 
     result = {'created': 0, 'updated': 0, 'closed': 0}
 
@@ -184,7 +183,6 @@ def sync_kotak_positions(account):
 def sync_breeze_positions(account):
     """Sync positions from ICICI Breeze API."""
     from apps.positions.models import Position
-    from apps.brokers.models import BrokerPosition
 
     result = {'created': 0, 'updated': 0, 'closed': 0}
 

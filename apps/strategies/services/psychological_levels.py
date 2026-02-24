@@ -18,7 +18,7 @@ This protects against unexpected support/resistance at round numbers.
 """
 
 import logging
-from typing import Dict, List, Tuple
+from typing import Dict, List
 
 logger = logging.getLogger(__name__)
 

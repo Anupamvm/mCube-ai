@@ -5,18 +5,16 @@ A service that fetches Trendlyne data with real-time logging support.
 Used by the SSE endpoint to stream logs to the frontend.
 """
 
-import os
-import time
 import threading
 import queue
 from datetime import datetime
-from typing import Callable, Optional, Dict, Any
+from typing import Optional, Dict, Any
 from pathlib import Path
 
 from django.conf import settings
 from django.db import transaction
 
-from apps.data.models import ContractData, ContractStockData
+from apps.data.models import ContractData
 
 
 class TrendlyneLogCallback:
@@ -172,7 +170,7 @@ class TrendlyneDataFetcher:
             try:
                 import os
                 import pandas as pd
-                from datetime import datetime, timedelta
+                from datetime import datetime
                 stock_file_path = None
 
                 # ALWAYS try to download fresh stock data first

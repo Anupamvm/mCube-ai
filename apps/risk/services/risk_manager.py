@@ -15,7 +15,7 @@ CRITICAL RISK RULES:
 import logging
 from datetime import date, timedelta
 from decimal import Decimal
-from typing import Dict, List, Tuple
+from typing import Dict, Tuple
 
 from django.utils import timezone
 
@@ -157,7 +157,6 @@ def check_weekly_loss_limit(account: BrokerAccount) -> Dict[str, any]:
         dict: Check result with details
     """
 
-    from datetime import datetime
 
     today = date.today()
     # Get Monday of current week

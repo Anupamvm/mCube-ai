@@ -16,16 +16,9 @@ from decimal import Decimal
 from django.contrib.auth.models import User
 from django.utils import timezone
 
+from apps.core.utils import json_serial as _json_serial
+
 logger = logging.getLogger(__name__)
-
-
-def _json_serial(obj):
-    """JSON serializer for dates and Decimals."""
-    if isinstance(obj, (datetime, date)):
-        return obj.isoformat()
-    if isinstance(obj, Decimal):
-        return float(obj)
-    raise TypeError(f"Type {type(obj)} not serializable")
 
 
 def save_futures_suggestions(passed_results, user=None, source='manual'):

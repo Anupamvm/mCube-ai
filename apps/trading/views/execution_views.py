@@ -204,7 +204,6 @@ def confirm_manual_execution(request):
     from apps.brokers.models import Order
     from apps.accounts.models import BrokerAccount
     from apps.brokers.integrations.breeze import get_breeze_client
-    from apps.brokers.integrations.kotak_neo import get_kotak_client
 
     try:
         # Get trade data
@@ -300,7 +299,7 @@ def confirm_manual_execution(request):
             try:
                 if broker_code == 'ICICI':
                     # Place order with Breeze
-                    breeze = get_breeze_client()
+                    get_breeze_client()
                     # Note: Actual order placement logic depends on Breeze API
                     # This is a placeholder - implement based on your broker API
                     order_result = {
@@ -466,13 +465,11 @@ def execute_strangle_orders(request):
         - Position created only after ALL batches succeed
     """
     import json
-    from decimal import Decimal
     from django.db import transaction
     from apps.trading.models import TradeSuggestion
     from apps.brokers.integrations.kotak_neo import place_strangle_orders_in_batches
     from apps.positions.models import Position
     from apps.accounts.models import BrokerAccount
-    from apps.brokers.models import Order
 
     try:
         # Parse JSON body (frontend sends JSON, not form data)
@@ -541,7 +538,7 @@ def execute_strangle_orders(request):
             })
 
         # Get position details
-        position_details = suggestion.position_details
+        suggestion.position_details
 
         # Get broker account
         broker_account = BrokerAccount.objects.filter(
@@ -938,7 +935,6 @@ def execute_iron_condor_orders(request):
     """
     import json
     from decimal import Decimal
-    from datetime import timedelta
     from django.db import transaction
     from django.core.cache import cache
     from apps.trading.models import TradeSuggestion

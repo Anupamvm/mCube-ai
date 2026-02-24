@@ -15,12 +15,9 @@ NO TRADE CRITERIA:
 
 import logging
 from decimal import Decimal
-from datetime import datetime, date, timedelta
-from typing import Dict, List, Tuple, Optional
-from django.utils import timezone
+from typing import Dict
 
-from apps.brokers.integrations.breeze import get_nifty_quote, get_india_vix
-from apps.brokers.models import HistoricalPrice
+from apps.brokers.integrations.breeze import get_nifty_quote
 
 logger = logging.getLogger(__name__)
 
@@ -165,7 +162,7 @@ class MarketConditionValidator:
 
         Criteria: Gap > 0.5% is WARNING, Gap > 1.0% is NO TRADE
         """
-        ltp = current_data['ltp']
+        current_data['ltp']
         open_price = current_data['open']
         prev_close = current_data['prev_close']
 

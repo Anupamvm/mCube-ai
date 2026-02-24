@@ -12,9 +12,9 @@ This is a minimal implementation focusing on:
 
 import logging
 from decimal import Decimal
-from datetime import datetime, timedelta
-from typing import Dict, List, Optional
-from django.db.models import Avg, Sum, Count, Q
+from datetime import timedelta
+from typing import Dict
+from django.db.models import Avg, Sum
 from django.utils import timezone
 
 logger = logging.getLogger(__name__)

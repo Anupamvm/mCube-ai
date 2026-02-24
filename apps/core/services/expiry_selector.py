@@ -268,10 +268,9 @@ def get_expiry_details(expiry_date: date) -> Dict[str, any]:
         dict: Detailed information about the expiry
     """
 
-    from datetime import datetime
 
     days_remaining = get_days_to_expiry(expiry_date)
-    today = date.today()
+    date.today()
 
     # Categorize time to expiry
     if days_remaining == 0:

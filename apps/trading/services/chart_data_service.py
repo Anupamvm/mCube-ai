@@ -14,8 +14,6 @@ from datetime import datetime, timedelta, date
 from decimal import Decimal
 from typing import Dict, Optional, List, Any
 
-from django.db.models import Sum
-from django.utils import timezone as dj_timezone
 
 from apps.brokers.models import HistoricalPrice
 from apps.data.models import ContractData
@@ -487,7 +485,7 @@ class ChartDataService:
             return {'dma_20': [], 'dma_50': [], 'dma_100': [], 'dma_200': []}
 
         closes = [d['close'] for d in ohlc_data]
-        dates = [d['date'] for d in ohlc_data]
+        [d['date'] for d in ohlc_data]
         times = [d['time'] for d in ohlc_data]
 
         def calculate_sma(values: List[float], period: int) -> List[Optional[float]]:

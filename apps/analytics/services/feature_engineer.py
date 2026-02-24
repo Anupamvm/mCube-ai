@@ -13,11 +13,10 @@ import logging
 import os
 from datetime import date, datetime, timedelta
 from decimal import Decimal
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional
 
-import numpy as np
 from django.db import transaction
-from django.db.models import Avg, Sum, Count, Q
+from django.db.models import Avg, Sum
 from django.utils import timezone
 
 from apps.analytics.models import (
@@ -194,8 +193,8 @@ class FeatureEngineer:
                 feature_store.days_to_expiry = max(0, days_to_expiry)
 
                 # Is expiry week (Thursday is typical expiry)
-                expiry_weekday = suggestion.expiry_date.weekday()
-                current_weekday = dt.weekday()
+                suggestion.expiry_date.weekday()
+                dt.weekday()
 
                 # Same week as expiry
                 days_diff = (suggestion.expiry_date - dt.date()).days

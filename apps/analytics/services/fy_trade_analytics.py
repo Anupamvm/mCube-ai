@@ -6,15 +6,12 @@ and calculates monthly P&L performance for Futures and Options separately.
 """
 
 import logging
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from decimal import Decimal
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Tuple
 from collections import defaultdict
 
-from django.db import models, transaction
-from django.db.models import Sum, Count, Q, F
-from django.db.models.functions import TruncMonth
-from django.utils import timezone
+from django.db import models
 
 logger = logging.getLogger(__name__)
 

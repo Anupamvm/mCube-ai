@@ -5,7 +5,7 @@ Institutional behavior, technical analysis, and risk assessment
 """
 
 import logging
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +58,7 @@ class InstitutionalBehaviorAnalyzer:
             dict: Institutional behavior analysis
         """
         # Check data freshness before analysis
-        freshness_result = ensure_data_freshness()
+        ensure_data_freshness()
 
         if not stock_data:
             return self._empty_analysis("No stock data available")
@@ -358,8 +358,8 @@ class InstitutionalBehaviorAnalyzer:
     def _generate_summary(self, analysis: Dict) -> str:
         """Generate institutional behavior summary"""
         promoter_conf = analysis['promoter_analysis'].get('confidence_signal', 'MODERATE')
-        fii_interp = analysis['fii_activity'].get('interpretation', '')
-        mf_phase = analysis['mutual_fund_activity'].get('accumulation_phase', 'NEUTRAL')
+        analysis['fii_activity'].get('interpretation', '')
+        analysis['mutual_fund_activity'].get('accumulation_phase', 'NEUTRAL')
         smart_money = analysis['combined_institutional'].get('smart_money_signal', '')
 
         if promoter_conf == 'HIGH' and '🟢' in smart_money:
@@ -396,7 +396,7 @@ class TechnicalDeepDive:
             dict: Technical analysis
         """
         # Check data freshness before analysis
-        freshness_result = ensure_data_freshness()
+        ensure_data_freshness()
 
         if not stock_data:
             return self._empty_analysis("No stock data available")

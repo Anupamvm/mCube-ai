@@ -31,7 +31,7 @@ def get_nfo_margin():
               Returns None if API call fails
     """
     try:
-        breeze = get_breeze_client()
+        get_breeze_client()
 
         # Use centralized credential loading
         creds = get_credentials('breeze')

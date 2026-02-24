@@ -8,8 +8,6 @@ Flow: Broker → Type → Symbol → Expiry → Direction+Lots → Order Type �
 """
 
 import logging
-from datetime import datetime
-from decimal import Decimal
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from asgiref.sync import sync_to_async
@@ -575,14 +573,14 @@ class TradeMixin:
             await query.edit_message_text("Trade session expired. Please start again with /trade")
             return
 
-        broker = state.get('broker', 'breeze')
+        state.get('broker', 'breeze')
         symbol = state.get('symbol', '')
-        inst_type = state.get('inst_type', 'futures')
-        expiry = state.get('expiry', '')
+        state.get('inst_type', 'futures')
+        state.get('expiry', '')
         direction = state.get('direction', 'BUY')
         lots = state.get('lots', 1)
         order_type = state.get('order_type', 'MARKET')
-        limit_price = state.get('limit_price', 0)
+        state.get('limit_price', 0)
 
         await query.edit_message_text(
             f"<b>⏳ Placing order...</b>\n"
@@ -629,13 +627,13 @@ class TradeMixin:
         close_old_connections()
 
         broker = state.get('broker', 'breeze')
-        symbol = state.get('symbol', '')
-        inst_type = state.get('inst_type', 'futures')
-        expiry = state.get('expiry', '')
-        direction = state.get('direction', 'BUY')
-        lots = state.get('lots', 1)
-        order_type = state.get('order_type', 'MARKET')
-        limit_price = state.get('limit_price', 0)
+        state.get('symbol', '')
+        state.get('inst_type', 'futures')
+        state.get('expiry', '')
+        state.get('direction', 'BUY')
+        state.get('lots', 1)
+        state.get('order_type', 'MARKET')
+        state.get('limit_price', 0)
 
         try:
             if broker == 'kotak':

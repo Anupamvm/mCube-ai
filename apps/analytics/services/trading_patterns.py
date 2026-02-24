@@ -13,15 +13,11 @@ Provides insights on:
 """
 
 import logging
-from datetime import datetime, timedelta, date
-from decimal import Decimal
-from typing import Dict, List, Optional, Any
-from collections import defaultdict
+from datetime import datetime, date
+from typing import Dict, List, Any
 
-from django.db import models
-from django.db.models import Sum, Count, Avg, Max, Min, F, Q, Case, When, Value
-from django.db.models.functions import ExtractWeekDay, ExtractHour, ExtractMonth, TruncMonth, Coalesce
-from django.utils import timezone
+from django.db.models import Sum, Count, Avg, Max, Min, Q
+from django.db.models.functions import ExtractWeekDay, ExtractMonth, TruncMonth, Coalesce
 
 logger = logging.getLogger(__name__)
 
@@ -164,7 +160,6 @@ class TradingPatternsAnalyzer:
         Returns:
             List of dicts with day name, trades, P&L, win rate
         """
-        from apps.brokers.models import BrokerTradeHistory
 
         qs = self.get_trade_history_queryset()
 
@@ -176,7 +171,7 @@ class TradingPatternsAnalyzer:
         ).order_by('day_of_week')
 
         # Get P&L by day from contracts (using expiry as proxy for trade timing)
-        contract_qs = self.get_base_queryset()
+        self.get_base_queryset()
 
         day_names = ['', 'Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
 
@@ -810,7 +805,7 @@ class TradingPatternsAnalyzer:
         Returns:
             Dict with critical trades, nifty data, and date range
         """
-        from apps.brokers.models import HistoricalPrice, BrokerContractPnL
+        from apps.brokers.models import HistoricalPrice
 
         today = date.today()
 

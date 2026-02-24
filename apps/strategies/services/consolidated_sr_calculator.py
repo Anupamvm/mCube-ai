@@ -13,16 +13,14 @@ Conservative S/R provides safer trading boundaries with less room for adverse mo
 """
 
 import logging
-from typing import Dict, Optional, Tuple
+from typing import Dict
 from datetime import datetime
 
 from apps.strategies.services.support_resistance_calculator import (
-    SupportResistanceCalculator,
-    calculate_nifty_sr
+    SupportResistanceCalculator
 )
 from apps.strategies.services.oi_support_resistance import (
-    OISupportResistanceCalculator,
-    calculate_oi_sr
+    OISupportResistanceCalculator
 )
 
 logger = logging.getLogger(__name__)

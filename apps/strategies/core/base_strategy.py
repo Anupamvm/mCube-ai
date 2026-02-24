@@ -7,7 +7,7 @@ for its unique logic.
 """
 
 from abc import ABC, abstractmethod
-from typing import Dict, List, Tuple, Optional, TYPE_CHECKING
+from typing import Dict, List, Tuple, TYPE_CHECKING
 import logging
 
 from apps.strategies.core.result_types import StrategyConfig, EntryResult
@@ -56,7 +56,6 @@ class BaseStrategy(ABC):
         Returns:
             StrategyConfig with strategy settings
         """
-        pass
 
     @abstractmethod
     def calculate_entry_parameters(self, market_data: Dict) -> Dict:
@@ -72,7 +71,6 @@ class BaseStrategy(ABC):
         Returns:
             Dict with calculated entry parameters
         """
-        pass
 
     @abstractmethod
     def build_position_details(self, entry_params: Dict, sizing: Dict) -> Dict:
@@ -86,7 +84,6 @@ class BaseStrategy(ABC):
         Returns:
             Dict with position details for TradeSuggestion
         """
-        pass
 
     @abstractmethod
     def build_algorithm_reasoning(self,
@@ -104,7 +101,6 @@ class BaseStrategy(ABC):
         Returns:
             Dict with algorithm reasoning for TradeSuggestion
         """
-        pass
 
     # =========================================================================
     # OPTIONAL OVERRIDES - Strategies can customize these

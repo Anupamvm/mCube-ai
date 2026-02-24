@@ -918,4 +918,3 @@ class FuturesSuggestion(TimeStampedModel):
 
 
 # Import Nifty Strangle Strategy models
-from .models_strangle import NiftyMarketData, StrangleAlgorithmState

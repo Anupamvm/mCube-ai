@@ -24,19 +24,16 @@ Usage:
     python manage.py trendlyne_data_manager --full-cycle
 """
 
-import os
-import json
 import shutil
 from pathlib import Path
-from datetime import datetime
 from django.core.management.base import BaseCommand, CommandError
 from django.conf import settings
 from django.db import transaction
 
 from apps.data.models import (
     ContractData, ContractStockData, TLStockData,
-    OptionChain, Event, MarketData, NewsArticle,
-    InvestorCall, KnowledgeBase
+    OptionChain, Event, NewsArticle, InvestorCall,
+    KnowledgeBase
 )
 
 
@@ -577,7 +574,6 @@ class Command(BaseCommand):
     def parse_news(self, filepath):
         """Parse news CSV"""
         import pandas as pd
-        from datetime import datetime
         from django.utils import timezone
         import uuid
 

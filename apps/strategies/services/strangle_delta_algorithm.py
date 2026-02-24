@@ -10,9 +10,7 @@ This algorithm implements intelligent strike selection based on:
 
 import logging
 from decimal import Decimal
-from datetime import date, datetime
-from typing import Dict, List, Tuple, Optional
-from django.utils import timezone
+from typing import Dict, Optional
 
 logger = logging.getLogger(__name__)
 

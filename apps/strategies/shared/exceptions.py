@@ -4,7 +4,7 @@ Custom exceptions for strategy operations.
 Provides structured error handling with context for debugging and logging.
 """
 
-from typing import Dict, Optional, Any
+from typing import Dict, Any
 
 
 class StrategyError(Exception):

@@ -13,9 +13,9 @@ import re
 import uuid
 from datetime import datetime, date
 from decimal import Decimal, InvalidOperation
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List
 
-from django.core.files.uploadedfile import InMemoryUploadedFile, TemporaryUploadedFile
+from django.core.files.uploadedfile import InMemoryUploadedFile
 from django.db import transaction
 
 from apps.brokers.models import BrokerContractPnL, CSVImportLog

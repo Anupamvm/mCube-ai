@@ -13,9 +13,8 @@ NO ASSUMPTIONS - If data is missing, it's marked as unavailable.
 """
 
 import logging
-from decimal import Decimal
-from typing import Dict, Optional, List
-from datetime import datetime, date
+from typing import Dict, Optional
+from datetime import datetime
 
 from apps.data.models import TLStockData, ContractData
 from apps.brokers.integrations.breeze import get_india_vix

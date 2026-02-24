@@ -17,11 +17,9 @@ Features:
 
 import logging
 from typing import Dict, Optional, Tuple
-from datetime import datetime, timedelta
 
 from apps.llm.services.ollama_client import get_ollama_client
 from apps.llm.services.rag_system import get_rag_system
-from apps.data.models import NewsArticle, InvestorCall
 
 logger = logging.getLogger(__name__)
 

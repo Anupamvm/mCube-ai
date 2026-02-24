@@ -2,8 +2,6 @@
 URL configuration for positions app
 """
 
-from django.urls import path
-from . import views
 
 app_name = 'positions'
 

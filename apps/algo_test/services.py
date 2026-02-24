@@ -5,8 +5,8 @@ Calculation and analysis services for algorithm testing
 """
 
 from decimal import Decimal
-from datetime import datetime, timedelta
-from typing import Dict, List, Tuple, Optional
+from datetime import datetime
+from typing import Dict, List, Tuple
 import logging
 
 logger = logging.getLogger(__name__)

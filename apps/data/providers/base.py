@@ -23,7 +23,6 @@ logger = logging.getLogger(__name__)
 
 class DataProviderException(Exception):
     """Base exception for data provider errors"""
-    pass
 
 
 class BaseDataProvider(ABC):
@@ -125,7 +124,6 @@ class BaseDataProvider(ABC):
         Raises:
             DataProviderException: If credentials not found
         """
-        pass
 
     @abstractmethod
     def login(self) -> bool:
@@ -138,7 +136,6 @@ class BaseDataProvider(ABC):
         Raises:
             DataProviderException: If login fails
         """
-        pass
 
     @abstractmethod
     def fetch_data(self, data_type: str, **kwargs) -> Dict:
@@ -155,7 +152,6 @@ class BaseDataProvider(ABC):
         Raises:
             DataProviderException: If fetch fails
         """
-        pass
 
     def cleanup(self):
         """Cleanup resources (close driver, etc.)"""

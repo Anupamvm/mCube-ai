@@ -21,8 +21,8 @@ from django.utils import timezone
 
 from apps.llm.services.ollama_client import get_ollama_client, generate_embedding
 from apps.llm.services.vector_store import get_vector_store
-from apps.llm.services.rag_system import get_rag_system, ask_question
-from apps.llm.services.trade_validator import get_trade_validator, validate_trade
+from apps.llm.services.rag_system import ask_question
+from apps.llm.services.trade_validator import validate_trade
 from apps.llm.services.news_processor import get_news_processor
 from apps.data.models import NewsArticle, KnowledgeBase
 

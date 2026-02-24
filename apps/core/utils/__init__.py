@@ -45,15 +45,15 @@ from .validators import (
     validate_quantity,
 )
 
-# Parsing utilities (NEW - consolidates duplicate _parse_float functions)
+# Parsing utilities
 from .parsers import (
     parse_float,
     parse_int,
     parse_decimal,
-    parse_date,
-    parse_percentage,
-    parse_boolean,
 )
+
+# JSON helpers
+from .json_helpers import json_serial
 
 # Decorators (NEW - consolidates duplicate error handling patterns)
 from .decorators import (
@@ -118,13 +118,13 @@ __all__ = [
     'validate_risk_reward_ratio',
     'validate_quantity',
 
-    # Parsers (NEW)
+    # Parsers
     'parse_float',
     'parse_int',
     'parse_decimal',
-    'parse_date',
-    'parse_percentage',
-    'parse_boolean',
+
+    # JSON helpers
+    'json_serial',
 
     # Decorators (NEW)
     'handle_exceptions',

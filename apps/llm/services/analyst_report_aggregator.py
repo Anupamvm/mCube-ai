@@ -11,7 +11,7 @@ analyst sentiment before allowing trades.
 
 import logging
 from typing import Dict, List, Optional
-from datetime import datetime, timedelta
+from datetime import timedelta
 from django.utils import timezone
 
 logger = logging.getLogger(__name__)
@@ -36,7 +36,6 @@ class AnalystReportAggregator:
 
     def __init__(self):
         """Initialize aggregator"""
-        pass
 
     def get_price_target(self, symbol: str, nse_code: str = None) -> Optional[Dict]:
         """

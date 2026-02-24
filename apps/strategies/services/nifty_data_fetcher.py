@@ -9,7 +9,6 @@ Fetches comprehensive Nifty market data from multiple sources:
 
 import logging
 from decimal import Decimal
-from datetime import datetime, timedelta
 from django.utils import timezone
 
 logger = logging.getLogger(__name__)
@@ -172,7 +171,6 @@ class NiftyDataFetcher:
         """
         try:
             from apps.brokers.integrations.breeze import get_breeze_client, get_next_nifty_expiry
-            from apps.brokers.models import NiftyOptionChain
             from datetime import datetime
 
             # Get current weekly expiry from NSE (handles holidays)

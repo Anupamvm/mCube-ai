@@ -13,8 +13,7 @@ Key Concepts:
 """
 
 import logging
-from decimal import Decimal
-from typing import Dict, Optional, List, Tuple
+from typing import Dict, Optional, List
 from datetime import datetime, timedelta
 
 from apps.brokers.models import HistoricalPrice

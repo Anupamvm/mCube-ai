@@ -19,7 +19,6 @@ Usage:
 
 import os
 import time
-import csv
 import re
 import pandas as pd
 from datetime import datetime, timedelta

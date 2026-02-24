@@ -6,10 +6,7 @@ BrokerTradeHistory model for reconciliation and reporting.
 """
 
 import logging
-from datetime import date, datetime, timedelta
-from decimal import Decimal
-from django.utils import timezone
-from django.db import transaction
+from datetime import date, datetime
 from django.core.cache import cache
 
 from apps.brokers.models import BrokerTradeHistory
