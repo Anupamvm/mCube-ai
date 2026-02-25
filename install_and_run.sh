@@ -351,6 +351,27 @@ echo "  - data/SecurityMaster (for ICICI SecurityMaster files)"
 echo ""
 echo "Step 8/10: Running Django makemigrations..."
 echo "--------------------------------------------"
+
+# Heal partial migration state from a previous failed installation.
+# If alerts.0001_initial was applied (it has a FK to brokers.Order) but
+# brokers.0005_order_execution (which introduces that model) was not yet
+# applied, Django raises InconsistentMigrationHistory on makemigrations.
+# Fix: fake-apply brokers.0005 so the dependency is satisfied.
+# Safe because brokers.0005 uses SeparateDatabaseAndState — no tables touched.
+python manage.py shell -c "
+from django.db.migrations.recorder import MigrationRecorder
+from django.db import connection
+try:
+    applied = MigrationRecorder(connection).applied_migrations()
+    if ('alerts', '0001_initial') in applied and ('brokers', '0005_order_execution') not in applied:
+        import subprocess, sys
+        print('  Healing partial migration state: faking brokers.0005_order_execution...')
+        subprocess.run([sys.executable, 'manage.py', 'migrate', 'brokers', '0005_order_execution', '--fake'], check=True)
+        print('  Migration state healed.')
+except Exception:
+    pass  # Fresh DB (no migrations table yet) — migrate will handle it normally
+" 2>/dev/null || true
+
 python manage.py makemigrations
 
 # ============================================================================
