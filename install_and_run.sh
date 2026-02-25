@@ -752,7 +752,18 @@ else
     # Ensure logs directory exists for background mode
     mkdir -p "$SCRIPT_DIR/logs"
 
+    # Test that gnome-terminal actually works — on Ubuntu with broken snap/core20
+    # the binary exists but crashes with a GLIBC symbol error.
+    GNOME_TERMINAL_OK=false
     if command -v gnome-terminal &> /dev/null; then
+        if gnome-terminal --version &>/dev/null 2>&1; then
+            GNOME_TERMINAL_OK=true
+        else
+            echo "gnome-terminal found but non-functional (snap/GLIBC conflict). Falling back..."
+        fi
+    fi
+
+    if [ "$GNOME_TERMINAL_OK" = true ]; then
         echo "Opening gnome-terminal windows for each service..."
 
         # Django Server
@@ -798,8 +809,25 @@ else
 
         echo "✓ All services started in xterm windows"
 
+    elif command -v tmux &> /dev/null; then
+        echo "Starting services in tmux sessions (reattachable)..."
+
+        tmux new-session  -d -s mcube-django  "cd '$SCRIPT_DIR' && ./venv/bin/python manage.py runserver 0.0.0.0:8000"
+        tmux new-session  -d -s mcube-bot     "cd '$SCRIPT_DIR' && ./venv/bin/python manage.py run_telegram_bot"
+        tmux new-session  -d -s mcube-worker  "cd '$SCRIPT_DIR' && ./venv/bin/python -m celery -A mcube_ai worker -l info -Q data,strategies,monitoring,risk,reports,celery --concurrency=$CELERY_CONCURRENCY 2>&1 | tee -a logs/celery_worker.log"
+        rm -f celerybeat-schedule.db
+        tmux new-session  -d -s mcube-beat    "cd '$SCRIPT_DIR' && ./venv/bin/python -m celery -A mcube_ai beat --scheduler=mcube_ai.celery:DBReloadScheduler -l info 2>&1 | tee -a logs/celery_beat.log"
+
+        echo "✓ All services started in tmux sessions"
+        echo ""
+        echo "Reattach with:"
+        echo "  tmux attach -t mcube-django"
+        echo "  tmux attach -t mcube-bot"
+        echo "  tmux attach -t mcube-worker"
+        echo "  tmux attach -t mcube-beat"
+
     else
-        echo "No GUI terminal found. Starting services in background (headless mode)..."
+        echo "No GUI terminal or tmux found. Starting services in background (headless mode)..."
         echo "Logs will be written to: $SCRIPT_DIR/logs/"
 
         cd "$SCRIPT_DIR"
