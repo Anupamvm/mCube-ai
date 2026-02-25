@@ -352,22 +352,43 @@ echo ""
 echo "Step 8/10: Running Django makemigrations..."
 echo "--------------------------------------------"
 
-# Heal partial migration state from a previous failed installation.
-# If alerts.0001_initial was applied (it has a FK to brokers.Order) but
-# brokers.0005_order_execution (which introduces that model) was not yet
-# applied, Django raises InconsistentMigrationHistory on makemigrations.
-# Fix: fake-apply brokers.0005 so the dependency is satisfied.
-# Safe because brokers.0005 uses SeparateDatabaseAndState — no tables touched.
+# Heal ALL migration inconsistencies from a previous failed installation.
+# A partial install may leave some migrations applied whose dependencies are not,
+# causing InconsistentMigrationHistory on makemigrations.
+# We loop until every applied migration has all its declared dependencies also applied.
+# Fake-applying a missing dependency is safe: it records it in django_migrations
+# without running any SQL (Django uses SeparateDatabaseAndState for moved models).
 python manage.py shell -c "
+import subprocess, sys
 from django.db.migrations.recorder import MigrationRecorder
+from django.db.migrations.loader import MigrationLoader
 from django.db import connection
+
 try:
-    applied = MigrationRecorder(connection).applied_migrations()
-    if ('alerts', '0001_initial') in applied and ('brokers', '0005_order_execution') not in applied:
-        import subprocess, sys
-        print('  Healing partial migration state: faking brokers.0005_order_execution...')
-        subprocess.run([sys.executable, 'manage.py', 'migrate', 'brokers', '0005_order_execution', '--fake'], check=True)
-        print('  Migration state healed.')
+    for _pass in range(50):  # cap at 50 to avoid infinite loop
+        recorder = MigrationRecorder(connection)
+        loader = MigrationLoader(connection, ignore_no_migrations=True)
+        applied = set(recorder.applied_migrations())
+
+        missing = set()
+        for migration in applied:
+            if migration not in loader.graph.node_map:
+                continue
+            for parent in loader.graph.node_map[migration].parents:
+                if parent not in applied:
+                    missing.add(parent)
+
+        if not missing:
+            if _pass > 0:
+                print('  All migration inconsistencies resolved.')
+            break
+
+        for app, name in sorted(missing):
+            print(f'  Faking missing dependency: {app}.{name}')
+            subprocess.run(
+                [sys.executable, 'manage.py', 'migrate', app, name, '--fake'],
+                check=True
+            )
 except Exception:
     pass  # Fresh DB (no migrations table yet) — migrate will handle it normally
 " 2>/dev/null || true
