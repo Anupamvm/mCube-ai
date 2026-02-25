@@ -355,20 +355,19 @@ echo "--------------------------------------------"
 # Heal ALL migration inconsistencies from a previous failed installation.
 # A partial install may leave some migrations applied whose dependencies are not,
 # causing InconsistentMigrationHistory on makemigrations.
-# We loop until every applied migration has all its declared dependencies also applied.
-# Fake-applying a missing dependency is safe: it records it in django_migrations
-# without running any SQL (Django uses SeparateDatabaseAndState for moved models).
+# We loop until every applied migration has all its declared dependencies recorded.
+# recorder.record_applied() is exactly what Django's --fake does internally —
+# it writes a row to django_migrations without touching any database schema.
 python manage.py shell -c "
-import subprocess, sys
 from django.db.migrations.recorder import MigrationRecorder
 from django.db.migrations.loader import MigrationLoader
 from django.db import connection
 
 try:
-    for _pass in range(50):  # cap at 50 to avoid infinite loop
+    for _pass in range(50):  # cap to avoid infinite loop
         recorder = MigrationRecorder(connection)
-        loader = MigrationLoader(connection, ignore_no_migrations=True)
-        applied = set(recorder.applied_migrations())
+        loader   = MigrationLoader(connection, ignore_no_migrations=True)
+        applied  = set(recorder.applied_migrations())
 
         missing = set()
         for migration in applied:
@@ -384,13 +383,11 @@ try:
             break
 
         for app, name in sorted(missing):
-            print(f'  Faking missing dependency: {app}.{name}')
-            subprocess.run(
-                [sys.executable, 'manage.py', 'migrate', app, name, '--fake'],
-                check=True
-            )
+            print('  Recording missing dependency: ' + app + '.' + name)
+            recorder.record_applied(app, name)
+
 except Exception:
-    pass  # Fresh DB (no migrations table yet) — migrate will handle it normally
+    pass  # Fresh DB (migrations table does not exist yet) — migrate handles it
 " 2>/dev/null || true
 
 python manage.py makemigrations
