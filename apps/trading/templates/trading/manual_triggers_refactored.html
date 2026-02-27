@@ -498,7 +498,7 @@
 
 <!-- JavaScript Section -->
 <!-- Core Modules -->
-<script src="{% static 'js/trading/core/api-client.js' %}?v=1.4"></script>
+<script src="{% static 'js/trading/core/api-client.js' %}?v=1.5"></script>
 <script src="{% static 'js/trading/core/broker-auth.js' %}"></script>
 <script src="{% static 'js/trading/core/state.js' %}"></script>
 <script src="{% static 'js/trading/core/utils.js' %}"></script>
@@ -998,10 +998,16 @@ const FuturesAlgorithm = {
             const response = await fetch(ApiClient.endpoints.verify, {
                 method: 'POST',
                 headers: {
-                    'X-CSRFToken': ApiClient.csrftoken
+                    'X-CSRFToken': ApiClient.getCookie('csrftoken')
                 },
                 body: formData
             });
+
+            if (!response.headers.get('content-type')?.includes('application/json')) {
+                if (response.status === 403) throw new Error('CSRF validation failed — please refresh the page.');
+                if (response.redirected || response.status === 302) throw new Error('Session expired — please refresh the page to log in again.');
+                throw new Error(`Server error (HTTP ${response.status}) — please try again.`);
+            }
 
             const data = await response.json();
 
@@ -1122,10 +1128,16 @@ const FuturesAlgorithm = {
             const response = await fetch(ApiClient.endpoints.verify, {
                 method: 'POST',
                 headers: {
-                    'X-CSRFToken': ApiClient.csrftoken
+                    'X-CSRFToken': ApiClient.getCookie('csrftoken')
                 },
                 body: formData
             });
+
+            if (!response.headers.get('content-type')?.includes('application/json')) {
+                if (response.status === 403) throw new Error('CSRF validation failed — please refresh the page.');
+                if (response.redirected || response.status === 302) throw new Error('Session expired — please refresh the page to log in again.');
+                throw new Error(`Server error (HTTP ${response.status}) — please try again.`);
+            }
 
             const data = await response.json();
 
@@ -4766,10 +4778,16 @@ const TradeVerification = {
             const response = await fetch(ApiClient.endpoints.verify, {
                 method: 'POST',
                 headers: {
-                    'X-CSRFToken': ApiClient.csrftoken
+                    'X-CSRFToken': ApiClient.getCookie('csrftoken')
                 },
                 body: formData
             });
+
+            if (!response.headers.get('content-type')?.includes('application/json')) {
+                if (response.status === 403) throw new Error('CSRF validation failed — please refresh the page.');
+                if (response.redirected || response.status === 302) throw new Error('Session expired — please refresh the page to log in again.');
+                throw new Error(`Server error (HTTP ${response.status}) — please try again.`);
+            }
 
             const data = await response.json();
 
@@ -4786,6 +4804,7 @@ const TradeVerification = {
                 throw new Error(data.error || 'Verification failed');
             }
         } catch (error) {
+            console.error('[Verify] Error:', error);
             UIBuilders.showNotification({
                 type: 'error',
                 message: 'Failed to verify trade: ' + error.message,

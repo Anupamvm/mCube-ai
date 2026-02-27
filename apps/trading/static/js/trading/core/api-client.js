@@ -204,6 +204,9 @@ const ApiClient = (function() {
         executeStrangle: '/trading/trigger/execute-strangle/',
         placeFutureOrder: '/trading/api/place-futures-order/',  // For verify trade execution
 
+        // Task status
+        futuresTaskStatus: (taskId) => `/trading/trigger/futures/status/${taskId}/`,
+
         // Data endpoints
         getContracts: '/trading/trigger/get-contracts/',
         startTrendlyneFetch: '/trading/trigger/start-trendlyne-fetch/',

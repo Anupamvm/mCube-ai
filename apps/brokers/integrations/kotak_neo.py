@@ -2615,9 +2615,25 @@ def get_neo_open_positions(include_raw=False) -> dict:
             # then fall back to base symbol (e.g., NIFTY)
             # Holdings map is a list per symbol (same symbol can have futures + options).
             # Pick the entry matching position direction (LONG→qty>0, SHORT→qty<0).
+            #
+            # A symbol like HDFCBANK can appear in holdings TWICE: once as an equity
+            # demat holding (nse_cm, e.g. 6000 shares @ ₹701) and once as a futures
+            # carry-forward (nse_fo, e.g. 96250 shares @ ₹913).  Without segment
+            # filtering, `next(e for e in entries if e['quantity'] > 0)` picks the
+            # first entry — often the cheaper equity holding — and blends it with
+            # today's F&O trades, producing a completely wrong average.
+            # Fix: keep only holdings entries whose exchange segment matches the
+            # position's own segment so each entry is compared apples-to-apples.
             holdings_entries = (holdings_avg_map.get(trading_symbol_upper)
                                 or holdings_avg_map.get(symbol_upper)
                                 or [])
+            pos_seg = (pos.exchange_segment or '').lower()
+            if holdings_entries and pos_seg:
+                seg_filtered = [e for e in holdings_entries
+                                if (e.get('exchange_segment') or '').lower() == pos_seg]
+                if seg_filtered:
+                    holdings_entries = seg_filtered
+                # else: no segment match — keep all as fallback (unknown segment)
             today_data = (today_trades_map.get(trading_symbol_upper)
                           or today_trades_map.get(symbol_upper))
 

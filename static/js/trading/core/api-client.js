@@ -196,7 +196,6 @@ const ApiClient = (function() {
     const endpoints = {
         // Algorithm endpoints
         futures: '/trading/trigger/futures/',
-        futuresTaskStatus: (taskId) => `/trading/trigger/futures/status/${taskId}/`,
         strangle: '/trading/trigger/strangle/',
         verify: '/trading/trigger/verify/',  // Verify future trade
 
@@ -204,6 +203,9 @@ const ApiClient = (function() {
         placeFuturesOrder: '/trading/api/place-futures-order/',
         executeStrangle: '/trading/trigger/execute-strangle/',
         placeFutureOrder: '/trading/api/place-futures-order/',  // For verify trade execution
+
+        // Task status
+        futuresTaskStatus: (taskId) => `/trading/trigger/futures/status/${taskId}/`,
 
         // Data endpoints
         getContracts: '/trading/trigger/get-contracts/',

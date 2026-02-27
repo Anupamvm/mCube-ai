@@ -646,8 +646,14 @@ fi
 # ============================================================================
 echo "Stopping any existing services..."
 
-# Kill existing Django server
-pkill -f "manage.py runserver" 2>/dev/null || true
+# Kill existing Django server — use SIGKILL so it releases port 8001 immediately.
+# pkill covers the normal case; fuser/lsof covers stale or renamed processes.
+pkill -9 -f "manage.py runserver" 2>/dev/null || true
+if command -v fuser &>/dev/null; then
+    fuser -k 8001/tcp 2>/dev/null || true
+elif command -v lsof &>/dev/null; then
+    lsof -ti tcp:8001 | xargs -r kill -9 2>/dev/null || true
+fi
 
 # Kill existing Telegram bot (all possible patterns)
 pkill -f "run_telegram_bot" 2>/dev/null || true
@@ -677,7 +683,22 @@ rm -f /tmp/mcube_telegram_bot.lock
 find "$SCRIPT_DIR" -name "*.pyc" -delete 2>/dev/null || true
 find "$SCRIPT_DIR" -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
 
-sleep 2
+# Wait until port 8001 is actually free (max 10 seconds)
+echo "Waiting for port 8001 to be free..."
+for _i in $(seq 1 10); do
+    _port_free=true
+    if command -v fuser &>/dev/null; then
+        fuser 8001/tcp > /dev/null 2>&1 && _port_free=false
+    elif command -v lsof &>/dev/null; then
+        lsof -i tcp:8001 > /dev/null 2>&1 && _port_free=false
+    fi
+    if [ "$_port_free" = true ]; then
+        echo "✓ Port 8001 is free"
+        break
+    fi
+    echo "  Still waiting for port 8001... ($_i/10)"
+    sleep 1
+done
 
 # ============================================================================
 # Open Terminal windows for each service (macOS)
@@ -693,13 +714,13 @@ if [[ "$OSTYPE" == "darwin"* ]]; then
     osascript <<APPLESCRIPT
     tell application "Terminal"
         activate
-        do script "cd '$SCRIPT_DIR' && source venv/bin/activate && echo '============================================' && echo 'mCube Django Server' && echo '============================================' && echo '' && python manage.py runserver 0.0.0.0:8000"
+        do script "cd '$SCRIPT_DIR' && source venv/bin/activate && echo '============================================' && echo 'mCube Django Server' && echo '============================================' && echo '' && lsof -ti tcp:8001 | xargs kill 2>/dev/null; sleep 1; python manage.py runserver 0.0.0.0:8001"
         set custom title of front window to "mCube - Django Server"
     end tell
 APPLESCRIPT
 
     echo "✓ Django server starting in new terminal..."
-    echo "  URL: http://localhost:8000"
+    echo "  URL: http://localhost:8001"
 
     sleep 1
 
@@ -755,47 +776,70 @@ else
     # Ensure logs directory exists for background mode
     mkdir -p "$SCRIPT_DIR/logs"
 
-    # Test that gnome-terminal actually works — on Ubuntu servers with broken
-    # snap/core20 the binary exists and exits 0, but crashes at the dynamic
-    # linker level (GLIBC symbol error) producing no stdout output at all.
-    # We check stdout content rather than exit code to detect this correctly.
+    # gnome-terminal launched from within a snap app (e.g. VS Code installed as
+    # snap) inherits snap-injected env vars (GIO_MODULE_DIR, GTK_PATH, etc.) that
+    # force it to load GIO/GTK modules from the snap cache. Those modules carry an
+    # RPATH pointing to /snap/core20/current/lib which loads an older libpthread,
+    # which in turn can't resolve __libc_pthread_init from the newer system libc →
+    # GLIBC_PRIVATE symbol lookup crash.
+    # Fix: strip the snap-injected vars before every gnome-terminal invocation.
+    # VS Code snap saves the original (pre-snap) values with _VSCODE_SNAP_ORIG
+    # suffix — all were empty before VS Code, so we simply unset them.
+    _gt() {
+        env -u GIO_MODULE_DIR \
+            -u GTK_PATH \
+            -u GTK_EXE_PREFIX \
+            -u GTK_IM_MODULE_FILE \
+            gnome-terminal "$@"
+    }
+
     # Also skip GUI terminals entirely when there is no display (headless/SSH).
     GNOME_TERMINAL_OK=false
     HAS_DISPLAY=false
     [ -n "${DISPLAY:-}" ] || [ -n "${WAYLAND_DISPLAY:-}" ] && HAS_DISPLAY=true
 
     if [ "$HAS_DISPLAY" = true ] && command -v gnome-terminal &> /dev/null; then
-        if gnome-terminal --version 2>/dev/null | grep -q .; then
-            GNOME_TERMINAL_OK=true
+        # --version succeeds even on broken snap/core20 installs (the GLIBC error
+        # is triggered lazily during VTE init, only when a window opens).
+        # Use the cleaned launcher to run a quick window test.
+        _gt_err_file=$(mktemp /tmp/.gt_check_XXXXXX 2>/dev/null || echo "/tmp/.gt_check_$$")
+        _gt -- bash -c "exit 0" 2>"$_gt_err_file" &
+        _gt_test_pid=$!
+        sleep 0.5
+        if grep -qi "symbol lookup\|undefined symbol\|GLIBC_PRIVATE" "$_gt_err_file" 2>/dev/null; then
+            kill "$_gt_test_pid" 2>/dev/null; wait "$_gt_test_pid" 2>/dev/null || true
+            echo "gnome-terminal snap/GLIBC conflict persists — falling back to tmux..."
         else
-            echo "gnome-terminal is non-functional (snap/GLIBC conflict). Using tmux..."
+            wait "$_gt_test_pid" 2>/dev/null || true
+            GNOME_TERMINAL_OK=true
         fi
+        rm -f "$_gt_err_file"
     fi
 
     if [ "$GNOME_TERMINAL_OK" = true ]; then
         echo "Opening gnome-terminal windows for each service..."
 
         # Django Server
-        gnome-terminal --title="mCube - Django Server" -- bash -c "cd '$SCRIPT_DIR' && ./venv/bin/python manage.py runserver 0.0.0.0:8000; exec bash"
+        _gt --title="mCube - Django Server" -- bash -c "fuser -k 8001/tcp 2>/dev/null; sleep 1; cd '$SCRIPT_DIR' && ./venv/bin/python manage.py runserver 0.0.0.0:8001; exec bash"
         sleep 1
 
         # Telegram Bot
-        gnome-terminal --title="mCube - Telegram Bot" -- bash -c "cd '$SCRIPT_DIR' && ./venv/bin/python manage.py run_telegram_bot; exec bash"
+        _gt --title="mCube - Telegram Bot" -- bash -c "cd '$SCRIPT_DIR' && ./venv/bin/python manage.py run_telegram_bot; exec bash"
         sleep 1
 
         # Celery Worker (with tee to log file)
-        gnome-terminal --title="mCube - Celery Worker" -- bash -c "cd '$SCRIPT_DIR' && ./venv/bin/python -m celery -A mcube_ai worker -l info -Q data,strategies,monitoring,risk,reports,celery --concurrency=$CELERY_CONCURRENCY 2>&1 | tee -a logs/celery_worker.log; exec bash"
+        _gt --title="mCube - Celery Worker" -- bash -c "cd '$SCRIPT_DIR' && ./venv/bin/python -m celery -A mcube_ai worker -l info -Q data,strategies,monitoring,risk,reports,celery --concurrency=$CELERY_CONCURRENCY 2>&1 | tee -a logs/celery_worker.log; exec bash"
         sleep 1
 
         # Celery Beat (with tee to log file)
-        gnome-terminal --title="mCube - Celery Beat" -- bash -c "cd '$SCRIPT_DIR' && rm -f celerybeat-schedule.db && ./venv/bin/python -m celery -A mcube_ai beat --scheduler=mcube_ai.celery:DBReloadScheduler -l info 2>&1 | tee -a logs/celery_beat.log; exec bash"
+        _gt --title="mCube - Celery Beat" -- bash -c "cd '$SCRIPT_DIR' && rm -f celerybeat-schedule.db && ./venv/bin/python -m celery -A mcube_ai beat --scheduler=mcube_ai.celery:DBReloadScheduler -l info 2>&1 | tee -a logs/celery_beat.log; exec bash"
 
         echo "✓ All services started in gnome-terminal windows"
 
     elif command -v konsole &> /dev/null; then
         echo "Opening konsole windows for each service..."
 
-        konsole --new-tab -e bash -c "cd '$SCRIPT_DIR' && ./venv/bin/python manage.py runserver 0.0.0.0:8000" &
+        konsole --new-tab -e bash -c "fuser -k 8001/tcp 2>/dev/null; sleep 1; cd '$SCRIPT_DIR' && ./venv/bin/python manage.py runserver 0.0.0.0:8001" &
         sleep 1
         konsole --new-tab -e bash -c "cd '$SCRIPT_DIR' && ./venv/bin/python manage.py run_telegram_bot" &
         sleep 1
@@ -808,7 +852,7 @@ else
     elif command -v xterm &> /dev/null; then
         echo "Opening xterm windows for each service..."
 
-        xterm -title "mCube - Django Server" -e bash -c "cd '$SCRIPT_DIR' && ./venv/bin/python manage.py runserver 0.0.0.0:8000" &
+        xterm -title "mCube - Django Server" -e bash -c "fuser -k 8001/tcp 2>/dev/null; sleep 1; cd '$SCRIPT_DIR' && ./venv/bin/python manage.py runserver 0.0.0.0:8001" &
         sleep 1
         xterm -title "mCube - Telegram Bot" -e bash -c "cd '$SCRIPT_DIR' && ./venv/bin/python manage.py run_telegram_bot" &
         sleep 1
@@ -821,7 +865,7 @@ else
     elif command -v tmux &> /dev/null; then
         echo "Starting services in tmux sessions (reattachable)..."
 
-        tmux new-session  -d -s mcube-django  "cd '$SCRIPT_DIR' && ./venv/bin/python manage.py runserver 0.0.0.0:8000"
+        tmux new-session  -d -s mcube-django  "fuser -k 8001/tcp 2>/dev/null; sleep 1; cd '$SCRIPT_DIR' && ./venv/bin/python manage.py runserver 0.0.0.0:8001"
         tmux new-session  -d -s mcube-bot     "cd '$SCRIPT_DIR' && ./venv/bin/python manage.py run_telegram_bot"
         tmux new-session  -d -s mcube-worker  "cd '$SCRIPT_DIR' && ./venv/bin/python -m celery -A mcube_ai worker -l info -Q data,strategies,monitoring,risk,reports,celery --concurrency=$CELERY_CONCURRENCY 2>&1 | tee -a logs/celery_worker.log"
         rm -f celerybeat-schedule.db
@@ -840,7 +884,8 @@ else
         echo "Logs will be written to: $SCRIPT_DIR/logs/"
 
         cd "$SCRIPT_DIR"
-        nohup ./venv/bin/python manage.py runserver 0.0.0.0:8000 > logs/django_server.log 2>&1 &
+        fuser -k 8001/tcp 2>/dev/null; sleep 1
+        nohup ./venv/bin/python manage.py runserver 0.0.0.0:8001 > logs/django_server.log 2>&1 &
         echo "  ✓ Django server started (PID: $!) - log: logs/django_server.log"
 
         nohup ./venv/bin/python manage.py run_telegram_bot > logs/telegram_bot.log 2>&1 &
@@ -871,13 +916,13 @@ echo "All Services Started! ✓"
 echo "============================================"
 echo ""
 echo "Running Services (in separate terminals):"
-echo "  1. Django Server:    http://localhost:8000"
+echo "  1. Django Server:    http://localhost:8001"
 echo "  2. Telegram Bot:     @dmcube_bot"
 echo "  3. Celery Worker:    Processing async tasks"
 echo "  4. Celery Beat:      Scheduling periodic tasks"
 echo "  5. Background Tasks: Django background processor"
 echo ""
-echo "Admin Panel: http://localhost:8000/admin/"
+echo "Admin Panel: http://localhost:8001/admin/"
 echo ""
 echo "Login Credentials:"
 echo "  Username: anupamvm"
