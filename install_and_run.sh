@@ -755,14 +755,20 @@ else
     # Ensure logs directory exists for background mode
     mkdir -p "$SCRIPT_DIR/logs"
 
-    # Test that gnome-terminal actually works — on Ubuntu with broken snap/core20
-    # the binary exists but crashes with a GLIBC symbol error.
+    # Test that gnome-terminal actually works — on Ubuntu servers with broken
+    # snap/core20 the binary exists and exits 0, but crashes at the dynamic
+    # linker level (GLIBC symbol error) producing no stdout output at all.
+    # We check stdout content rather than exit code to detect this correctly.
+    # Also skip GUI terminals entirely when there is no display (headless/SSH).
     GNOME_TERMINAL_OK=false
-    if command -v gnome-terminal &> /dev/null; then
-        if gnome-terminal --version &>/dev/null 2>&1; then
+    HAS_DISPLAY=false
+    [ -n "${DISPLAY:-}" ] || [ -n "${WAYLAND_DISPLAY:-}" ] && HAS_DISPLAY=true
+
+    if [ "$HAS_DISPLAY" = true ] && command -v gnome-terminal &> /dev/null; then
+        if gnome-terminal --version 2>/dev/null | grep -q .; then
             GNOME_TERMINAL_OK=true
         else
-            echo "gnome-terminal found but non-functional (snap/GLIBC conflict). Falling back..."
+            echo "gnome-terminal is non-functional (snap/GLIBC conflict). Using tmux..."
         fi
     fi
 
