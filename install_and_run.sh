@@ -125,20 +125,23 @@ if [[ "$OSTYPE" != "darwin"* ]]; then
         python3 -c "import venv" &> /dev/null || NEED_APT=true
         # Check for gcc (needed to compile cryptography, Pillow, lxml, etc.)
         command -v gcc &> /dev/null || NEED_APT=true
+        # tmux is required as the terminal fallback on headless/server Ubuntu
+        # (gnome-terminal often crashes with snap/GLIBC conflicts on Ubuntu servers)
+        command -v tmux &> /dev/null || NEED_APT=true
 
         if [ "$NEED_APT" = true ]; then
-            echo "Installing required system packages (venv, build tools)..."
+            echo "Installing required system packages (venv, build tools, tmux)..."
             sudo apt-get update -qq
             sudo apt-get install -y python3-venv python3-pip python3-dev \
-                build-essential libffi-dev libssl-dev libpq-dev
+                build-essential libffi-dev libssl-dev libpq-dev tmux
             echo "✓ System packages installed"
         else
             echo "✓ System packages already installed"
         fi
     elif command -v yum &> /dev/null; then
-        if ! python3 -c "import venv" &> /dev/null; then
+        if ! python3 -c "import venv" &> /dev/null || ! command -v tmux &> /dev/null; then
             echo "Installing required system packages..."
-            sudo yum install -y python3-venv python3-pip python3-devel gcc libffi-devel openssl-devel
+            sudo yum install -y python3-venv python3-pip python3-devel gcc libffi-devel openssl-devel tmux
             echo "✓ System packages installed"
         fi
     else
