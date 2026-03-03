@@ -26,7 +26,7 @@ import atexit
 from datetime import datetime
 from typing import List, Dict
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -301,6 +301,51 @@ class TelegramBotHandler(MenuMixin, DataMixin, TradeMixin):
         ]]
         await update.message.reply_text(message, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard))
 
+    async def history_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /history command - show trade history inline menu."""
+        if not self.is_authorized(update):
+            await update.message.reply_text("Unauthorized access")
+            return
+        data = await self._get_trade_history(10)
+        message = "<b>\U0001f4c4 Trade History (Last 10)</b>\n\n"
+        if not data.get('success') or not data.get('trades'):
+            message += "No closed trades found."
+        else:
+            for t in data['trades']:
+                instrument = t.get('instrument', '?')[:15]
+                direction = t.get('direction', '?')
+                pnl = float(t.get('net_pnl') or t.get('realized_pnl') or 0)
+                pnl_str = f"+\u20b9{pnl:,.0f}" if pnl >= 0 else f"-\u20b9{abs(pnl):,.0f}"
+                pnl_icon = "\U0001f7e2" if pnl >= 0 else "\U0001f534"
+                message += f"  {pnl_icon} {instrument} {direction} {pnl_str}\n"
+            message += (
+                f"\nWin Rate: {data['win_rate']}% ({data['wins']}/{data['total_count']})\n"
+                f"Total P&L: {'+' if data['total_pnl'] >= 0 else ''}\u20b9{data['total_pnl']:,.0f}"
+            )
+        keyboard = [[
+            InlineKeyboardButton("Full View", callback_data="menu_history"),
+            InlineKeyboardButton("\u00ab Main Menu", callback_data="back_main"),
+        ]]
+        await update.message.reply_text(message, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard))
+
+    async def login_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /login command - show broker login menu."""
+        if not self.is_authorized(update):
+            await update.message.reply_text("Unauthorized access")
+            return
+        keyboard = [[
+            InlineKeyboardButton("\U0001f511 Login ICICI", callback_data="login_breeze"),
+            InlineKeyboardButton("\U0001f511 Login Kotak", callback_data="login_kotak"),
+        ], [
+            InlineKeyboardButton("\U0001f4cb Session Status", callback_data="login_view"),
+            InlineKeyboardButton("\u00ab Main Menu", callback_data="back_main"),
+        ]]
+        await update.message.reply_text(
+            "<b>\U0001f511 Broker Login</b>\n\nSelect a broker to login:",
+            parse_mode='HTML',
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
     async def button_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle button callbacks using prefix-based routing."""
         query = update.callback_query
@@ -472,7 +517,7 @@ class TelegramBotHandler(MenuMixin, DataMixin, TradeMixin):
         if data == "login_breeze":
             await query.edit_message_text("\u23f3 Initiating Breeze login...\nSend OTP when prompted.")
             result = await self._trigger_breeze_login()
-            await self._show_action_result(query, "Breeze Login", result)
+            await self._show_breeze_login_result(query, result)
             return
 
         # Analytics
@@ -3738,17 +3783,44 @@ class TelegramBotHandler(MenuMixin, DataMixin, TradeMixin):
                 "Stop the other instance before running this one."
             )
 
+    async def _post_init(self, application: Application) -> None:
+        """Register bot commands (pinned menu) and set the menu button after startup."""
+        commands = [
+            BotCommand("start",     "\U0001f4ca Main Menu"),
+            BotCommand("pnl",       "\U0001f4b0 P&L Summary"),
+            BotCommand("positions", "\U0001f4c8 Open Positions"),
+            BotCommand("orders",    "\U0001f4cb Orders"),
+            BotCommand("margin",    "\U0001f4b5 Margin & Limits"),
+            BotCommand("trade",     "\u26a1 Manual Trade"),
+            BotCommand("history",   "\U0001f4c4 Trade History"),
+            BotCommand("analytics", "\U0001f4c9 Analytics"),
+            BotCommand("login",     "\U0001f511 Broker Login"),
+            BotCommand("core",      "\U0001f39b Core Settings"),
+        ]
+        await application.bot.set_my_commands(commands)
+        # Show a commands menu button next to the message input (pinned at top)
+        from telegram import MenuButtonCommands
+        await application.bot.set_chat_menu_button(menu_button=MenuButtonCommands())
+        logger.info("Bot commands registered and menu button pinned.")
+
     def run(self):
         """Run the bot"""
         logger.info("Starting Telegram bot...")
 
-        application = Application.builder().token(self.bot_token).build()
+        application = (
+            Application.builder()
+            .token(self.bot_token)
+            .post_init(self._post_init)
+            .concurrent_updates(True)  # Allow OTP messages to be processed while login is running
+            .build()
+        )
 
         # Add error handler
         application.add_error_handler(self.error_handler)
 
         # Add command handlers
         application.add_handler(CommandHandler("start", self.start_command))
+        application.add_handler(CommandHandler("menu", self.start_command))
         application.add_handler(CommandHandler("test", self.test_command))
         application.add_handler(CommandHandler("positions", self.positions_command))
         application.add_handler(CommandHandler("core", self.core_command))
@@ -3757,6 +3829,8 @@ class TelegramBotHandler(MenuMixin, DataMixin, TradeMixin):
         application.add_handler(CommandHandler("margin", self.margin_command))
         application.add_handler(CommandHandler("pnl", self.pnl_command))
         application.add_handler(CommandHandler("analytics", self.analytics_command))
+        application.add_handler(CommandHandler("history", self.history_command))
+        application.add_handler(CommandHandler("login", self.login_command))
 
         # Add callback query handler for buttons
         application.add_handler(CallbackQueryHandler(self.button_callback))

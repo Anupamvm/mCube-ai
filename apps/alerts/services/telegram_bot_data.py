@@ -1243,28 +1243,21 @@ class DataMixin:
 
     @sync_to_async(thread_sensitive=False)
     def _trigger_breeze_login(self) -> dict:
-        """Trigger Breeze session refresh."""
+        """Trigger Breeze login — uses the same auto_login_breeze path as the management command."""
         from django.db import close_old_connections
         close_old_connections()
 
         try:
-            from apps.brokers.services.breeze_session import BreezeSessionManager
+            from apps.brokers.services.breeze_auto_login import auto_login_breeze
+            from apps.brokers.utils.auth_manager import reset_auto_login_status
 
-            manager = BreezeSessionManager()
-            is_valid, msg = manager.is_session_valid()
+            # Reset any previous failed/in_progress state so a manual trigger is never blocked.
+            reset_auto_login_status('breeze')
 
-            if is_valid:
-                return {'success': True, 'message': f'Session already valid: {msg}'}
-
-            from apps.brokers.utils.auth_manager import can_attempt_auto_login
-            can_login, reason = can_attempt_auto_login('breeze')
-            if not can_login:
-                return {'success': False, 'error': f'Login blocked: {reason}'}
-
-            success, refresh_msg = manager.refresh_session()
+            success, message = auto_login_breeze(task_name="Telegram manual login")
             if success:
-                return {'success': True, 'message': f'Login successful: {refresh_msg}'}
-            return {'success': False, 'error': f'Login failed: {refresh_msg}'}
+                return {'success': True, 'message': message}
+            return {'success': False, 'error': message}
         except Exception as e:
             logger.error(f"Error triggering Breeze login: {e}")
             return {'success': False, 'error': str(e)}

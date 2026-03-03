@@ -97,6 +97,10 @@ class MenuMixin:
             ],
             [
                 InlineKeyboardButton("\U0001f4c9 Analytics", callback_data="menu_analytics"),
+                InlineKeyboardButton("\U0001f4c4 History", callback_data="menu_history"),
+            ],
+            [
+                InlineKeyboardButton("\U0001f4b5 Margin", callback_data="menu_margin"),
                 InlineKeyboardButton("\U0001f504 Refresh", callback_data="menu_refresh"),
             ],
         ]
@@ -137,6 +141,10 @@ class MenuMixin:
         )
 
         keyboard = [
+            [
+                InlineKeyboardButton("\U0001f4c4 History", callback_data="menu_history"),
+                InlineKeyboardButton("\U0001f4c9 Analytics", callback_data="menu_analytics"),
+            ],
             [
                 InlineKeyboardButton("\U0001f504 Refresh", callback_data="pnl_refresh"),
                 InlineKeyboardButton("\u00ab Main Menu", callback_data="back_main"),
@@ -426,6 +434,39 @@ class MenuMixin:
             ],
         ]
 
+        await query.edit_message_text(
+            message, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
+    async def _show_breeze_login_result(self, query, result: dict):
+        """Show Breeze login result. On failure, offer a Retry button so the user
+        can re-trigger the login without navigating back to the menu."""
+        if result.get('success'):
+            icon = "\u2705"
+            msg = result.get('message', 'Login successful')
+            keyboard = [
+                [
+                    InlineKeyboardButton("\u00ab Settings", callback_data="menu_settings"),
+                    InlineKeyboardButton("\u00ab Main Menu", callback_data="back_main"),
+                ],
+            ]
+        else:
+            icon = "\u274c"
+            msg = result.get('error', 'Unknown error')
+            keyboard = [
+                [
+                    InlineKeyboardButton("\U0001f504 Retry ICICI Login", callback_data="login_breeze"),
+                ],
+                [
+                    InlineKeyboardButton("\u00ab Settings", callback_data="menu_settings"),
+                    InlineKeyboardButton("\u00ab Main Menu", callback_data="back_main"),
+                ],
+            ]
+
+        message = (
+            f"{icon} <b>Breeze Login</b>\n\n"
+            f"{msg}"
+        )
         await query.edit_message_text(
             message, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard)
         )
@@ -1057,6 +1098,9 @@ class MenuMixin:
                 InlineKeyboardButton("This Week", callback_data="analytics_week"),
                 InlineKeyboardButton("This Month", callback_data="analytics_month"),
                 InlineKeyboardButton("FY", callback_data="analytics_FY"),
+            ],
+            [
+                InlineKeyboardButton("\U0001f4c4 History", callback_data="menu_history"),
             ],
             [
                 InlineKeyboardButton("\U0001f504 Refresh", callback_data=f"analytics_{period}"),
