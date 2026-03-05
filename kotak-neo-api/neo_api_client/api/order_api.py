@@ -38,6 +38,7 @@ class OrderAPI(object):
             header_params = {
                 "Sid": self.api_client.configuration.edit_sid,
                 "Auth": self.api_client.configuration.edit_token,
+                "neo-fin-key": self.api_client.configuration.get_neo_fin_key(),
                 "Content-Type": "application/x-www-form-urlencoded",
             }
 
@@ -95,6 +96,7 @@ class OrderAPI(object):
         header_params = {
             "Sid": self.api_client.configuration.edit_sid,
             "Auth": self.api_client.configuration.edit_token,
+            "neo-fin-key": self.api_client.configuration.get_neo_fin_key(),
             "Content-Type": "application/x-www-form-urlencoded"
         }
         body_params = {"on": order_id, "am": amo}
@@ -127,6 +129,7 @@ class OrderAPI(object):
         header_params = {
             "Sid": self.api_client.configuration.edit_sid,
             "Auth": self.api_client.configuration.edit_token,
+            "neo-fin-key": self.api_client.configuration.get_neo_fin_key(),
             "Content-Type": "application/x-www-form-urlencoded"
         }
         body_params = {"on": order_id, "am": amo}
@@ -160,6 +163,7 @@ class OrderAPI(object):
         header_params = {
             "Sid": self.api_client.configuration.edit_sid,
             "Auth": self.api_client.configuration.edit_token,
+            "neo-fin-key": self.api_client.configuration.get_neo_fin_key(),
             "Content-Type": "application/x-www-form-urlencoded"
         }
         body_params = {"on": order_id, "am": amo}

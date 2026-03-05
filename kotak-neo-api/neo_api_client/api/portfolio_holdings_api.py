@@ -10,6 +10,7 @@ class PortfolioAPI(object):
         header_params = {
             "Sid": self.api_client.configuration.edit_sid,
             "Auth": self.api_client.configuration.edit_token,
+            "neo-fin-key": self.api_client.configuration.get_neo_fin_key(),
             'accept': '*/*'
         }
         params = {"sId": self.api_client.configuration.serverId}
