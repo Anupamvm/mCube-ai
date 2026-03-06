@@ -66,6 +66,7 @@ urlpatterns = [
 
     # Position Average Price Override
     path('api/update-position-avg/', api_views.update_position_avg_price, name='api_update_position_avg'),
+    path('api/clear-position-avg/', api_views.clear_position_avg_override, name='api_clear_position_avg'),
 
     # Active Positions Management
     path('api/get-positions/', api_views.get_active_positions, name='api_get_positions'),

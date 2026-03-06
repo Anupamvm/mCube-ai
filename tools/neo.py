@@ -159,8 +159,9 @@ class NeoAPI(BrokerInterface if isinstance(BrokerInterface, type) else object):
             self.neo.configuration.edit_token = edit_token
             self.neo.configuration.edit_sid = edit_sid
             self.neo.configuration.base_url = base_url
-            if server_id:
-                self.neo.configuration.serverId = server_id
+            # Always set serverId explicitly: '' produces ?sId= in URLs (handled by server),
+            # while leaving it as None produces ?sId=None (causes routing failures).
+            self.neo.configuration.serverId = server_id or ''
             if data_center:
                 self.neo.configuration.data_center = data_center
 
@@ -299,7 +300,10 @@ class NeoAPI(BrokerInterface if isinstance(BrokerInterface, type) else object):
                 self.last_error = None
 
                 data = session_response.get('data', {})
-                server_id = data.get('hsServerId', '')
+                server_id = data.get('hsServerId', '') or ''
+                # Normalize serverId to '' when None to avoid ?sId=None in API URLs
+                if self.neo.configuration.serverId is None:
+                    self.neo.configuration.serverId = server_id  # '' if not provided
                 base_url = getattr(self.neo.configuration, 'base_url', None) or data.get('baseUrl', '')
                 data_center = getattr(self.neo.configuration, 'data_center', None) or data.get('dataCenter', '')
                 logger.info(f"Neo login successful on attempt {attempt} - serverId: {server_id}, base_url: {base_url}, dataCenter: {data_center}")

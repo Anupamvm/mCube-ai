@@ -3277,6 +3277,45 @@ def update_position_avg_price(request):
         return JsonResponse({'success': False, 'error': str(e)})
 
 
+@login_required
+@require_POST
+def clear_position_avg_override(request):
+    """
+    Remove the manual average price override for a position so the system
+    resumes auto-calculating from holdings / trade_report data.
+    """
+    try:
+        data = json.loads(request.body)
+        trading_symbol = data.get('trading_symbol', '').strip()
+
+        if not trading_symbol:
+            return JsonResponse({'success': False, 'error': 'trading_symbol is required'})
+
+        from apps.brokers.models import PositionAvgOverride
+
+        deleted_count, _ = PositionAvgOverride.objects.filter(
+            trading_symbol=trading_symbol
+        ).delete()
+
+        if deleted_count:
+            logger.info(f"Avg price override removed for {trading_symbol} by {request.user}")
+            return JsonResponse({
+                'success': True,
+                'trading_symbol': trading_symbol,
+                'message': f'Override removed. System will auto-calculate avg price from holdings / trade data.',
+            })
+        else:
+            return JsonResponse({
+                'success': True,
+                'trading_symbol': trading_symbol,
+                'message': 'No override was set for this position.',
+            })
+
+    except Exception as e:
+        logger.error(f"Error clearing position avg override: {e}", exc_info=True)
+        return JsonResponse({'success': False, 'error': str(e)})
+
+
 # ============================================================================
 # HISTORICAL DATA API VIEWS
 # Import from the dedicated historical_data_views module

@@ -195,22 +195,42 @@ def fetch_and_save_kotakneo_data():
     # Validate response — Neo API returns error dicts on session expiry
     if not resp or not isinstance(resp, dict):
         raise Exception(f"Neo positions() returned invalid response: {type(resp)}")
-    if resp.get('stat') == 'Not_Ok' or 'Error' in resp or 'Error Message' in resp:
+
+    # Check for success: only 'ok' stat means valid data.
+    # Known error patterns:
+    #   stat='Not_Ok', stCode=5203 → no open positions (not an error)
+    #   stat='error in neo-login-check-api', stCode=100022 → invalid/expired session
+    #   key 'Error' or 'error' (ApiException wrapper) → connection error
+    stat = resp.get('stat', '')
+    if stat == 'ok':
+        raw_positions = resp.get('data', [])
+    else:
+        # Extract error message robustly (handles ApiException with broken __str__)
         err_msg = resp.get('errMsg', '')
+        if not err_msg:
+            raw_err = resp.get('Error Message') or resp.get('Error') or resp.get('error') or resp.get('message')
+            if raw_err is None:
+                err_msg = f"stat={stat!r}, stCode={resp.get('stCode')}"
+            elif isinstance(raw_err, str):
+                err_msg = raw_err
+            else:
+                # Could be an ApiException whose __str__ returns None — use repr or type name
+                try:
+                    err_msg = repr(raw_err)
+                except Exception:
+                    err_msg = type(raw_err).__name__
+
         # stCode 5203 = "No Data" — no open positions today, not an auth error
-        if 'no data' in err_msg.lower() or resp.get('stCode') == 5203:
+        if 'no data' in str(err_msg).lower() or resp.get('stCode') == 5203:
             logger.info("Neo positions() returned no data (no open positions)")
             raw_positions = []
         else:
-            error_msg = resp.get('Error Message') or resp.get('Error') or resp.get('message') or str(resp)
-            logger.error(f"Neo positions() API error: {error_msg}")
+            logger.error(f"Neo positions() API error: {err_msg}")
             raise NeoAuthenticationError(
-                f"Neo API error: {error_msg}",
+                f"Neo API error: {err_msg}",
                 error_type='session',
                 is_retryable=True
             )
-    else:
-        raw_positions = resp.get('data', [])
 
     # ── Fetch trade_report() for ACTUAL trade execution prices ──
     # positions() cfBuyAmt/cfBuyQty gives MTM settlement price (resets daily),
@@ -2634,6 +2654,19 @@ def get_neo_open_positions(include_raw=False) -> dict:
                 if seg_filtered:
                     holdings_entries = seg_filtered
                 # else: no segment match — keep all as fallback (unknown segment)
+
+            # If multiple entries still remain after segment filtering (e.g. same symbol has
+            # both Mar and Apr futures in nse_fo), narrow further by expiry date.
+            # Without this, the code picks the first entry — often the wrong contract month.
+            if len(holdings_entries) > 1 and pos.expiry_date:
+                expiry_str = pos.expiry_date.strftime('%d-%b-%Y').upper()  # e.g. '30-MAR-2026'
+                expiry_filtered = [e for e in holdings_entries
+                                   if (e.get('expiry_date') or '').upper() == expiry_str]
+                if expiry_filtered:
+                    holdings_entries = expiry_filtered
+                    logger.info(f"[HOLDINGS MATCH] {pos.symbol}: Narrowed to expiry {expiry_str} "
+                                f"-> avg={expiry_filtered[0]['avg_price']:.2f}")
+
             today_data = (today_trades_map.get(trading_symbol_upper)
                           or today_trades_map.get(symbol_upper))
 

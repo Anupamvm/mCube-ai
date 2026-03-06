@@ -1071,7 +1071,9 @@ function displayPositions(broker, positions) {
                         <td>
                             ₹${parseFloat(pos.average_price).toFixed(2)}
                             <button onclick="showEditAvgModal('${pos.trading_symbol || pos.symbol}', ${parseFloat(pos.average_price)})" style="background:none;border:none;color:var(--gray);cursor:pointer;padding:2px 4px;font-size:0.75rem;" title="Edit avg price">&#9998;</button>
-                            ${pos.avg_price_source === 'manual override' ? '<small style="color:#f59e0b;">(override)</small>' : ''}
+                            ${pos.avg_price_source === 'manual override'
+                                ? `<button onclick="clearAvgOverride('${pos.trading_symbol || pos.symbol}')" style="background:none;border:none;color:#f59e0b;cursor:pointer;padding:2px 4px;font-size:0.75rem;" title="Remove override — resume auto-calculation">&#128275;</button><small style="color:#f59e0b;">(override)</small>`
+                                : ''}
                         </td>
                         <td>${pos.ltp ? '₹' + parseFloat(pos.ltp).toFixed(2) : '<span style="color: var(--gray);">N/A</span>'}</td>
                         <td class="${getPnLClass(pos.total_pnl)}">
@@ -2136,6 +2138,33 @@ function handleAverageOverlayClick(event) {
 function closeAverageModal() {
     const modal = document.getElementById('averagePositionModal');
     modal.classList.remove('active');
+}
+
+// ── Clear Average Price Override (resume auto-calculation) ──
+function clearAvgOverride(tradingSymbol) {
+    if (!confirm(`Remove manual override for ${tradingSymbol}?\n\nThe system will resume auto-calculating the avg price from holdings / trade data.`)) return;
+
+    fetch('{% url "trading:api_clear_position_avg" %}', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': '{{ csrf_token }}',
+        },
+        body: JSON.stringify({ trading_symbol: tradingSymbol }),
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.success) {
+            alert(`Override removed for ${tradingSymbol}.\n${data.message}\n\nRefreshing positions...`);
+            loadPositions('neo');
+            loadPositions('breeze');
+        } else {
+            alert('Error: ' + (data.error || 'Unknown error'));
+        }
+    })
+    .catch(err => {
+        alert('Network error: ' + err.message);
+    });
 }
 
 // ── Edit Average Price Modal ──
