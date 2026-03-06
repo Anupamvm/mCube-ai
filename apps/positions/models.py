@@ -61,7 +61,13 @@ class Position(TimeStampedModel):
     instrument = models.CharField(
         max_length=100,
         db_index=True,
-        help_text="Trading symbol (NIFTY, RELIANCE, etc.)"
+        help_text="Original broker symbol used for order placement"
+    )
+
+    display_name = models.CharField(
+        max_length=100,
+        blank=True,
+        help_text="Human-friendly name, e.g. HDFCBANK26MARFUT (auto-generated)"
     )
 
     direction = models.CharField(
@@ -72,13 +78,24 @@ class Position(TimeStampedModel):
 
     quantity = models.IntegerField(
         validators=[MinValueValidator(1)],
-        help_text="Number of lots"
+        help_text="Total units (e.g. lots × lot_size)"
     )
 
     lot_size = models.IntegerField(
         default=1,
         help_text="Lot size for the instrument"
     )
+
+    @property
+    def lots(self):
+        """Number of lots (quantity / lot_size)."""
+        ls = self.lot_size or 1
+        return self.quantity // ls if ls > 1 else self.quantity
+
+    @property
+    def label(self):
+        """Display-friendly name; falls back to instrument if not set."""
+        return self.display_name or self.instrument
 
     # ==========================================================================
     # STATUS & SOURCE TRACKING
@@ -331,7 +348,7 @@ class Position(TimeStampedModel):
         ]
 
     def __str__(self):
-        return f"{self.instrument} {self.direction} ({self.get_status_display()})"
+        return f"{self.label} {self.direction} ({self.get_status_display()})"
 
     # ==========================================================================
     # CLASS METHODS
@@ -428,7 +445,12 @@ class Position(TimeStampedModel):
         self.save()
 
     def calculate_pnl(self, price=None) -> Decimal:
-        """Calculate P&L at given price."""
+        """Calculate P&L at given price.
+
+        Note: quantity stores total shares (not lots), so lot_size is NOT
+        multiplied again.  E.g. 305 lots of HDFCBANK (lot_size=550) is
+        stored as quantity=167750.
+        """
         price = price or self.current_price
         if self.direction == 'LONG':
             pnl_per_unit = price - self.entry_price
@@ -436,7 +458,7 @@ class Position(TimeStampedModel):
             pnl_per_unit = self.entry_price - price
         else:  # NEUTRAL
             pnl_per_unit = self.premium_collected - price
-        return pnl_per_unit * self.quantity * self.lot_size
+        return pnl_per_unit * self.quantity
 
     def update_price(self, price: Decimal):
         """Update current price and unrealized P&L."""
@@ -489,3 +511,81 @@ class MonitorLog(TimeStampedModel):
 
     def __str__(self):
         return f"{self.check_type} - {self.result}"
+
+
+class PositionMonitorDashboard(TimeStampedModel):
+    """
+    Daily monitoring dashboard state for anti-spam Telegram updates.
+
+    One record per trading day. The monitor task edits a single Telegram
+    message instead of flooding the chat with per-minute updates.
+
+    Stores:
+    - The Telegram message_id so we can EDIT it each run
+    - Day-start snapshot (first reading of the day)
+    - Last 3 monitoring snapshots (rolling window, shows progression)
+    - Last exit suggestion details (deduplication)
+    """
+
+    date = models.DateField(
+        db_index=True,
+        help_text="Trading date"
+    )
+    position = models.ForeignKey(
+        Position,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='monitor_dashboards',
+        help_text="Position being monitored"
+    )
+
+    # Telegram message tracking
+    telegram_message_id = models.BigIntegerField(
+        null=True,
+        blank=True,
+        help_text="Message ID of the live monitoring dashboard message"
+    )
+
+    # Snapshots
+    day_start = models.JSONField(
+        null=True,
+        blank=True,
+        help_text="Snapshot at day start: {time, price, pnl, pnl_pct}"
+    )
+    snapshots = models.JSONField(
+        default=list,
+        help_text="Last 3 monitoring snapshots [{time, price, pnl, pnl_pct}]"
+    )
+
+    last_updated = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When dashboard was last refreshed"
+    )
+
+    # Exit suggestion deduplication
+    last_exit_msg_id = models.BigIntegerField(
+        null=True,
+        blank=True,
+        help_text="Telegram message_id of last exit suggestion (for tracking)"
+    )
+    last_exit_reason = models.CharField(
+        max_length=50,
+        blank=True,
+        help_text="Reason of last exit suggestion sent"
+    )
+    last_exit_sent_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When last exit suggestion was sent"
+    )
+
+    class Meta:
+        db_table = 'position_monitor_dashboard'
+        ordering = ['-date']
+        unique_together = [('position', 'date')]
+
+    def __str__(self):
+        pos_str = self.position.label if self.position else 'No position'
+        return f"Dashboard {self.date} | {pos_str}"

@@ -12,25 +12,31 @@ TEST_DESCRIPTIONS = {
             <br><br>
             <strong>How it works:</strong>
             <ul>
-                <li>Connects to http://27.107.134.179:8000/v1</li>
-                <li>Attempts to initialize the OpenAI-compatible client</li>
+                <li>Tries Public IP (27.107.134.179:8000) first, then Local IP (192.168.1.32:8000)</li>
+                <li>Initializes the OpenAI-compatible client and sends a test request</li>
                 <li>Verifies the server responds and is ready to accept requests</li>
             </ul>
             <br>
             <strong>What success means:</strong> Your 70B parameter Llama model is accessible and ready to process requests.
             <br><br>
-            <strong>If it fails:</strong> The vLLM server needs to be started manually.
-            <br><br>
-            <strong>How to start the LLM server:</strong>
+            <strong>If it succeeds — check server health:</strong>
             <ol>
-                <li>SSH into the GPU server: <code>ssh anupamvm@27.107.134.179</code></li>
-                <li>Navigate to the vLLM directory: <code>cd /home/anupamvm/vllm</code></li>
-                <li>Start the container: <code>docker compose up -d</code></li>
-                <li>Check logs: <code>docker logs -f vllm-70b</code></li>
-                <li>Wait for the model to load (may take 2-3 minutes for the 70B model)</li>
+                <li>Container status: <code>docker ps --filter name=vllm-70b --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"</code></li>
+                <li>GPU usage: <code>nvidia-smi</code></li>
+                <li>API models: <code>curl -s http://192.168.1.32:8000/v1/models | python3 -m json.tool</code></li>
+                <li>Recent logs: <code>docker logs --tail 50 vllm-70b</code></li>
+            </ol>
+            <br>
+            <strong>If it fails — start the LLM server:</strong>
+            <ol>
+                <li>Check if container exists: <code>docker ps -a --filter name=vllm-70b</code></li>
+                <li>Check GPU: <code>nvidia-smi</code></li>
+                <li>Start the container: <code>cd /home/anupamvm/vllm && docker compose up -d</code></li>
+                <li>Watch logs: <code>docker logs -f vllm-70b</code></li>
+                <li>Wait for "Application startup complete" (2-3 minutes for 70B model)</li>
             </ol>
         ''',
-        'expected_output': 'Server URL and model name (hugging-quants/Meta-Llama-3.1-70B-Instruct-AWQ-INT4)'
+        'expected_output': 'Network type (Local/Public), server URL, and model name (Meta-Llama-3.1-70B-Instruct-AWQ-INT4)'
     },
 
     'text_generation': {

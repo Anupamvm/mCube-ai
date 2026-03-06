@@ -2713,7 +2713,7 @@ Source: ${instrument.source || 'Unknown'}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 Lots: ${lots}
-Quantity: ${lots * (positionData ? positionData.lot_size : contractDetails.lot_size)}
+Lots: ${lots}
 
 Entry Price: ₹${contract.futures_price.toFixed(2)}
 Margin Required: ₹${marginRequired.toLocaleString()}
@@ -3514,8 +3514,8 @@ Are you absolutely sure?
                         </div>
                         <div id="adjustedCalculations" style="margin-top: 1rem; font-size: 0.875rem;">
                             <div style="display: flex; justify-content: space-between; padding: 0.5rem 0; border-bottom: 1px solid rgba(255,255,255,0.2);">
-                                <span>Total Quantity:</span>
-                                <span id="adjQuantity" style="font-weight: 700;">${initial.total_quantity}</span>
+                                <span>Lots:</span>
+                                <span id="adjQuantity" style="font-weight: 700;">${initial.lots || initial.total_quantity}</span>
                             </div>
                             <div style="display: flex; justify-content: space-between; padding: 0.5rem 0; border-bottom: 1px solid rgba(255,255,255,0.2);">
                                 <span>Margin Required:</span>
@@ -3625,8 +3625,8 @@ Are you absolutely sure?
                                 <div style="font-size: 1.25rem; font-weight: 700;">${averaging.total_after_all_averaging.total_lots}</div>
                             </div>
                             <div>
-                                <div style="font-size: 0.7rem; opacity: 0.8;">Total Quantity</div>
-                                <div style="font-size: 1.25rem; font-weight: 700;">${averaging.total_after_all_averaging.total_quantity}</div>
+                                <div style="font-size: 0.7rem; opacity: 0.8;">Total Lots</div>
+                                <div style="font-size: 1.25rem; font-weight: 700;">${averaging.total_after_all_averaging.total_lots}</div>
                             </div>
                             <div>
                                 <div style="font-size: 0.7rem; opacity: 0.8;">Total Margin</div>
@@ -5411,7 +5411,7 @@ Are you absolutely sure?
                             <div style="background: #F0FDF4; border-left: 4px solid #16A34A; padding: 15px; margin-bottom: 20px;">
                                 <h3 style="margin-top: 0; color: #14532D;">💰 TRADE ECONOMICS</h3>
                                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
-                                    <div><strong>Total Quantity:</strong> ${totalQuantity} (${recommendedLots} × ${lotSize})</div>
+                                    <div><strong>Lots:</strong> ${recommendedLots}</div>
                                     <div><strong>Premium Collection:</strong> ₹${totalPremiumCollection.toLocaleString('en-IN', {maximumFractionDigits: 0})}</div>
                                     <div><strong>Margin Required:</strong> ₹${marginRequired.toLocaleString('en-IN', {maximumFractionDigits: 0})}</div>
                                     <div><strong>Margin Available:</strong> ₹${marginAvailable.toLocaleString('en-IN', {maximumFractionDigits: 0})}</div>
@@ -6036,7 +6036,7 @@ Please check your connection and try again.`);
                             <div><strong>Expiry:</strong> ${expiryFormatted}</div>
                             <div><strong>Lots:</strong> ${finalLots}</div>
                             <div><strong>Lot Size:</strong> ${lotSize}</div>
-                            <div><strong>Total Quantity:</strong> ${finalLots * lotSize}</div>
+                            <div><strong>Lots:</strong> ${finalLots}</div>
                             <div><strong>Entry Price:</strong> ₹${futuresPrice.toFixed(2)}</div>
                             <div><strong>Stop Loss:</strong> ₹${stopLoss.toFixed(2)}</div>
                             <div><strong>Target:</strong> ₹${target.toFixed(2)}</div>

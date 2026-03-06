@@ -786,6 +786,34 @@ class TelegramBotHandler(MenuMixin, DataMixin, TradeMixin):
             suggestion_id = int(data.split("_")[3])
             await self._handle_cancel_futures_execution(query, suggestion_id)
 
+        # Monitor dashboard position actions
+        elif data.startswith("monitor_pos_"):
+            position_id = int(data.split("_")[2])
+            await self._handle_monitor_pos(query, position_id)
+
+        elif data.startswith("monitor_close_"):
+            parts = data.split("_")
+            position_id = int(parts[2])
+            pct = int(parts[3]) if len(parts) > 3 else 100
+            await self._handle_monitor_close(query, position_id, pct)
+
+        elif data.startswith("monitor_confirm_"):
+            parts = data.split("_")
+            position_id = int(parts[2])
+            pct = int(parts[3]) if len(parts) > 3 else 100
+            await self._handle_monitor_confirm(query, position_id, pct)
+
+        elif data.startswith("monitor_cancel_"):
+            position_id = int(data.split("_")[2])
+            await self._handle_monitor_pos(query, position_id)
+
+        elif data.startswith("monitor_hold_"):
+            position_id = int(data.split("_")[2])
+            await self._handle_monitor_hold(query, position_id)
+
+        elif data.startswith("monitor_back"):
+            await self._handle_monitor_back(query)
+
         # Exit confirmation (SL/Target hit)
         elif data.startswith("confirm_exit_"):
             position_id = int(data.split("_")[2])
@@ -1904,6 +1932,257 @@ class TelegramBotHandler(MenuMixin, DataMixin, TradeMixin):
         except TradeSuggestion.DoesNotExist:
             return None
 
+    # =========================================================================
+    # MONITOR DASHBOARD POSITION ACTIONS
+    # =========================================================================
+
+    @sync_to_async(thread_sensitive=False)
+    def _get_position_detail(self, position_id: int) -> dict:
+        """Fetch position detail for the monitor action menu."""
+        from django.db import close_old_connections
+        close_old_connections()
+        from apps.positions.models import Position
+        from apps.positions.services.monitor_dashboard import _fmt_compact, _sl_status
+        from decimal import Decimal
+
+        try:
+            pos = Position.objects.select_related('account').get(id=position_id)
+            lot_size = pos.lot_size or 1
+            lots = pos.quantity // lot_size if lot_size > 1 else pos.quantity
+            broker_map = {'KOTAK': 'Kotak Neo', 'ICICI': 'ICICI Breeze'}
+            broker_name = broker_map.get(
+                pos.account.broker if pos.account else '', 'Unknown'
+            )
+            pnl = pos.unrealized_pnl or Decimal('0')
+            entry_val = pos.entry_value if (pos.entry_value and pos.entry_value > 0) else (
+                pos.entry_price * pos.quantity
+            )
+            pnl_pct = (pnl / entry_val * Decimal('100')) if entry_val > 0 else Decimal('0')
+            direction_arrow = "▲" if pos.direction == 'LONG' else ("▼" if pos.direction == 'SHORT' else "◆")
+            pnl_str = _fmt_compact(pnl, pnl_pct)
+            sl_badge = _sl_status(pos)
+
+            lines = [
+                f"<b>{pos.instrument}</b>  {direction_arrow} {lots}L",
+                f"🏦 {broker_name}",
+                f"",
+                f"Entry:   ₹{pos.entry_price:,.2f}",
+                f"Current: ₹{pos.current_price:,.2f}",
+            ]
+            if pos.stop_loss:
+                sl_dist = pos.current_price - pos.stop_loss
+                lines.append(f"SL:      ₹{pos.stop_loss:,.2f}  ({sl_dist:+.2f})")
+            if pos.target:
+                tgt_dist = pos.target - pos.current_price
+                lines.append(f"Target:  ₹{pos.target:,.2f}  ({tgt_dist:+.2f})")
+            pnl_emoji = "📈" if pnl >= 0 else "📉"
+            lines += [
+                f"",
+                f"{pnl_emoji} <b>P&L: {pnl_str}</b>{sl_badge}",
+                f"",
+                f"<i>Choose action below:</i>",
+            ]
+            return {
+                'found': True,
+                'text': "\n".join(lines),
+                'instrument': pos.instrument,
+                'lots': lots,
+                'status': pos.status,
+            }
+        except Exception as e:
+            return {'found': False, 'error': str(e)}
+
+    async def _handle_monitor_pos(self, query, position_id: int):
+        """Show action menu for a specific position from the monitor dashboard."""
+        await query.answer()
+        detail = await self._get_position_detail(position_id)
+
+        if not detail.get('found'):
+            await query.answer(f"Position not found: {detail.get('error', '')}", show_alert=True)
+            return
+
+        if detail['status'] != 'OPEN':
+            await query.answer("Position is already closed.", show_alert=True)
+            return
+
+        keyboard = [
+            [
+                InlineKeyboardButton("✅ Close 100%", callback_data=f"monitor_close_{position_id}_100"),
+                InlineKeyboardButton("📊 Close 50%", callback_data=f"monitor_close_{position_id}_50"),
+            ],
+            [
+                InlineKeyboardButton("⏸️ Hold / Wait", callback_data=f"monitor_hold_{position_id}"),
+                InlineKeyboardButton("← Back", callback_data="monitor_back"),
+            ],
+        ]
+
+        await query.edit_message_text(
+            detail['text'],
+            parse_mode='HTML',
+            reply_markup=InlineKeyboardMarkup(keyboard),
+        )
+
+    async def _handle_monitor_close(self, query, position_id: int, pct: int):
+        """Show confirmation screen before closing — safety gate for large positions."""
+        await query.answer()
+        detail = await self._get_position_detail(position_id)
+
+        if not detail.get('found'):
+            await query.answer(f"Position not found: {detail.get('error', '')}", show_alert=True)
+            return
+
+        if detail['status'] != 'OPEN':
+            await query.answer("Position is already closed.", show_alert=True)
+            return
+
+        pct_label = "100%" if pct == 100 else f"{pct}% (partial)"
+        confirm_text = (
+            f"⚠️ <b>Confirm Close {pct_label}</b>\n\n"
+            f"{detail['text']}\n\n"
+            f"<b>Are you sure you want to close this position?</b>\n"
+            f"<i>This action cannot be undone.</i>"
+        )
+
+        keyboard = [
+            [
+                InlineKeyboardButton(
+                    f"✅ YES — Close {pct_label}",
+                    callback_data=f"monitor_confirm_{position_id}_{pct}"
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    "❌ NO — Cancel",
+                    callback_data=f"monitor_cancel_{position_id}"
+                ),
+            ],
+        ]
+
+        await query.edit_message_text(
+            confirm_text,
+            parse_mode='HTML',
+            reply_markup=InlineKeyboardMarkup(keyboard),
+        )
+
+    async def _handle_monitor_confirm(self, query, position_id: int, pct: int):
+        """Execute close after user confirmed."""
+        await query.edit_message_text("⏳ Closing position...")
+
+        try:
+            result = await self._close_position_by_id(position_id)
+
+            if result.get('success'):
+                pnl_str = result.get('pnl', 'N/A')
+                msg = (
+                    f"✅ <b>Position Closed</b>\n\n"
+                    f"<b>{result.get('symbol', 'N/A')}</b>\n"
+                    f"P&L: {pnl_str}\n"
+                    f"Reason: Manual (monitor dashboard)"
+                )
+            else:
+                msg = (
+                    f"❌ <b>Close Failed</b>\n\n"
+                    f"Error: {result.get('error', 'Unknown error')}"
+                )
+
+            await query.edit_message_text(msg, parse_mode='HTML')
+
+        except Exception as e:
+            logger.error(f"Error closing position {position_id} from monitor: {e}")
+            await query.edit_message_text(f"Error: {str(e)[:200]}")
+
+    async def _handle_monitor_hold(self, query, position_id: int):
+        """Acknowledge hold — dismiss the action menu, go back to dashboard."""
+        await query.answer("Holding position. Monitor continues.", show_alert=False)
+        # Restore the consolidated dashboard by re-triggering the monitor view
+        await self._handle_monitor_back(query)
+
+    async def _handle_monitor_back(self, query):
+        """Restore the consolidated monitor dashboard in-place."""
+        await query.answer()
+
+        dashboard_data = await sync_to_async(self._build_dashboard_data)()
+
+        if not dashboard_data:
+            await query.edit_message_text(
+                "No open positions found.",
+                parse_mode='HTML',
+            )
+            return
+
+        await query.edit_message_text(
+            dashboard_data['message'],
+            parse_mode='HTML',
+            reply_markup=InlineKeyboardMarkup(dashboard_data['keyboard']),
+        )
+
+    def _build_dashboard_data(self):
+        """Sync helper: build consolidated message + keyboard for current open positions."""
+        from decimal import Decimal
+        from collections import Counter
+        from django.utils import timezone
+        from django.db.models import Sum
+        from apps.positions.models import Position
+        from apps.positions.services.monitor_dashboard import (
+            build_consolidated_message,
+            _build_dashboard_keyboard,
+            BROKER_DISPLAY,
+        )
+        from apps.core.models import TradingCoreConfig
+
+        active_positions = list(Position.objects.filter(status='OPEN').select_related('account'))
+        if not active_positions:
+            return None
+
+        config = TradingCoreConfig.get_instance()
+        mode_label = config.get_notification_level_display_short()
+        now = timezone.now()
+        today = timezone.localdate()
+
+        sym_counts = Counter((p.account_id, p.instrument) for p in active_positions)
+
+        positions_data = []
+        for pos in active_positions:
+            if pos.direction == 'LONG':
+                pnl = (pos.current_price - pos.entry_price) * pos.quantity
+            elif pos.direction == 'SHORT':
+                pnl = (pos.entry_price - pos.current_price) * pos.quantity
+            else:
+                pnl = pos.premium_collected
+
+            entry_val = pos.entry_value if pos.entry_value > 0 else (pos.entry_price * pos.quantity)
+            pnl_pct = (pnl / entry_val * Decimal('100')) if entry_val > 0 else Decimal('0')
+
+            lot_size = pos.lot_size or 1
+            lots = pos.quantity // lot_size if lot_size > 1 else pos.quantity
+            broker_name = BROKER_DISPLAY.get(
+                pos.account.broker if pos.account else '',
+                pos.account.broker if pos.account else 'Unknown'
+            )
+            positions_data.append({
+                'position': pos,
+                'pnl': pnl,
+                'pnl_pct': pnl_pct,
+                'broker_name': broker_name,
+                'lots': lots,
+                'needs_avg': sym_counts.get((pos.account_id, pos.instrument), 1) > 1,
+                'label': pos.label,
+            })
+
+        realized_result = Position.objects.filter(
+            status='CLOSED', exit_time__date=today,
+        ).aggregate(total=Sum('realized_pnl'))
+        realized_today = realized_result['total'] or Decimal('0')
+
+        message = build_consolidated_message(positions_data, mode_label, now, realized_today)
+        keyboard_dict = _build_dashboard_keyboard(positions_data)
+        keyboard = [
+            [InlineKeyboardButton(btn['text'], callback_data=btn['callback_data'])
+             for btn in row]
+            for row in keyboard_dict['inline_keyboard']
+        ]
+        return {'message': message, 'keyboard': keyboard}
+
     async def _handle_exit_confirm(self, query, position_id: int):
         """Handle exit confirmation (close position)"""
         await query.edit_message_text("Closing position...")
@@ -2587,11 +2866,14 @@ class TelegramBotHandler(MenuMixin, DataMixin, TradeMixin):
         symbol = html.escape(str(pos.get('symbol', 'N/A')))
         pnl = float(pos.get('unrealized_pnl', 0))
         direction = "LONG" if pos.get('net_quantity', 0) > 0 else "SHORT"
+        net_qty = abs(pos.get('net_quantity', 0))
+        ls = int(pos.get('lot_size', 1) or 1)
+        lots = net_qty // ls if ls > 1 else net_qty
 
         message = (
             f"<b>Position: {symbol}</b>\n\n"
             f"Direction: {direction}\n"
-            f"Quantity: {abs(pos.get('net_quantity', 0))}\n"
+            f"Lots: {lots}\n"
             f"Avg Price: {pos.get('average_price', 0):,.2f}\n"
             f"LTP: {pos.get('ltp', 0):,.2f}\n"
             f"P&L: {'+' if pnl >= 0 else ''}{pnl:,.2f}\n\n"
@@ -2923,11 +3205,14 @@ class TelegramBotHandler(MenuMixin, DataMixin, TradeMixin):
         symbol = html.escape(str(pos.get('symbol', 'N/A')))
         pnl = float(pos.get('unrealized_pnl', 0))
         direction = "LONG" if pos.get('net_quantity', 0) > 0 else "SHORT"
+        net_qty = abs(pos.get('net_quantity', 0))
+        ls = int(pos.get('lot_size', 1) or 1)
+        lots = net_qty // ls if ls > 1 else net_qty
 
         message = (
             f"<b>Position: {symbol}</b>\n\n"
             f"Direction: {direction}\n"
-            f"Quantity: {abs(pos.get('net_quantity', 0))}\n"
+            f"Lots: {lots}\n"
             f"Avg Price: {pos.get('average_price', 0):,.2f}\n"
             f"LTP: {pos.get('ltp', 0):,.2f}\n"
             f"P&L: {'+' if pnl >= 0 else ''}{pnl:,.2f}\n\n"
@@ -3243,7 +3528,7 @@ class TelegramBotHandler(MenuMixin, DataMixin, TradeMixin):
 
     @sync_to_async(thread_sensitive=False)
     def _fetch_icici_positions(self) -> List[Dict]:
-        """Fetch positions from ICICI Breeze"""
+        """Fetch positions from ICICI Breeze and sync to DB."""
         import traceback
         from django.db import close_old_connections
 
@@ -3255,7 +3540,8 @@ class TelegramBotHandler(MenuMixin, DataMixin, TradeMixin):
             from apps.accounts.models import BrokerAccount
 
             # Check if account is active
-            if not BrokerAccount.objects.filter(broker='ICICI', is_active=True).exists():
+            account = BrokerAccount.objects.filter(broker='ICICI', is_active=True).first()
+            if not account:
                 logger.info("ICICI account not active")
                 return [{'error': 'ICICI account not active or not found'}]
 
@@ -3263,7 +3549,15 @@ class TelegramBotHandler(MenuMixin, DataMixin, TradeMixin):
             _, positions = fetch_and_save_breeze_data()
             logger.info(f"Fetched {len(positions)} raw positions from Breeze")
 
-            # Convert to dict format and filter non-zero positions
+            # Sync to DB: create missing, update partial, close stale
+            try:
+                from apps.positions.services.position_sync import sync_positions_from_broker_objects
+                sync_result = sync_positions_from_broker_objects(account, positions)
+                logger.info(f"ICICI DB sync: created={sync_result['created']} updated={sync_result['updated']} closed={sync_result['closed']}")
+            except Exception as sync_err:
+                logger.error(f"ICICI DB sync failed (display continues): {sync_err}")
+
+            # Convert to dict format and filter non-zero positions for display
             result = []
             for pos in positions:
                 logger.info(f"Position: {pos.symbol}, net_qty={pos.net_quantity}")
@@ -3290,7 +3584,7 @@ class TelegramBotHandler(MenuMixin, DataMixin, TradeMixin):
 
     @sync_to_async(thread_sensitive=False)
     def _fetch_kotak_positions(self) -> dict:
-        """Fetch positions from Kotak Neo using centralized get_neo_open_positions().
+        """Fetch positions from Kotak Neo and sync to DB.
 
         Returns:
             dict with 'positions' list, or
@@ -3305,7 +3599,8 @@ class TelegramBotHandler(MenuMixin, DataMixin, TradeMixin):
             from apps.brokers.integrations.kotak_neo import get_neo_open_positions
             from apps.accounts.models import BrokerAccount
 
-            if not BrokerAccount.objects.filter(broker='KOTAK', is_active=True).exists():
+            account = BrokerAccount.objects.filter(broker='KOTAK', is_active=True).first()
+            if not account:
                 logger.info("Kotak account not active")
                 return {'error': 'Kotak account not active or not found'}
 
@@ -3314,6 +3609,14 @@ class TelegramBotHandler(MenuMixin, DataMixin, TradeMixin):
 
             if 'error' in result:
                 return result
+
+            # Sync to DB: create missing, update partial, close stale
+            try:
+                from apps.positions.services.position_sync import sync_positions_from_broker_objects
+                sync_result = sync_positions_from_broker_objects(account, result.get('positions', []))
+                logger.info(f"Kotak DB sync: created={sync_result['created']} updated={sync_result['updated']} closed={sync_result['closed']}")
+            except Exception as sync_err:
+                logger.error(f"Kotak DB sync failed (display continues): {sync_err}")
 
             logger.info(f"Returning {len(result['positions'])} Kotak Neo positions")
             return result

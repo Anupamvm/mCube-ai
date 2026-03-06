@@ -274,7 +274,7 @@ class FuturesRiskScenarios:
             f"<b>Position Details:</b>\n"
             f"  Entry: ₹{entry_price:,.2f}\n"
             f"  Direction: {direction}\n"
-            f"  Quantity: {quantity} lots ({total_units} units)\n"
+            f"  Lots: {quantity}\n"
             f"  Value: ₹{Decimal(scenarios['position_value']):,.0f}\n\n"
 
             f"<b>⚠️ LOSS SCENARIOS:</b>\n"

@@ -58,7 +58,8 @@ class TelegramClient:
         message: str,
         chat_id: Optional[str] = None,
         parse_mode: str = 'HTML',
-        disable_notification: bool = False
+        disable_notification: bool = False,
+        reply_markup: dict = None,
     ) -> Tuple[bool, str]:
         """
         Send a text message to Telegram
@@ -88,8 +89,10 @@ class TelegramClient:
             'chat_id': target_chat_id,
             'text': message,
             'parse_mode': parse_mode,
-            'disable_notification': disable_notification
+            'disable_notification': disable_notification,
         }
+        if reply_markup:
+            payload['reply_markup'] = reply_markup
 
         try:
             response = requests.post(url, json=payload, timeout=10)
@@ -118,7 +121,8 @@ class TelegramClient:
         message_id: int,
         text: str,
         chat_id: Optional[str] = None,
-        parse_mode: str = 'HTML'
+        parse_mode: str = 'HTML',
+        reply_markup: dict = None,
     ) -> Tuple[bool, str]:
         """
         Edit an existing Telegram message.
@@ -146,6 +150,8 @@ class TelegramClient:
             'text': text,
             'parse_mode': parse_mode,
         }
+        if reply_markup:
+            payload['reply_markup'] = reply_markup
 
         try:
             response = requests.post(url, json=payload, timeout=10)

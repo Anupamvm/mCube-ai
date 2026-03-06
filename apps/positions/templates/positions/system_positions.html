@@ -1,0 +1,642 @@
+{% extends "core/master_base.html" %}
+
+{% block title %}System Positions - mCube{% endblock %}
+
+{% block content %}
+<div class="positions-page">
+    <!-- Page Header -->
+    <div class="page-header">
+        <div class="header-left">
+            <h1 class="page-title">System Positions</h1>
+            <p class="page-subtitle">Positions tracked by mCube monitoring engine</p>
+        </div>
+        <div class="header-right">
+            <div class="summary-cards">
+                <div class="summary-card {% if total_unrealized > 0 %}profit{% elif total_unrealized < 0 %}loss{% endif %}">
+                    <span class="summary-label">Unrealized P&L</span>
+                    <span class="summary-value">{{ total_unrealized|floatformat:2 }}</span>
+                </div>
+                <div class="summary-card {% if total_realized > 0 %}profit{% elif total_realized < 0 %}loss{% endif %}">
+                    <span class="summary-label">Realized P&L</span>
+                    <span class="summary-value">{{ total_realized|floatformat:2 }}</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Filter Tabs -->
+    <div class="filter-tabs">
+        <a href="?status=OPEN" class="filter-tab {% if status_filter == 'OPEN' %}active{% endif %}">
+            Open <span class="badge">{{ open_count }}</span>
+        </a>
+        <a href="?status=CLOSED" class="filter-tab {% if status_filter == 'CLOSED' %}active{% endif %}">
+            Closed <span class="badge">{{ closed_count }}</span>
+        </a>
+        <a href="?status=SUGGESTED" class="filter-tab {% if status_filter == 'SUGGESTED' %}active{% endif %}">
+            Suggested <span class="badge">{{ suggested_count }}</span>
+        </a>
+        <a href="?status=ALL" class="filter-tab {% if status_filter == 'ALL' %}active{% endif %}">
+            All <span class="badge">{{ total_count }}</span>
+        </a>
+    </div>
+
+    <!-- Positions Table -->
+    {% if position_data %}
+    <div class="positions-table-wrapper">
+        <table class="positions-table">
+            <thead>
+                <tr>
+                    <th class="col-instrument">Instrument</th>
+                    <th class="col-broker">Broker</th>
+                    <th class="col-dir">Dir</th>
+                    <th class="col-qty">Lots</th>
+                    <th class="col-price">Entry</th>
+                    <th class="col-price">CMP</th>
+                    <th class="col-pnl">P&L</th>
+                    <th class="col-pnl">P&L %</th>
+                    <th class="col-editable">Stop Loss</th>
+                    <th class="col-sl-info">SL Away</th>
+                    <th class="col-editable">Target</th>
+                    <th class="col-tgt-info">Tgt Away</th>
+                    <th class="col-strategy">Strategy</th>
+                    <th class="col-notes">Notes</th>
+                    <th class="col-status">Status</th>
+                    <th class="col-time">Entry Time</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in position_data %}
+                <tr class="position-row {% if item.position.status == 'OPEN' %}row-open{% elif item.position.status == 'CLOSED' %}row-closed{% endif %}" data-id="{{ item.position.id }}">
+                    <!-- Instrument -->
+                    <td class="col-instrument">
+                        <div class="instrument-name">{{ item.position.label }}</div>
+                        {% if item.position.expiry_date %}
+                        <div class="instrument-expiry">Exp: {{ item.position.expiry_date|date:"d M" }}</div>
+                        {% endif %}
+                    </td>
+
+                    <!-- Broker -->
+                    <td class="col-broker">
+                        {% if item.position.account %}
+                        <span class="broker-badge broker-{{ item.position.account.broker|lower }}">{{ item.broker_display }}</span>
+                        {% else %}
+                        <span class="broker-badge">-</span>
+                        {% endif %}
+                    </td>
+
+                    <!-- Direction -->
+                    <td class="col-dir">
+                        <span class="dir-badge dir-{{ item.position.direction|lower }}">{{ item.position.direction }}</span>
+                    </td>
+
+                    <!-- Quantity (lots) -->
+                    <td class="col-qty">
+                        <span class="editable-field" data-field="quantity" data-id="{{ item.position.id }}" data-type="int" data-lot-size="{{ item.position.lot_size }}">{{ item.position.lots }}</span>
+                        {% if item.position.lot_size > 1 %}
+                        <div class="lot-info">x{{ item.position.lot_size }}</div>
+                        {% endif %}
+                    </td>
+
+                    <!-- Entry Price (editable) -->
+                    <td class="col-price">
+                        <span class="editable-field" data-field="entry_price" data-id="{{ item.position.id }}" data-type="decimal">{{ item.position.entry_price|floatformat:2 }}</span>
+                    </td>
+
+                    <!-- Current Price -->
+                    <td class="col-price">{{ item.position.current_price|floatformat:2 }}</td>
+
+                    <!-- P&L -->
+                    <td class="col-pnl {% if item.position.status == 'OPEN' %}{% if item.position.unrealized_pnl > 0 %}profit{% elif item.position.unrealized_pnl < 0 %}loss{% endif %}{% else %}{% if item.position.realized_pnl > 0 %}profit{% elif item.position.realized_pnl < 0 %}loss{% endif %}{% endif %}">
+                        {% if item.position.status == 'OPEN' %}
+                            {{ item.position.unrealized_pnl|floatformat:2 }}
+                        {% else %}
+                            {{ item.position.realized_pnl|floatformat:2 }}
+                        {% endif %}
+                    </td>
+
+                    <!-- P&L % -->
+                    <td class="col-pnl {% if item.pnl_pct != None %}{% if item.pnl_pct > 0 %}profit{% elif item.pnl_pct < 0 %}loss{% endif %}{% endif %}">
+                        {% if item.pnl_pct != None %}{{ item.pnl_pct }}%{% else %}-{% endif %}
+                    </td>
+
+                    <!-- Stop Loss (editable) -->
+                    <td class="col-editable">
+                        <span class="editable-field {% if item.position.is_stop_loss_hit %}sl-hit{% endif %}" data-field="stop_loss" data-id="{{ item.position.id }}" data-type="decimal">{% if item.position.stop_loss %}{{ item.position.stop_loss|floatformat:2 }}{% else %}<span class="not-set">Set SL</span>{% endif %}</span>
+                    </td>
+
+                    <!-- SL Distance -->
+                    <td class="col-sl-info {% if item.sl_distance != None %}{% if item.sl_distance <= 1 %}danger-zone{% elif item.sl_distance <= 3 %}warning-zone{% endif %}{% endif %}" data-sl-distance="{{ item.position.id }}">
+                        {% if item.sl_distance != None %}{{ item.sl_distance }}%{% else %}-{% endif %}
+                    </td>
+
+                    <!-- Target (editable) -->
+                    <td class="col-editable">
+                        <span class="editable-field" data-field="target" data-id="{{ item.position.id }}" data-type="decimal">{% if item.position.target %}{{ item.position.target|floatformat:2 }}{% else %}<span class="not-set">Set Tgt</span>{% endif %}</span>
+                    </td>
+
+                    <!-- Target Distance -->
+                    <td class="col-tgt-info" data-tgt-distance="{{ item.position.id }}">
+                        {% if item.target_distance != None %}{{ item.target_distance }}%{% else %}-{% endif %}
+                    </td>
+
+                    <!-- Strategy (editable) -->
+                    <td class="col-strategy">
+                        <span class="editable-field" data-field="strategy_type" data-id="{{ item.position.id }}" data-type="text">{% if item.position.strategy_type %}{{ item.position.strategy_type }}{% else %}<span class="not-set">-</span>{% endif %}</span>
+                    </td>
+
+                    <!-- Notes (editable) -->
+                    <td class="col-notes">
+                        <span class="editable-field editable-notes" data-field="notes" data-id="{{ item.position.id }}" data-type="text">{% if item.position.notes %}{{ item.position.notes|truncatewords:8 }}{% else %}<span class="not-set">Add note</span>{% endif %}</span>
+                    </td>
+
+                    <!-- Status -->
+                    <td class="col-status">
+                        <span class="status-badge status-{{ item.position.status|lower }}">{{ item.position.get_status_display }}</span>
+                    </td>
+
+                    <!-- Entry Time -->
+                    <td class="col-time">
+                        {% if item.position.entry_time %}
+                            {{ item.position.entry_time|date:"d M H:i" }}
+                        {% else %}
+                            -
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="empty-state">
+        <div class="empty-icon">📭</div>
+        <h3>No {{ status_filter|lower }} positions found</h3>
+        <p>Positions synced from broker or created by strategies will appear here.</p>
+    </div>
+    {% endif %}
+</div>
+
+<!-- Edit Modal -->
+<div id="editModal" class="edit-modal" style="display:none;">
+    <div class="edit-modal-content">
+        <div class="edit-modal-header">
+            <h3 id="editModalTitle">Edit Field</h3>
+            <button class="edit-modal-close" onclick="closeEditModal()">&times;</button>
+        </div>
+        <div class="edit-modal-body">
+            <input type="text" id="editModalInput" class="edit-modal-input" />
+            <textarea id="editModalTextarea" class="edit-modal-textarea" style="display:none;" rows="3"></textarea>
+        </div>
+        <div class="edit-modal-footer">
+            <button class="btn btn-secondary" onclick="closeEditModal()">Cancel</button>
+            <button class="btn btn-primary" onclick="saveEdit()">Save</button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_css %}
+<style>
+    .positions-page { padding: 1rem 0; }
+
+    /* Header */
+    .page-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        margin-bottom: 1.5rem;
+        flex-wrap: wrap;
+        gap: 1rem;
+    }
+    .page-title { font-size: 1.75rem; font-weight: 700; color: var(--dark); margin: 0; }
+    .page-subtitle { color: var(--gray); margin: 0.25rem 0 0; font-size: 0.9rem; }
+
+    .summary-cards { display: flex; gap: 1rem; }
+    .summary-card {
+        background: var(--white);
+        border-radius: var(--radius-md);
+        padding: 0.75rem 1.25rem;
+        box-shadow: var(--shadow-sm);
+        border-left: 3px solid var(--gray-light);
+        text-align: right;
+    }
+    .summary-card.profit { border-left-color: var(--success); }
+    .summary-card.loss { border-left-color: var(--danger); }
+    .summary-label { display: block; font-size: 0.75rem; color: var(--gray); text-transform: uppercase; font-weight: 600; }
+    .summary-value { display: block; font-size: 1.25rem; font-weight: 700; color: var(--dark); }
+    .summary-card.profit .summary-value { color: var(--success); }
+    .summary-card.loss .summary-value { color: var(--danger); }
+
+    /* Filter Tabs */
+    .filter-tabs {
+        display: flex;
+        gap: 0.5rem;
+        margin-bottom: 1.25rem;
+        border-bottom: 2px solid var(--light);
+        padding-bottom: 0;
+    }
+    .filter-tab {
+        padding: 0.625rem 1.25rem;
+        text-decoration: none;
+        color: var(--gray);
+        font-weight: 500;
+        border-bottom: 2px solid transparent;
+        margin-bottom: -2px;
+        transition: all 0.2s;
+        font-size: 0.9375rem;
+    }
+    .filter-tab:hover { color: var(--primary); }
+    .filter-tab.active { color: var(--primary); border-bottom-color: var(--primary); font-weight: 600; }
+    .filter-tab .badge {
+        background: var(--light);
+        color: var(--gray);
+        padding: 0.125rem 0.5rem;
+        border-radius: var(--radius-full);
+        font-size: 0.75rem;
+        margin-left: 0.375rem;
+    }
+    .filter-tab.active .badge { background: var(--primary); color: var(--white); }
+
+    /* Table */
+    .positions-table-wrapper {
+        background: var(--white);
+        border-radius: var(--radius-lg);
+        box-shadow: var(--shadow-md);
+        overflow-x: auto;
+    }
+    .positions-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.875rem;
+    }
+    .positions-table thead th {
+        background: var(--lighter);
+        padding: 0.75rem 0.625rem;
+        text-align: left;
+        font-weight: 600;
+        color: var(--gray);
+        text-transform: uppercase;
+        font-size: 0.6875rem;
+        letter-spacing: 0.5px;
+        border-bottom: 2px solid var(--light);
+        white-space: nowrap;
+        position: sticky;
+        top: 0;
+        z-index: 10;
+    }
+    .positions-table tbody td {
+        padding: 0.625rem;
+        border-bottom: 1px solid var(--light);
+        vertical-align: middle;
+    }
+    .positions-table tbody tr:hover { background: rgba(37, 99, 235, 0.03); }
+    .row-open { border-left: 3px solid var(--primary); }
+    .row-closed { border-left: 3px solid var(--gray-light); opacity: 0.75; }
+
+    /* Instrument */
+    .instrument-name { font-weight: 600; color: var(--dark); white-space: nowrap; }
+    .instrument-expiry { font-size: 0.6875rem; color: var(--gray); }
+
+    /* Direction Badge */
+    .dir-badge {
+        display: inline-block;
+        padding: 0.125rem 0.5rem;
+        border-radius: var(--radius-full);
+        font-size: 0.6875rem;
+        font-weight: 700;
+        text-transform: uppercase;
+    }
+    .dir-long { background: rgba(16, 185, 129, 0.12); color: var(--success); }
+    .dir-short { background: rgba(239, 68, 68, 0.12); color: var(--danger); }
+    .dir-neutral { background: rgba(100, 116, 139, 0.12); color: var(--gray); }
+
+    /* Broker badge */
+    .col-broker { min-width: 70px; text-align: center; }
+    .broker-badge {
+        display: inline-block;
+        padding: 0.125rem 0.5rem;
+        border-radius: var(--radius-full);
+        font-size: 0.6875rem;
+        font-weight: 600;
+        background: rgba(100, 116, 139, 0.1);
+        color: var(--gray);
+    }
+    .broker-kotak { background: rgba(37, 99, 235, 0.1); color: #2563eb; }
+    .broker-icici { background: rgba(245, 158, 11, 0.1); color: #d97706; }
+
+    /* Lot info */
+    .lot-info { font-size: 0.6875rem; color: var(--gray); }
+
+    /* P&L Colors */
+    .profit { color: var(--success) !important; font-weight: 600; }
+    .loss { color: var(--danger) !important; font-weight: 600; }
+
+    /* SL/Target distance zones */
+    .danger-zone { color: var(--danger) !important; font-weight: 700; }
+    .warning-zone { color: var(--warning) !important; font-weight: 600; }
+    .sl-hit { background: rgba(239, 68, 68, 0.15) !important; border-radius: var(--radius-sm); padding: 2px 4px; }
+
+    /* Editable Fields */
+    .editable-field {
+        cursor: pointer;
+        padding: 0.25rem 0.375rem;
+        border-radius: var(--radius-sm);
+        border: 1px dashed transparent;
+        transition: all 0.15s;
+        display: inline-block;
+        min-width: 3rem;
+    }
+    .editable-field:hover {
+        border-color: var(--primary-light);
+        background: rgba(37, 99, 235, 0.04);
+    }
+    .not-set { color: var(--gray-light); font-style: italic; font-size: 0.8rem; }
+
+    /* Status Badge */
+    .status-badge {
+        display: inline-block;
+        padding: 0.2rem 0.625rem;
+        border-radius: var(--radius-full);
+        font-size: 0.6875rem;
+        font-weight: 600;
+        text-transform: uppercase;
+    }
+    .status-open { background: rgba(37, 99, 235, 0.12); color: var(--primary); }
+    .status-closed { background: rgba(100, 116, 139, 0.12); color: var(--gray); }
+    .status-suggested { background: rgba(245, 158, 11, 0.12); color: var(--warning); }
+    .status-approved { background: rgba(16, 185, 129, 0.12); color: var(--success); }
+    .status-rejected { background: rgba(239, 68, 68, 0.12); color: var(--danger); }
+
+    /* Col widths */
+    .col-instrument { min-width: 120px; }
+    .col-dir { min-width: 55px; }
+    .col-qty { min-width: 50px; text-align: center; }
+    .col-price { min-width: 80px; text-align: right; font-family: monospace; }
+    .col-pnl { min-width: 80px; text-align: right; font-family: monospace; }
+    .col-editable { min-width: 85px; text-align: right; font-family: monospace; }
+    .col-sl-info, .col-tgt-info { min-width: 55px; text-align: center; font-size: 0.8rem; }
+    .col-strategy { min-width: 80px; font-size: 0.8rem; }
+    .col-notes { min-width: 100px; max-width: 200px; font-size: 0.8rem; }
+    .col-status { min-width: 70px; text-align: center; }
+    .col-time { min-width: 90px; font-size: 0.8rem; color: var(--gray); white-space: nowrap; }
+
+    /* Empty State */
+    .empty-state {
+        text-align: center;
+        padding: 4rem 2rem;
+        background: var(--white);
+        border-radius: var(--radius-lg);
+        box-shadow: var(--shadow-sm);
+    }
+    .empty-icon { font-size: 3rem; margin-bottom: 1rem; }
+    .empty-state h3 { color: var(--dark); margin: 0 0 0.5rem; }
+    .empty-state p { color: var(--gray); margin: 0; }
+
+    /* Edit Modal */
+    .edit-modal {
+        position: fixed;
+        top: 0; left: 0; right: 0; bottom: 0;
+        background: rgba(0,0,0,0.4);
+        z-index: 2000;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+    .edit-modal-content {
+        background: var(--white);
+        border-radius: var(--radius-lg);
+        box-shadow: var(--shadow-xl);
+        width: 400px;
+        max-width: 90vw;
+    }
+    .edit-modal-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 1rem 1.25rem;
+        border-bottom: 1px solid var(--light);
+    }
+    .edit-modal-header h3 { margin: 0; font-size: 1rem; }
+    .edit-modal-close {
+        background: none;
+        border: none;
+        font-size: 1.5rem;
+        cursor: pointer;
+        color: var(--gray);
+        line-height: 1;
+    }
+    .edit-modal-body { padding: 1.25rem; }
+    .edit-modal-input, .edit-modal-textarea {
+        width: 100%;
+        padding: 0.625rem 0.75rem;
+        border: 1px solid #d1d5db;
+        border-radius: var(--radius-md);
+        font-size: 1rem;
+        font-family: inherit;
+        box-sizing: border-box;
+    }
+    .edit-modal-input:focus, .edit-modal-textarea:focus {
+        outline: none;
+        border-color: var(--primary);
+        box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+    }
+    .edit-modal-footer {
+        display: flex;
+        justify-content: flex-end;
+        gap: 0.5rem;
+        padding: 0.75rem 1.25rem;
+        border-top: 1px solid var(--light);
+    }
+    .btn-secondary {
+        background: var(--light);
+        color: var(--dark);
+        border: 1px solid #d1d5db;
+    }
+    .btn-secondary:hover { background: #e2e8f0; }
+
+    /* Save feedback */
+    .save-success { animation: flashGreen 0.6s ease; }
+    .save-error { animation: flashRed 0.6s ease; }
+    @keyframes flashGreen {
+        0%, 100% { background-color: transparent; }
+        50% { background-color: rgba(16, 185, 129, 0.2); }
+    }
+    @keyframes flashRed {
+        0%, 100% { background-color: transparent; }
+        50% { background-color: rgba(239, 68, 68, 0.2); }
+    }
+
+    /* Responsive */
+    @media (max-width: 768px) {
+        .page-header { flex-direction: column; }
+        .summary-cards { width: 100%; }
+        .summary-card { flex: 1; }
+        .filter-tabs { overflow-x: auto; }
+    }
+</style>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    // CSRF
+    function getCookie(name) {
+        let v = null;
+        if (document.cookie) {
+            document.cookie.split(';').forEach(c => {
+                c = c.trim();
+                if (c.startsWith(name + '=')) v = decodeURIComponent(c.substring(name.length + 1));
+            });
+        }
+        return v;
+    }
+    const csrftoken = getCookie('csrftoken');
+
+    // Edit state
+    let editState = { id: null, field: null, type: null, element: null };
+
+    const FIELD_LABELS = {
+        stop_loss: 'Stop Loss',
+        target: 'Target Price',
+        quantity: 'Lots',
+        entry_price: 'Entry Price',
+        strategy_type: 'Strategy Type',
+        notes: 'Notes',
+        exit_reason: 'Exit Reason',
+    };
+
+    // Click handler for editable fields
+    document.addEventListener('click', function(e) {
+        const field = e.target.closest('.editable-field');
+        if (!field) return;
+
+        editState.id = field.dataset.id;
+        editState.field = field.dataset.field;
+        editState.type = field.dataset.type;
+        editState.element = field;
+
+        const modal = document.getElementById('editModal');
+        const input = document.getElementById('editModalInput');
+        const textarea = document.getElementById('editModalTextarea');
+        const title = document.getElementById('editModalTitle');
+
+        title.textContent = 'Edit ' + (FIELD_LABELS[editState.field] || editState.field);
+
+        // Get current value (strip "Set SL", "Set Tgt", "Add note", "-")
+        let currentVal = field.textContent.trim();
+        if (['Set SL', 'Set Tgt', 'Add note', '-'].includes(currentVal)) currentVal = '';
+
+        if (editState.field === 'notes') {
+            input.style.display = 'none';
+            textarea.style.display = 'block';
+            textarea.value = currentVal;
+            modal.style.display = 'flex';
+            setTimeout(() => textarea.focus(), 50);
+        } else {
+            textarea.style.display = 'none';
+            input.style.display = 'block';
+            input.type = (editState.type === 'decimal' || editState.type === 'int') ? 'number' : 'text';
+            if (editState.type === 'decimal') input.step = '0.05';
+            else if (editState.type === 'int') input.step = '1';
+            else input.step = 'any';
+            input.value = currentVal;
+            modal.style.display = 'flex';
+            setTimeout(() => { input.focus(); input.select(); }, 50);
+        }
+    });
+
+    function closeEditModal() {
+        document.getElementById('editModal').style.display = 'none';
+        editState = { id: null, field: null, type: null, element: null };
+    }
+
+    // Save on Enter key
+    document.getElementById('editModalInput').addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') saveEdit();
+        if (e.key === 'Escape') closeEditModal();
+    });
+    document.getElementById('editModalTextarea').addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') closeEditModal();
+    });
+
+    // Close modal on backdrop click
+    document.getElementById('editModal').addEventListener('click', function(e) {
+        if (e.target === this) closeEditModal();
+    });
+
+    async function saveEdit() {
+        const input = document.getElementById('editModalInput');
+        const textarea = document.getElementById('editModalTextarea');
+        let value = editState.field === 'notes' ? textarea.value : input.value;
+
+        // Convert lots to units for quantity field
+        let sendValue = value;
+        if (editState.field === 'quantity' && editState.element) {
+            const lotSize = parseInt(editState.element.dataset.lotSize) || 1;
+            if (lotSize > 1) {
+                sendValue = String(parseInt(value) * lotSize);
+            }
+        }
+
+        try {
+            const response = await fetch('{% url "positions:update_field" %}', {
+                method: 'POST',
+                headers: {
+                    'X-CSRFToken': csrftoken,
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    position_id: editState.id,
+                    field: editState.field,
+                    value: sendValue,
+                }),
+            });
+
+            const data = await response.json();
+
+            if (data.success) {
+                // Update displayed value
+                const el = editState.element;
+                if (value === '' || value === null) {
+                    const placeholder = {
+                        stop_loss: 'Set SL',
+                        target: 'Set Tgt',
+                        notes: 'Add note',
+                    }[editState.field] || '-';
+                    el.innerHTML = '<span class="not-set">' + placeholder + '</span>';
+                } else {
+                    if (editState.type === 'decimal') {
+                        el.textContent = parseFloat(value).toFixed(2);
+                    } else if (editState.field === 'notes') {
+                        // Truncate display
+                        const words = value.split(' ');
+                        el.textContent = words.length > 8 ? words.slice(0, 8).join(' ') + ' ...' : value;
+                    } else {
+                        el.textContent = value;
+                    }
+                }
+
+                // Update distance columns if applicable
+                if (data.sl_distance !== undefined) {
+                    const slCell = document.querySelector('[data-sl-distance="' + editState.id + '"]');
+                    if (slCell) slCell.textContent = data.sl_distance + '%';
+                }
+                if (data.target_distance !== undefined) {
+                    const tgtCell = document.querySelector('[data-tgt-distance="' + editState.id + '"]');
+                    if (tgtCell) tgtCell.textContent = data.target_distance + '%';
+                }
+
+                // Flash success
+                const row = el.closest('tr');
+                row.classList.add('save-success');
+                setTimeout(() => row.classList.remove('save-success'), 600);
+
+                closeEditModal();
+            } else {
+                alert('Error: ' + data.error);
+            }
+        } catch (err) {
+            alert('Failed to save: ' + err.message);
+        }
+    }
+</script>
+{% endblock %}

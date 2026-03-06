@@ -197,12 +197,41 @@ def evaluate_kotak_strangle_exit(profit_threshold=10000, mandatory=False):
             reason = "Mandatory Friday EOD exit (before weekly expiry)"
 
         if should_exit:
-            # Close position
+            from apps.core.models import TradingCoreConfig
+            config = TradingCoreConfig.get_instance()
+
+            # Manual mode: send suggestion, do NOT auto-execute
+            if config.requires_confirmation('EXIT'):
+                from apps.trading.services.trade_confirmation import get_confirmation_service
+                conf_service = get_confirmation_service()
+                success, result = conf_service.request_exit_confirmation(
+                    position, reason, current_pnl=position.unrealized_pnl
+                )
+                mode_label = config.get_notification_level_display_short()
+                if success:
+                    logger.info(f"Exit suggestion sent for pos #{position.id}: {reason}")
+                    return {
+                        'success': True,
+                        'awaiting_confirmation': True,
+                        'message': f'Exit suggestion sent ({mode_label}): {reason}',
+                    }
+                else:
+                    send_telegram_notification(
+                        f"⚠️ EXIT SUGGESTION FAILED TO SEND ({mode_label})\n\n"
+                        f"Position: #{position.id} | {position.instrument}\n"
+                        f"Reason: {reason}\n"
+                        f"P&L: ₹{position.unrealized_pnl:,.0f}\n\n"
+                        f"⚠️ Please review and close manually.",
+                        notification_type='WARNING'
+                    )
+                    return {'success': False, 'message': f'Suggestion send failed: {result}'}
+
+            # Autonomous mode: auto-execute
             from apps.positions.services.position_manager import close_position
 
             success, closed_position, message = close_position(
                 position=position,
-                exit_price=position.current_price,  # TODO: Fetch actual current price
+                exit_price=position.current_price,
                 exit_reason=reason
             )
 
@@ -928,14 +957,22 @@ def start_options_trade(self):
                 }
             else:
                 task_logger.warning('telegram_failed', f"Failed to send Telegram: {result}")
-                # Fall through to auto-execute if Telegram fails
+                # Manual mode: Telegram failed — do NOT fall through to auto-execute.
+                # The suggestion is pending but undelivered; abort and alert.
                 send_telegram_notification(
-                    f"⚠️ Could not send confirmation request.\n"
-                    f"Auto-executing {strategy}...",
+                    f"⚠️ CONFIRMATION REQUEST FAILED\n\n"
+                    f"Strategy: {strategy}\n"
+                    f"Telegram delivery failed. Trade NOT executed.\n\n"
+                    f"Please trigger manually if desired.",
                     notification_type='WARNING'
                 )
+                return {
+                    'success': False,
+                    'awaiting_confirmation': False,
+                    'message': f'Telegram confirmation failed — trade aborted in manual mode.',
+                }
 
-        # Auto-execute (SUPERVISED or AUTONOMOUS mode for non-entry actions, or confirmation disabled)
+        # Auto-execute (AUTONOMOUS mode only — confirmation not required)
         mode_label = config.get_notification_level_display_short()
         task_logger.step('execute', f"Auto-executing {strategy} strategy ({mode_label})")
 
@@ -1326,7 +1363,7 @@ def close_trading_day(self):
             close_reason = ""
 
             if is_force_close:
-                close_reason = "Force close at 3:28 PM"
+                close_reason = "EOD"   # maps to ⏰ END OF DAY EXIT in the suggestion message
                 close_results['forced'] += 1
             elif position_pnl >= MIN_PROFIT:
                 close_reason = f"Profit target met: ₹{position_pnl:,.0f}"
@@ -1341,11 +1378,11 @@ def close_trading_day(self):
                 })
                 continue
 
-            # Close the position - check if confirmation required (unless force close)
+            # Close the position - always check confirmation in manual mode,
+            # even for force close (3:28 PM deadline — user gets an urgent suggestion).
             task_logger.info('closing', f"Closing position {position.id}: {close_reason}")
 
-            # Force close always auto-executes; otherwise check confirmation
-            if not is_force_close and config.requires_confirmation('EXIT'):
+            if config.requires_confirmation('EXIT'):
                 # Send confirmation request
                 from apps.trading.services.trade_confirmation import get_confirmation_service
                 confirmation_service = get_confirmation_service()

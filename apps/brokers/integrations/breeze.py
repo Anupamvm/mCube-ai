@@ -669,16 +669,29 @@ def fetch_and_save_breeze_data():
                 quantity, avg_price_val, ltp_val
             )
 
-            symbol = p.get('stock_code') or f"{p.get('underlying', '')} {p.get('strike_price', '')} {p.get('right', '')}".strip()
+            stock_code = p.get('stock_code') or ''
+            symbol = stock_code or f"{p.get('underlying', '')} {p.get('strike_price', '')} {p.get('right', '')}".strip()
+
+            # Parse expiry and build Kotak-style trading symbol
+            from apps.brokers.integrations.breeze_module.data_fetcher import (
+                _parse_breeze_expiry, _build_trading_symbol,
+            )
+            expiry_date = _parse_breeze_expiry(p.get('expiry_date'))
+            product_type = p.get('product_type', '')
+            trading_symbol = _build_trading_symbol(
+                stock_code, expiry_date, product_type,
+                strike_price=p.get('strike_price'),
+                right=p.get('right'),
+            )
 
             # Convert to Decimal for database
             pos = BrokerPosition.objects.create(
                 broker=BROKER_ICICI,
                 fetched_at=dj_timezone.now(),
                 symbol=symbol,
-                trading_symbol='',
+                trading_symbol=trading_symbol,
                 exchange_segment=p.get('segment', ''),
-                product=p.get('product_type', ''),
+                product=product_type,
                 buy_qty=buy_qty,
                 sell_qty=sell_qty,
                 net_quantity=quantity,
@@ -688,6 +701,7 @@ def fetch_and_save_breeze_data():
                 average_price=Decimal(str(avg_price_val)),
                 realized_pnl=realized_pnl_val,
                 unrealized_pnl=unrealized_pnl_val,
+                expiry_date=expiry_date,
             )
             pos_objs.append(pos)
         except (ValueError, Exception) as e:

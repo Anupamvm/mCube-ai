@@ -17,20 +17,38 @@ def trigger_vllm_connection_test(request):
         client = get_vllm_client()
 
         if client.is_enabled():
+            network = 'Local Network' if '192.168.' in client.base_url else 'Public IP'
+            model_short = client.model.split('/')[-1] if '/' in client.model else client.model
             return JsonResponse({
                 'success': True,
                 'status': 'pass',
-                'message': f'Connected to {client.base_url} | Model: {client.model[:50]}...',
+                'message': 'Connected via ' + network + ' at ' + client.base_url + ' | Model: ' + model_short,
                 'details': {
                     'base_url': client.base_url,
                     'model': client.model,
+                    'network': network,
+                    'commands': [
+                        'docker ps --filter name=vllm-70b',
+                        'nvidia-smi',
+                        'curl -s http://192.168.1.32:8000/v1/models | python3 -m json.tool',
+                        'docker logs --tail 50 vllm-70b',
+                    ],
                 }
             })
         else:
             return JsonResponse({
                 'success': False,
                 'status': 'fail',
-                'message': 'LLM not running on the server. Start: cd /home/anupamvm/vllm && docker compose up -d && docker logs -f vllm-70b',
+                'message': 'LLM server is not running or unreachable',
+                'details': {
+                    'commands': [
+                        'docker ps --filter name=vllm-70b',
+                        'nvidia-smi',
+                        'cd /home/anupamvm/vllm && docker compose up -d',
+                        'docker logs -f vllm-70b',
+                    ],
+                    'note': 'Model takes 2-3 minutes to load. Wait for "Application startup complete" in logs.',
+                },
             })
     except Exception as e:
         return JsonResponse({

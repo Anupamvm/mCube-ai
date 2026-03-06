@@ -250,37 +250,75 @@ def activate_circuit_breaker(
         )
     )
 
-    # Step 1: Close all active positions
+    # Step 1: Close all active positions (respects manual mode)
     active_positions = Position.objects.filter(account=account, status='ACTIVE')
     positions_closed = 0
+    positions_pending = 0
+
+    # Check notification level — manual mode sends suggestion, autonomous auto-closes
+    try:
+        from apps.core.models import TradingCoreConfig
+        core_config = TradingCoreConfig.get_instance()
+        is_manual_mode = not core_config.is_autonomous()
+    except Exception:
+        is_manual_mode = False  # Fail safe: auto-execute if config unavailable
 
     for position in active_positions:
         try:
-            position.close_position(
-                exit_price=position.current_price,
-                exit_reason='CIRCUIT_BREAKER'
-            )
-            positions_closed += 1
-
-            circuit_breaker.add_action(
-                f"Closed position: {position.instrument} at ₹{position.current_price:,.2f}"
-            )
-
-            logger.warning(
-                f"Position closed by circuit breaker: {position.instrument}"
-            )
+            if is_manual_mode:
+                # Manual mode: send CRITICAL exit suggestion via Telegram, do not auto-close
+                from apps.trading.services.trade_confirmation import get_confirmation_service
+                conf_service = get_confirmation_service()
+                success, result = conf_service.request_exit_confirmation(
+                    position,
+                    'STOP_LOSS',       # maps to 🛑 STOP-LOSS HIT — highest urgency
+                    current_pnl=position.unrealized_pnl,
+                )
+                circuit_breaker.add_action(
+                    f"Suggestion sent: {position.instrument} — awaiting user confirmation"
+                )
+                positions_pending += 1
+                logger.warning(
+                    f"Circuit breaker: exit suggestion sent for {position.instrument} (manual mode)"
+                )
+            else:
+                # Autonomous mode: close immediately
+                position.close_position(
+                    exit_price=position.current_price,
+                    exit_reason='CIRCUIT_BREAKER'
+                )
+                positions_closed += 1
+                circuit_breaker.add_action(
+                    f"Closed position: {position.instrument} at ₹{position.current_price:,.2f}"
+                )
+                logger.warning(
+                    f"Position closed by circuit breaker: {position.instrument}"
+                )
 
         except Exception as e:
             logger.error(
-                f"Failed to close position {position.instrument}: {str(e)}",
+                f"Failed to process circuit breaker for {position.instrument}: {str(e)}",
                 exc_info=True
             )
             circuit_breaker.add_action(
-                f"Failed to close {position.instrument}: {str(e)}"
+                f"Failed to process {position.instrument}: {str(e)}"
             )
 
     circuit_breaker.positions_closed = positions_closed
     circuit_breaker.save()
+
+    # Notify if suggestions were sent (manual mode) vs positions auto-closed
+    if is_manual_mode and positions_pending > 0:
+        from apps.alerts.services.telegram_client import send_telegram_notification
+        send_telegram_notification(
+            f"🚨 CIRCUIT BREAKER — MANUAL MODE\n\n"
+            f"Account: {account.account_name}\n"
+            f"Trigger: {trigger_type} | ₹{trigger_value:,.0f} > ₹{threshold_value:,.0f}\n\n"
+            f"⚠️ {positions_pending} exit suggestion(s) sent.\n"
+            f"Positions will NOT close until you confirm in Telegram.\n\n"
+            f"ACT NOW — confirm all exit suggestions immediately.",
+            notification_type='ERROR'
+        )
 
     # Step 2: Deactivate account
     try:

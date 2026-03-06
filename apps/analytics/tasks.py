@@ -40,16 +40,14 @@ logger = logging.getLogger(__name__)
 @task_enabled_guard('generate-daily-pnl-report')
 def generate_daily_pnl_report():
     """
-    Generate daily P&L report for all accounts
+    Generate daily P&L report for all accounts.
+
+    Covers:
+    - Positions closed today (realized P&L)
+    - Positions still open (entered today or carried forward) with unrealized P&L
+    - Per-position breakdown with entry price, LTP, and P&L %
 
     Scheduled: Daily @ 4:00 PM (Mon-Fri)
-
-    Workflow:
-    1. Get all accounts and calculate daily P&L
-    2. Get all positions closed today
-    3. Calculate win rate, average P&L
-    4. Generate summary report
-    5. Send via Telegram
 
     Returns:
         dict: Task execution summary
@@ -61,9 +59,7 @@ def generate_daily_pnl_report():
     try:
         today = timezone.now().date()
 
-        # Get all broker accounts
         all_accounts = BrokerAccount.objects.all()
-
         if not all_accounts.exists():
             logger.info("ℹ️ No accounts to report on")
             return {'success': True, 'accounts_reported': 0}
@@ -72,65 +68,136 @@ def generate_daily_pnl_report():
         report_lines.append(f"Date: {today.strftime('%Y-%m-%d (%A)')}\n")
         report_lines.append("=" * 40 + "\n\n")
 
-        total_daily_pnl = Decimal('0.00')
-        total_positions_closed = 0
-        total_winners = 0
-        total_losers = 0
+        grand_realized = Decimal('0.00')
+        grand_unrealized = Decimal('0.00')
+        grand_closed_count = 0
+        grand_open_count = 0
+        grand_winners = 0
+        grand_losers = 0
+        any_activity = False
 
         for account in all_accounts:
             try:
-                # Get positions closed today
-                positions_closed_today = Position.objects.filter(
+                # --- Closed today ---
+                closed_today = Position.objects.filter(
                     account=account,
                     status='CLOSED',
-                    exit_timestamp__date=today
+                    exit_time__date=today
                 )
 
-                if not positions_closed_today.exists():
+                # --- Open positions (entered today OR carried forward) ---
+                open_positions = Position.objects.filter(
+                    account=account,
+                    status__in=['OPEN', 'ACTIVE']
+                )
+
+                if not closed_today.exists() and not open_positions.exists():
                     continue
 
-                # Calculate daily P&L for this account
-                daily_pnl = positions_closed_today.aggregate(
-                    total=Sum('realized_pnl')
-                )['total'] or Decimal('0.00')
+                any_activity = True
+                report_lines.append(f"🏦 {account.account_name}\n")
+                report_lines.append("-" * 30 + "\n")
 
-                # Count winners and losers
-                winners = positions_closed_today.filter(realized_pnl__gt=0).count()
-                losers = positions_closed_today.filter(realized_pnl__lt=0).count()
-                breakeven = positions_closed_today.filter(realized_pnl=0).count()
+                # -- Closed positions section --
+                if closed_today.exists():
+                    acct_realized = closed_today.aggregate(
+                        total=Sum('realized_pnl')
+                    )['total'] or Decimal('0.00')
+                    winners = closed_today.filter(realized_pnl__gt=0).count()
+                    losers = closed_today.filter(realized_pnl__lt=0).count()
+                    closed_count = closed_today.count()
+                    win_rate = (winners / closed_count * 100) if closed_count > 0 else 0
 
-                # Win rate
-                total_trades = positions_closed_today.count()
-                win_rate = (winners / total_trades * 100) if total_trades > 0 else 0
+                    pnl_icon = "📈" if acct_realized > 0 else "📉" if acct_realized < 0 else "➖"
+                    report_lines.append(f"\n{pnl_icon} Closed Trades: {closed_count}\n")
+                    report_lines.append(f"  Realized P&L: ₹{acct_realized:,.0f}\n")
+                    report_lines.append(f"  Win Rate: {win_rate:.0f}% ({winners}W/{losers}L)\n")
 
-                # Account summary
-                pnl_icon = "📈" if daily_pnl > 0 else "📉" if daily_pnl < 0 else "➖"
+                    for pos in closed_today.order_by('-realized_pnl'):
+                        pnl_pct = _calc_pnl_pct(pos.entry_price, pos.exit_price, pos.direction)
+                        icon = "✅" if pos.realized_pnl > 0 else "❌" if pos.realized_pnl < 0 else "➖"
+                        report_lines.append(
+                            f"  {icon} {pos.instrument} {pos.direction}\n"
+                            f"     Entry: ₹{pos.entry_price:,.2f} → Exit: ₹{pos.exit_price:,.2f} ({pnl_pct})\n"
+                            f"     P&L: ₹{pos.realized_pnl:,.0f} | Qty: {pos.quantity}\n"
+                        )
+                        if pos.exit_reason:
+                            report_lines.append(f"     Reason: {pos.exit_reason}\n")
 
-                report_lines.append(f"{pnl_icon} {account.account_name} ({account.broker})\n")
-                report_lines.append(f"  Daily P&L: ₹{daily_pnl:,.0f}\n")
-                report_lines.append(f"  Trades: {total_trades} ({winners}W/{losers}L/{breakeven}BE)\n")
-                report_lines.append(f"  Win Rate: {win_rate:.1f}%\n\n")
+                    grand_realized += acct_realized
+                    grand_closed_count += closed_count
+                    grand_winners += winners
+                    grand_losers += losers
 
-                # Update totals
-                total_daily_pnl += daily_pnl
-                total_positions_closed += total_trades
-                total_winners += winners
-                total_losers += losers
+                # -- Open positions section --
+                if open_positions.exists():
+                    open_entered_today = open_positions.filter(entry_time__date=today)
+                    open_carried = open_positions.exclude(entry_time__date=today)
+
+                    acct_unrealized = open_positions.aggregate(
+                        total=Sum('unrealized_pnl')
+                    )['total'] or Decimal('0.00')
+
+                    open_icon = "📈" if acct_unrealized > 0 else "📉" if acct_unrealized < 0 else "➖"
+                    report_lines.append(f"\n{open_icon} Open Positions: {open_positions.count()}\n")
+                    report_lines.append(f"  Unrealized P&L: ₹{acct_unrealized:,.0f}\n")
+
+                    if open_entered_today.exists():
+                        report_lines.append(f"\n  🆕 Entered Today ({open_entered_today.count()}):\n")
+                        for pos in open_entered_today:
+                            pnl_pct = _calc_pnl_pct(pos.entry_price, pos.current_price, pos.direction)
+                            u_pnl = pos.unrealized_pnl or Decimal('0')
+                            icon = "🟢" if u_pnl > 0 else "🔴" if u_pnl < 0 else "⚪"
+                            report_lines.append(
+                                f"  {icon} {pos.instrument} {pos.direction}\n"
+                                f"     Avg: ₹{pos.entry_price:,.2f} → LTP: ₹{pos.current_price:,.2f} ({pnl_pct})\n"
+                                f"     P&L: ₹{u_pnl:,.0f} | Qty: {pos.quantity}\n"
+                            )
+                            if pos.stop_loss:
+                                report_lines.append(f"     SL: ₹{pos.stop_loss:,.2f}")
+                                if pos.target:
+                                    report_lines.append(f" | TGT: ₹{pos.target:,.2f}")
+                                report_lines.append("\n")
+
+                    if open_carried.exists():
+                        report_lines.append(f"\n  📦 Carried Forward ({open_carried.count()}):\n")
+                        for pos in open_carried:
+                            pnl_pct = _calc_pnl_pct(pos.entry_price, pos.current_price, pos.direction)
+                            u_pnl = pos.unrealized_pnl or Decimal('0')
+                            icon = "🟢" if u_pnl > 0 else "🔴" if u_pnl < 0 else "⚪"
+                            days_held = (today - pos.entry_time.date()).days
+                            report_lines.append(
+                                f"  {icon} {pos.instrument} {pos.direction} (Day {days_held})\n"
+                                f"     Avg: ₹{pos.entry_price:,.2f} → LTP: ₹{pos.current_price:,.2f} ({pnl_pct})\n"
+                                f"     P&L: ₹{u_pnl:,.0f} | Qty: {pos.quantity}\n"
+                            )
+
+                    grand_unrealized += acct_unrealized
+                    grand_open_count += open_positions.count()
+
+                report_lines.append("\n")
 
             except Exception as e:
                 logger.error(f"Error processing account {account.account_name}: {e}")
-                report_lines.append(f"❌ Error for {account.account_name}\n\n")
+                report_lines.append(f"❌ Error for {account.account_name}\n  {str(e)[:100]}\n\n")
 
-        # Overall summary
-        overall_win_rate = (total_winners / total_positions_closed * 100) if total_positions_closed > 0 else 0
-        overall_icon = "📈" if total_daily_pnl > 0 else "📉" if total_daily_pnl < 0 else "➖"
-
+        # --- Overall Summary ---
         report_lines.append("=" * 40 + "\n")
-        report_lines.append(f"{overall_icon} OVERALL SUMMARY\n")
-        report_lines.append(f"Total P&L: ₹{total_daily_pnl:,.0f}\n")
-        report_lines.append(f"Total Trades: {total_positions_closed}\n")
-        report_lines.append(f"Winners: {total_winners} | Losers: {total_losers}\n")
-        report_lines.append(f"Win Rate: {overall_win_rate:.1f}%\n")
+
+        if not any_activity:
+            report_lines.append("📭 No positions or trades today.\n")
+        else:
+            grand_total = grand_realized + grand_unrealized
+            overall_icon = "📈" if grand_total > 0 else "📉" if grand_total < 0 else "➖"
+
+            report_lines.append(f"{overall_icon} DAY SUMMARY\n")
+            if grand_closed_count > 0:
+                overall_win_rate = (grand_winners / grand_closed_count * 100)
+                report_lines.append(f"Realized P&L: ₹{grand_realized:,.0f} ({grand_closed_count} closed)\n")
+                report_lines.append(f"Win Rate: {overall_win_rate:.0f}% ({grand_winners}W/{grand_losers}L)\n")
+            if grand_open_count > 0:
+                report_lines.append(f"Unrealized P&L: ₹{grand_unrealized:,.0f} ({grand_open_count} open)\n")
+            report_lines.append(f"Net Day P&L: ₹{grand_total:,.0f}\n")
 
         # Send report
         report_text = "".join(report_lines)
@@ -139,14 +206,16 @@ def generate_daily_pnl_report():
             notification_type='INFO'
         )
 
-        logger.info(f"✅ Daily P&L report generated: ₹{total_daily_pnl:,.0f}, {total_positions_closed} trades")
+        grand_total = grand_realized + grand_unrealized
+        logger.info(f"✅ Daily P&L report: realized=₹{grand_realized:,.0f}, unrealized=₹{grand_unrealized:,.0f}, net=₹{grand_total:,.0f}")
         logger.info("=" * 80)
 
         return {
             'success': True,
-            'total_pnl': float(total_daily_pnl),
-            'total_trades': total_positions_closed,
-            'win_rate': float(overall_win_rate)
+            'realized_pnl': float(grand_realized),
+            'unrealized_pnl': float(grand_unrealized),
+            'closed_trades': grand_closed_count,
+            'open_positions': grand_open_count,
         }
 
     except Exception as e:
@@ -156,6 +225,18 @@ def generate_daily_pnl_report():
             notification_type='ERROR'
         )
         return {'success': False, 'message': str(e)}
+
+
+def _calc_pnl_pct(entry_price, compare_price, direction):
+    """Calculate P&L percentage string given entry, compare price and direction."""
+    if not entry_price or entry_price == 0 or not compare_price:
+        return "0.0%"
+    if direction == 'SHORT':
+        pct = float((entry_price - compare_price) / entry_price * 100)
+    else:
+        pct = float((compare_price - entry_price) / entry_price * 100)
+    sign = "+" if pct > 0 else ""
+    return f"{sign}{pct:.1f}%"
 
 
 
@@ -453,7 +534,7 @@ def daily_data_aggregation():
                 positions = Position.objects.filter(
                     account=account,
                     status='CLOSED',
-                    exit_timestamp__date=today,
+                    exit_time__date=today,
                 )
 
                 if not positions.exists():

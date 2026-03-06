@@ -276,11 +276,11 @@ def execute_averaging(position: Position, current_price: Decimal) -> Tuple[bool,
         try:
             alert_message = (
                 f"⚠️ POSITION AVERAGED - #{position.id}\n\n"
-                f"Symbol: {position.instrument}\n"
+                f"Symbol: {position.label}\n"
                 f"Direction: {position.direction}\n\n"
-                f"Previous Quantity: {original_quantity}\n"
-                f"Added Quantity: {additional_quantity}\n"
-                f"New Quantity: {new_total_quantity}\n\n"
+                f"Previous Lots: {original_quantity // (position.lot_size or 1)}\n"
+                f"Added Lots: {additional_quantity // (position.lot_size or 1)}\n"
+                f"New Lots: {new_total_quantity // (position.lot_size or 1)}\n\n"
                 f"Previous Entry: ₹{original_entry_price:,.2f}\n"
                 f"Averaging Price: ₹{current_price:,.2f}\n"
                 f"New Avg Entry: ₹{new_average_price:,.2f}\n\n"

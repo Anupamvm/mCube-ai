@@ -189,7 +189,7 @@ class TelegramTradeNotifier:
             f"<b>💰 RISK/REWARD ANALYSIS</b>\n"
             f"{'=' * 40}\n"
             f"  Position Value: ₹{Decimal(risk_scenarios['position_value']):,.0f}\n"
-            f"  Quantity: {risk_scenarios['quantity']} lots ({risk_scenarios['total_units']} units)\n\n"
+            f"  Lots: {risk_scenarios['quantity']}\n\n"
 
             f"  ⚠️ <b>LOSS SCENARIOS:</b>\n"
             f"  📉 5% Loss: -₹{abs(loss_5['pnl']):,.0f} (Exit: ₹{loss_5['exit_price']:,.2f})\n"

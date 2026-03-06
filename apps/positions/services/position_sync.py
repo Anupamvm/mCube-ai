@@ -101,80 +101,208 @@ def sync_positions_from_brokers(clear_existing=False, include_history=True):
         return results
 
 
-def sync_kotak_positions(account):
-    """Sync positions from Kotak Neo API."""
+def sync_positions_from_broker_objects(account, broker_positions):
+    """
+    Upsert Position records from already-fetched broker position objects or dicts.
+
+    Accepts both ORM objects (BrokerPosition) and plain dicts — reads fields with
+    getattr-then-dict fallback so it works for both Kotak and Breeze data.
+
+    Matching strategy:
+    - If the broker object has an 'id' field (e.g. Breeze BrokerPosition ORM),
+      use broker_position_id for exact matching — handles multiple positions
+      with the same symbol (e.g. HDFBAN MAR + HDFBAN APR in Breeze).
+    - Otherwise fall back to (account, instrument, OPEN) matching (Kotak).
+
+    Also closes any DB positions that are no longer present at the broker.
+
+    Returns:
+        dict: {'created': int, 'updated': int, 'closed': int}
+    """
     from apps.positions.models import Position
+    from datetime import date as dt_date
+
+    # Lot-size fallback for brokers that don't report it (e.g. Breeze reports 1)
+    KNOWN_LOT_SIZES = [
+        ('BANKNIFTY', 30), ('FINNIFTY', 40), ('MIDCPNIFTY', 75), ('NIFTY', 75),
+        ('HDFCBANK', 550), ('HDFBAN', 550), ('ICICIBANK', 700), ('AXISBANK', 625),
+        ('RELIANCE', 250), ('TCS', 150), ('INFY', 300), ('SBIN', 750),
+    ]
+
+    def _resolve_lot_size(symbol, broker_lot_size):
+        if broker_lot_size and broker_lot_size > 1:
+            return broker_lot_size
+        sym_upper = symbol.upper()
+        for key, ls in KNOWN_LOT_SIZES:
+            if key in sym_upper:
+                return ls
+        return broker_lot_size or 1
 
     result = {'created': 0, 'updated': 0, 'closed': 0}
+    broker_symbols = set()
+    matched_db_ids = set()   # DB Position.id values matched during this sync
+    now = timezone.now()
 
+    def _get(obj, *keys, default=None):
+        """Get a value from an object or dict, trying multiple key names.
+        Returns the first non-None value found."""
+        for key in keys:
+            val = getattr(obj, key, None)
+            if val is None and isinstance(obj, dict):
+                val = obj.get(key)
+            if val is not None:
+                return val
+        return default
+
+    def _get_str(obj, *keys):
+        """Get a non-empty string value, skipping blank strings."""
+        for key in keys:
+            val = getattr(obj, key, None)
+            if val is None and isinstance(obj, dict):
+                val = obj.get(key)
+            if val is not None and str(val).strip():
+                return str(val).strip()
+        return ''
+
+    for bp in broker_positions:
+        net_qty = _get(bp, 'net_quantity', default=0) or 0
+        if net_qty == 0:
+            continue
+
+        # instrument = original broker symbol (used for order placement)
+        #   Kotak: trading_symbol e.g. HDFCBANK26MARFUT
+        #   Breeze: symbol e.g. HDFBAN (trading_symbol is the display name)
+        # display_name = unified human-friendly name (for UI)
+        #   Kotak: same as trading_symbol
+        #   Breeze: built from stock_code + expiry e.g. HDFCBANK26MARFUT
+        trading_sym = _get_str(bp, 'trading_symbol')
+        raw_symbol  = _get_str(bp, 'symbol')
+
+        # For Breeze: trading_symbol is the display name, symbol is the broker code
+        # For Kotak: trading_symbol is both the broker code and the display name
+        if trading_sym and raw_symbol and trading_sym != raw_symbol:
+            # Breeze case: trading_symbol was built by _build_trading_symbol
+            symbol = raw_symbol           # broker code (HDFBAN)
+            display_name = trading_sym    # clean name (HDFCBANK26MARFUT)
+        elif trading_sym:
+            # Kotak case: trading_symbol IS the broker code
+            symbol = trading_sym
+            display_name = trading_sym
+        elif raw_symbol:
+            symbol = raw_symbol
+            display_name = raw_symbol
+        else:
+            continue
+
+        broker_symbols.add(symbol)
+        direction = 'LONG' if net_qty > 0 else 'SHORT'
+
+        avg_price  = Decimal(str(_get(bp, 'average_price', default=0) or 0))
+        ltp        = Decimal(str(_get(bp, 'ltp', default=0) or 0))
+        unrealized = Decimal(str(_get(bp, 'unrealized_pnl', default=0) or 0))
+        realized   = Decimal(str(_get(bp, 'realized_pnl', default=0) or 0))
+        exchange   = _get_str(bp, 'exchange_segment', 'exchange')
+        product    = _get_str(bp, 'product')
+        lot_size   = _resolve_lot_size(display_name, int(_get(bp, 'lot_size', default=1) or 1))
+
+        # Parse expiry_date (ISO string, date object, or None)
+        expiry_raw = _get(bp, 'expiry_date', default=None)
+        expiry_date = None
+        if expiry_raw:
+            try:
+                if isinstance(expiry_raw, str):
+                    expiry_date = dt_date.fromisoformat(expiry_raw[:10])
+                elif isinstance(expiry_raw, dt_date):
+                    expiry_date = expiry_raw
+            except Exception:
+                pass
+
+        # ── Match existing position ──────────────────────────────────────────
+        # Candidates: open positions for this (account, symbol) not yet matched
+        candidates = list(Position.objects.filter(
+            account=account,
+            instrument=symbol,
+            status=POSITION_STATUS_OPEN,
+            source=POSITION_SOURCE_BROKER,
+        ).exclude(id__in=matched_db_ids))
+
+        existing = None
+        if len(candidates) == 1:
+            existing = candidates[0]
+        elif len(candidates) > 1:
+            # Multiple same-symbol positions (e.g. Breeze HDFBAN MAR + APR):
+            # match by closest average_price to avoid mixing them up
+            existing = min(candidates, key=lambda p: abs(float(p.entry_price) - float(avg_price)))
+
+        if existing:
+            existing.direction        = direction
+            existing.quantity         = abs(net_qty)
+            existing.current_price    = ltp
+            existing.entry_price      = avg_price
+            existing.unrealized_pnl   = unrealized
+            # Don't overwrite realized_pnl — broker reports day-level trade
+            # aggregates, not position-level realized P&L.  The monitor task
+            # and close_position() manage this field correctly.
+            existing.exchange_segment = exchange
+            existing.product_type     = product
+            existing.last_synced_at   = now
+            existing.lot_size         = lot_size
+            existing.display_name     = display_name
+            if expiry_date:
+                existing.expiry_date = expiry_date
+            existing.save()
+            matched_db_ids.add(existing.id)
+            result['updated'] += 1
+            logger.debug(f"Updated position: {display_name} | {direction} qty={abs(net_qty)} ltp={ltp}")
+        else:
+            pos = Position.objects.create(
+                account=account,
+                instrument=symbol,
+                display_name=display_name,
+                direction=direction,
+                quantity=abs(net_qty),
+                lot_size=lot_size,
+                entry_price=avg_price,
+                current_price=ltp,
+                unrealized_pnl=unrealized,
+                realized_pnl=Decimal('0'),  # Position-level; set by close_position()
+                status=POSITION_STATUS_OPEN,
+                source=POSITION_SOURCE_BROKER,
+                exchange_segment=exchange,
+                product_type=product,
+                expiry_date=expiry_date,
+                entry_time=now,
+                last_synced_at=now,
+            )
+            matched_db_ids.add(pos.id)
+            result['created'] += 1
+            logger.info(f"Created position: {display_name} | {direction} qty={abs(net_qty)} avg={avg_price}")
+
+    # ── Close stale: any open positions for this account not matched this sync
+    stale = Position.objects.filter(
+        account=account,
+        source=POSITION_SOURCE_BROKER,
+        status=POSITION_STATUS_OPEN,
+    ).exclude(id__in=matched_db_ids)
+    for pos in stale:
+        pos.status = POSITION_STATUS_CLOSED
+        pos.exit_time = now
+        pos.exit_reason = 'BROKER_SYNC'
+        pos.save()
+        result['closed'] += 1
+        logger.info(f"Closed stale position: {pos.instrument}")
+
+    return result
+
+
+def sync_kotak_positions(account):
+    """Sync positions from Kotak Neo API."""
     try:
         from apps.brokers.integrations.kotak_neo import fetch_and_save_kotakneo_data
         limit_record, broker_positions, *_ = fetch_and_save_kotakneo_data()
-
-        broker_symbols = set()
-
-        for bp in broker_positions:
-            if bp.net_quantity == 0:
-                continue
-
-            broker_symbols.add(bp.symbol)
-            direction = 'LONG' if bp.net_quantity > 0 else 'SHORT'
-
-            existing = Position.objects.filter(
-                account=account,
-                instrument=bp.symbol,
-                status=POSITION_STATUS_OPEN,
-                source=POSITION_SOURCE_BROKER
-            ).first()
-
-            if existing:
-                existing.quantity = abs(bp.net_quantity)
-                existing.current_price = bp.ltp
-                existing.entry_price = bp.average_price
-                existing.unrealized_pnl = bp.unrealized_pnl
-                existing.realized_pnl = bp.realized_pnl
-                existing.exchange_segment = bp.exchange_segment
-                existing.product_type = bp.product
-                existing.last_synced_at = timezone.now()
-                existing.save()
-                result['updated'] += 1
-            else:
-                Position.objects.create(
-                    account=account,
-                    instrument=bp.symbol,
-                    direction=direction,
-                    quantity=abs(bp.net_quantity),
-                    lot_size=1,
-                    entry_price=bp.average_price,
-                    current_price=bp.ltp,
-                    unrealized_pnl=bp.unrealized_pnl,
-                    realized_pnl=bp.realized_pnl,
-                    status=POSITION_STATUS_OPEN,
-                    source=POSITION_SOURCE_BROKER,
-                    exchange_segment=bp.exchange_segment,
-                    product_type=bp.product,
-                    entry_time=timezone.now(),
-                    last_synced_at=timezone.now(),
-                )
-                result['created'] += 1
-
-        # Close stale positions
-        stale = Position.objects.filter(
-            account=account,
-            source=POSITION_SOURCE_BROKER,
-            status=POSITION_STATUS_OPEN
-        ).exclude(instrument__in=broker_symbols)
-
-        for pos in stale:
-            pos.status = POSITION_STATUS_CLOSED
-            pos.exit_time = timezone.now()
-            pos.exit_reason = 'BROKER_SYNC'
-            pos.save()
-            result['closed'] += 1
-
+        result = sync_positions_from_broker_objects(account, broker_positions)
         logger.info(f"Kotak sync: {result}")
         return result
-
     except Exception as e:
         logger.error(f"Error syncing Kotak positions: {e}")
         raise
@@ -182,78 +310,12 @@ def sync_kotak_positions(account):
 
 def sync_breeze_positions(account):
     """Sync positions from ICICI Breeze API."""
-    from apps.positions.models import Position
-
-    result = {'created': 0, 'updated': 0, 'closed': 0}
-
     try:
         from apps.brokers.integrations.breeze_module.data_fetcher import fetch_and_save_breeze_data
         limit_record, broker_positions = fetch_and_save_breeze_data()
-
-        broker_symbols = set()
-
-        for bp in broker_positions:
-            if bp.net_quantity == 0:
-                continue
-
-            broker_symbols.add(bp.symbol)
-            direction = 'LONG' if bp.net_quantity > 0 else 'SHORT'
-
-            existing = Position.objects.filter(
-                account=account,
-                instrument=bp.symbol,
-                status=POSITION_STATUS_OPEN,
-                source=POSITION_SOURCE_BROKER
-            ).first()
-
-            if existing:
-                existing.quantity = abs(bp.net_quantity)
-                existing.current_price = bp.ltp
-                existing.entry_price = bp.average_price
-                existing.unrealized_pnl = bp.unrealized_pnl
-                existing.realized_pnl = bp.realized_pnl
-                existing.exchange_segment = bp.exchange_segment
-                existing.product_type = bp.product
-                existing.last_synced_at = timezone.now()
-                existing.save()
-                result['updated'] += 1
-            else:
-                Position.objects.create(
-                    account=account,
-                    instrument=bp.symbol,
-                    direction=direction,
-                    quantity=abs(bp.net_quantity),
-                    lot_size=1,
-                    entry_price=bp.average_price,
-                    current_price=bp.ltp,
-                    unrealized_pnl=bp.unrealized_pnl,
-                    realized_pnl=bp.realized_pnl,
-                    status=POSITION_STATUS_OPEN,
-                    source=POSITION_SOURCE_BROKER,
-                    exchange_segment=bp.exchange_segment,
-                    product_type=bp.product,
-                    entry_time=timezone.now(),
-                    last_synced_at=timezone.now(),
-                )
-                result['created'] += 1
-
-        # Close stale positions
-        stale = Position.objects.filter(
-            account=account,
-            source=POSITION_SOURCE_BROKER,
-            status=POSITION_STATUS_OPEN
-        ).exclude(instrument__in=broker_symbols)
-
-        for pos in stale:
-            pos.status = POSITION_STATUS_CLOSED
-            pos.exit_time = timezone.now()
-            pos.exit_reason = 'BROKER_SYNC'
-            pos.save()
-            result['closed'] += 1
-
+        result = sync_positions_from_broker_objects(account, broker_positions)
         logger.info(f"Breeze sync: {result}")
         return result
-
     except Exception as e:
         logger.error(f"Error syncing Breeze positions: {e}")
         raise

@@ -60,13 +60,13 @@ def morning_check(account: BrokerAccount) -> Dict[str, any]:
 
     if existing_position:
         logger.info(
-            f"✋ Active position exists: {existing_position.instrument} "
+            f"✋ Active position exists: {existing_position.label} "
             f"{existing_position.direction}"
         )
         logger.info("📊 MONITOR MODE - No new entry permitted (ONE POSITION RULE)")
 
         message = (
-            f"Active position: {existing_position.instrument} "
+            f"Active position: {existing_position.label} "
             f"{existing_position.direction}. "
             f"Entry: ₹{existing_position.entry_price:,.2f}, "
             f"Current: ₹{existing_position.current_price:,.2f}, "
@@ -166,9 +166,10 @@ def create_position(
             **kwargs  # Additional fields like call_strike, put_strike, etc.
         )
 
+        lots = quantity // lot_size if lot_size > 1 else quantity
         message = (
             f"✅ Position created: {instrument} {direction} "
-            f"Qty: {quantity} lots x {lot_size} = {quantity * lot_size} units, "
+            f"Lots: {lots}, "
             f"Entry: ₹{entry_price:,.2f}, "
             f"SL: ₹{stop_loss:,.2f}, "
             f"Target: ₹{target:,.2f}, "
@@ -239,7 +240,7 @@ def close_position(
         position.close_position(exit_price, exit_reason)
 
         message = (
-            f"✅ Position closed: {position.instrument} {position.direction}, "
+            f"✅ Position closed: {position.label} {position.direction}, "
             f"Entry: ₹{position.entry_price:,.2f}, "
             f"Exit: ₹{exit_price:,.2f}, "
             f"Realized P&L: ₹{position.realized_pnl:,.2f}, "
@@ -298,7 +299,7 @@ def get_position_summary(position: Position) -> Dict[str, any]:
         'status': position.status,
         'quantity': position.quantity,
         'lot_size': position.lot_size,
-        'total_quantity': position.quantity * position.lot_size,
+        'lots': position.lots,
         'entry_price': position.entry_price,
         'current_price': position.current_price,
         'stop_loss': position.stop_loss,

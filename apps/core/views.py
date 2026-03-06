@@ -2017,11 +2017,20 @@ def test_llm():
         client = get_vllm_client()
 
         if client.is_enabled():
+            network = 'Local Network' if '192.168.' in client.base_url else 'Public IP'
+            model_short = client.model.split('/')[-1] if '/' in client.model else client.model
             tests.append({
                 'name': '🔌 vLLM Server Connection',
                 'status': 'pass',
-                'message': f'✓ Connected to {client.base_url} | Model: {client.model[:50]}...',
-                'description': '<b>Tests:</b> Connection to vLLM server. <b>Success means:</b> Your 70B Llama model is accessible and ready.',
+                'message': '✓ Connected via ' + network + ' at ' + client.base_url + ' | Model: ' + model_short,
+                'description': (
+                    '<b>Status:</b> LLM server is running and responding to requests.'
+                    '<br><br><b>Check server health on GPU server:</b>'
+                    '<br><code>docker ps --filter name=vllm-70b</code>'
+                    '<br><code>nvidia-smi</code>'
+                    '<br><code>curl -s http://192.168.1.32:8000/v1/models | python3 -m json.tool</code>'
+                    '<br><code>docker logs --tail 50 vllm-70b</code>'
+                ),
                 'trigger_url': reverse('llm:test_connection'),
                 'trigger_label': '🔄 Test Connection',
             })
@@ -2029,8 +2038,15 @@ def test_llm():
             tests.append({
                 'name': '🔌 vLLM Server Connection',
                 'status': 'fail',
-                'message': '✗ LLM not running on the server',
-                'description': '<b>Start LLM:</b> <code>cd /home/anupamvm/vllm && docker compose up -d && docker logs -f vllm-70b</code>',
+                'message': '✗ LLM server is not running or unreachable',
+                'description': (
+                    '<b>Start LLM server:</b>'
+                    '<br><code>docker ps --filter name=vllm-70b</code>'
+                    '<br><code>nvidia-smi</code>'
+                    '<br><code>cd /home/anupamvm/vllm && docker compose up -d</code>'
+                    '<br><code>docker logs -f vllm-70b</code>'
+                    '<br><br><i>Model takes 2-3 min to load. Wait for "Application startup complete" in logs.</i>'
+                ),
                 'trigger_url': reverse('llm:test_connection'),
                 'trigger_label': '🔄 Retry Connection',
             })
@@ -2039,7 +2055,13 @@ def test_llm():
             'name': '🔌 vLLM Server Connection',
             'status': 'fail',
             'message': f'✗ Error: {str(e)}',
-            'description': '<b>Start LLM:</b> <code>cd /home/anupamvm/vllm && docker compose up -d && docker logs -f vllm-70b</code>',
+            'description': (
+                '<b>Start LLM server:</b>'
+                '<br><code>docker ps --filter name=vllm-70b</code>'
+                '<br><code>nvidia-smi</code>'
+                '<br><code>cd /home/anupamvm/vllm && docker compose up -d</code>'
+                '<br><code>docker logs -f vllm-70b</code>'
+            ),
         })
 
     # Test 2: Text Generation

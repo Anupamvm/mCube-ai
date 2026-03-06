@@ -481,7 +481,7 @@ class AlertManager:
         if alert_type == 'POSITION_ENTERED':
             return (
                 f"New {position.direction} position entered in {position.instrument}. "
-                f"Quantity: {position.quantity} lots at Rs.{position.entry_price:,.2f}. "
+                f"Lots: {position.lots} at Rs.{position.entry_price:,.2f}. "
                 f"SL: Rs.{position.stop_loss:,.2f}, Target: Rs.{position.target:,.2f}"
             )
         elif alert_type == 'POSITION_CLOSED':

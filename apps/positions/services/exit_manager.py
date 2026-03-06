@@ -54,7 +54,7 @@ def check_exit_conditions(position: Position) -> Dict[str, any]:
     # RULE 1: Check Stop-Loss
     if position.is_stop_loss_hit():
         message = (
-            f"🚨 STOP-LOSS HIT: {position.instrument} "
+            f"🚨 STOP-LOSS HIT: {position.label} "
             f"Current: ₹{current_price:,.2f}, SL: ₹{position.stop_loss:,.2f}. "
             f"IMMEDIATE EXIT REQUIRED."
         )
@@ -71,7 +71,7 @@ def check_exit_conditions(position: Position) -> Dict[str, any]:
     # RULE 2: Check Target
     if position.is_target_hit():
         message = (
-            f"🎯 TARGET HIT: {position.instrument} "
+            f"🎯 TARGET HIT: {position.label} "
             f"Current: ₹{current_price:,.2f}, Target: ₹{position.target:,.2f}. "
             f"IMMEDIATE EXIT REQUIRED."
         )
@@ -100,7 +100,7 @@ def check_exit_conditions(position: Position) -> Dict[str, any]:
         'should_exit': False,
         'exit_reason': None,
         'exit_price': None,
-        'message': f"No exit condition met for {position.instrument}",
+        'message': f"No exit condition met for {position.label}",
         'is_mandatory': False
     }
 
@@ -149,7 +149,7 @@ def check_eod_exit(position: Position, current_time) -> Dict[str, any]:
     if position.strategy_type == 'WEEKLY_NIFTY_STRANGLE' and is_thursday:
         if profit_pct >= min_profit_threshold:
             message = (
-                f"📅 THURSDAY EOD EXIT: {position.instrument}, "
+                f"📅 THURSDAY EOD EXIT: {position.label}, "
                 f"Profit: {profit_pct:.2f}% (>= {min_profit_threshold}%). "
                 f"Exiting as planned."
             )
@@ -164,7 +164,7 @@ def check_eod_exit(position: Position, current_time) -> Dict[str, any]:
             }
         else:
             message = (
-                f"⏳ THURSDAY EOD - HOLD: {position.instrument}, "
+                f"⏳ THURSDAY EOD - HOLD: {position.label}, "
                 f"Profit: {profit_pct:.2f}% (< {min_profit_threshold}%). "
                 f"Holding overnight as profit threshold not met."
             )
@@ -182,7 +182,7 @@ def check_eod_exit(position: Position, current_time) -> Dict[str, any]:
     if position.strategy_type == 'LLM_VALIDATED_FUTURES':
         if profit_pct >= min_profit_threshold:
             message = (
-                f"📅 EOD EXIT: {position.instrument}, "
+                f"📅 EOD EXIT: {position.label}, "
                 f"Profit: {profit_pct:.2f}% (>= {min_profit_threshold}%). "
                 f"Exiting as planned."
             )
@@ -197,7 +197,7 @@ def check_eod_exit(position: Position, current_time) -> Dict[str, any]:
             }
         else:
             message = (
-                f"⏳ EOD - HOLD: {position.instrument}, "
+                f"⏳ EOD - HOLD: {position.label}, "
                 f"Profit: {profit_pct:.2f}% (< {min_profit_threshold}%). "
                 f"Holding overnight as profit threshold not met."
             )
@@ -232,6 +232,10 @@ def check_expiry_exit(position: Position, current_time) -> Dict[str, any]:
     """
 
 
+    # No expiry date set (e.g. Breeze positions) — skip expiry check
+    if not position.expiry_date:
+        return {'should_exit': False, 'reason': None, 'exit_price': None}
+
     # Check if expiry is today or tomorrow
     days_to_expiry = (position.expiry_date - current_time.date()).days
 
@@ -239,7 +243,7 @@ def check_expiry_exit(position: Position, current_time) -> Dict[str, any]:
     if days_to_expiry == 0:
         if current_time.time() >= time(15, 20):
             message = (
-                f"⚠️ EXPIRY DAY - MANDATORY EXIT: {position.instrument} "
+                f"⚠️ EXPIRY DAY - MANDATORY EXIT: {position.label} "
                 f"expires today. IMMEDIATE EXIT REQUIRED."
             )
             logger.warning(message)
@@ -256,7 +260,7 @@ def check_expiry_exit(position: Position, current_time) -> Dict[str, any]:
     if days_to_expiry == 1 and current_time.weekday() == WEEKDAY_FRIDAY:
         if current_time.time() >= time(15, 15):
             message = (
-                f"⚠️ FRIDAY EOD - MANDATORY EXIT: {position.instrument} "
+                f"⚠️ FRIDAY EOD - MANDATORY EXIT: {position.label} "
                 f"expires tomorrow. Exiting to avoid weekend risk."
             )
             logger.warning(message)
@@ -316,7 +320,8 @@ def calculate_exit_metrics(position: Position, exit_price: Decimal) -> Dict[str,
     else:  # NEUTRAL (Strangle)
         pnl_per_unit = position.premium_collected - exit_price
 
-    realized_pnl = pnl_per_unit * position.quantity * position.lot_size
+    # quantity already stores total units (not lots), so no lot_size multiplication
+    realized_pnl = pnl_per_unit * position.quantity
 
     # Calculate ROI
     if position.direction == 'NEUTRAL':  # Strangle
@@ -341,7 +346,7 @@ def calculate_exit_metrics(position: Position, exit_price: Decimal) -> Dict[str,
         'roi_on_margin': roi_on_margin,
         'holding_period_hours': holding_period_hours,
         'holding_period_days': holding_period_days,
-        'total_quantity': position.quantity * position.lot_size,
+        'total_quantity': position.quantity,
         'margin_used': position.margin_used,
         'was_profitable': realized_pnl > 0,
         'averaging_count': position.averaging_count,

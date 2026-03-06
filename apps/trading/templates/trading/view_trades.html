@@ -1067,7 +1067,7 @@ function displayPositions(broker, positions) {
                         </td>
                         <td><strong>${pos.symbol}</strong><br><small style="color: var(--gray);">${pos.product}${pos.lot_size ? ' (lot:' + pos.lot_size + ')' : ''}</small></td>
                         <td><span class="direction-${pos.direction.toLowerCase()}">${pos.direction}</span></td>
-                        <td>${pos.quantity}</td>
+                        <td>${pos.lot_size > 1 ? Math.floor(pos.quantity / pos.lot_size) : pos.quantity}${pos.lot_size > 1 ? '<br><small style="color:var(--gray);">x' + pos.lot_size + '</small>' : ''}</td>
                         <td>
                             ₹${parseFloat(pos.average_price).toFixed(2)}
                             <button onclick="showEditAvgModal('${pos.trading_symbol || pos.symbol}', ${parseFloat(pos.average_price)})" style="background:none;border:none;color:var(--gray);cursor:pointer;padding:2px 4px;font-size:0.75rem;" title="Edit avg price">&#9998;</button>
@@ -1197,8 +1197,8 @@ function showCloseModal(broker, symbol, posData) {
             <div class="modal-info-value">${pos.direction}</div>
         </div>
         <div class="modal-info-item">
-            <div class="modal-info-label">Quantity</div>
-            <div class="modal-info-value">${pos.quantity}</div>
+            <div class="modal-info-label">Lots</div>
+            <div class="modal-info-value">${pos.lot_size > 1 ? Math.floor(pos.quantity / pos.lot_size) : pos.quantity}</div>
         </div>
         <div class="modal-info-item">
             <div class="modal-info-label">Avg Price</div>
@@ -1665,7 +1665,7 @@ function displayAverageRecommendations(broker, positions) {
                         <h3 style="margin: 0 0 8px 0; font-size: 1.25rem; color: #1f2937;">${pos.symbol}</h3>
                         <div style="display: flex; gap: 15px; font-size: 0.875rem; color: #6b7280;">
                             <span>Direction: <strong class="${pos.direction.toLowerCase() === 'long' ? 'direction-long' : 'direction-short'}">${pos.direction}</strong></span>
-                            <span>Qty: <strong>${pos.quantity}</strong></span>
+                            <span>Lots: <strong>${pos.lot_size > 1 ? Math.floor(pos.quantity / pos.lot_size) : pos.quantity}</strong></span>
                             <span>Avg Price: <strong>₹${parseFloat(pos.average_price).toFixed(2)}</strong></span>
                         </div>
                     </div>
@@ -2119,7 +2119,7 @@ async function executeAveragingOrder() {
     const current_price = currentAveragingData.current_price || 0;
     const value = quantity * current_price;
 
-    if (!confirm(`⚠️ CONFIRM AVERAGING ORDER\n\nSymbol: ${currentAveragingData.symbol}\nDirection: ${currentAveragingData.direction}\nQuantity: ${quantity} (${lots} lots)\nPrice: ₹${current_price.toFixed(2)}\nValue: ₹${formatIndianNumber(value)}\n\nThis will add to your existing position. Continue?`)) {
+    if (!confirm(`⚠️ CONFIRM AVERAGING ORDER\n\nSymbol: ${currentAveragingData.symbol}\nDirection: ${currentAveragingData.direction}\nLots: ${lots}\nPrice: ₹${current_price.toFixed(2)}\nValue: ₹${formatIndianNumber(value)}\n\nThis will add to your existing position. Continue?`)) {
         return;
     }
 

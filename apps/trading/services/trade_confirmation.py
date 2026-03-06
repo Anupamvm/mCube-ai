@@ -367,48 +367,125 @@ class TradeConfirmationService:
         current_pnl: Decimal = None
     ) -> Tuple[bool, str]:
         """
-        Send exit alert (SL/Target hit) for confirmation.
+        Send exit suggestion for user confirmation (Manual mode).
 
-        Args:
-            position: Position model instance
-            reason: Exit reason (STOP_LOSS_HIT, TARGET_HIT, etc.)
-            current_pnl: Current P&L
+        Includes all context a trader needs to decide:
+        - Exit trigger and reason
+        - Current vs entry price
+        - P&L in absolute and %
+        - Stop-loss / target reference
+        - Clear note that system will NOT auto-execute
 
         Returns:
             Tuple[bool, str]: (success, message_id or error)
         """
-        pnl = current_pnl or position.unrealized_pnl or Decimal('0')
-        pnl_str = f"+₹{pnl:,.0f}" if pnl >= 0 else f"-₹{abs(pnl):,.0f}"
+        from django.utils import timezone
 
-        reason_emoji = {
-            'STOP_LOSS_HIT': '🛑',
-            'TARGET_HIT': '🎯',
-            'TIME_EXIT': '⏰',
-            'MANUAL': '👤',
-        }.get(reason, '📊')
+        pnl = current_pnl if current_pnl is not None else (position.unrealized_pnl or Decimal('0'))
 
-        message = (
-            f"{reason_emoji} <b>EXIT ALERT</b>\n\n"
-            f"Position: #{position.id}\n"
-            f"Symbol: {position.instrument}\n"
-            f"Direction: {position.direction}\n\n"
-            f"<b>Reason: {reason.replace('_', ' ')}</b>\n\n"
-            f"Current P&L: <b>{pnl_str}</b>\n"
-            f"Entry: ₹{position.entry_price:,.0f}\n"
-            f"Current: ₹{position.current_price:,.0f}\n\n"
-            f"<i>Confirm to close position now:</i>"
+        # P&L % — entry_value may be 0 for broker-synced positions; derive it
+        entry_val = position.entry_value if (position.entry_value and position.entry_value > 0) else (
+            position.entry_price * position.quantity
+        )
+        pnl_pct = (pnl / entry_val * Decimal('100')) if entry_val > 0 else Decimal('0')
+
+        pnl_sign = "+" if pnl >= 0 else ""
+        pnl_str = f"{pnl_sign}₹{abs(pnl):,.0f} ({pnl_sign}{pnl_pct:.1f}%)"
+        pnl_emoji = "📈" if pnl >= 0 else "📉"
+
+        # Lot display — quantity in DB is total units; show lots
+        lot_size = position.lot_size or 1
+        lots = position.quantity // lot_size if lot_size > 1 else position.quantity
+        size_str = f"{lots} lots"
+
+        # Broker / account label
+        broker_label = ""
+        if position.account:
+            broker_map = {'KOTAK': 'Kotak Neo', 'ICICI': 'ICICI Breeze'}
+            broker_name = broker_map.get(position.account.broker, position.account.broker)
+            broker_label = f"🏦 {broker_name}"
+
+        reason_meta = {
+            'STOP_LOSS': ('🛑', 'STOP-LOSS HIT', 'high'),
+            'STOP_LOSS_HIT': ('🛑', 'STOP-LOSS HIT', 'high'),
+            'TARGET': ('🎯', 'TARGET HIT', 'medium'),
+            'TARGET_HIT': ('🎯', 'TARGET HIT', 'medium'),
+            'EOD': ('⏰', 'END OF DAY EXIT', 'medium'),
+            'EOD_THURSDAY': ('⏰', 'EOD THURSDAY EXIT', 'medium'),
+            'FRIDAY_EOD': ('⏰', 'FRIDAY EOD EXIT', 'medium'),
+            'EXPIRY_DAY': ('📅', 'EXPIRY DAY EXIT', 'high'),
+            'MANUAL': ('👤', 'MANUAL EXIT', 'low'),
+        }
+        emoji, reason_label, urgency = reason_meta.get(reason, ('📊', reason.replace('_', ' '), 'medium'))
+
+        urgency_header = {'high': '🚨', 'medium': '⚠️', 'low': '📌'}.get(urgency, '⚠️')
+        now_str = self._ist_time_str()
+
+        # ── Build message ─────────────────────────────────────────────────────
+        direction_arrow = "▲" if position.direction == 'LONG' else ("▼" if position.direction == 'SHORT' else "◆")
+
+        msg = (
+            f"{urgency_header} <b>EXIT SUGGESTION</b>  [{now_str}]\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        )
+        if broker_label:
+            msg += f"{broker_label}\n"
+        msg += (
+            f"{emoji} <b>{reason_label}</b>\n\n"
+            f"<b>{position.instrument}</b> | {direction_arrow} {position.direction} | {size_str}\n"
+        )
+
+        # Price context
+        price_diff = position.current_price - position.entry_price
+        diff_sign = "+" if price_diff >= 0 else ""
+        msg += (
+            f"\nEntry:   ₹{position.entry_price:,.2f}\n"
+            f"Current: ₹{position.current_price:,.2f}  ({diff_sign}₹{price_diff:,.2f}/unit)\n"
+        )
+        if position.stop_loss:
+            sl_dist = position.current_price - position.stop_loss
+            triggered = " ← triggered" if position.is_stop_loss_hit() else ""
+            msg += f"SL:      ₹{position.stop_loss:,.2f}  ({sl_dist:+,.2f} away){triggered}\n"
+        if position.target:
+            tgt_dist = position.target - position.current_price
+            triggered = " ← triggered" if position.is_target_hit() else ""
+            msg += f"Target:  ₹{position.target:,.2f}  ({tgt_dist:+,.2f} away){triggered}\n"
+
+        # P&L — show negative clearly with ₹ sign
+        if pnl < 0:
+            pnl_display = f"-₹{abs(pnl):,.0f} ({pnl_pct:.1f}%)"
+        else:
+            pnl_display = f"+₹{abs(pnl):,.0f} ({pnl_sign}{pnl_pct:.1f}%)"
+        msg += f"\n{pnl_emoji} <b>P&L: {pnl_display}</b>\n"
+
+        # Manual mode notice
+        msg += (
+            f"\n─────────────────────────\n"
+            f"<i>⚙️ Manual mode — system will NOT auto-execute.\n"
+            f"Choose your action below:</i>"
         )
 
         keyboard = {
             'inline_keyboard': [
                 [
                     {'text': '✅ Close Now', 'callback_data': f'confirm_exit_{position.id}'},
-                    {'text': '⏸️ Hold', 'callback_data': f'hold_exit_{position.id}'},
+                    {'text': '⏸️ Hold / Wait', 'callback_data': f'hold_exit_{position.id}'},
                 ],
             ]
         }
 
-        return self._send_with_keyboard(message, keyboard)
+        return self._send_with_keyboard(msg, keyboard)
+
+    def _ist_time_str(self) -> str:
+        """Return current time as HH:MM IST string."""
+        try:
+            import pytz
+            from django.utils import timezone as tz
+            ist = pytz.timezone('Asia/Kolkata')
+            return tz.now().astimezone(ist).strftime('%H:%M')
+        except Exception:
+            from django.utils import timezone as tz
+            return tz.now().strftime('%H:%M')
 
     def request_averaging_confirmation(
         self,
