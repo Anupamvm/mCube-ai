@@ -30,6 +30,7 @@ from django.utils import timezone
 from apps.positions.models import Position, MonitorLog
 from apps.positions.services.position_manager import close_position
 from apps.positions.services.exit_manager import should_exit_position
+from apps.positions.services.sr_exit_engine import apply_sl_and_target
 from apps.positions.services.monitor_dashboard import (
     get_or_create_dashboard,
     add_snapshot,
@@ -80,17 +81,29 @@ def monitor_and_manage_positions():
         except Exception as sync_err:
             logger.warning(f"Pre-monitor broker sync failed (continuing with DB state): {sync_err}")
 
-        active_positions = Position.objects.filter(status='OPEN')
+        all_open = Position.objects.filter(status='OPEN').select_related('account')
 
-        if not active_positions.exists():
+        if not all_open.exists():
             return {'success': True, 'positions': 0}
 
         if config.is_simulated():
             return {
                 'success': True,
                 'simulated': True,
-                'positions': active_positions.count(),
+                'positions': all_open.count(),
             }
+
+        # ── Deduplicate positions ─────────────────────────────────────────
+        # Multiple DB accounts per broker can map to the same real broker
+        # account, creating duplicate Position rows. Keep one per
+        # (broker, instrument, quantity) — prefer the most recently synced.
+        seen_keys = set()
+        active_positions = []
+        for p in all_open.order_by('-updated_at'):
+            key = (p.account.broker, p.instrument, p.quantity)
+            if key not in seen_keys:
+                seen_keys.add(key)
+                active_positions.append(p)
 
         mode_label = config.get_notification_level_display_short()
         is_manual_mode = not config.is_autonomous()   # FULL_CONTROL or SUPERVISED
@@ -150,8 +163,15 @@ def monitor_and_manage_positions():
                     pnl_at_check=pnl,
                 )
 
-                # ── 3. Per-position snapshot (data tracking only) ──────────────
+                # ── 3. Per-position dashboard + SR engine (SL/target update) ──
                 dashboard, _ = get_or_create_dashboard(position, today)
+
+                # Apply SR-based SL tightening and target initialization.
+                # Must run before near-SL warning and exit check so both
+                # see the latest structural SL/target values.
+                # Also handles new/broker-synced positions that arrive without SL.
+                sr_eval = apply_sl_and_target(position, dashboard, now)
+
                 add_snapshot(dashboard, position.current_price, pnl, pnl_pct, now)
 
                 # Collect for consolidated Telegram message
@@ -171,33 +191,37 @@ def monitor_and_manage_positions():
                     'label': position.label,
                 })
 
-                # ── 4. Near-SL warning (before SL is hit) ────────────────────
+                # ── 4. Near-SL warning (uses SR-updated SL from step 3) ──────
                 if (
                     position.stop_loss
                     and position.current_price
-                    and position.entry_price
                     and not position.is_stop_loss_hit()
                 ):
-                    total_range = abs(float(position.entry_price) - float(position.stop_loss))
-                    current_dist = abs(float(position.current_price) - float(position.stop_loss))
-                    if total_range > 0 and (current_dist / total_range) < 0.15:
-                        dashboard_for_near_sl, _ = get_or_create_dashboard(position, today)
-                        if should_send_exit_suggestion(dashboard_for_near_sl, 'NEAR_SL', cooldown_minutes=15):
-                            lot_size = position.lot_size or 1
-                            pct_left = (current_dist / total_range) * 100
+                    price = float(position.current_price)
+                    sl = float(position.stop_loss)
+                    buffer_pct = abs(price - sl) / price * 100  # % of current price
+                    if buffer_pct < 1.0:  # within 1% of SL
+                        if should_send_exit_suggestion(dashboard, 'NEAR_SL', cooldown_minutes=15):
                             warn_msg = (
                                 f"🟡 <b>NEAR SL WARNING</b>\n\n"
                                 f"<b>{position.label}</b>\n"
-                                f"Current: ₹{position.current_price:,.2f}\n"
-                                f"SL:      ₹{position.stop_loss:,.2f}\n"
-                                f"Buffer remaining: {pct_left:.0f}% of SL distance\n\n"
+                                f"Current: ₹{price:,.2f}\n"
+                                f"SL:      ₹{sl:,.2f}\n"
+                                f"Buffer: {buffer_pct:.2f}% from SL\n\n"
                                 f"<i>Position approaching stop-loss — monitor closely.</i>"
                             )
                             send_telegram_notification(warn_msg, notification_type='WARNING')
-                            record_exit_suggestion(dashboard_for_near_sl, 'NEAR_SL')
+                            record_exit_suggestion(dashboard, 'NEAR_SL')
 
                 # ── 5. Exit condition check ───────────────────────────────────
-                should_exit, reason, exit_price = should_exit_position(position, now)
+                # SR structural SL trigger (two-condition rule from step 3)
+                if sr_eval['sl_triggered']:
+                    should_exit = True
+                    reason = sr_eval['sl_reason']
+                    exit_price = position.current_price
+                else:
+                    # Standard checks: is_stop_loss_hit, is_target_hit, EOD, expiry
+                    should_exit, reason, exit_price = should_exit_position(position, now)
 
                 if should_exit:
                     logger.warning(

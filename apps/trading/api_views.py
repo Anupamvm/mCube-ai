@@ -3327,3 +3327,44 @@ from apps.trading.api.historical_data_views import (  # noqa: F401
     get_related_instruments,
     verify_historical_data,
 )
+
+
+# ============================================================================
+# PORTFOLIO P&L TREND TRACKING
+# ============================================================================
+
+@login_required
+@require_GET
+def get_pnl_snapshots(request):
+    """Load today's P&L snapshots for the Open Positions trend display."""
+    from apps.positions.models import PortfolioPnlTracker
+    from django.utils import timezone
+
+    today = timezone.localdate()
+    tracker = PortfolioPnlTracker.objects.filter(date=today).first()
+    return JsonResponse({
+        'success': True,
+        'snapshots': tracker.snapshots if tracker else [],
+    })
+
+
+@login_required
+@require_POST
+def save_pnl_snapshot(request):
+    """Append a P&L snapshot to today's tracker."""
+    from apps.positions.models import PortfolioPnlTracker
+    from django.utils import timezone
+
+    try:
+        data = json.loads(request.body)
+        pnl = float(data.get('pnl', 0))
+        ts = int(data.get('ts', 0))
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return JsonResponse({'success': False, 'error': 'Invalid payload'}, status=400)
+
+    today = timezone.localdate()
+    tracker, _ = PortfolioPnlTracker.objects.get_or_create(date=today)
+    tracker.snapshots.append({'pnl': pnl, 'ts': ts})
+    tracker.save(update_fields=['snapshots'])
+
+    return JsonResponse({'success': True, 'count': len(tracker.snapshots)})

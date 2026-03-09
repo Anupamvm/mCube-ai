@@ -38,6 +38,7 @@ import logging
 from typing import Dict
 from datetime import timedelta
 from django.utils import timezone
+from apps.positions.services.sr_exit_engine import compute_initial_sl_target
 
 logger = logging.getLogger(__name__)
 
@@ -1918,42 +1919,49 @@ class EnhancedFuturesAnalyzer:
         price = tl.current_price or 0
         atr = tl.day_atr
 
-        # Use ATR for dynamic SL/Target if available
-        if atr and atr > 0:
-            if self.direction == 'LONG':
-                stop_loss = price - (2 * atr)
-                target_1 = price + (2 * atr)
-                target_2 = price + (3 * atr)
-            else:  # SHORT
-                stop_loss = price + (2 * atr)
-                target_1 = price - (2 * atr)
-                target_2 = price - (3 * atr)
+        # Try structural S/R-based SL/target first
+        _sr = compute_initial_sl_target(self.symbol, float(price), self.direction)
+        if _sr['stop_loss'] is not None and _sr['target'] is not None:
+            stop_loss = _sr['stop_loss']
+            target_1 = _sr['target']
+            target_2 = target_1  # no second target in SR mode
         else:
-            # Fallback to percentage-based
-            sl_pct = 0.02  # 2%
-            target_pct = 0.04  # 4%
-            if self.direction == 'LONG':
-                stop_loss = price * (1 - sl_pct)
-                target_1 = price * (1 + target_pct)
-                target_2 = price * (1 + target_pct * 1.5)
+            # Fall through to existing ATR-based logic
+            if atr and atr > 0:
+                if self.direction == 'LONG':
+                    stop_loss = price - (2 * atr)
+                    target_1 = price + (2 * atr)
+                    target_2 = price + (3 * atr)
+                else:  # SHORT
+                    stop_loss = price + (2 * atr)
+                    target_1 = price - (2 * atr)
+                    target_2 = price - (3 * atr)
             else:
-                stop_loss = price * (1 + sl_pct)
-                target_1 = price * (1 - target_pct)
-                target_2 = price * (1 - target_pct * 1.5)
+                # Fallback to percentage-based
+                sl_pct = 0.02  # 2%
+                target_pct = 0.04  # 4%
+                if self.direction == 'LONG':
+                    stop_loss = price * (1 - sl_pct)
+                    target_1 = price * (1 + target_pct)
+                    target_2 = price * (1 + target_pct * 1.5)
+                else:
+                    stop_loss = price * (1 + sl_pct)
+                    target_1 = price * (1 - target_pct)
+                    target_2 = price * (1 - target_pct * 1.5)
 
-        # Use support/resistance for validation
-        s1 = tl.first_support_s1
-        r1 = tl.first_resistance_r1
+            # Use support/resistance for validation
+            s1 = tl.first_support_s1
+            r1 = tl.first_resistance_r1
 
-        if self.direction == 'LONG' and s1:
-            # Use S1 as SL if it's tighter than ATR-based SL
-            if s1 > stop_loss:
-                stop_loss = s1 * 0.995  # Slightly below S1
+            if self.direction == 'LONG' and s1:
+                # Use S1 as SL if it's tighter than ATR-based SL
+                if s1 > stop_loss:
+                    stop_loss = s1 * 0.995  # Slightly below S1
 
-        if self.direction == 'SHORT' and r1:
-            # Use R1 as SL if it's tighter than ATR-based SL
-            if r1 < stop_loss:
-                stop_loss = r1 * 1.005  # Slightly above R1
+            if self.direction == 'SHORT' and r1:
+                # Use R1 as SL if it's tighter than ATR-based SL
+                if r1 < stop_loss:
+                    stop_loss = r1 * 1.005  # Slightly above R1
 
         # Calculate risk/reward
         risk = abs(price - stop_loss)

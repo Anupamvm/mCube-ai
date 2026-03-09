@@ -1,32 +1,27 @@
 from __future__ import absolute_import
 
-import six
 import jwt
 from neo_api_client.exceptions import ApiValueError
-from neo_api_client.urls import UAT_BASE_URL, BASE_URL
-from neo_api_client.settings import UAT_URL, PROD_URL
+from neo_api_client.urls import BASE_URL
+from neo_api_client.settings import PROD_URL
 
 
 class NeoUtility:
     """
-        Project configuration (or) Params to be passed here
+    Configuration holder for the Neo API client (v2 API).
+
+    Stores session tokens, base URL, and data center info
+    obtained from the TOTP login + MPIN validate flow.
     """
 
     def __init__(
             self,
-            # consumer_key=None,
-            # consumer_secret=None,
             host=None,
             access_token=None,
             neo_fin_key=None,
-            # base_url=None
             consumer_key=None
     ):
-        # self.consumer_key = consumer_key
-        # self.consumer_secret = consumer_secret
         self.host = host
-        # self.base64_token = self.convert_base64()
-        self.bearer_token = access_token
         self.view_token = None
         self.sid = None
         self.userId = None
@@ -41,17 +36,6 @@ class NeoUtility:
         self.totp_session_id = None
         self.consumer_key = consumer_key
 
-    # def convert_base64(self):
-    #     """The Base64 Token Generation.
-    #     This function will generate the Base64 Token this will be used to generate the Bearer Token.
-    #     Return the Token in a String Format
-    #     """
-    #     base64_string = str(self.consumer_key) + ":" + str(self.consumer_secret)
-    #     base64_token = base64_string.encode("ascii")
-    #     base64_bytes = base64.b64encode(base64_token)
-    #     final_base64_token = base64_bytes.decode("ascii")
-    #     return final_base64_token
-
     def extract_userid(self, view_token):
         if not view_token:
             raise ApiValueError(
@@ -61,66 +45,27 @@ class NeoUtility:
         self.userId = userid
         return userid
 
-    def get_domain(self, session_init=False):
-        host_list = ["prod", "uat"]
-        if self.host.lower().strip() in host_list:
-            if session_init:
-                if self.host.lower().strip() == 'prod':
-                    base_url = BASE_URL
-                else:
-                    base_url = BASE_URL
-            else:
-                if self.host.lower().strip() == 'prod':
-                    base_url = self.base_url
-                else:
-                    base_url = UAT_BASE_URL
+    def get_domain(self, is_login=False):
+        """
+        Return the appropriate base URL.
 
-            return base_url
+        - is_login=True: Return the fixed login base URL (mis.kotaksecurities.com)
+        - is_login=False: Return the dynamic base_url from login response
+        """
+        if is_login:
+            return BASE_URL
         else:
-            raise ApiValueError("Either UAT or PROD in Environment accepted")
-
-    # def get_domain(self, session_init=False):
-    #     host_list = ["prod", "uat"]
-    #     if self.host.lower().strip() in host_list:
-    #         if session_init:
-    #             if self.host.lower().strip() == 'prod':
-    #                 base_url = self.base_url
-    #                 if self.base_url == PROD_BASE_URL_GW_NAPI:
-    #                     base_url = PROD_BASE_URL_NAPI
-    #             else:
-    #                 base_url = SESSION_UAT_BASE_URL
-    #         else:
-    #             if self.host.lower().strip() == 'prod':
-    #                 base_url = self.base_url
-    #                 if self.base_url == PROD_BASE_URL_GW_NAPI:
-    #                     base_url = PROD_BASE_URL_GW_NAPI
-    #             else:
-    #                 base_url = UAT_BASE_URL
-    #
-    #         return base_url
-    #     else:
-    #         raise ApiValueError("Either UAT or PROD in Environment accepted")
+            return self.base_url
 
     def get_url_details(self, api_info):
         domain_info = self.get_domain()
-        if self.host.lower().strip() == 'prod':
-            domain_info += '/' + PROD_URL.get(api_info)
-        else:
-            domain_info += '/' + UAT_URL.get(api_info)
-
+        url_path = PROD_URL.get(api_info)
+        if not url_path:
+            raise ApiValueError(f"Unknown API endpoint: {api_info}")
+        domain_info += '/' + url_path
         return domain_info
 
     def get_neo_fin_key(self):
-        if self.host.lower().strip() == 'prod':
-            if self.neo_fin_key:
-                fin_key = self.neo_fin_key
-            else:
-                # fin_key = "X6Nk8cQhUgGmJ2vBdWw4sfzrz4L5En"
-                fin_key = "neotradeapi"
-        else:
-            if self.neo_fin_key:
-                fin_key = self.neo_fin_key
-            else:
-                fin_key = "bQJNkL5z8m4aGcRgjDvXhHfSx7VpZnE"
-
-        return fin_key
+        if self.neo_fin_key:
+            return self.neo_fin_key
+        return "neotradeapi"

@@ -361,6 +361,117 @@ def _build_dashboard_keyboard(positions_data: List[Dict]) -> dict:
     return {'inline_keyboard': rows}
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Dashboard update triggers
+#
+# Updates are sent when ANY of these conditions is true:
+#   1. Day start (first run) or day end (>= 3:30 PM)
+#   2. P&L moved outside ±5% band from last sent value
+#   3. Any position within 0.2% of SL or target price
+# ─────────────────────────────────────────────────────────────────────────────
+PNL_BAND_PCT = Decimal('5')  # ±5% band around last sent P&L
+SL_TARGET_PROXIMITY_PCT = 0.002  # 0.2% of price = "close to SL/target"
+
+
+def _is_first_or_last_run(master, now=None) -> bool:
+    """True on first run of the day or at/after 3:30 PM (closing snapshot)."""
+    if not master.snapshots:
+        return True
+
+    if now is None:
+        now = timezone.now()
+    ist_now = _to_ist(now)
+    if ist_now.hour >= 15 and ist_now.minute >= 30:
+        return True
+
+    return False
+
+
+def _near_sl_or_target(positions_data: List[Dict]) -> bool:
+    """True if any position's current price is within 0.2% of its SL or target."""
+    for d in positions_data:
+        pos = d['position']
+        price = float(pos.current_price or 0)
+        if price <= 0:
+            continue
+
+        if pos.stop_loss:
+            sl = float(pos.stop_loss)
+            if sl > 0 and abs(price - sl) / price <= SL_TARGET_PROXIMITY_PCT:
+                logger.info(f"Near SL: {pos.label} price={price:.2f} SL={sl:.2f}")
+                return True
+
+        if pos.target:
+            tgt = float(pos.target)
+            if tgt > 0 and abs(price - tgt) / price <= SL_TARGET_PROXIMITY_PCT:
+                logger.info(f"Near target: {pos.label} price={price:.2f} Tgt={tgt:.2f}")
+                return True
+
+    return False
+
+
+def _pnl_outside_band(master, positions_data: List[Dict]) -> bool:
+    """True if total P&L moved outside ±5% of the last sent value.
+
+    Example: last sent at -₹1.5Cr → band is [-₹1.575Cr, -₹1.425Cr].
+    Update only when P&L exits this band.
+    """
+    last = (master.snapshots or [{}])[-1] if master.snapshots else {}
+    prev_pnl = Decimal(str(last.get('total_pnl', 0)))
+    total_pnl = sum(d['pnl'] for d in positions_data)
+
+    if prev_pnl == 0:
+        # No baseline yet — update if P&L exceeds ₹50K
+        outside = abs(total_pnl) >= Decimal('50000')
+    else:
+        pct_change = abs(total_pnl - prev_pnl) / abs(prev_pnl) * 100
+        outside = pct_change >= PNL_BAND_PCT
+
+    logger.info(
+        f"PnL band check: {prev_pnl:,.0f}→{total_pnl:,.0f} "
+        f"(Δ₹{abs(total_pnl - prev_pnl):,.0f}, "
+        f"band ±{PNL_BAND_PCT}% = ±₹{abs(prev_pnl) * PNL_BAND_PCT / 100:,.0f}) | "
+        f"{'OUTSIDE' if outside else 'within'}"
+    )
+    return outside
+
+
+def should_update_dashboard(master, positions_data: List[Dict], now=None) -> bool:
+    """Decide whether to send/edit the Telegram dashboard.
+
+    Triggers:
+    1. Day start (first run) / day end (>= 3:30 PM)
+    2. P&L outside ±5% band of last sent value
+    3. Any position within 0.2% of SL or target
+    """
+    if _is_first_or_last_run(master, now):
+        return True
+
+    if _near_sl_or_target(positions_data):
+        return True
+
+    return _pnl_outside_band(master, positions_data)
+
+
+def _store_master_snapshot(master, positions_data: List[Dict], now):
+    """Record current totals in master dashboard snapshots for next comparison."""
+    total_pnl = sum(d['pnl'] for d in positions_data)
+    total_entry = sum(
+        (d['position'].entry_value if d['position'].entry_value > 0
+         else d['position'].entry_price * d['position'].quantity)
+        for d in positions_data
+    )
+    total_pct = float(total_pnl / total_entry * 100) if total_entry > 0 else 0.0
+
+    snapshot = {
+        'time': ist_time_str(now),
+        'total_pnl': float(total_pnl),
+        'total_pnl_pct': total_pct,
+    }
+    master.snapshots = [snapshot]  # only keep latest for comparison
+    master.save(update_fields=['snapshots'])
+
+
 def send_or_update_master_dashboard(
     positions_data: List[Dict],
     mode_label: str,
@@ -373,7 +484,9 @@ def send_or_update_master_dashboard(
     Send or edit the single consolidated monitoring message.
 
     - First call → sends new silent message, stores message_id
-    - Subsequent calls → edits in place (no spam)
+    - Subsequent calls → edits in place ONLY if:
+      • P&L moved outside ±5% band of last sent value, OR
+      • Any position within 0.2% of SL or target price
 
     Returns True if successful.
     """
@@ -385,6 +498,11 @@ def send_or_update_master_dashboard(
     keyboard = _build_dashboard_keyboard(positions_data)
 
     if master.telegram_message_id:
+        # Skip edit if no trigger condition met
+        if not should_update_dashboard(master, positions_data, now):
+            logger.info("Dashboard update SKIPPED — within band, no events")
+            return True
+        logger.info("Dashboard update PROCEEDING")
         success, result = telegram_client.edit_message(
             message_id=master.telegram_message_id,
             text=message,
@@ -393,6 +511,7 @@ def send_or_update_master_dashboard(
         if success:
             master.last_updated = now
             master.save(update_fields=['last_updated'])
+            _store_master_snapshot(master, positions_data, now)
             return True
         logger.warning(
             f"Could not edit master dashboard msg {master.telegram_message_id}: {result}. "
@@ -411,6 +530,7 @@ def send_or_update_master_dashboard(
             master.save(update_fields=['telegram_message_id', 'last_updated'])
         except (ValueError, TypeError):
             pass
+        _store_master_snapshot(master, positions_data, now)
         return True
 
     logger.error(f"Failed to send master monitoring dashboard: {result}")

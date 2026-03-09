@@ -7,55 +7,24 @@ from neo_api_client.api_client import ApiClient
 
 class NeoAPI:
     """
-        A class representing the NeoAPI, which is a client API for the Neo banking platform.
+        Kotak Neo API client (v2 API).
 
-        The `NeoAPI` class provides methods to initialize the API client, log in to the platform, generate OTP, and perform 2FA authentication.
+        Authentication flow:
+            1. totp_login(mobile_number, ucc, totp) → view token + SID
+            2. totp_validate(mpin) → trade token + SID + baseUrl
 
-        Attributes:
-            environment (str): The environment for the API client.
-            configuration (neo_api_client.Configuration): The configuration for the API client.
-            consumer_key (str): The consumer key for the API client.
-            consumer_secret (str): The consumer secret for the API client.
-            username (str): The username for the API client.
-            password (str): The password for the API client.
-            api_client (ApiClient): The API client instance.
-
-        Methods:
-            __init__(consumer_key=None, consumer_secret=None, host='uat', username=None, password=None):
-                Initializes the `NeoAPI` instance with the given consumer key, consumer secret, host, username, and password.
-                Validates the configuration and creates an API client instance.
-
-            login(mobileNumber, password):
-                Logs in to the platform using the given mobile number and password.
-                Sets the view token, SID, and server ID in the configuration.
-
-            generateOTP():
-                Generates an OTP for 2FA authentication.
-
-            session_2fa(OTP):
-                Performs 2FA authentication using the given OTP.
-                Sets the edit token, SID, RID, and server ID in the configuration.
+        Post-login APIs use the dynamic baseUrl returned by totp_validate.
     """
 
     def __init__(self, environment="uat", access_token=None, neo_fin_key=None, consumer_key=None):
         """
-    Initializes the class and sets up the necessary configurations for the API client.
+    Initializes the v2 API client.
 
     Parameters:
-    environment (str): The environment has to pass by user to connect 'UAT' or 'PROD'.
-    access_token (str, optional): The access token used for authentication. Defaults to None.
-    consumer_key (str, optional): The consumer key used for authentication. Defaults to None.
-    consumer_secret (str, optional): The consumer secret used for authentication. Defaults to None.
-    neo_fin_key (str, optional): Finkey for tracking purpose
-
-    Updates:
-    self.on_message: sets the callback function for incoming messages for Websocket.
-    self.on_error: sets the callback function for errors for Websocket.
-    self.on_close: sets the callback function for connection close events for Websocket.
-    self.on_open: sets the callback function for connection open events for Websocket.
-
-    Raises:
-    ApiException: if the session initiation fails.
+    environment (str): 'uat' or 'prod'.
+    access_token (str, optional): Access token from NEO API dashboard.
+    consumer_key (str, optional): Consumer key from NEO API dashboard.
+    neo_fin_key (str, optional): Fin key for tracking (defaults to 'neotradeapi').
     """
 
         self.on_message = None
@@ -63,20 +32,11 @@ class NeoAPI:
         self.on_close = None
         self.on_open = None
 
-        if not access_token:
-            # neo_api_client.req_data_validation.validate_configuration(consumer_key, consumer_secret)
-            self.configuration = neo_api_client.NeoUtility(
-                # consumer_key=consumer_key, consumer_secret=consumer_secret,
-                                                           host=environment)
-            self.api_client = ApiClient(self.configuration)
-            # try:
-            #     session_init = neo_api_client.LoginAPI(self.api_client).session_init()
-            #     print(json.dumps({"data": session_init}))
-            # except ApiException as ex:
-            #     error = ex
-        elif access_token:
+        if access_token:
             self.configuration = neo_api_client.NeoUtility(access_token=access_token, host=environment)
-            self.api_client = ApiClient(self.configuration)
+        else:
+            self.configuration = neo_api_client.NeoUtility(host=environment)
+        self.api_client = ApiClient(self.configuration)
 
         self.NeoWebSocket = None
         self.configuration.neo_fin_key = neo_fin_key
@@ -705,27 +665,13 @@ class NeoAPI:
             return {'Error': "Some Exception while connecting to help, Try after some time!", 'message': e}
 
     def logout(self):
-        """
-        Logs out the user from the NEO API.
-
-        Raises:
-            Exception: If there was an error logging out.
-
-        Returns:
-            None.
-        """
+        """Clear local session state."""
         if self.configuration.edit_token and self.configuration.edit_sid:
-            try:
-                # log_off = neo_api_client.LogoutAPI(self.api_client).logging_out()
-                self.configuration.bearer_token = None
-                self.configuration.edit_sid = None
-                self.configuration.edit_token = None
-                return {"State": "OK", "message": "You have been successfully logged out"}
-
-            except Exception as e:
-                return {"State": "NOT_OK", "message": "Some Exception with the Logout Functionality"}
+            self.configuration.edit_sid = None
+            self.configuration.edit_token = None
+            return {"State": "OK", "message": "You have been successfully logged out"}
         else:
-            return {"Error Message": "Complete the 2fa process before accessing this application"}
+            return {"Error Message": "Complete the login process before accessing this application"}
 
     def subscribe_to_orderfeed(self):
         """

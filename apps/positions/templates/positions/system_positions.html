@@ -121,7 +121,12 @@
 
                     <!-- Stop Loss (editable) -->
                     <td class="col-editable">
-                        <span class="editable-field {% if item.position.is_stop_loss_hit %}sl-hit{% endif %}" data-field="stop_loss" data-id="{{ item.position.id }}" data-type="decimal">{% if item.position.stop_loss %}{{ item.position.stop_loss|floatformat:2 }}{% else %}<span class="not-set">Set SL</span>{% endif %}</span>
+                        <span class="editable-field {% if item.position.is_stop_loss_hit %}sl-hit{% endif %}" data-field="stop_loss" data-id="{{ item.position.id }}" data-type="decimal">
+                            {% if item.position.stop_loss %}{{ item.position.stop_loss|floatformat:2 }}{% else %}<span class="not-set">Set SL</span>{% endif %}
+                        </span>
+                        {% if not item.position.stop_loss and item.position.status == 'OPEN' %}
+                        <button class="sr-apply-btn" data-id="{{ item.position.id }}" title="Compute structural S/R stop loss">SR</button>
+                        {% endif %}
                     </td>
 
                     <!-- SL Distance -->
@@ -131,7 +136,12 @@
 
                     <!-- Target (editable) -->
                     <td class="col-editable">
-                        <span class="editable-field" data-field="target" data-id="{{ item.position.id }}" data-type="decimal">{% if item.position.target %}{{ item.position.target|floatformat:2 }}{% else %}<span class="not-set">Set Tgt</span>{% endif %}</span>
+                        <span class="editable-field" data-field="target" data-id="{{ item.position.id }}" data-type="decimal">
+                            {% if item.position.target %}{{ item.position.target|floatformat:2 }}{% else %}<span class="not-set">Set Tgt</span>{% endif %}
+                        </span>
+                        {% if not item.position.target and item.position.status == 'OPEN' %}
+                        <button class="sr-apply-btn" data-id="{{ item.position.id }}" title="Compute structural S/R target">SR</button>
+                        {% endif %}
                     </td>
 
                     <!-- Target Distance -->
@@ -454,6 +464,25 @@
     }
     .btn-secondary:hover { background: #e2e8f0; }
 
+    /* SR Apply Button */
+    .sr-apply-btn {
+        display: inline-block;
+        margin-left: 4px;
+        padding: 1px 5px;
+        font-size: 0.65rem;
+        font-weight: 700;
+        color: var(--primary);
+        background: rgba(37, 99, 235, 0.08);
+        border: 1px solid rgba(37, 99, 235, 0.3);
+        border-radius: var(--radius-sm);
+        cursor: pointer;
+        vertical-align: middle;
+        transition: all 0.15s;
+        line-height: 1.4;
+    }
+    .sr-apply-btn:hover { background: rgba(37, 99, 235, 0.18); }
+    .sr-apply-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
     /* Save feedback */
     .save-success { animation: flashGreen 0.6s ease; }
     .save-error { animation: flashRed 0.6s ease; }
@@ -504,8 +533,74 @@
         exit_reason: 'Exit Reason',
     };
 
-    // Click handler for editable fields
+    // ── SR Level Application ──────────────────────────────────────────────────
+
+    async function applySRLevels(positionId) {
+        const btns = document.querySelectorAll(`.sr-apply-btn[data-id="${positionId}"]`);
+        btns.forEach(b => { b.textContent = '…'; b.disabled = true; });
+
+        try {
+            const resp = await fetch('{% url "positions:suggest_sl_target" %}', {
+                method: 'POST',
+                headers: { 'X-CSRFToken': csrftoken, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ position_id: positionId }),
+            });
+            const data = await resp.json();
+
+            if (data.success) {
+                const row = document.querySelector(`tr[data-id="${positionId}"]`);
+
+                if (data.stop_loss !== null) {
+                    const slSpan = row.querySelector('.editable-field[data-field="stop_loss"]');
+                    slSpan.textContent = parseFloat(data.stop_loss).toFixed(2);
+                    row.querySelectorAll('.sr-apply-btn[data-id="' + positionId + '"]').forEach(b => {
+                        // Only remove the SL button if SL was actually saved
+                        const cell = b.closest('td');
+                        const field = cell && cell.querySelector('.editable-field');
+                        if (field && field.dataset.field === 'stop_loss') b.remove();
+                    });
+                }
+                if (data.target !== null) {
+                    const tgtSpan = row.querySelector('.editable-field[data-field="target"]');
+                    tgtSpan.textContent = parseFloat(data.target).toFixed(2);
+                    row.querySelectorAll('.sr-apply-btn[data-id="' + positionId + '"]').forEach(b => {
+                        const cell = b.closest('td');
+                        const field = cell && cell.querySelector('.editable-field');
+                        if (field && field.dataset.field === 'target') b.remove();
+                    });
+                }
+
+                if (data.sl_distance !== undefined) {
+                    const slCell = row.querySelector('[data-sl-distance]');
+                    if (slCell) slCell.textContent = data.sl_distance + '%';
+                }
+                if (data.target_distance !== undefined) {
+                    const tgtCell = row.querySelector('[data-tgt-distance]');
+                    if (tgtCell) tgtCell.textContent = data.target_distance + '%';
+                }
+
+                row.classList.add('save-success');
+                setTimeout(() => row.classList.remove('save-success'), 800);
+            } else {
+                btns.forEach(b => { b.textContent = 'SR'; b.disabled = false; });
+                alert('SR Error: ' + (data.error || 'Unknown error'));
+            }
+        } catch (err) {
+            btns.forEach(b => { b.textContent = 'SR'; b.disabled = false; });
+            alert('SR request failed: ' + err.message);
+        }
+    }
+
+    // ── Click handler for editable fields ────────────────────────────────────
     document.addEventListener('click', function(e) {
+        // SR button takes priority
+        const srBtn = e.target.closest('.sr-apply-btn');
+        if (srBtn) {
+            e.stopPropagation();
+            applySRLevels(parseInt(srBtn.dataset.id));
+            return;
+        }
+
         const field = e.target.closest('.editable-field');
         if (!field) return;
 

@@ -1,7 +1,7 @@
 {% extends "core/master_base.html" %}
 {% load static %}
 
-{% block title %}View Active Trades - mCube Trading{% endblock %}
+{% block title %}Open Positions - mCube Trading{% endblock %}
 
 {% block extra_css %}
 <style>
@@ -65,6 +65,23 @@
         gap: 0.4rem;
         color: var(--gray);
         font-size: 0.75rem;
+        cursor: pointer;
+        padding: 0.35rem 0.7rem;
+        border-radius: var(--radius-md);
+        border: 1px solid #e5e7eb;
+        background: var(--white);
+        transition: all 0.15s ease;
+        user-select: none;
+    }
+
+    .auto-refresh-indicator:hover {
+        border-color: #10b981;
+        background: #f0fdf4;
+        color: #059669;
+    }
+
+    .auto-refresh-indicator:active {
+        transform: scale(0.97);
     }
 
     .auto-refresh-dot {
@@ -78,6 +95,47 @@
     @keyframes pulse-dot {
         0%, 100% { opacity: 1; }
         50% { opacity: 0.3; }
+    }
+
+    .pnl-trend-bar {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        font-size: 0.7rem;
+        color: var(--gray);
+    }
+
+    .pnl-trend-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.2rem;
+        padding: 0.15rem 0.45rem;
+        border-radius: var(--radius-sm);
+        font-weight: 600;
+        font-size: 0.68rem;
+        white-space: nowrap;
+        background: #f3f4f6;
+        color: #6b7280;
+    }
+
+    .pnl-trend-chip.positive {
+        background: #ecfdf5;
+        color: #059669;
+    }
+
+    .pnl-trend-chip.negative {
+        background: #fef2f2;
+        color: #dc2626;
+    }
+
+    .pnl-trend-chip .trend-label {
+        font-weight: 400;
+        opacity: 0.7;
+        font-size: 0.62rem;
+    }
+
+    .pnl-trend-chip.hidden {
+        display: none;
     }
 
     .positions-summary-bar {
@@ -688,7 +746,7 @@
         <div class="page-header-row">
             <div>
                 <h1 class="page-title">Open Trades</h1>
-                <p class="page-subtitle">Monitor and manage your open positions across all broker accounts</p>
+                <p class="page-subtitle">Monitor and manage open positions across all broker accounts</p>
             </div>
             <div class="header-stats">
                 <div class="header-stat-badge">
@@ -697,7 +755,13 @@
                 <div class="header-stat-badge neo">
                     🚀 Neo <span class="stat-count" id="headerNeoCount">-</span>
                 </div>
-                <div class="auto-refresh-indicator">
+                <div class="pnl-trend-bar" id="pnlTrendBar">
+                    <span class="pnl-trend-chip hidden" id="trendDelta1"><span class="trend-label">Δ1</span> <span class="trend-val">--</span></span>
+                    <span class="pnl-trend-chip hidden" id="trendDelta5"><span class="trend-label">Δ5</span> <span class="trend-val">--</span></span>
+                    <span class="pnl-trend-chip hidden" id="trendDelta10"><span class="trend-label">Δ10</span> <span class="trend-val">--</span></span>
+                    <span class="pnl-trend-chip hidden" id="trendDeltaDay"><span class="trend-label">Day</span> <span class="trend-val">--</span></span>
+                </div>
+                <div class="auto-refresh-indicator" id="autoRefreshBtn" onclick="manualRefreshAll()" title="Click to refresh now">
                     <span class="auto-refresh-dot"></span>
                     Auto-refresh <span id="autoRefreshCountdown">2:00</span>
                 </div>
@@ -868,19 +932,44 @@ let closeExecutionState = {
     broker: null,
     symbol: null
 };
-let autoRefreshInterval = null;
 let countdownInterval = null;
-let countdownSeconds = 120;  // 2 minutes
+let countdownSeconds = 120;
 
-// Load positions on page load
+// P&L trend tracking — persisted server-side via PortfolioPnlTracker model.
+// Snapshots are only recorded once both brokers have loaded.
+let pnlSnapshots = [];
+let snapshotDebounceTimer = null;
+let brokersLoaded = new Set();
+
+async function loadPnlSnapshots() {
+    try {
+        const resp = await fetch('/trading/api/pnl-snapshots/');
+        const data = await resp.json();
+        if (data.success && Array.isArray(data.snapshots)) {
+            pnlSnapshots = data.snapshots;
+        }
+    } catch (e) {
+        // Server unreachable — continue with empty snapshots
+    }
+}
+
+function savePnlSnapshot(pnl, ts) {
+    fetch('/trading/api/pnl-snapshots/save/', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': getCsrfToken(),
+        },
+        body: JSON.stringify({ pnl, ts }),
+    }).catch(() => {});
+}
+
 document.addEventListener('DOMContentLoaded', function() {
+    loadPnlSnapshots();
     loadPositions('breeze');
     loadPositions('neo');
-
-    // Start auto-refresh every 2 minutes
     startAutoRefresh();
 
-    // Add ESC key handler to close modal
     document.addEventListener('keydown', function(e) {
         if (e.key === 'Escape' && !isOrderProcessing) {
             const modal = document.getElementById('closePositionModal');
@@ -891,7 +980,7 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 });
 
-// Auto-refresh logic
+// Auto-refresh: countdown from 120s, refresh all positions when it hits 0
 function startAutoRefresh() {
     countdownSeconds = 120;
     updateCountdownDisplay();
@@ -917,7 +1006,6 @@ function updateCountdownDisplay() {
 }
 
 function autoRefreshAll() {
-    // Don't auto-refresh if a modal is open or order is processing
     if (isOrderProcessing) return;
     const closeModal = document.getElementById('closePositionModal');
     const avgModal = document.getElementById('averagePositionModal');
@@ -928,7 +1016,7 @@ function autoRefreshAll() {
     loadPositions('neo');
 }
 
-// Update the summary bar with current position data
+// Update header badges, summary cards, and P&L trend chips
 function updatePositionsSummary() {
     const breezePositions = positionsCache['breeze'] || [];
     const neoPositions = positionsCache['neo'] || [];
@@ -940,11 +1028,8 @@ function updatePositionsSummary() {
     const neoPnl = neoPositions.reduce((sum, pos) => sum + parseFloat(pos.unrealized_pnl || 0), 0);
     const totalPnl = breezePnl + neoPnl;
 
-    // Header badges
     document.getElementById('headerBreezeCount').textContent = breezeCount;
     document.getElementById('headerNeoCount').textContent = neoCount;
-
-    // Summary cards
     document.getElementById('summaryBreezeCount').textContent = breezeCount;
     document.getElementById('summaryNeoCount').textContent = neoCount;
     document.getElementById('summaryTotalCount').textContent = totalCount;
@@ -963,9 +1048,57 @@ function updatePositionsSummary() {
     setPnlEl('summaryBreezePnl', breezePnl);
     setPnlEl('summaryNeoPnl', neoPnl);
     setPnlEl('summaryTotalPnl', totalPnl);
+
+    recordPnlSnapshot(totalPnl);
 }
 
-// Load positions for a broker
+// Debounced snapshot recording — waits for both brokers to load before recording.
+// Both broker loads call updatePositionsSummary; the debounce ensures we capture
+// the final total (after both have responded) rather than a partial sum.
+function recordPnlSnapshot(totalPnl) {
+    if (brokersLoaded.size < 2) return;
+    if (snapshotDebounceTimer) clearTimeout(snapshotDebounceTimer);
+    snapshotDebounceTimer = setTimeout(() => {
+        const snapshot = { pnl: totalPnl, ts: Date.now() };
+        pnlSnapshots.push(snapshot);
+        savePnlSnapshot(snapshot.pnl, snapshot.ts);
+    }, 500);
+    updateTrendChips(totalPnl);
+}
+
+// Show P&L movement: Δ1 = since 1 refresh ago, Δ5 = since 5 ago, etc.
+// "N refreshes ago" = snapshot[length - 1 - N] (last element is the most recent)
+function updateTrendChips(currentPnl) {
+    const n = pnlSnapshots.length;
+
+    const updateChip = (id, ago) => {
+        const chip = document.getElementById(id);
+        const refIdx = (ago === 'day') ? 0 : n - 1 - ago;
+        if (refIdx < 0 || refIdx >= n) {
+            chip.classList.add('hidden');
+            return;
+        }
+        const delta = currentPnl - pnlSnapshots[refIdx].pnl;
+        const sign = delta >= 0 ? '+' : '-';
+        chip.querySelector('.trend-val').textContent = `${sign}₹${formatIndianNumber(Math.abs(delta).toFixed(0))}`;
+        chip.classList.remove('hidden', 'positive', 'negative');
+        chip.classList.add(delta >= 0 ? 'positive' : 'negative');
+    };
+
+    updateChip('trendDelta1', 1);
+    updateChip('trendDelta5', 5);
+    updateChip('trendDelta10', 10);
+    updateChip('trendDeltaDay', 'day');
+}
+
+// Manual refresh via the auto-refresh button click
+function manualRefreshAll() {
+    countdownSeconds = 120;
+    updateCountdownDisplay();
+    loadPositions('breeze');
+    loadPositions('neo');
+}
+
 async function loadPositions(broker) {
     const container = document.getElementById(`${broker}Positions`);
     container.innerHTML = '<div class="loading-spinner">Loading positions...</div>';
@@ -976,12 +1109,11 @@ async function loadPositions(broker) {
 
         if (data.success) {
             positionsCache[broker] = data.positions;
+            brokersLoaded.add(broker);
             rawApiCache[broker] = {
                 raw_positions_api: data.raw_positions_api || null,
                 raw_trade_report_api: data.raw_trade_report_api || null,
             };
-            console.log(`[${broker}] raw_positions_api:`, data.raw_positions_api ? (Array.isArray(data.raw_positions_api) ? `array(${data.raw_positions_api.length})` : `object(${Object.keys(data.raw_positions_api)})`) : 'missing');
-            console.log(`[${broker}] raw_trade_report_api:`, data.raw_trade_report_api ? (Array.isArray(data.raw_trade_report_api) ? `array(${data.raw_trade_report_api.length})` : `object(${Object.keys(data.raw_trade_report_api)})`) : 'missing');
             displayPositions(broker, data.positions);
             updatePositionsSummary();
         } else if (data.auth_required) {
@@ -1005,13 +1137,11 @@ async function loadPositions(broker) {
     }
 }
 
-// Refresh positions
+// Per-broker refresh (from individual refresh buttons)
 function refreshPositions(broker) {
     const btn = document.getElementById(`refresh${broker.charAt(0).toUpperCase() + broker.slice(1)}Btn`);
     btn.disabled = true;
     btn.textContent = '⏳ Loading...';
-
-    // Reset auto-refresh countdown on manual refresh
     countdownSeconds = 120;
     updateCountdownDisplay();
 

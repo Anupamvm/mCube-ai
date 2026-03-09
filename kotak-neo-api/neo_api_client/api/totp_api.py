@@ -17,7 +17,7 @@ class TotpAPI(object):
                          'neo-fin-key': self.api_client.configuration.get_neo_fin_key(),
                          'Content-Type': 'application/json'
                          }
-        URL = self.api_client.configuration.get_domain(session_init=True) + '/' + PROD_URL.get('totp_login')
+        URL = self.api_client.configuration.get_domain(is_login=True) + '/' + PROD_URL.get('totp_login')
         body_params = {
             "mobileNumber": mobile_number,
             "ucc": ucc,
@@ -45,7 +45,7 @@ class TotpAPI(object):
                          "Auth": self.api_client.configuration.view_token,
                          'neo-fin-key': self.api_client.configuration.get_neo_fin_key()
                          }
-        URL = self.api_client.configuration.get_domain(session_init=True) + '/' + PROD_URL.get('totp_validate')
+        URL = self.api_client.configuration.get_domain(is_login=True) + '/' + PROD_URL.get('totp_validate')
         body_params = {
             "mpin": mpin
         }

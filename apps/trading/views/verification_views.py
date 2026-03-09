@@ -19,6 +19,7 @@ from django.contrib.auth.decorators import login_required
 from django.views.decorators.http import require_POST
 from django.http import JsonResponse, StreamingHttpResponse
 from django.shortcuts import render
+from apps.positions.services.sr_exit_engine import compute_initial_sl_target
 
 logger = logging.getLogger(__name__)
 
@@ -1585,15 +1586,15 @@ def verify_future_trade(request):
                 logger.error(f"Error serializing position_details: {e}")
                 position_details_safe = {'error': 'Serialization error'}
 
-            # Calculate stop loss and target from position details or defaults
-            # Convert futures_price to Decimal for calculations
+            # Calculate stop loss and target using structural S/R levels
             futures_price_decimal = Decimal(str(futures_price))
+            _sr = compute_initial_sl_target(stock_symbol, float(futures_price), direction)
             if direction == 'LONG':
-                stop_loss_price = futures_price_decimal * Decimal('0.98')
-                target_price = futures_price_decimal * Decimal('1.04')
+                stop_loss_price = Decimal(str(round(_sr['stop_loss'] or float(futures_price_decimal) * 0.98, 2)))
+                target_price = Decimal(str(round(_sr['target'] or float(futures_price_decimal) * 1.04, 2)))
             elif direction == 'SHORT':
-                stop_loss_price = futures_price_decimal * Decimal('1.02')
-                target_price = futures_price_decimal * Decimal('0.96')
+                stop_loss_price = Decimal(str(round(_sr['stop_loss'] or float(futures_price_decimal) * 1.02, 2)))
+                target_price = Decimal(str(round(_sr['target'] or float(futures_price_decimal) * 0.96, 2)))
             else:
                 stop_loss_price = futures_price_decimal * Decimal('0.98')
                 target_price = futures_price_decimal * Decimal('1.02')

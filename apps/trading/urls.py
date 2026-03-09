@@ -77,6 +77,10 @@ urlpatterns = [
     path('api/cancel-order-placement/', api_views.cancel_order_placement, name='api_cancel_order_placement'),
     path('api/analyze-averaging/', api_views.analyze_position_averaging, name='api_analyze_averaging'),
 
+    # Portfolio P&L Trend
+    path('api/pnl-snapshots/', api_views.get_pnl_snapshots, name='api_get_pnl_snapshots'),
+    path('api/pnl-snapshots/save/', api_views.save_pnl_snapshot, name='api_save_pnl_snapshot'),
+
     # Manual Trade Execution (Live Orders)
     path('manual/prepare/', views.prepare_manual_execution, name='prepare_manual_execution'),
     path('manual/confirm/', views.confirm_manual_execution, name='confirm_manual_execution'),

@@ -16,6 +16,7 @@ from apps.trading.models import TradeSuggestion, TradeSuggestionLog
 from apps.positions.models import Position
 from apps.brokers.integrations.breeze import get_india_vix
 from apps.core.utils import json_serial
+from apps.positions.services.sr_exit_engine import compute_initial_sl_target
 
 logger = logging.getLogger(__name__)
 
@@ -1091,16 +1092,19 @@ def trigger_futures_algorithm(request):
                         'direction': direction
                     }
 
-                    # Calculate stop loss and target
+                    # Calculate stop loss and target using structural S/R levels
+                    _sr = compute_initial_sl_target(symbol, float(futures_price), direction)
                     if direction == 'LONG':
-                        stop_loss_price = futures_price * Decimal('0.98')
-                        target_price = futures_price * Decimal('1.04')
+                        stop_loss = _sr['stop_loss'] or float(futures_price) * 0.98
+                        target = _sr['target'] or float(futures_price) * 1.04
                     elif direction == 'SHORT':
-                        stop_loss_price = futures_price * Decimal('1.02')
-                        target_price = futures_price * Decimal('0.96')
+                        stop_loss = _sr['stop_loss'] or float(futures_price) * 1.02
+                        target = _sr['target'] or float(futures_price) * 0.96
                     else:
-                        stop_loss_price = futures_price * Decimal('0.98')
-                        target_price = futures_price * Decimal('1.02')
+                        stop_loss = float(futures_price) * 0.98
+                        target = float(futures_price) * 1.02
+                    stop_loss_price = Decimal(str(round(stop_loss, 2)))
+                    target_price = Decimal(str(round(target, 2)))
 
                     # Update position_sizing_data with stop loss and target
                     position_sizing_data['stop_loss'] = float(stop_loss_price)
@@ -2288,16 +2292,17 @@ def verify_future_trade(request):
                     entry_value = futures_price * lot_size * recommended_lots
                     margin_utilization = (total_margin_required / available_margin * 100) if available_margin > 0 else 0
 
-                    # Calculate stop loss and targets
+                    # Calculate stop loss and targets using structural S/R levels
+                    _sr = compute_initial_sl_target(stock_symbol, float(futures_price), direction)
                     if direction == 'LONG':
-                        stop_loss = futures_price * 0.98
-                        target = futures_price * 1.04
+                        stop_loss = _sr['stop_loss'] or float(futures_price) * 0.98
+                        target = _sr['target'] or float(futures_price) * 1.04
                     elif direction == 'SHORT':
-                        stop_loss = futures_price * 1.02
-                        target = futures_price * 0.96
+                        stop_loss = _sr['stop_loss'] or float(futures_price) * 1.02
+                        target = _sr['target'] or float(futures_price) * 0.96
                     else:
-                        stop_loss = futures_price * 0.98
-                        target = futures_price * 1.02
+                        stop_loss = float(futures_price) * 0.98
+                        target = float(futures_price) * 1.02
 
                     risk_amount = abs(futures_price - stop_loss) * lot_size * recommended_lots
                     reward_amount = abs(target - futures_price) * lot_size * recommended_lots

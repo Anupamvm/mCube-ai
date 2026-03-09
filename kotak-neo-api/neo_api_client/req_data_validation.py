@@ -4,17 +4,6 @@ from neo_api_client.settings import exchange_segment_allowed_values, product_all
     order_type_allowed_values, segment_limits, exchange_limits, product_limits
 
 
-def validate_configuration(consumer_key, consumer_secret):
-    if not consumer_key:
-        raise ApiValueError(
-            "Please provide the Consumer Key parameter while creating NeoTradeAPI object. Without Consumer Key "
-            "the API cannot be accessed.")
-    if not consumer_secret:
-        raise ApiValueError(
-            "Please provide the Consumer Secret parameter while creating NeoTradeAPI object. Without Consumer "
-            "Secret the API cannot be accessed.")
-
-
 def place_order_validation(exchange_segment, product, price, order_type, quantity, validity, trading_symbol,
                            transaction_type, amo=None, disclosed_quantity=None, market_protection=None, pf=None,
                            trigger_price=None, tag=None):

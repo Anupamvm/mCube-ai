@@ -3,6 +3,7 @@ Views for System Positions management page.
 """
 
 import json
+import logging
 from decimal import Decimal, InvalidOperation
 from django.shortcuts import render
 from django.contrib.auth.decorators import login_required
@@ -16,6 +17,9 @@ from apps.core.constants import (
     POSITION_STATUS_CLOSED,
     POSITION_STATUS_SUGGESTED,
 )
+from apps.positions.services.sr_exit_engine import compute_initial_sl_target
+
+logger = logging.getLogger(__name__)
 
 BROKER_DISPLAY = {'KOTAK': 'Kotak Neo', 'ICICI': 'ICICI Breeze'}
 
@@ -152,4 +156,113 @@ def update_position_field(request):
     except Position.DoesNotExist:
         return JsonResponse({'success': False, 'error': 'Position not found'})
     except Exception as e:
+        return JsonResponse({'success': False, 'error': str(e)})
+
+
+@require_POST
+@login_required
+def suggest_sl_target(request):
+    """
+    Compute structural S/R-based SL/target for a position and save any missing values.
+
+    Only fills fields that are currently None — never overwrites manually set values.
+
+    Request body (JSON):
+        position_id  int   Required.
+
+    Response (JSON):
+        success       bool
+        stop_loss     float|null   Computed value (may already have been saved)
+        target        float|null   Computed value (may already have been saved)
+        saved_fields  list[str]    Which fields were actually written ('stop_loss', 'target')
+        sl_distance   float|null   Recomputed distance after save (%)
+        target_distance float|null Recomputed distance after save (%)
+        error         str          Present only on failure
+    """
+    try:
+        data = json.loads(request.body)
+        position_id = data.get('position_id')
+
+        position = Position.objects.get(id=position_id)
+        symbol = position.instrument or ''
+        direction = position.direction
+
+        # All open positions for the same instrument+direction share the same
+        # structural support/resistance.  Compute once and apply consistently.
+        siblings = list(Position.objects.filter(
+            instrument=symbol,
+            direction=direction,
+            status=POSITION_STATUS_OPEN,
+        ))
+
+        # Use the highest CMP across all siblings as the canonical reference.
+        # This ensures "nearest support below" finds the same floor for every
+        # sibling regardless of minor CMP drift between positions.
+        ref_price = max(
+            (float(p.current_price or p.entry_price or 0) for p in siblings),
+            default=0.0,
+        )
+        if ref_price == 0:
+            return JsonResponse({'success': False, 'error': 'No price available for SR computation'})
+
+        sr = compute_initial_sl_target(symbol, ref_price, direction)
+
+        if sr['stop_loss'] is None and sr['target'] is None:
+            return JsonResponse({
+                'success': False,
+                'error': 'SR engine found no structural levels for this symbol — try again during market hours',
+            })
+
+        sl_dec  = Decimal(str(round(sr['stop_loss'], 2))) if sr['stop_loss'] else None
+        tgt_dec = Decimal(str(round(sr['target'],    2))) if sr['target']    else None
+
+        # Apply consistently to every sibling that is missing SL or target
+        siblings_updated = 0
+        for sib in siblings:
+            fields = []
+            if sl_dec is not None and not sib.stop_loss:
+                sib.stop_loss = sl_dec
+                fields.append('stop_loss')
+            if tgt_dec is not None and not sib.target:
+                sib.target = tgt_dec
+                fields.append('target')
+            if fields:
+                sib.save(update_fields=fields + ['updated_at'])
+                siblings_updated += 1
+
+        # Refresh the clicked position for response values
+        position.refresh_from_db()
+
+        response = {
+            'success': True,
+            'stop_loss': float(position.stop_loss) if position.stop_loss else None,
+            'target':    float(position.target)    if position.target    else None,
+            'saved_fields': (
+                (['stop_loss'] if sl_dec else []) + (['target'] if tgt_dec else [])
+            ),
+            'siblings_updated': siblings_updated,
+        }
+
+        # Recompute distances for the UI (for the clicked position only)
+        cmp = float(position.current_price or 0)
+        if cmp > 0:
+            if position.stop_loss:
+                sl_f = float(position.stop_loss)
+                if direction == 'LONG':
+                    response['sl_distance'] = round((cmp - sl_f) / cmp * 100, 2)
+                elif direction == 'SHORT':
+                    response['sl_distance'] = round((sl_f - cmp) / cmp * 100, 2)
+            if position.target:
+                tgt_f = float(position.target)
+                if direction == 'LONG':
+                    response['target_distance'] = round((tgt_f - cmp) / cmp * 100, 2)
+                elif direction == 'SHORT':
+                    response['target_distance'] = round((cmp - tgt_f) / cmp * 100, 2)
+
+        return JsonResponse(response)
+
+    except Position.DoesNotExist:
+        return JsonResponse({'success': False, 'error': 'Position not found'})
+    except Exception as e:
+        logger.error(f"suggest_sl_target error: {e}", exc_info=True)
         return JsonResponse({'success': False, 'error': str(e)})

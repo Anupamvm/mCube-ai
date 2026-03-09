@@ -349,6 +349,7 @@ _SILENT_TASK_KEYS = frozenset({
     'monitor-and-manage-positions',
     'check-risk-limits-all-accounts',
     'monitor-circuit-breakers',
+    'check-confirmation-timeouts',
 })
 
 # Categories that get Telegram lifecycle notifications (started / success / failed)

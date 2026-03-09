@@ -278,6 +278,11 @@ def sync_positions_from_broker_objects(account, broker_positions):
             result['created'] += 1
             logger.info(f"Created position: {display_name} | {direction} qty={abs(net_qty)} avg={avg_price}")
 
+            # Immediately initialize SL/target from structural S/R for new positions.
+            # Gives downstream flows (monitoring, averaging, exit) real levels from
+            # the first moment — rather than waiting for the next monitor task cycle.
+            _init_sr_levels(pos, symbol, float(ltp or avg_price), direction)
+
     # ── Close stale: any open positions for this account not matched this sync
     stale = Position.objects.filter(
         account=account,
@@ -447,6 +452,82 @@ def sync_trade_history(account):
         logger.error(f"Error syncing trade history: {e}")
         result['errors'].append(str(e))
         return result
+
+
+def _init_sr_levels(position, symbol: str, price: float, direction: str):
+    """
+    Compute structural S/R-based SL/target for a freshly created position and
+    save both fields in a single DB write.
+
+    Uses the highest CMP across all open siblings (same instrument+direction)
+    as the canonical reference price so every position of the same instrument
+    gets the same structural SL/target — regardless of minor CMP drift between
+    positions.  Results are propagated to existing siblings that lack SL/target.
+
+    Called immediately after broker-sync creates a new OPEN position so that
+    monitoring, averaging, and exit logic all start with real levels instead of
+    waiting for the next monitor-task cycle.
+
+    Never raises — all errors are silently logged so the sync itself never fails.
+    """
+    if not price or direction == 'NEUTRAL':
+        return
+    try:
+        from apps.positions.services.sr_exit_engine import compute_initial_sl_target
+        from apps.positions.models import Position
+
+        # All open positions of the same instrument+direction share the same
+        # structural levels.  Resolve a canonical price from all siblings.
+        existing_siblings = list(Position.objects.filter(
+            instrument=symbol,
+            direction=direction,
+            status=POSITION_STATUS_OPEN,
+        ).exclude(id=position.id))
+
+        all_prices = [float(p.current_price or p.entry_price or 0) for p in existing_siblings]
+        all_prices.append(price)
+        ref_price = max(p for p in all_prices if p > 0)
+
+        sr = compute_initial_sl_target(symbol, ref_price, direction)
+        if not sr['stop_loss'] and not sr['target']:
+            return
+
+        sl_dec  = Decimal(str(round(sr['stop_loss'], 2))) if sr['stop_loss'] else None
+        tgt_dec = Decimal(str(round(sr['target'],    2))) if sr['target']    else None
+
+        # Apply to the new position
+        new_fields = []
+        if sl_dec and not position.stop_loss:
+            position.stop_loss = sl_dec
+            new_fields.append('stop_loss')
+        if tgt_dec and not position.target:
+            position.target = tgt_dec
+            new_fields.append('target')
+        if new_fields:
+            position.save(update_fields=new_fields)
+            logger.info(
+                f"SR init: {position.display_name} {direction} "
+                f"SL={position.stop_loss} Target={position.target}"
+            )
+
+        # Propagate to existing siblings that are missing levels
+        for sib in existing_siblings:
+            fields = []
+            if sl_dec and not sib.stop_loss:
+                sib.stop_loss = sl_dec
+                fields.append('stop_loss')
+            if tgt_dec and not sib.target:
+                sib.target = tgt_dec
+                fields.append('target')
+            if fields:
+                sib.save(update_fields=fields)
+                logger.info(
+                    f"SR init propagated to sibling id={sib.id} {sib.display_name}: "
+                    f"SL={sib.stop_loss} Target={sib.target}"
+                )
+
+    except Exception as e:
+        logger.debug(f"SR init skipped for {symbol}: {e}")
 
 
 def get_position_summary():

@@ -27,24 +27,25 @@ logger = logging.getLogger(__name__)
 
 def check_exit_conditions(position: Position) -> Dict[str, any]:
     """
-    Check all exit conditions for a position
+    Pure exit condition checker — evaluates the position's current fields only.
+
+    The SR engine (apply_sl_and_target) runs BEFORE this function in the
+    monitor task, so position.stop_loss and position.target are already
+    updated to their SR-derived values by the time this is called.
 
     Exit Priority:
     1. Stop-loss hit → IMMEDIATE EXIT
-    2. Target hit → IMMEDIATE EXIT
-    3. EOD exit → CONDITIONAL (only if profit >= 50%)
-    4. Expiry day → MANDATORY EXIT
-
-    Args:
-        position: Position instance
+    2. Target hit    → IMMEDIATE EXIT
+    3. EOD exit      → CONDITIONAL (profit >= 50%)
+    4. Expiry day    → MANDATORY EXIT
 
     Returns:
         dict: {
             'should_exit': bool,
             'exit_reason': str,
-            'exit_price': Decimal,
+            'exit_price': Decimal | None,
             'message': str,
-            'is_mandatory': bool  # True for SL/Target/Expiry, False for EOD
+            'is_mandatory': bool
         }
     """
 

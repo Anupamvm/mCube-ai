@@ -564,6 +564,17 @@ class PositionMonitorDashboard(TimeStampedModel):
         help_text="When dashboard was last refreshed"
     )
 
+    # S/R exit engine intraday state
+    sr_tracking = models.JSONField(
+        null=True,
+        blank=True,
+        help_text=(
+            "Intraday S/R engine state: "
+            "{session_low, session_high, last_sr_computed_at, sr_cache, "
+            "condition_b_met_at, gap_detected}"
+        )
+    )
+
     # Exit suggestion deduplication
     last_exit_msg_id = models.BigIntegerField(
         null=True,
@@ -589,3 +600,33 @@ class PositionMonitorDashboard(TimeStampedModel):
     def __str__(self):
         pos_str = self.position.label if self.position else 'No position'
         return f"Dashboard {self.date} | {pos_str}"
+
+
+class PortfolioPnlTracker(TimeStampedModel):
+    """
+    Daily portfolio-level P&L snapshots for the Open Positions trend display.
+
+    One row per trading day. Stores timestamped total P&L readings taken every
+    auto-refresh cycle (~2 min). The web UI uses these to show P&L movement
+    (Δ1, Δ5, Δ10, Day) across page refreshes and devices.
+
+    Snapshots format: [{pnl: float, ts: epoch_ms}, ...]
+    """
+
+    date = models.DateField(
+        unique=True,
+        db_index=True,
+        help_text="Trading date"
+    )
+    snapshots = models.JSONField(
+        default=list,
+        help_text="Timestamped P&L readings: [{pnl, ts}, ...]"
+    )
+
+    class Meta:
+        db_table = 'portfolio_pnl_tracker'
+        ordering = ['-date']
+
+    def __str__(self):
+        count = len(self.snapshots) if self.snapshots else 0
+        return f"PnL Tracker {self.date} | {count} snapshots"

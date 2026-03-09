@@ -68,6 +68,7 @@ from apps.strategies.analyzers.enhanced_futures_analyzer import (
     HardRejectError,
     analyze_stock_for_futures as enhanced_analyze_stock
 )
+from apps.positions.services.sr_exit_engine import compute_initial_sl_target
 
 logger = logging.getLogger(__name__)
 
@@ -980,14 +981,15 @@ def analyze_stock_for_futures(stock_symbol: str, use_enhanced: bool = True) -> O
         # Calculate entry, SL, target
         current_price = float(stock.current_price or 0)
 
+        _sr = compute_initial_sl_target(stock_symbol, current_price, direction)
         if direction == 'LONG':
             entry_price = current_price
-            stop_loss = current_price * 0.98  # 2% below
-            target = current_price * 1.04     # 4% above
+            stop_loss = _sr['stop_loss'] or current_price * 0.98
+            target = _sr['target'] or current_price * 1.04
         elif direction == 'SHORT':
             entry_price = current_price
-            stop_loss = current_price * 1.02  # 2% above
-            target = current_price * 0.96     # 4% below
+            stop_loss = _sr['stop_loss'] or current_price * 1.02
+            target = _sr['target'] or current_price * 0.96
         else:
             entry_price = current_price
             stop_loss = current_price * 0.95
