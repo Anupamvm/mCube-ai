@@ -219,6 +219,158 @@ def _collapse_cluster(cluster: list) -> dict:
     return {'price': avg_price, 'score': total_score, 'source': '+'.join(filter(None, sources))}
 
 
+def scale_sl_conditions(atr_pct: float) -> tuple:
+    """
+    Return ATR-adaptive Condition A/B thresholds for the two-condition SL rule.
+
+    Fixed 0.5%/1.0% thresholds are too tight on high-ATR days (ATR=1.5–2%)
+    and too generous on low-ATR days (ATR=0.3%).  Scaling to ATR prevents
+    false triggers on volatile days and catches real breaks on calm days.
+
+    Args:
+        atr_pct: ATR as fraction of spot price (e.g. 0.008 = 0.8%)
+                 Pass 0.0 for backward-compatible defaults.
+
+    Returns:
+        (cond_a_pct, cond_b_pct) — Condition A and B breach thresholds as fractions.
+        cond_a_pct ∈ [0.003, 0.010]
+        cond_b_pct ∈ [0.006, 0.020]   always 2× cond_a
+
+    Backward compat: atr_pct=0 → (0.005, 0.010) — existing hardcoded defaults.
+    """
+    if not atr_pct or atr_pct <= 0:
+        return (0.005, 0.010)  # legacy defaults
+
+    cond_a = 0.3 * atr_pct
+    cond_a = max(0.003, min(0.010, cond_a))
+    cond_b = 2.0 * cond_a
+    return (cond_a, cond_b)
+
+
+def detect_liquidity_gaps(candles: list, gap_pct: float = 0.005) -> list:
+    """
+    Identify price zones where very little volume traded — "thin air" zones.
+
+    Once price enters a liquidity vacuum it tends to move quickly because
+    there are no resting orders to absorb the move.  The SL trigger can use
+    this to escalate Condition A (trigger faster) when price is inside a vacuum.
+
+    Algorithm:
+        1. Compute average volume per 0.1% price bucket across all candles.
+        2. Find contiguous price bands where EVERY bucket has volume < 10% of avg.
+        3. Return those bands as vacuum zones with a score (depth of thinness).
+
+    Args:
+        candles:  list of dicts with keys 'high', 'low', 'close', 'volume'
+                  ordered oldest → newest
+        gap_pct:  bucket width as fraction of price for detection (default 0.5%)
+
+    Returns:
+        list of dicts: [{'low': float, 'high': float, 'vacuum_score': float}, ...]
+        vacuum_score is the ratio of (avg_volume / max_bucket_vol_in_zone) —
+        higher score means thinner zone (less volume relative to average).
+        Returns [] if insufficient data.
+    """
+    if len(candles) < 5:
+        return []
+
+    all_prices = [float(c['close']) for c in candles if c.get('close')]
+    if not all_prices:
+        return []
+
+    avg_price = sum(all_prices) / len(all_prices)
+    if avg_price <= 0:
+        return []
+
+    bucket_width = avg_price * 0.001  # 0.1% buckets for resolution
+    volume_map: dict = {}
+
+    for c in candles:
+        h = float(c['high'])
+        l = float(c['low'])
+        v = float(c['volume']) if c.get('volume') else 0.0
+        price_range = h - l
+        if price_range <= 0:
+            bk = round(float(c['close']) / bucket_width) * bucket_width
+            volume_map[bk] = volume_map.get(bk, 0.0) + v
+            continue
+        n_buckets = max(1, int(price_range / bucket_width))
+        vol_per = v / n_buckets
+        for k in range(n_buckets):
+            price_point = l + (k + 0.5) * bucket_width
+            bk = round(price_point / bucket_width) * bucket_width
+            volume_map[bk] = volume_map.get(bk, 0.0) + vol_per
+
+    if not volume_map:
+        return []
+
+    total_vol = sum(volume_map.values())
+    avg_vol = total_vol / len(volume_map)
+    if avg_vol <= 0:
+        return []
+
+    VACUUM_THRESHOLD = 0.10  # bucket must have < 10% of avg vol to be "thin"
+
+    # Find price range spanned by candles
+    all_highs = [float(c['high']) for c in candles]
+    all_lows = [float(c['low']) for c in candles]
+    price_min = min(all_lows)
+    price_max = max(all_highs)
+
+    gap_bucket_count = max(1, int(gap_pct * avg_price / bucket_width))
+
+    vacuums = []
+    in_vacuum = False
+    vacuum_start = None
+    vacuum_buckets = []
+
+    # Walk sorted buckets; treat missing buckets as volume=0 (true vacuum)
+    sorted_prices = []
+    p = price_min
+    while p <= price_max + bucket_width:
+        bk = round(p / bucket_width) * bucket_width
+        sorted_prices.append(bk)
+        p += bucket_width
+
+    for bk in sorted_prices:
+        vol = volume_map.get(bk, 0.0)
+        is_thin = vol < avg_vol * VACUUM_THRESHOLD
+
+        if is_thin:
+            if not in_vacuum:
+                in_vacuum = True
+                vacuum_start = bk
+                vacuum_buckets = []
+            vacuum_buckets.append((bk, vol))
+        else:
+            if in_vacuum and len(vacuum_buckets) >= gap_bucket_count:
+                # Close out a qualifying vacuum zone
+                zone_vol_max = max(v for _, v in vacuum_buckets) if vacuum_buckets else 0
+                vacuum_score = avg_vol / (zone_vol_max + 1e-9)
+                vacuum_score = min(vacuum_score, 10.0)
+                vacuums.append({
+                    'low': vacuum_start,
+                    'high': bk,
+                    'vacuum_score': round(vacuum_score, 2),
+                })
+            in_vacuum = False
+            vacuum_start = None
+            vacuum_buckets = []
+
+    # Close final vacuum if at edge of range
+    if in_vacuum and vacuum_buckets and len(vacuum_buckets) >= gap_bucket_count:
+        zone_vol_max = max(v for _, v in vacuum_buckets) if vacuum_buckets else 0
+        vacuum_score = avg_vol / (zone_vol_max + 1e-9)
+        vacuum_score = min(vacuum_score, 10.0)
+        vacuums.append({
+            'low': vacuum_start,
+            'high': vacuum_start + len(vacuum_buckets) * bucket_width,
+            'vacuum_score': round(vacuum_score, 2),
+        })
+
+    return vacuums
+
+
 def interpolate_target_offset(atr_pct: float, min_pct: float = 0.003, max_pct: float = 0.005) -> float:
     """
     Interpolate resistance target offset between min_pct and max_pct

@@ -936,10 +936,11 @@ let countdownInterval = null;
 let countdownSeconds = 120;
 
 // P&L trend tracking — persisted server-side via PortfolioPnlTracker model.
-// Snapshots are only recorded once both brokers have loaded.
+// Snapshots are only recorded once both brokers have loaded in the CURRENT cycle.
 let pnlSnapshots = [];
 let snapshotDebounceTimer = null;
 let brokersLoaded = new Set();
+let brokersLoadedThisCycle = new Set();
 
 async function loadPnlSnapshots() {
     try {
@@ -964,8 +965,9 @@ function savePnlSnapshot(pnl, ts) {
     }).catch(() => {});
 }
 
-document.addEventListener('DOMContentLoaded', function() {
-    loadPnlSnapshots();
+document.addEventListener('DOMContentLoaded', async function() {
+    await loadPnlSnapshots();
+    brokersLoadedThisCycle.clear();
     loadPositions('breeze');
     loadPositions('neo');
     startAutoRefresh();
@@ -1012,6 +1014,7 @@ function autoRefreshAll() {
     if ((closeModal && closeModal.classList.contains('active')) ||
         (avgModal && avgModal.classList.contains('active'))) return;
 
+    brokersLoadedThisCycle.clear();
     loadPositions('breeze');
     loadPositions('neo');
 }
@@ -1052,11 +1055,11 @@ function updatePositionsSummary() {
     recordPnlSnapshot(totalPnl);
 }
 
-// Debounced snapshot recording — waits for both brokers to load before recording.
-// Both broker loads call updatePositionsSummary; the debounce ensures we capture
-// the final total (after both have responded) rather than a partial sum.
+// Debounced snapshot recording — waits for both brokers to load in the CURRENT
+// refresh cycle before recording. Prevents partial snapshots (one broker stale)
+// from corrupting the Day trend baseline.
 function recordPnlSnapshot(totalPnl) {
-    if (brokersLoaded.size < 2) return;
+    if (brokersLoadedThisCycle.size < 2) return;
     if (snapshotDebounceTimer) clearTimeout(snapshotDebounceTimer);
     snapshotDebounceTimer = setTimeout(() => {
         const snapshot = { pnl: totalPnl, ts: Date.now() };
@@ -1095,6 +1098,7 @@ function updateTrendChips(currentPnl) {
 function manualRefreshAll() {
     countdownSeconds = 120;
     updateCountdownDisplay();
+    brokersLoadedThisCycle.clear();
     loadPositions('breeze');
     loadPositions('neo');
 }
@@ -1110,6 +1114,7 @@ async function loadPositions(broker) {
         if (data.success) {
             positionsCache[broker] = data.positions;
             brokersLoaded.add(broker);
+            brokersLoadedThisCycle.add(broker);
             rawApiCache[broker] = {
                 raw_positions_api: data.raw_positions_api || null,
                 raw_trade_report_api: data.raw_trade_report_api || null,
@@ -1144,6 +1149,10 @@ function refreshPositions(broker) {
     btn.textContent = '⏳ Loading...';
     countdownSeconds = 120;
     updateCountdownDisplay();
+
+    // Mark the OTHER broker as loaded this cycle (its cached data is still current)
+    const otherBroker = broker === 'breeze' ? 'neo' : 'breeze';
+    if (brokersLoaded.has(otherBroker)) brokersLoadedThisCycle.add(otherBroker);
 
     loadPositions(broker).finally(() => {
         btn.disabled = false;

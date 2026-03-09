@@ -6,9 +6,18 @@ Includes both open positions and trade history.
 """
 
 import logging
+import re
 from decimal import Decimal
 from datetime import date
 from django.utils import timezone
+
+_EXPIRY_RE = re.compile(r'^([A-Z&]+)\d{2}[A-Z]{3}(FUT|CE|PE)\d*$')
+
+
+def _underlying(display_name: str) -> str:
+    """Extract underlying from futures/options display_name (e.g. HDFCBANK26MARFUT → HDFCBANK)."""
+    m = _EXPIRY_RE.match(display_name or '')
+    return m.group(1) if m else (display_name or '')
 
 from apps.core.constants import (
     POSITION_STATUS_OPEN,
@@ -281,7 +290,9 @@ def sync_positions_from_broker_objects(account, broker_positions):
             # Immediately initialize SL/target from structural S/R for new positions.
             # Gives downstream flows (monitoring, averaging, exit) real levels from
             # the first moment — rather than waiting for the next monitor task cycle.
-            _init_sr_levels(pos, symbol, float(ltp or avg_price), direction)
+            # Pass LTP only — entry price (avg_price) must never be used as SR reference.
+            # If LTP is zero (e.g. after-hours sync), _init_sr_levels will skip safely.
+            _init_sr_levels(pos, symbol, float(ltp or 0), direction)
 
     # ── Close stale: any open positions for this account not matched this sync
     stale = Position.objects.filter(
@@ -459,36 +470,63 @@ def _init_sr_levels(position, symbol: str, price: float, direction: str):
     Compute structural S/R-based SL/target for a freshly created position and
     save both fields in a single DB write.
 
-    Uses the highest CMP across all open siblings (same instrument+direction)
-    as the canonical reference price so every position of the same instrument
-    gets the same structural SL/target — regardless of minor CMP drift between
-    positions.  Results are propagated to existing siblings that lack SL/target.
+    Uses display_name to extract the underlying symbol (e.g. HDFCBANK26MARFUT →
+    HDFCBANK) so that positions across different brokers (which may use different
+    instrument codes like HDFBAN vs HDFCBANK) are correctly grouped together.
 
-    Called immediately after broker-sync creates a new OPEN position so that
-    monitoring, averaging, and exit logic all start with real levels instead of
-    waiting for the next monitor-task cycle.
+    If any existing sibling already has SL/Target, the new position inherits
+    those exact values — no recomputation — ensuring consistency across brokers
+    and expiry contracts for the same underlying.
 
     Never raises — all errors are silently logged so the sync itself never fails.
     """
-    if not price or direction == 'NEUTRAL':
+    # Only proceed if we have a live LTP — entry/buying price must never be used
+    # as a reference for SR computation; SR depends only on CMP and market structure.
+    if not price or price <= 0 or direction == 'NEUTRAL':
         return
     try:
         from apps.positions.services.sr_exit_engine import compute_initial_sl_target
         from apps.positions.models import Position
 
-        # All open positions of the same instrument+direction share the same
-        # structural levels.  Resolve a canonical price from all siblings.
+        # Derive the underlying (HDFCBANK26MARFUT → HDFCBANK) so the sibling
+        # query groups across brokers that use different instrument codes.
+        underlying = _underlying(position.display_name or symbol)
+
         existing_siblings = list(Position.objects.filter(
-            instrument=symbol,
+            display_name__startswith=underlying,
             direction=direction,
             status=POSITION_STATUS_OPEN,
         ).exclude(id=position.id))
 
+        # If any existing sibling already has SL/Target (from a prior computation),
+        # inherit those exact values for the new position — no recomputation.
+        # This guarantees consistency: all positions of the same instrument always
+        # share identical SR levels regardless of when each was synced.
+        existing_sl  = next((sib.stop_loss for sib in existing_siblings if sib.stop_loss),  None)
+        existing_tgt = next((sib.target    for sib in existing_siblings if sib.target),     None)
+
+        if existing_sl or existing_tgt:
+            new_fields = []
+            if existing_sl and not position.stop_loss:
+                position.stop_loss = existing_sl
+                new_fields.append('stop_loss')
+            if existing_tgt and not position.target:
+                position.target = existing_tgt
+                new_fields.append('target')
+            if new_fields:
+                position.save(update_fields=new_fields)
+                logger.info(
+                    f"SR init (inherited from sibling): {position.display_name} {direction} "
+                    f"SL={position.stop_loss} Target={position.target}"
+                )
+            return
+
+        # No existing sibling has values — compute fresh SR levels.
         all_prices = [float(p.current_price or p.entry_price or 0) for p in existing_siblings]
         all_prices.append(price)
         ref_price = max(p for p in all_prices if p > 0)
 
-        sr = compute_initial_sl_target(symbol, ref_price, direction)
+        sr = compute_initial_sl_target(underlying, ref_price, direction)
         if not sr['stop_loss'] and not sr['target']:
             return
 

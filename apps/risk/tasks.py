@@ -82,26 +82,9 @@ def check_risk_limits_all_accounts():
 
                     if not trading_allowed:
                         # Circuit breaker was activated - account locked
+                        # Telegram notification is sent inside activate_circuit_breaker()
+                        # with mode-accurate text (manual vs autonomous)
                         circuit_breakers_activated += 1
-
-                        # Send critical alert
-                        breach_details = "\n".join([
-                            f"• {limit.limit_type}: ₹{limit.current_value:,.0f} / ₹{limit.limit_value:,.0f}"
-                            for limit in risk_check['breached_limits']
-                        ])
-
-                        send_telegram_notification(
-                            f"🚨🚨 CIRCUIT BREAKER ACTIVATED 🚨🚨\n\n"
-                            f"Account: {account.account_name}\n"
-                            f"Broker: {account.broker}\n\n"
-                            f"BREACHED LIMITS:\n{breach_details}\n\n"
-                            f"ACTIONS TAKEN:\n"
-                            f"✅ All positions closed\n"
-                            f"✅ Account deactivated\n"
-                            f"✅ 24-hour cooldown activated\n\n"
-                            f"⚠️ IMMEDIATE ATTENTION REQUIRED",
-                            notification_type='ERROR'
-                        )
 
                 # Handle warnings
                 elif risk_check['warnings']:

@@ -822,6 +822,34 @@
                     Code Reference
                 </a>
             </div>
+
+            <div class="docs-nav-section">
+                <div class="docs-nav-section-title">Deep Dive</div>
+                <a href="#sr-engine" class="docs-nav-link">
+                    <span class="docs-nav-icon">📍</span>
+                    S/R Exit Engine
+                </a>
+                <a href="#monitoring-engine" class="docs-nav-link">
+                    <span class="docs-nav-icon">🔄</span>
+                    Monitoring Engine
+                </a>
+                <a href="#risk-internals" class="docs-nav-link">
+                    <span class="docs-nav-icon">🚨</span>
+                    Risk Internals
+                </a>
+                <a href="#calculations" class="docs-nav-link">
+                    <span class="docs-nav-icon">🧮</span>
+                    Calculations
+                </a>
+                <a href="#edge-cases" class="docs-nav-link">
+                    <span class="docs-nav-icon">⚡</span>
+                    Edge Cases
+                </a>
+                <a href="#strategy-lifecycle" class="docs-nav-link">
+                    <span class="docs-nav-icon">🔁</span>
+                    Strategy Lifecycle
+                </a>
+            </div>
         </nav>
     </aside>
 
@@ -3674,6 +3702,1612 @@ GET /analytics/insights/            <span class="comment"># Smart insights</span
                         </tr>
                     </tbody>
                 </table>
+            </div>
+        </section>
+
+        <!-- ============================================
+             S/R EXIT ENGINE - DEEP DIVE
+             ============================================ -->
+        <section id="sr-engine" class="docs-section">
+            <div class="docs-section-header">
+                <h1>📍 Support & Resistance Exit Engine</h1>
+                <p>Multi-factor structural S/R engine with confidence-gated triggers and adaptive thresholds</p>
+                <p style="font-size: 0.85rem; color: #6b7280; margin-top: 8px;">
+                    📁 <code>apps/positions/services/sr_exit_engine.py</code> |
+                    <code>sr_exit_engine_utils.py</code> |
+                    6 enhancement modules
+                </p>
+            </div>
+
+            <div class="docs-card">
+                <h3>🏗️ Architecture Overview</h3>
+                <p>
+                    The S/R Exit Engine is the core structural intelligence layer of mCube. It computes support and resistance levels
+                    from <strong>8 independent data sources</strong>, enriches them with multi-timeframe analysis, OI wall detection,
+                    and order block identification, then uses a <strong>two-condition SL trigger</strong> with confidence-gated rules
+                    to protect open positions.
+                </p>
+                <p>
+                    The engine runs <strong>once per position per monitor cycle</strong> (every 1 minute during market hours).
+                    Its public API is <code>apply_sl_and_target(position, dashboard, now)</code>, which returns a dict indicating
+                    whether a structural SL was triggered, what the reason was, and any structural pressure warnings.
+                </p>
+
+                <div class="callout info">
+                    <span class="callout-icon">💡</span>
+                    <div class="callout-content">
+                        <h4>Key Design Principles</h4>
+                        <p>
+                            <strong>1.</strong> SL is only ever tightened, never loosened (LONG: higher SL = tighter; SHORT: lower SL = tighter).<br>
+                            <strong>2.</strong> Two conditions must BOTH be met before triggering a structural exit (price breach + session extreme confirmation).<br>
+                            <strong>3.</strong> All computations are fail-safe: any error returns safe defaults, never crashes the monitor cycle.<br>
+                            <strong>4.</strong> SL and target are propagated to sibling positions (same underlying + direction) across all brokers.
+                        </p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="docs-card">
+                <h3>📊 8-Source Weighted S/R Computation</h3>
+                <p>
+                    The <code>MultiFactorSRCalculator</code> aggregates support and resistance levels from 8 independent sources,
+                    each with a configurable weight. Levels within 0.3% of each other are clustered together (scores summed),
+                    producing a consolidated list of structural levels ranked by significance.
+                </p>
+
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>Source</th>
+                            <th>Weight</th>
+                            <th>Data Origin</th>
+                            <th>What It Captures</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>Pivot Points</strong></td>
+                            <td>20%</td>
+                            <td>ConsolidatedSRCalculator (5-day avg H/L/C)</td>
+                            <td>Classical floor-trader pivots: P, R1/R2/R3, S1/S2/S3</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Previous Day H/L</strong></td>
+                            <td>15%</td>
+                            <td>Yesterday's daily bar</td>
+                            <td>Intraday reference levels, gap detection</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Swing H/L</strong></td>
+                            <td>15%</td>
+                            <td>Last 20 five-minute candles</td>
+                            <td>Short-term intraday structure</td>
+                        </tr>
+                        <tr>
+                            <td><strong>VWAP Bands</strong></td>
+                            <td>15%</td>
+                            <td>Today's intraday 5-min candles</td>
+                            <td>Institutional fair-value with +/-1&sigma; and +/-2&sigma; bands</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Moving Averages</strong></td>
+                            <td>15%</td>
+                            <td>20/50/100/200 DMA from HistoricalPrice</td>
+                            <td>Trend-following dynamic levels</td>
+                        </tr>
+                        <tr>
+                            <td><strong>High Volume Nodes</strong></td>
+                            <td>10%</td>
+                            <td>20-day volume profile (0.1% buckets)</td>
+                            <td>Price levels with concentrated institutional activity</td>
+                        </tr>
+                        <tr>
+                            <td><strong>ATR Zones</strong></td>
+                            <td>5%</td>
+                            <td>14-bar ATR from daily bars</td>
+                            <td>Volatility-based expected range (1x and 2x ATR)</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Psychological Levels</strong></td>
+                            <td>5%</td>
+                            <td>Round-number detection algorithm</td>
+                            <td>Cognitive anchoring at round numbers (e.g., 25000, 25500)</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <h4 style="margin-top: 20px;">Level Clustering Algorithm</h4>
+                <div class="code-block">
+                    <code>
+<span class="comment"># Levels within 0.3% of each other are merged</span>
+<span class="keyword">def</span> <span class="function">cluster_levels</span>(levels, cluster_pct=0.003):
+    <span class="comment"># Sort by price</span>
+    <span class="comment"># Group levels where abs(a.price - b.price) / a.price < 0.003</span>
+    <span class="comment"># Merged level = weighted-average price, summed scores</span>
+    <span class="comment"># Result sorted by score descending</span>
+                    </code>
+                </div>
+            </div>
+
+            <div class="docs-card">
+                <h3>🔬 Enhancement Layers (6 Modules)</h3>
+                <p>
+                    Beyond the 8-source base, the engine applies four enrichment layers that add institutional context,
+                    multi-timeframe confirmation, and strategy-specific signals.
+                </p>
+
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>Module</th>
+                            <th>Class</th>
+                            <th>Purpose</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>sr_mtf_enricher.py</strong></td>
+                            <td>MTFSREnricher</td>
+                            <td>
+                                Multi-timeframe swing H/L stacking across <strong>4 timeframes</strong>
+                                (5min w=0.20, 15min w=0.30, 60min w=0.30, 1day w=0.20).
+                                Levels confirmed by 3+ timeframes are flagged as <strong>HIGH_CONFLUENCE</strong>.
+                                Tolerance: 0.5% for clustering.
+                            </td>
+                        </tr>
+                        <tr>
+                            <td><strong>sr_level_strength.py</strong></td>
+                            <td>LevelStrengthAnnotator + LevelConfidenceScorer</td>
+                            <td>
+                                Assigns a <strong>0-100 confidence score</strong> to each level based on 6 components:
+                                source agreement (25), MTF confluence (20), touch history (20),
+                                OI reinforcement (15), volume at level (10), recency (10).
+                                Score gates the trigger sensitivity.
+                            </td>
+                        </tr>
+                        <tr>
+                            <td><strong>order_block_detector.py</strong></td>
+                            <td>OrderBlockDetector</td>
+                            <td>
+                                Detects institutional order blocks: identifies <strong>base candles</strong> before strong impulse moves.
+                                Base body must be &lt; 40% of impulse body, impulse &gt; 1.5x ATR.
+                                Strength scored 1-3 based on impulse magnitude and recency.
+                            </td>
+                        </tr>
+                        <tr>
+                            <td><strong>oi_wall_enricher.py</strong></td>
+                            <td>OIWallEnricher</td>
+                            <td>
+                                Identifies <strong>gamma walls</strong> (max OI CE/PE strikes), tracks <strong>OI delta</strong>
+                                (% shift between cycles), detects <strong>strike pinning</strong> (spot within 0.5% for 3+ cycles),
+                                and calculates <strong>max-pain strike</strong> on expiry days. Cache TTL: 5 min.
+                            </td>
+                        </tr>
+                        <tr>
+                            <td><strong>sr_strategy_adapter.py</strong></td>
+                            <td>FuturesStrategyAdapter, StrangleRangeGuard, BrokenIronCondorGuard</td>
+                            <td>
+                                Strategy-specific signals from enhanced SR data. Currently <strong>shadow-run only</strong>
+                                (observe and log, don't act). Produces: breakout quality, conviction score, range integrity,
+                                gamma squeeze risk assessment.
+                            </td>
+                        </tr>
+                        <tr>
+                            <td><strong>sr_risk_interface.py</strong></td>
+                            <td>AdaptiveSLPlacer, StructuralPressureMonitor, PartialCloseAdvisor</td>
+                            <td>
+                                Risk interface layer. <strong>AdaptiveSLPlacer</strong> computes confidence-adjusted ATR-buffered SL.
+                                <strong>StructuralPressureMonitor</strong> emits Stage 2 warnings. <strong>PartialCloseAdvisor</strong>
+                                suggests 50% close when confidence is uncertain (score 40-60).
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="docs-card">
+                <h3>🎯 Level Confidence Scoring (0-100)</h3>
+                <p>
+                    Every clustered S/R level is assigned a confidence score that determines how aggressively the SL trigger
+                    responds. Higher scores mean the level is more likely to be respected by the market.
+                </p>
+
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>Component</th>
+                            <th>Max Points</th>
+                            <th>How It's Calculated</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>Source Agreement</strong></td>
+                            <td>25</td>
+                            <td>4 pts per confirming source (pivot, VWAP, HVN, etc.); cap at 25</td>
+                        </tr>
+                        <tr>
+                            <td><strong>MTF Confluence</strong></td>
+                            <td>20</td>
+                            <td>5 pts per confirming timeframe (5m, 15m, 60m, 1d); cap at 20</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Touch History</strong></td>
+                            <td>20</td>
+                            <td>5 pts per historical bounce within 0.3% tolerance over 20 days; cap at 20</td>
+                        </tr>
+                        <tr>
+                            <td><strong>OI Reinforcement</strong></td>
+                            <td>15</td>
+                            <td>15 pts if within 0.5% of OI wall; 8 pts within 1%; 3 pts within 2%</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Volume at Level</strong></td>
+                            <td>10</td>
+                            <td>HVN score x 3; cap at 10 (concentrated institutional volume)</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Recency</strong></td>
+                            <td>10</td>
+                            <td>10 - (days_since_last_touch x 2); floor at 0</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="docs-card">
+                <h3>🔒 Two-Condition SL Trigger (Confidence-Gated)</h3>
+                <p>
+                    The structural SL uses a <strong>two-condition verification system</strong> to prevent false triggers.
+                    Both conditions must be met simultaneously, with the sensitivity gated by the level's confidence score.
+                </p>
+
+                <h4 style="margin-top: 16px;">Trigger Conditions</h4>
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>Direction</th>
+                            <th>Condition A (Price Breach)</th>
+                            <th>Condition B (Session Extreme)</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>LONG</strong></td>
+                            <td>price &le; support x (1 - cond_a)</td>
+                            <td>session_low &le; support x (1 - cond_b)</td>
+                        </tr>
+                        <tr>
+                            <td><strong>SHORT</strong></td>
+                            <td>price &ge; resistance x (1 + cond_a)</td>
+                            <td>session_high &ge; resistance x (1 + cond_b)</td>
+                        </tr>
+                        <tr>
+                            <td><strong>NEUTRAL</strong></td>
+                            <td colspan="2">Checks OI-based S1 (put side) and R1 (call side) independently</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <h4 style="margin-top: 20px;">ATR-Adaptive Thresholds</h4>
+                <p>Thresholds scale with ATR to adapt to the instrument's volatility profile:</p>
+                <div class="code-block">
+                    <code>
+<span class="keyword">def</span> <span class="function">scale_sl_conditions</span>(atr_pct):
+    <span class="comment"># atr_pct = ATR as fraction of spot (e.g., 0.008 = 0.8%)</span>
+    cond_a = clamp(0.3 x atr_pct, [0.003, 0.010])  <span class="comment"># Range: 0.3% to 1.0%</span>
+    cond_b = 2 x cond_a                              <span class="comment"># Always 2x of Cond A</span>
+    <span class="comment"># Backward compat: atr_pct=0 returns (0.005, 0.010)</span>
+    <span class="keyword">return</span> (cond_a, cond_b)
+                    </code>
+                </div>
+
+                <h4 style="margin-top: 20px;">Confidence-Gated Sensitivity</h4>
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>Score Range</th>
+                            <th>Classification</th>
+                            <th>Trigger Rule</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>76 - 100</strong></td>
+                            <td><span class="badge badge-green">INSTITUTIONAL</span></td>
+                            <td>Condition A alone triggers (single-condition mode)</td>
+                        </tr>
+                        <tr>
+                            <td><strong>56 - 75</strong></td>
+                            <td><span class="badge badge-blue">STRONG</span></td>
+                            <td>Either A or B, plus 15-minute recovery check</td>
+                        </tr>
+                        <tr>
+                            <td><strong>31 - 55</strong></td>
+                            <td><span class="badge badge-orange">MODERATE</span></td>
+                            <td>Both A + B required, plus 15-minute recovery check</td>
+                        </tr>
+                        <tr>
+                            <td><strong>0 - 30</strong></td>
+                            <td><span class="badge badge-orange">WEAK</span></td>
+                            <td>Both A + B + 15-min + strict requirements</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <div class="callout warning">
+                    <span class="callout-icon">⚠️</span>
+                    <div class="callout-content">
+                        <h4>Strict Mode Override</h4>
+                        <p>On <strong>expiry day before 14:00 IST</strong> or <strong>low-liquidity days</strong>, strict mode is forced regardless of score. Both Condition A and B are always required. This prevents gamma-driven false triggers on expiry days.</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="docs-card">
+                <h3>📐 Adaptive Stop-Loss Placement</h3>
+                <p>
+                    The <code>AdaptiveSLPlacer</code> computes the actual SL price by buffering the nearest S/R level
+                    with an ATR-scaled margin, adjusted for the level's confidence and nearby liquidity vacuums.
+                </p>
+
+                <h4 style="margin-top: 16px;">ATR Multiplier by Confidence</h4>
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>Level Score</th>
+                            <th>ATR Multiplier</th>
+                            <th>Rationale</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>&gt; 70</strong></td>
+                            <td>0.3x ATR</td>
+                            <td>Tight SL: high-confidence level likely to hold</td>
+                        </tr>
+                        <tr>
+                            <td><strong>41 - 70</strong></td>
+                            <td>0.5x ATR</td>
+                            <td>Standard buffer: moderate confidence</td>
+                        </tr>
+                        <tr>
+                            <td><strong>&le; 40</strong></td>
+                            <td>0.8x ATR</td>
+                            <td>Wide buffer: noisy level, needs room to breathe</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <h4 style="margin-top: 16px;">SL Price Formula</h4>
+                <div class="code-block">
+                    <code>
+<span class="comment"># LONG position: SL below nearest support</span>
+sl = nearest_support - (multiplier x ATR) - vacuum_bonus
+
+<span class="comment"># SHORT position: SL above nearest resistance</span>
+sl = nearest_resistance + (multiplier x ATR) + vacuum_bonus
+
+<span class="comment"># vacuum_bonus: +0.5 x ATR if level sits at edge of liquidity gap</span>
+<span class="comment"># This prevents SL from being placed inside thin-air zones</span>
+                    </code>
+                </div>
+            </div>
+
+            <div class="docs-card">
+                <h3>🎯 Target Calculation</h3>
+                <p>
+                    Profit targets are set at the nearest resistance (LONG) or support (SHORT), offset by an ATR-adaptive buffer:
+                </p>
+
+                <div class="code-block">
+                    <code>
+<span class="comment"># LONG: target at nearest resistance, slightly below</span>
+target = nearest_resistance x (1 - offset)
+
+<span class="comment"># SHORT: target at nearest support, slightly above</span>
+target = nearest_support x (1 + offset)
+
+<span class="comment"># offset = interpolate_target_offset(atr_pct)</span>
+<span class="comment">#   ATR &le; 0.5%: offset = 0.3% (calm market, less buffer)</span>
+<span class="comment">#   ATR &ge; 2.0%: offset = 0.5% (volatile, more buffer)</span>
+<span class="comment">#   Between: linear interpolation</span>
+
+<span class="comment"># NEUTRAL (strangles): target = None (premium-decay target set by strategy)</span>
+                    </code>
+                </div>
+            </div>
+
+            <div class="docs-card">
+                <h3>⚡ 3-Stage Warning System</h3>
+                <p>The engine emits progressive warnings as price approaches structural levels:</p>
+
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>Stage</th>
+                            <th>Name</th>
+                            <th>Trigger</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>1</strong></td>
+                            <td>NEAR_SL</td>
+                            <td>Price within 1% of current SL</td>
+                            <td>One-time Telegram warning per position per day</td>
+                        </tr>
+                        <tr>
+                            <td><strong>2</strong></td>
+                            <td>STRUCTURAL_PRESSURE</td>
+                            <td>Condition A met, Condition B pending</td>
+                            <td>Telegram warning with 10-min cooldown; gives ~5 min lead time</td>
+                        </tr>
+                        <tr>
+                            <td><strong>3</strong></td>
+                            <td>TRIGGER</td>
+                            <td>Both Condition A + B met (per confidence gate)</td>
+                            <td>Structural SL fires; exit suggestion (manual) or auto-close (autonomous)</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="docs-card">
+                <h3>🔗 Engine Call Hierarchy</h3>
+                <p>Complete call tree showing how the SR engine is invoked from the monitoring pipeline:</p>
+
+                <div class="code-block">
+                    <code>
+positions/tasks.py (monitor_and_manage_positions)
+  <span class="function">apply_sl_and_target</span>(position, dashboard)
+    IntraDayTracker(dashboard)
+    <span class="function">SRExitEngine</span>(position, tracker).<span class="function">evaluate</span>()
+      <span class="function">MultiFactorSRCalculator</span>.<span class="function">compute_enhanced</span>()
+        <span class="function">compute</span>()            <span class="comment"># 8-source base S/R</span>
+        <span class="function">MTFSREnricher</span>        <span class="comment"># 4-timeframe swing stacking</span>
+        <span class="function">OrderBlockDetector</span>   <span class="comment"># Institutional base candles</span>
+        <span class="function">OIWallEnricher</span>       <span class="comment"># Gamma walls + OI delta</span>
+        <span class="function">LevelStrengthAnnotator</span>
+          <span class="function">LevelConfidenceScorer</span>.<span class="function">score</span>()
+        <span class="function">detect_liquidity_gaps</span>()
+        <span class="function">run_strategy_signals</span>() <span class="comment"># Shadow-run only</span>
+      <span class="function">GapDownFilter</span>.<span class="function">detect_gap</span>()
+      <span class="function">SLTriggerChecker</span>.<span class="function">should_trigger_sl</span>()
+        <span class="function">StructuralPressureMonitor</span>.<span class="function">check</span>()
+      <span class="function">AdaptiveSLPlacer</span>.<span class="function">compute_sl</span>()
+      <span class="function">TargetCalculator</span>.<span class="function">calculate</span>()
+    <span class="function">is_tighter_sl</span>(position, new_sl)
+    <span class="function">_propagate_sl_to_siblings</span>()
+    <span class="function">_propagate_target_to_siblings</span>()
+                    </code>
+                </div>
+            </div>
+
+            <div class="docs-card">
+                <h3>⚙️ Key Constants</h3>
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>Constant</th>
+                            <th>Value</th>
+                            <th>Purpose</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr><td>SR_CACHE_TTL_MINUTES</td><td>15</td><td>S/R data refresh interval</td></tr>
+                        <tr><td>OI_CACHE_TTL_MINUTES</td><td>5</td><td>OI wall refresh (faster than price S/R)</td></tr>
+                        <tr><td>CONDITION_A_PCT</td><td>0.5% (default)</td><td>Price breach threshold</td></tr>
+                        <tr><td>CONDITION_B_PCT</td><td>1.0% (default)</td><td>Session extreme threshold</td></tr>
+                        <tr><td>VOLUME_MULTIPLIER</td><td>1.2x</td><td>Volume filter: 5-min vol > 1.2x avg</td></tr>
+                        <tr><td>GAP_THRESHOLD</td><td>1.0%</td><td>Gap detection threshold vs prev close</td></tr>
+                        <tr><td>GAP_NOISE_EXTENSION</td><td>15 min</td><td>Extended noise window on gap days (09:30 &rarr; 09:45)</td></tr>
+                        <tr><td>PINNING_TOLERANCE_PCT</td><td>0.5%</td><td>Spot within 0.5% of wall = pinning</td></tr>
+                        <tr><td>PINNING_CYCLE_COUNT</td><td>3</td><td>Cycles before pinning alert fires</td></tr>
+                        <tr><td>STRUCTURAL_PRESSURE_COOLDOWN</td><td>10 min</td><td>Stage 2 warning cooldown</td></tr>
+                        <tr><td>TOUCH_TOLERANCE_PCT</td><td>0.3%</td><td>Historical touch detection tolerance</td></tr>
+                        <tr><td>CONFLUENCE_TOLERANCE_PCT</td><td>0.5%</td><td>MTF confluence clustering</td></tr>
+                        <tr><td>SCORE_INSTITUTIONAL</td><td>76</td><td>Single-condition trigger threshold</td></tr>
+                        <tr><td>SCORE_STRONG</td><td>56</td><td>Either-condition trigger threshold</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- ============================================
+             POSITION MONITORING ENGINE - DEEP DIVE
+             ============================================ -->
+        <section id="monitoring-engine" class="docs-section">
+            <div class="docs-section-header">
+                <h1>🔄 Position Monitoring Engine</h1>
+                <p>Complete 6-step monitoring pipeline with anti-spam dashboard and exit confirmation flow</p>
+                <p style="font-size: 0.85rem; color: #6b7280; margin-top: 8px;">
+                    📁 <code>apps/positions/tasks.py</code> |
+                    <code>apps/positions/services/monitor_dashboard.py</code> |
+                    <code>apps/positions/services/exit_manager.py</code>
+                </p>
+            </div>
+
+            <div class="docs-card">
+                <h3>🔄 Pipeline Overview</h3>
+                <p>
+                    The <code>monitor_and_manage_positions</code> Celery task runs <strong>every 1 minute</strong> during
+                    market hours (9:00 AM - 3:59 PM, Mon-Fri). It processes ALL open positions through a 6-step pipeline
+                    that handles price updates, P&L calculation, structural analysis, warnings, exit decisions, and
+                    consolidated Telegram reporting.
+                </p>
+                <p>
+                    Behaviour adapts to <code>TradingCoreConfig.notification_level</code>:
+                    <strong>FULL_CONTROL/SUPERVISED</strong> = send exit suggestions (user decides),
+                    <strong>AUTONOMOUS</strong> = auto-execute exits immediately.
+                </p>
+            </div>
+
+            <div class="docs-card">
+                <h3>📋 Step-by-Step Pipeline</h3>
+
+                <h4 style="margin-top: 16px; color: #2563eb;">Step 0: Broker Sync (Pre-cycle)</h4>
+                <p>
+                    Calls <code>sync_positions_from_brokers(include_history=False)</code> to fetch latest LTPs and detect
+                    any new positions entered directly at the broker. New positions get S/R-based SL/target via
+                    <code>_init_sr_levels()</code>. Existing sibling positions share SL/target for consistency.
+                </p>
+
+                <h4 style="margin-top: 16px; color: #2563eb;">Step 1: Deduplication</h4>
+                <p>
+                    Multiple DB accounts per broker can create duplicate position records. The system keeps
+                    <strong>one per (broker, instrument, quantity)</strong>, preferring the most recently synced.
+                </p>
+
+                <h4 style="margin-top: 16px; color: #2563eb;">Step 2: P&L Calculation</h4>
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>Direction</th>
+                            <th>P&L Formula</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr><td><strong>LONG</strong></td><td><code>(current_price - entry_price) x quantity</code></td></tr>
+                        <tr><td><strong>SHORT</strong></td><td><code>(entry_price - current_price) x quantity</code></td></tr>
+                        <tr><td><strong>NEUTRAL</strong></td><td><code>premium_collected</code> (fixed, time-decay based)</td></tr>
+                    </tbody>
+                </table>
+                <p style="margin-top: 8px;">P&L %: <code>(pnl / entry_value) x 100</code>. Updates <code>position.unrealized_pnl</code>.</p>
+
+                <h4 style="margin-top: 16px; color: #2563eb;">Step 3: Snapshot + SR Engine</h4>
+                <p>
+                    Creates a <code>MonitorLog</code> entry with IST timestamp and P&L snapshot. Then calls
+                    <code>apply_sl_and_target(position, dashboard, now)</code> which:
+                </p>
+                <ul style="margin-left: 16px; color: #4b5563; line-height: 1.8;">
+                    <li>Tightens position.stop_loss (never loosens)</li>
+                    <li>Initializes position.target if not yet set</li>
+                    <li>Checks structural SL trigger conditions (returns sl_triggered + sl_reason)</li>
+                    <li>Propagates values to sibling positions across brokers</li>
+                </ul>
+
+                <h4 style="margin-top: 16px; color: #2563eb;">Step 4a: Near-SL Warning</h4>
+                <p>
+                    If price is within <strong>1% of SL</strong> and no warning sent today: sends one-time
+                    Telegram alert. Uses <code>sr_tracking.near_sl_warned</code> flag to prevent duplicates.
+                </p>
+
+                <h4 style="margin-top: 16px; color: #2563eb;">Step 4b: Structural Pressure Warning (Stage 2)</h4>
+                <p>
+                    Manual mode only. When Condition A is met but Condition B is pending, a structural pressure
+                    warning is emitted. This gives the user approximately <strong>5 minutes of lead time</strong>
+                    before a full SL trigger. Subject to 10-minute cooldown.
+                </p>
+
+                <h4 style="margin-top: 16px; color: #2563eb;">Step 5: Exit Condition Check</h4>
+                <p>Two paths are checked in priority order:</p>
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>Priority</th>
+                            <th>Check</th>
+                            <th>Source</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr><td><strong>A (highest)</strong></td><td>SR Structural SL Triggered</td><td><code>sr_eval['sl_triggered']</code></td></tr>
+                        <tr><td><strong>B.1</strong></td><td>Stop-Loss Hit</td><td><code>current_price &le; stop_loss</code> (LONG)</td></tr>
+                        <tr><td><strong>B.2</strong></td><td>Target Hit</td><td><code>current_price &ge; target</code> (LONG)</td></tr>
+                        <tr><td><strong>B.3</strong></td><td>EOD Exit (3:15 PM)</td><td>Only if profit &ge; 50% of target</td></tr>
+                        <tr><td><strong>B.4</strong></td><td>Expiry Exit</td><td>Mandatory close on expiry day/Friday before expiry</td></tr>
+                    </tbody>
+                </table>
+
+                <h4 style="margin-top: 16px; color: #2563eb;">Step 6: Consolidated Dashboard</h4>
+                <p>
+                    After processing all positions, builds a single consolidated Telegram message grouped by broker.
+                    The message is <strong>edited in-place</strong> (not re-sent) to prevent notification spam.
+                    Updates only when: P&L moves outside a &plusmn;5% band, position approaches SL/target (within 0.2%),
+                    or it's the first/last run of the day.
+                </p>
+            </div>
+
+            <div class="docs-card">
+                <h3>📱 Exit Confirmation Flow (Manual Mode)</h3>
+                <p>Complete flow from detection to execution via Telegram:</p>
+
+                <div class="code-block">
+                    <code>
+<span class="comment">1. Exit condition detected in Step 5</span>
+        |
+<span class="comment">2. Check dedup: should_send_exit_suggestion(dashboard, reason)</span>
+   |-- First suggestion of day? <span class="string">ALWAYS SEND</span>
+   |-- Different reason than last? <span class="string">ALWAYS SEND</span>
+   |-- Same reason, cooldown (5 min) elapsed? <span class="string">SEND REMINDER</span>
+   |-- Same reason, within cooldown? <span class="string">SKIP (already pending)</span>
+        |
+<span class="comment">3. Send rich Telegram message via TradeConfirmationService:</span>
+   <span class="string">   "HDFCBANK26MARFUT | LONG 550 shares"</span>
+   <span class="string">   "Entry: 903 | Current: 882 | P&L: -35.3L (-2.3%)"</span>
+   <span class="string">   "SL: 850 | Target: 920"</span>
+   <span class="string">   "Reason: SR_STRUCTURAL_SL_TRIGGERED"</span>
+   <span class="string">   Buttons: [Close Now] [Hold / Wait]</span>
+        |
+<span class="comment">4. User taps button in Telegram</span>
+   |-- [Close Now]  -> _handle_exit_confirm() -> close_position()
+   |-- [Hold/Wait]  -> _handle_exit_hold() -> log and continue monitoring
+                    </code>
+                </div>
+            </div>
+
+            <div class="docs-card">
+                <h3>📊 Dashboard Message Format</h3>
+                <p>The consolidated Telegram message is phone-optimized and looks like this:</p>
+
+                <div class="code-block">
+                    <code>
+<span class="string">PORTFOLIO MONITOR  [14:35]</span>
+<span class="string">[SUPERVISED] | 2 position(s)</span>
+<span class="string">Day P&L: +12.5L (live +8.2L + realized +4.3L)</span>
+<span class="string">--------------------------------</span>
+
+<span class="string">Kotak Neo</span>
+<span class="string">  NIFTY26MAR25000CE | NEUTRAL 50L</span>
+<span class="string">    Entry prem: 6.70 | P&L: +2.1L (+31%)</span>
+<span class="string">    SL -15% | Tgt +50%</span>
+
+<span class="string">ICICI Breeze</span>
+<span class="string">  HDFCBANK26MARFUT | LONG 550</span>
+<span class="string">    903->918 | +8.3L (+1.7%)</span>
+<span class="string">    SL 890 (-28) | Tgt 940 (+22)</span>
+
+<span class="string">--------------------------------</span>
+<span class="string">Open P&L: +10.4L</span>
+<span class="string">Updated: 09-Mar 14:35:22</span>
+                    </code>
+                </div>
+
+                <h4 style="margin-top: 16px;">Dashboard Update Triggers</h4>
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>Condition</th>
+                            <th>Threshold</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr><td>First run of day</td><td>Always sends</td></tr>
+                        <tr><td>Last run of day (&ge; 3:30 PM)</td><td>Always sends (day-end snapshot)</td></tr>
+                        <tr><td>P&L moved outside band</td><td>&plusmn;5% from last sent value</td></tr>
+                        <tr><td>Near SL or target</td><td>Price within 0.2% of SL or target</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- ============================================
+             RISK MANAGEMENT INTERNALS
+             ============================================ -->
+        <section id="risk-internals" class="docs-section">
+            <div class="docs-section-header">
+                <h1>🚨 Risk Management Internals</h1>
+                <p>Circuit breakers, loss limits, risk limit lifecycle, and automated protective actions</p>
+                <p style="font-size: 0.85rem; color: #6b7280; margin-top: 8px;">
+                    📁 <code>apps/risk/services/risk_manager.py</code> |
+                    <code>apps/risk/tasks.py</code> |
+                    <code>apps/risk/models.py</code>
+                </p>
+            </div>
+
+            <div class="docs-card">
+                <h3>🏗️ Risk Hierarchy</h3>
+                <p>Risk is managed at 4 levels, from most granular to most broad. Each level can trigger protective actions independently.</p>
+
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>Level</th>
+                            <th>Scope</th>
+                            <th>Controls</th>
+                            <th>Automated Response</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>1. Position</strong></td>
+                            <td>Single position</td>
+                            <td>SL enforcement, target exit, expiry check, position sizing</td>
+                            <td>Immediate exit (auto or suggestion)</td>
+                        </tr>
+                        <tr>
+                            <td><strong>2. Account</strong></td>
+                            <td>Broker account</td>
+                            <td>Daily loss limit, weekly loss limit, ONE POSITION rule</td>
+                            <td>Circuit breaker activation, account deactivation</td>
+                        </tr>
+                        <tr>
+                            <td><strong>3. System</strong></td>
+                            <td>All accounts</td>
+                            <td>Max drawdown (15%), cross-account exposure</td>
+                            <td>Emergency close all, system pause</td>
+                        </tr>
+                        <tr>
+                            <td><strong>4. Adaptive</strong></td>
+                            <td>Behavioural</td>
+                            <td>VIX-adaptive thresholds, ATR scaling, confidence gating</td>
+                            <td>Automatic parameter adjustment per market conditions</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="docs-card">
+                <h3>🔄 Risk Check Pipeline</h3>
+                <p>The <code>check_risk_limits_all_accounts</code> task runs <strong>every 1 minute</strong> and executes this flow:</p>
+
+                <div class="code-block">
+                    <code>
+<span class="keyword">FOR EACH</span> active broker account:
+  1. <span class="function">check_daily_loss_limit</span>(account)
+     today_pnl = sum(CLOSED.realized_pnl <span class="keyword">WHERE</span> exit_time = today)
+                + sum(ACTIVE.unrealized_pnl)
+     <span class="keyword">IF</span> today_pnl >= daily_limit: <span class="string">BREACH</span>
+
+  2. <span class="function">check_weekly_loss_limit</span>(account)
+     week_pnl = sum(CLOSED.realized_pnl <span class="keyword">WHERE</span> exit_time >= monday)
+              + sum(ACTIVE.unrealized_pnl)
+     <span class="keyword">IF</span> week_pnl >= weekly_limit: <span class="string">BREACH</span>
+
+  3. Result routing:
+     <span class="keyword">BREACH</span>   -> <span class="function">activate_circuit_breaker</span>()
+     <span class="keyword">WARNING</span>  -> Send Telegram alert (utilization >= 80%)
+     <span class="keyword">CLEAR</span>    -> Log success, continue
+                    </code>
+                </div>
+            </div>
+
+            <div class="docs-card">
+                <h3>🔴 Circuit Breaker Activation</h3>
+                <p>
+                    When a risk breach is detected, <code>activate_circuit_breaker()</code> executes a multi-step
+                    protective sequence. The behaviour differs based on the notification mode:
+                </p>
+
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>Step</th>
+                            <th>Manual Mode</th>
+                            <th>Autonomous Mode</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>1. Record</strong></td>
+                            <td colspan="2">Create CircuitBreaker record with trigger details and timestamp</td>
+                        </tr>
+                        <tr>
+                            <td><strong>2. Close Positions</strong></td>
+                            <td>Send CRITICAL exit suggestion via Telegram (does NOT auto-close)</td>
+                            <td>Auto-close all positions immediately at current market price</td>
+                        </tr>
+                        <tr>
+                            <td><strong>3. Deactivate</strong></td>
+                            <td colspan="2">Set account.is_active = False (no new trades allowed)</td>
+                        </tr>
+                        <tr>
+                            <td><strong>4. Cooldown</strong></td>
+                            <td colspan="2">Set 24-hour cooldown period before account can be reactivated</td>
+                        </tr>
+                        <tr>
+                            <td><strong>5. Notify</strong></td>
+                            <td colspan="2">Send mode-appropriate Telegram notification with breach details</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <div class="callout warning">
+                    <span class="callout-icon">⚠️</span>
+                    <div class="callout-content">
+                        <h4>Important: Manual Mode Safety</h4>
+                        <p>In manual mode, circuit breaker activation does NOT automatically close positions. It sends a CRITICAL priority exit suggestion to Telegram. This respects the user's desire for control even in emergency situations. The user must tap [Close Now] to execute the exit.</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="docs-card">
+                <h3>📊 RiskLimit Model</h3>
+                <p>Per-account, per-period risk limits with warning thresholds:</p>
+
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>Field</th>
+                            <th>Type</th>
+                            <th>Purpose</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr><td>limit_type</td><td>CharField</td><td>DAILY_LOSS, WEEKLY_LOSS, MONTHLY_LOSS, POSITION_SIZE</td></tr>
+                        <tr><td>limit_value</td><td>Decimal</td><td>Maximum allowed loss in rupees</td></tr>
+                        <tr><td>current_value</td><td>Decimal</td><td>Current loss amount (updated each cycle)</td></tr>
+                        <tr><td>warning_threshold_pct</td><td>Decimal (80%)</td><td>Utilization % that triggers warning alert</td></tr>
+                        <tr><td>is_breached</td><td>Boolean</td><td>True when current_value >= limit_value</td></tr>
+                        <tr><td>period_start / period_end</td><td>Date</td><td>Tracking period boundaries</td></tr>
+                    </tbody>
+                </table>
+
+                <h4 style="margin-top: 16px;">Utilization Formula</h4>
+                <div class="code-block">
+                    <code>
+utilization_pct = (current_value / limit_value) x 100
+
+<span class="keyword">if</span> utilization_pct >= 100: <span class="comment"># BREACH -> circuit breaker</span>
+<span class="keyword">elif</span> utilization_pct >= 80: <span class="comment"># WARNING -> Telegram alert</span>
+<span class="keyword">else</span>:                      <span class="comment"># CLEAR -> continue trading</span>
+                    </code>
+                </div>
+            </div>
+
+            <div class="docs-card">
+                <h3>⏱️ Background Risk Tasks</h3>
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>Task</th>
+                            <th>Frequency</th>
+                            <th>Purpose</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>check_risk_limits_all_accounts</strong></td>
+                            <td>Every 1 min</td>
+                            <td>Check daily/weekly limits, activate circuit breakers</td>
+                        </tr>
+                        <tr>
+                            <td><strong>monitor_circuit_breakers</strong></td>
+                            <td>Every 30 sec</td>
+                            <td>Track active breakers, notify on cooldown expiry, send reminders every 6h if active > 24h</td>
+                        </tr>
+                        <tr>
+                            <td><strong>generate_daily_risk_report</strong></td>
+                            <td>6:00 PM daily</td>
+                            <td>Markdown report: per-account limits, utilization %, active breakers</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- ============================================
+             MATHEMATICAL CALCULATIONS
+             ============================================ -->
+        <section id="calculations" class="docs-section">
+            <div class="docs-section-header">
+                <h1>🧮 Mathematical Calculations</h1>
+                <p>All formulas, calculations, and derived values used across the system</p>
+                <p style="font-size: 0.85rem; color: #6b7280; margin-top: 8px;">
+                    📁 <code>apps/positions/services/sr_exit_engine_utils.py</code> |
+                    <code>apps/trading/services/position_sizer.py</code>
+                </p>
+            </div>
+
+            <div class="docs-card">
+                <h3>📐 Average True Range (ATR)</h3>
+                <p>ATR measures volatility by decomposing the full range of price movement, including gaps. Used extensively for SL placement and threshold scaling.</p>
+
+                <div class="code-block">
+                    <code>
+<span class="comment"># True Range for each bar (accounts for gaps)</span>
+TR = max(
+    High - Low,                    <span class="comment"># Intraday range</span>
+    |High - Previous_Close|,       <span class="comment"># Gap up range</span>
+    |Low - Previous_Close|         <span class="comment"># Gap down range</span>
+)
+
+<span class="comment"># ATR = simple average of TR over N periods (default 14)</span>
+ATR = mean(TR[-14:])
+
+<span class="comment"># ATR as percentage of price (used for scaling)</span>
+atr_pct = ATR / current_price
+                    </code>
+                </div>
+                <p style="margin-top: 8px; font-size: 0.9rem;">
+                    <strong>Usage:</strong> SL condition scaling, target offset interpolation, volatility event detection (body > 2x ATR),
+                    order block detection (impulse > 1.5x ATR).
+                </p>
+            </div>
+
+            <div class="docs-card">
+                <h3>📊 Volume-Weighted Average Price (VWAP)</h3>
+                <p>Institutional fair-value indicator. Price above VWAP = bullish bias, below = bearish.</p>
+
+                <div class="code-block">
+                    <code>
+<span class="comment"># Typical Price per candle</span>
+TP = (High + Low + Close) / 3
+
+<span class="comment"># Cumulative VWAP</span>
+VWAP = &Sigma;(TP x Volume) / &Sigma;(Volume)
+
+<span class="comment"># Standard Deviation for bands</span>
+&sigma; = sqrt(E[TP^2] - E[TP]^2)
+
+<span class="comment"># Band levels (used as S/R source)</span>
+Upper Band 1&sigma; = VWAP + &sigma;
+Lower Band 1&sigma; = VWAP - &sigma;
+Upper Band 2&sigma; = VWAP + 2&sigma;
+Lower Band 2&sigma; = VWAP - 2&sigma;
+                    </code>
+                </div>
+            </div>
+
+            <div class="docs-card">
+                <h3>📍 Pivot Points (5-Day Average)</h3>
+                <p>mCube uses a 5-day averaged pivot formula for stability (less sensitive to single-day noise):</p>
+
+                <div class="code-block">
+                    <code>
+avg_high  = mean(High[-5:])
+avg_low   = mean(Low[-5:])
+avg_close = mean(Close[-5:])
+
+Pivot = (avg_high + avg_low + avg_close) / 3
+
+R1 = (2 x Pivot) - avg_low
+R2 = Pivot + (avg_high - avg_low)
+R3 = avg_high + 2 x (Pivot - avg_low)
+
+S1 = (2 x Pivot) - avg_high
+S2 = Pivot - (avg_high - avg_low)
+S3 = avg_low - 2 x (avg_high - Pivot)
+                    </code>
+                </div>
+            </div>
+
+            <div class="docs-card">
+                <h3>📈 High Volume Node (HVN) Detection</h3>
+                <p>Identifies price levels with concentrated institutional activity over 20 days:</p>
+
+                <div class="code-block">
+                    <code>
+<span class="comment"># 1. Divide price range into 0.1% buckets</span>
+bucket_width = avg_price x 0.001
+
+<span class="comment"># 2. Distribute each candle's volume across H-L range</span>
+<span class="keyword">for</span> candle <span class="keyword">in</span> candles_20d:
+    vol_per_unit = candle.volume / (candle.high - candle.low)
+    <span class="keyword">for</span> bucket <span class="keyword">in</span> range(candle.low, candle.high):
+        bucket.volume += vol_per_unit
+
+<span class="comment"># 3. Score each bucket relative to average</span>
+score = bucket.volume / avg_volume_across_all_buckets
+
+<span class="comment"># 4. Return top N levels (default 3) as S/R levels</span>
+                    </code>
+                </div>
+            </div>
+
+            <div class="docs-card">
+                <h3>🕳️ Liquidity Gap (Vacuum Zone) Detection</h3>
+                <p>Identifies thin-air zones where price moves quickly due to absence of resting orders:</p>
+
+                <div class="code-block">
+                    <code>
+<span class="comment"># 1. Compute volume per 0.1% price bucket (same as HVN)</span>
+<span class="comment"># 2. Find contiguous bands where EVERY bucket < 10% of avg volume</span>
+<span class="comment"># 3. Calculate vacuum_score = avg_volume / max_bucket_vol_in_zone</span>
+<span class="comment">#    Higher score = thinner zone = faster price movement through it</span>
+
+<span class="comment"># Output: [{low, high, vacuum_score}, ...]</span>
+<span class="comment"># Used by AdaptiveSLPlacer to avoid placing SL inside vacuums</span>
+                    </code>
+                </div>
+            </div>
+
+            <div class="docs-card">
+                <h3>💰 Max-Pain Calculation (Options)</h3>
+                <p>Finds the strike price where total option holder pain is minimized (used on expiry days):</p>
+
+                <div class="code-block">
+                    <code>
+<span class="keyword">for</span> each candidate_strike:
+    total_pain = 0
+    <span class="keyword">for</span> each strike <span class="keyword">in</span> option_chain:
+        <span class="comment"># CE holders lose if spot settles above their strike</span>
+        <span class="keyword">if</span> candidate > strike:
+            total_pain += (candidate - strike) x ce_oi[strike]
+
+        <span class="comment"># PE holders lose if spot settles below their strike</span>
+        <span class="keyword">if</span> candidate < strike:
+            total_pain += (strike - candidate) x pe_oi[strike]
+
+max_pain_strike = <span class="function">argmin</span>(total_pain)
+                    </code>
+                </div>
+            </div>
+
+            <div class="docs-card">
+                <h3>📊 Consolidated S/R (Conservative Selection)</h3>
+                <p>Combines pivot-based and OI-based levels, always selecting the <strong>closest to current price</strong>:</p>
+
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>Level</th>
+                            <th>Selection Rule</th>
+                            <th>Rationale</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>Support</strong></td>
+                            <td>Take HIGHER value (closest to price)</td>
+                            <td>Tighter floor = less room for adverse move</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Resistance</strong></td>
+                            <td>Take LOWER value (closest to price)</td>
+                            <td>Tighter ceiling = less room for adverse move</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <p style="margin-top: 12px;"><strong>Example at NIFTY 25,746:</strong></p>
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>Level</th>
+                            <th>Pivot-Based</th>
+                            <th>OI-Based</th>
+                            <th>Selected</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr><td>S1</td><td>25,143</td><td>25,700</td><td><strong>25,700</strong> (higher = closer)</td></tr>
+                        <tr><td>R1</td><td>25,419</td><td>26,000</td><td><strong>25,419</strong> (lower = closer)</td></tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="docs-card">
+                <h3>📏 Position Sizing Formulas</h3>
+
+                <h4 style="margin-top: 16px;">Futures (ICICI)</h4>
+                <div class="code-block">
+                    <code>
+available = account.margin_available x 0.50  <span class="comment"># 50% rule</span>
+margin_per_lot = entry_price x lot_size x 0.20  <span class="comment"># 20% SPAN estimate</span>
+
+<span class="comment"># Risk-based constraint</span>
+risk_lots = max_loss_per_trade / (entry_price x lot_size x sl_pct)
+
+<span class="comment"># Margin-based constraint</span>
+margin_lots = available / margin_per_lot
+
+<span class="comment"># Beta/Volatility/Score adjustment</span>
+multiplier = beta_adj x vol_adj x score_adj  <span class="comment"># clamped [0.5, 1.5]</span>
+
+final_lots = min(risk_lots, margin_lots) x multiplier
+                    </code>
+                </div>
+
+                <h4 style="margin-top: 16px;">Options/Strangle (Kotak)</h4>
+                <div class="code-block">
+                    <code>
+margin_per_lot = higher_strike x lot_size x 0.16  <span class="comment"># 16% conservative SPAN</span>
+available = account.margin_available x 0.50 x 0.85  <span class="comment"># 50% rule + 15% buffer</span>
+max_position = total_margin x 0.30  <span class="comment"># 30% cap</span>
+
+lots = min(available, max_position) / margin_per_lot
+                    </code>
+                </div>
+            </div>
+
+            <div class="docs-card">
+                <h3>📈 Averaging Weighted Price</h3>
+                <p>When adding to a losing position, the new average entry price is calculated:</p>
+
+                <div class="code-block">
+                    <code>
+new_avg_price = (old_qty x old_price + new_qty x new_price) / (old_qty + new_qty)
+
+<span class="comment"># After averaging, SL is tightened to 0.5% from new average:</span>
+<span class="comment"># LONG:  new_sl = new_avg_price x 0.995</span>
+<span class="comment"># SHORT: new_sl = new_avg_price x 1.005</span>
+                    </code>
+                </div>
+            </div>
+
+            <div class="docs-card">
+                <h3>📊 VIX-Adaptive Thresholds</h3>
+
+                <h4 style="margin-top: 16px;">VIX Spike Detection (NEUTRAL positions)</h4>
+                <div class="code-block">
+                    <code>
+<span class="comment"># Adaptive threshold based on baseline VIX</span>
+threshold = 0.20 x (15.0 / baseline_vix)
+threshold = clamp(threshold, [0.10, 0.35])
+
+<span class="comment"># Example: VIX at 12 -> threshold = 0.25 (25% spike needed)</span>
+<span class="comment"># Example: VIX at 20 -> threshold = 0.15 (15% spike triggers)</span>
+
+<span class="keyword">if</span> current_vix > prev_close_vix x (1 + threshold):
+    <span class="comment"># Immediate exit for NEUTRAL (strangles) - IV expansion risk</span>
+                    </code>
+                </div>
+
+                <h4 style="margin-top: 16px;">VIX-Based Strategy Selection</h4>
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>VIX Level</th>
+                            <th>Auto Strategy</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr><td>&lt; 14 (Low)</td><td>STRANGLE (cheaper premium but lower risk)</td></tr>
+                        <tr><td>14 - 18 (Normal)</td><td>STRANGLE (standard environment)</td></tr>
+                        <tr><td>&gt; 18 (High)</td><td>BROKEN_IRON_CONDOR (add downside protection)</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- ============================================
+             EDGE CASE HANDLING
+             ============================================ -->
+        <section id="edge-cases" class="docs-section">
+            <div class="docs-section-header">
+                <h1>⚡ Edge Case Handling</h1>
+                <p>How the system handles extreme conditions, data issues, and unusual market events</p>
+            </div>
+
+            <div class="docs-card">
+                <h3>🌊 Extreme Volatility</h3>
+                <p>The system detects and handles extreme volatility events:</p>
+
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>Scenario</th>
+                            <th>Detection</th>
+                            <th>Response</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>Volatility Shock</strong></td>
+                            <td>Candle body > 2x ATR in a single 5-min bar</td>
+                            <td>
+                                Sets <code>volatility_event_flag</code> in sr_tracking. SR logic is bypassed
+                                (levels are unreliable during shocks). Flag auto-clears after 3 consecutive
+                                calm candles (body < 1x ATR).
+                            </td>
+                        </tr>
+                        <tr>
+                            <td><strong>VIX Spike</strong></td>
+                            <td>Current VIX > prev_close x (1 + adaptive threshold)</td>
+                            <td>Immediate exit for NEUTRAL positions (strangle IV expansion risk). Threshold adapts to baseline VIX level.</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Gap Down</strong></td>
+                            <td>Open price > 1% below prev close</td>
+                            <td>Extends noise window from 09:30 to 09:45 IST. Prevents false SL triggers during opening volatility.</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Circuit-Breaker Level Market Halt</strong></td>
+                            <td>Broker API returns no data / connection error</td>
+                            <td>Monitor cycle continues with last known prices. No SL triggers on stale data.</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="docs-card">
+                <h3>📡 Data Delays & Stale Data</h3>
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>Scenario</th>
+                            <th>Handling</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>Spot price stale</strong></td>
+                            <td><code>_fetch_spot_price()</code> checks if ContractData was updated today. Falls back to futures CMP to avoid stale spot-basis mismatch.</td>
+                        </tr>
+                        <tr>
+                            <td><strong>S/R cache expired</strong></td>
+                            <td>15-min TTL. On refresh failure, uses last cached result. On total failure, returns safe defaults (no SL trigger).</td>
+                        </tr>
+                        <tr>
+                            <td><strong>OI data unavailable</strong></td>
+                            <td>OIWallEnricher returns safe defaults (no gamma walls, no pinning alert). SR engine continues without OI enrichment.</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Broker sync failure</strong></td>
+                            <td>Position sync logs error and continues. Existing position records used with last known prices.</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Noise window (opening)</strong></td>
+                            <td>SL triggers blocked before 09:30 IST (or 09:45 on gap days). Prevents false triggers on opening auction noise.</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="docs-card">
+                <h3>📦 Partial Fills & Order Issues</h3>
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>Scenario</th>
+                            <th>Handling</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>Large orders (> 10 lots)</strong></td>
+                            <td>
+                                Orders are batched: 10 lots per batch with 10-second delays.
+                                <code>OrderExecutionControl</code> tracks progress. User can cancel via
+                                Telegram [Stop Execution] button between batches.
+                            </td>
+                        </tr>
+                        <tr>
+                            <td><strong>Partial fill</strong></td>
+                            <td>Position record tracks filled_quantity vs total quantity. Broker sync reconciles on next cycle.</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Order rejection</strong></td>
+                            <td>Logged with rejection reason from broker. Telegram alert sent. Position status remains unchanged.</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Broker session expired</strong></td>
+                            <td>Auto-login attempted (one per day per broker). Selenium + Telegram OTP for Breeze. TOTP+MPIN for Kotak Neo v2.</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="docs-card">
+                <h3>🔀 Strategy Conflicts & Cross-Position Concerns</h3>
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>Scenario</th>
+                            <th>Resolution</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>ONE POSITION rule violation</strong></td>
+                            <td>Enforced at code level in <code>create_position()</code>. If active position exists, new position creation returns False. Cannot be overridden.</td>
+                        </tr>
+                        <tr>
+                            <td><strong>SL/target propagation conflict</strong></td>
+                            <td>When same underlying traded on multiple accounts: SL is tightened (never loosened) and propagated to all siblings. Target set only if missing.</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Duplicate exit suggestions</strong></td>
+                            <td>5-minute cooldown per position per reason. Same reason within cooldown = skipped. Different reason = always sent.</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Conflicting signals (SR vs standard exit)</strong></td>
+                            <td>SR structural trigger takes priority. Checked BEFORE standard exit conditions (SL/target/EOD).</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Gamma squeeze on expiry (BIC)</strong></td>
+                            <td>BrokenIronCondorGuard detects spot within 1% of gamma wall. Emits warning (shadow-run mode currently).</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="docs-card">
+                <h3>🛡️ Fail-Safe Design Patterns</h3>
+                <p>Every component in the monitoring and SR engine follows these fail-safe principles:</p>
+                <ul class="module-features">
+                    <li><strong>Never raise, always return safe defaults</strong>: All SR engine classes catch exceptions internally and return neutral results (no trigger, no SL change)</li>
+                    <li><strong>Monotonic SL tightening</strong>: SL can only move in the protective direction (higher for LONG, lower for SHORT). Prevents loosening on recalculation</li>
+                    <li><strong>Sticky session extremes</strong>: Session low/high track the absolute min/max of the day, never reset mid-day. Used for Condition B verification</li>
+                    <li><strong>Graceful degradation</strong>: If MTF data unavailable, engine uses base 8-source. If OI unavailable, uses pivot-only. If all fail, SL/target unchanged</li>
+                    <li><strong>Idempotent operations</strong>: Running the same monitor cycle twice produces the same result. No cumulative side effects</li>
+                </ul>
+            </div>
+        </section>
+
+        <!-- ============================================
+             STRATEGY EXECUTION LIFECYCLE
+             ============================================ -->
+        <section id="strategy-lifecycle" class="docs-section">
+            <div class="docs-section-header">
+                <h1>🔁 Strategy Execution Lifecycle</h1>
+                <p>Complete lifecycle from market scan through exit, for each strategy type</p>
+            </div>
+
+            <div class="docs-card">
+                <h3>📈 Futures Strategy Lifecycle</h3>
+                <p>The LLM-Validated Futures strategy follows a two-phase daily lifecycle:</p>
+
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>Phase</th>
+                            <th>Time</th>
+                            <th>Steps</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>1. Pre-Market Scan</strong></td>
+                            <td>8:30 AM</td>
+                            <td>
+                                Screen top 50 F&O stocks by volume.
+                                Run 12-factor composite scoring (300 pts scaled to 100).
+                                Apply hard reject filters (MWPL < 80%, Volatility < 60%, Piotroski >= 4, etc.).
+                                Cache results for Phase 2.
+                            </td>
+                        </tr>
+                        <tr>
+                            <td><strong>2. Execution</strong></td>
+                            <td>9:40 AM</td>
+                            <td>
+                                Re-validate with live prices.
+                                Filter: composite_score >= 65 (configurable).
+                                Rank by score, take top 3 candidates.
+                                Verify ONE POSITION rule and margin availability.
+                            </td>
+                        </tr>
+                        <tr>
+                            <td><strong>3. LLM Validation</strong></td>
+                            <td>9:40-10:00 AM</td>
+                            <td>
+                                Build context via RAG (news, sector, analyst reports).
+                                Submit to LLM with structured prompt.
+                                Require >= 70% confidence.
+                                If passed: create TradeSuggestion, send to Telegram for approval.
+                            </td>
+                        </tr>
+                        <tr>
+                            <td><strong>4. Approval & Entry</strong></td>
+                            <td>User-dependent</td>
+                            <td>
+                                Manual mode: wait for Telegram [Approve] tap.
+                                Calculate position size (50% margin, beta/vol/score adjusted).
+                                Place market order. Batching for > 10 lots.
+                                Set initial SL/target from SR engine (<code>compute_initial_sl_target()</code>).
+                            </td>
+                        </tr>
+                        <tr>
+                            <td><strong>5. Active Monitoring</strong></td>
+                            <td>Every 1 min</td>
+                            <td>
+                                6-step monitor pipeline: sync, P&L calc, SR engine, near-SL warning,
+                                structural pressure, exit check. Consolidated dashboard every cycle.
+                            </td>
+                        </tr>
+                        <tr>
+                            <td><strong>6. Averaging</strong></td>
+                            <td>Every 10 min</td>
+                            <td>
+                                Check if position down >= 1% from avg price.
+                                Max 2 additional entries (3 total).
+                                Re-validate with LLM before averaging.
+                                Tighten SL to 0.5% from new average.
+                            </td>
+                        </tr>
+                        <tr>
+                            <td><strong>7. Exit</strong></td>
+                            <td>Condition-based</td>
+                            <td>
+                                Priority: SR structural trigger > SL hit > Target hit > EOD (3:15 PM, >= 50% profit) > Expiry.
+                                Manual: exit suggestion via Telegram.
+                                Autonomous: auto-close immediately.
+                            </td>
+                        </tr>
+                        <tr>
+                            <td><strong>8. Post-Exit</strong></td>
+                            <td>After exit</td>
+                            <td>
+                                Record realized_pnl. Set exit_time and exit_reason. Update position status to CLOSED.
+                                Send P&L notification via Telegram. Update daily/weekly risk limits.
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="docs-card">
+                <h3>📊 Strangle / Broken Iron Condor Lifecycle</h3>
+
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>Phase</th>
+                            <th>Time</th>
+                            <th>Steps</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>1. Strategy Selection</strong></td>
+                            <td>Pre-entry</td>
+                            <td>
+                                If <code>options_strategy = AUTO</code>: check VIX.
+                                VIX > 18 -> BROKEN_IRON_CONDOR (add put protection).
+                                VIX < 14 -> STRANGLE (standard premium collection).
+                                Otherwise: use configured strategy.
+                            </td>
+                        </tr>
+                        <tr>
+                            <td><strong>2. Entry Screening</strong></td>
+                            <td>9:00-11:30 AM</td>
+                            <td>
+                                10-factor scoring (275 pts scaled to 100).
+                                Hard reject filters: VIX range, news sentiment, gap at open, FII outflow, economic events.
+                                Score >= 60 required for entry.
+                            </td>
+                        </tr>
+                        <tr>
+                            <td><strong>3. Strike Calculation</strong></td>
+                            <td>After screening</td>
+                            <td>
+                                Multi-factor delta algorithm: base delta x VIX adj x trend adj x vol adj x OI adj x PCR adj x news adj.
+                                Asymmetric strikes based on news sentiment bias.
+                                Round to nearest 50 (NIFTY interval).
+                                Premium validation: minimum Rs 50/lot.
+                                BIC: add insurance put (risk_multiplier x max_profit = risk_budget).
+                            </td>
+                        </tr>
+                        <tr>
+                            <td><strong>4. Position Sizing</strong></td>
+                            <td>Before execution</td>
+                            <td>
+                                Margin per lot = higher_strike x lot_size x 16%.
+                                Available = margin x 50% x 85% (15% buffer).
+                                Cap at 30% of total margin.
+                                User can adjust strikes via +/- buttons in web UI before execution.
+                            </td>
+                        </tr>
+                        <tr>
+                            <td><strong>5. Execution</strong></td>
+                            <td>User-triggered</td>
+                            <td>
+                                Strangle: SELL CE + SELL PE (2 orders).
+                                BIC: SELL CE + SELL PE + BUY PE hedge (3 orders).
+                                Create Position record (status: OPEN, direction: NEUTRAL).
+                            </td>
+                        </tr>
+                        <tr>
+                            <td><strong>6. Monitoring</strong></td>
+                            <td>Every 1 min</td>
+                            <td>
+                                Delta monitoring: alert if |net_delta| > 300.
+                                P&L based on premium collected vs current premium.
+                                SR engine: NEUTRAL checks both OI S1 (put) and R1 (call) independently.
+                                VIX spike monitoring with adaptive threshold.
+                            </td>
+                        </tr>
+                        <tr>
+                            <td><strong>7. Exit</strong></td>
+                            <td>Condition-based</td>
+                            <td>
+                                Profit target: 50% of premium collected.
+                                Thursday 3:15 PM: exit if >= 50% profit, else hold.
+                                Friday EOD: mandatory exit.
+                                VIX spike: immediate exit (NEUTRAL only).
+                                Close ALL legs together (2 or 3 legs).
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="docs-card">
+                <h3>🔐 Notification Level Impact on Lifecycle</h3>
+                <p>
+                    The <code>TradingCoreConfig.notification_level</code> setting fundamentally changes how the
+                    system behaves at key decision points:
+                </p>
+
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>Decision Point</th>
+                            <th>FULL_CONTROL</th>
+                            <th>SUPERVISED</th>
+                            <th>AUTONOMOUS</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>Trade Entry</strong></td>
+                            <td>Telegram confirmation required</td>
+                            <td>Telegram confirmation required</td>
+                            <td>Auto-execute if LLM > 80%</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Exit Trigger</strong></td>
+                            <td>Exit suggestion sent, user decides</td>
+                            <td>Exit suggestion sent, user decides</td>
+                            <td>Auto-close immediately</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Circuit Breaker</strong></td>
+                            <td>CRITICAL suggestion (no auto-close)</td>
+                            <td>CRITICAL suggestion (no auto-close)</td>
+                            <td>Auto-close all + deactivate account</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Averaging</strong></td>
+                            <td>Confirmation required</td>
+                            <td>Confirmation required</td>
+                            <td>Auto-average if LLM validates</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Delta Adjustment</strong></td>
+                            <td>Alert only (manual execution)</td>
+                            <td>Alert only (manual execution)</td>
+                            <td>Alert only (manual execution)</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <div class="callout info">
+                    <span class="callout-icon">💡</span>
+                    <div class="callout-content">
+                        <h4>Mode Detection in Code</h4>
+                        <p>
+                            <code>config.is_autonomous()</code> returns True only for AUTONOMOUS mode.
+                            <code>config.requires_confirmation('EXIT')</code> returns True for both FULL_CONTROL and SUPERVISED.
+                            FULL_CONTROL and SUPERVISED are collectively referred to as "Manual mode" throughout the codebase.
+                        </p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="docs-card">
+                <h3>📊 Position State Machine</h3>
+                <p>Every position transitions through these states:</p>
+
+                <div class="code-block">
+                    <code>
+<span class="string">SUGGESTED</span> -> [User approves]  -> <span class="string">APPROVED</span>
+<span class="string">SUGGESTED</span> -> [User rejects]   -> <span class="string">REJECTED</span>
+<span class="string">SUGGESTED</span> -> [Timeout]         -> <span class="string">EXPIRED</span>
+
+<span class="string">APPROVED</span>  -> [Order placed]    -> <span class="string">OPEN</span>
+
+<span class="string">OPEN</span>      -> [SL / Target / EOD / SR trigger / Manual]
+                                     -> <span class="string">CLOSED</span>
+<span class="string">OPEN</span>      -> [Broker sync: position gone]
+                                     -> <span class="string">CLOSED</span> (exit_reason='BROKER_SYNC')
+
+<span class="comment"># OPEN is the "active" state where monitoring runs</span>
+<span class="comment"># CLOSED is terminal - position enters analytics pipeline</span>
+                    </code>
+                </div>
             </div>
         </section>
 

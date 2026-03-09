@@ -170,6 +170,42 @@ class BrokerAccount(TimeStampedModel):
 
         return realized_today + unrealized
 
+    def get_weekly_pnl(self, week_start=None) -> Decimal:
+        """
+        Calculate P&L for the current week (Monday to today)
+
+        Args:
+            week_start: Start date of the week (defaults to current week's Monday)
+
+        Returns:
+            Decimal: Weekly P&L (negative = loss)
+        """
+        from datetime import date, timedelta
+        from apps.positions.models import Position
+
+        if week_start is None:
+            today = date.today()
+            week_start = today - timedelta(days=today.weekday())
+
+        # Realized P&L from positions closed this week
+        realized_this_week = Position.objects.filter(
+            account=self,
+            status='CLOSED',
+            exit_time__date__gte=week_start
+        ).aggregate(
+            total=models.Sum('realized_pnl')
+        )['total'] or Decimal('0')
+
+        # Unrealized P&L from active positions
+        unrealized = Position.objects.filter(
+            account=self,
+            status='ACTIVE'
+        ).aggregate(
+            total=models.Sum('unrealized_pnl')
+        )['total'] or Decimal('0')
+
+        return realized_this_week + unrealized
+
     def deactivate(self, reason: str = ""):
         """
         Deactivate the account (triggered by circuit breakers)

@@ -192,6 +192,9 @@ def monitor_and_manage_positions():
                 })
 
                 # ── 4. Near-SL warning (uses SR-updated SL from step 3) ──────
+                # Tracked separately from exit suggestions in sr_tracking
+                # JSON to avoid cross-contamination. Sent ONCE per day per
+                # position — the dashboard already shows live SL proximity.
                 if (
                     position.stop_loss
                     and position.current_price
@@ -200,18 +203,48 @@ def monitor_and_manage_positions():
                     price = float(position.current_price)
                     sl = float(position.stop_loss)
                     buffer_pct = abs(price - sl) / price * 100  # % of current price
-                    if buffer_pct < 1.0:  # within 1% of SL
-                        if should_send_exit_suggestion(dashboard, 'NEAR_SL', cooldown_minutes=15):
-                            warn_msg = (
-                                f"🟡 <b>NEAR SL WARNING</b>\n\n"
-                                f"<b>{position.label}</b>\n"
-                                f"Current: ₹{price:,.2f}\n"
-                                f"SL:      ₹{sl:,.2f}\n"
-                                f"Buffer: {buffer_pct:.2f}% from SL\n\n"
-                                f"<i>Position approaching stop-loss — monitor closely.</i>"
-                            )
-                            send_telegram_notification(warn_msg, notification_type='WARNING')
-                            record_exit_suggestion(dashboard, 'NEAR_SL')
+                    sr_data = dashboard.sr_tracking or {}
+                    already_warned = sr_data.get('near_sl_warned', False)
+                    if buffer_pct < 1.0 and not already_warned:  # within 1% of SL, once per day
+                        warn_msg = (
+                            f"🟡 <b>NEAR SL WARNING</b>\n\n"
+                            f"<b>{position.label}</b>\n"
+                            f"Current: ₹{price:,.2f}\n"
+                            f"SL:      ₹{sl:,.2f}\n"
+                            f"Buffer: {buffer_pct:.2f}% from SL\n\n"
+                            f"<i>Position approaching stop-loss — monitor closely.</i>"
+                        )
+                        send_telegram_notification(warn_msg, notification_type='WARNING')
+                        sr_data['near_sl_warned'] = True
+                        dashboard.sr_tracking = sr_data
+                        dashboard.save(update_fields=['sr_tracking'])
+
+                # ── 4b. STRUCTURAL PRESSURE — Stage 2 pre-trigger warning ────
+                # Emitted when Condition A is met but Condition B is not yet.
+                # Gives the trader ~5 min lead time before the full SL fires.
+                # Only sent in manual mode (autonomous mode will auto-exit on trigger).
+                if is_manual_mode and sr_eval.get('structural_pressure'):
+                    stage2 = sr_eval['structural_pressure']
+                    if stage2.get('should_warn') and stage2.get('reason'):
+                        MonitorLog.objects.create(
+                            position=position,
+                            check_type='STRUCTURAL_PRESSURE',
+                            result='STAGE2_WARNING_SENT',
+                            message=(
+                                f"[{ist_datetime_str(now)}] "
+                                f"Structural pressure detected @ level={stage2.get('level',0):.2f} "
+                                f"score={stage2.get('score',0)}/100"
+                            ),
+                            price_at_check=position.current_price,
+                            pnl_at_check=pnl,
+                        )
+                        send_telegram_notification(
+                            stage2['reason'],
+                            notification_type='WARNING',
+                        )
+                        logger.info(
+                            f"Stage 2 structural pressure warning sent for pos #{position.id}"
+                        )
 
                 # ── 5. Exit condition check ───────────────────────────────────
                 # SR structural SL trigger (two-condition rule from step 3)

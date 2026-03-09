@@ -4,6 +4,7 @@ Views for System Positions management page.
 
 import json
 import logging
+import re
 from decimal import Decimal, InvalidOperation
 from django.shortcuts import render
 from django.contrib.auth.decorators import login_required
@@ -22,6 +23,17 @@ from apps.positions.services.sr_exit_engine import compute_initial_sl_target
 logger = logging.getLogger(__name__)
 
 BROKER_DISPLAY = {'KOTAK': 'Kotak Neo', 'ICICI': 'ICICI Breeze'}
+
+_EXPIRY_RE = re.compile(r'^([A-Z&]+)\d{2}[A-Z]{3}(FUT|CE|PE)\d*$')
+
+
+def _underlying(display_name: str) -> str:
+    """Extract underlying symbol from a futures/options display_name.
+    'HDFCBANK26MARFUT' → 'HDFCBANK', 'NIFTY26APRFUT' → 'NIFTY'.
+    Returns display_name unchanged if it doesn't match the pattern.
+    """
+    m = _EXPIRY_RE.match(display_name or '')
+    return m.group(1) if m else (display_name or '')
 
 
 @login_required
@@ -184,20 +196,22 @@ def suggest_sl_target(request):
         position_id = data.get('position_id')
 
         position = Position.objects.get(id=position_id)
-        symbol = position.instrument or ''
         direction = position.direction
 
-        # All open positions for the same instrument+direction share the same
+        # Use display_name to find the underlying symbol (e.g. HDFCBANK26MARFUT → HDFCBANK).
+        # This correctly groups positions across brokers (HDFBAN / HDFCBANK) that
+        # represent the same underlying and should share identical SR levels.
+        underlying = _underlying(position.display_name or position.instrument or '')
+
+        # All open positions for the same underlying+direction share the same
         # structural support/resistance.  Compute once and apply consistently.
         siblings = list(Position.objects.filter(
-            instrument=symbol,
+            display_name__startswith=underlying,
             direction=direction,
             status=POSITION_STATUS_OPEN,
         ))
 
         # Use the highest CMP across all siblings as the canonical reference.
-        # This ensures "nearest support below" finds the same floor for every
-        # sibling regardless of minor CMP drift between positions.
         ref_price = max(
             (float(p.current_price or p.entry_price or 0) for p in siblings),
             default=0.0,
@@ -205,7 +219,7 @@ def suggest_sl_target(request):
         if ref_price == 0:
             return JsonResponse({'success': False, 'error': 'No price available for SR computation'})
 
-        sr = compute_initial_sl_target(symbol, ref_price, direction)
+        sr = compute_initial_sl_target(underlying, ref_price, direction)
 
         if sr['stop_loss'] is None and sr['target'] is None:
             return JsonResponse({
@@ -216,14 +230,16 @@ def suggest_sl_target(request):
         sl_dec  = Decimal(str(round(sr['stop_loss'], 2))) if sr['stop_loss'] else None
         tgt_dec = Decimal(str(round(sr['target'],    2))) if sr['target']    else None
 
-        # Apply consistently to every sibling that is missing SL or target
+        # User explicitly requested SR refresh — apply to ALL siblings regardless
+        # of whether they already have values, ensuring full consistency across
+        # brokers and expiries for the same instrument.
         siblings_updated = 0
         for sib in siblings:
             fields = []
-            if sl_dec is not None and not sib.stop_loss:
+            if sl_dec is not None:
                 sib.stop_loss = sl_dec
                 fields.append('stop_loss')
-            if tgt_dec is not None and not sib.target:
+            if tgt_dec is not None:
                 sib.target = tgt_dec
                 fields.append('target')
             if fields:

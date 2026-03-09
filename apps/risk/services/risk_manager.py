@@ -173,9 +173,8 @@ def check_weekly_loss_limit(account: BrokerAccount) -> Dict[str, any]:
         }
     )
 
-    # Calculate this week's P&L (sum of daily P&L from Monday to today)
-    # For now, use cumulative realized + unrealized P&L
-    weekly_pnl = account.get_total_pnl()  # This is total P&L, need to filter by week
+    # Calculate this week's P&L (realized from positions closed this week + unrealized)
+    weekly_pnl = account.get_weekly_pnl(week_start=week_start)
     weekly_loss = abs(weekly_pnl) if weekly_pnl < 0 else Decimal('0.00')
 
     # Update limit
@@ -261,7 +260,7 @@ def activate_circuit_breaker(
         core_config = TradingCoreConfig.get_instance()
         is_manual_mode = not core_config.is_autonomous()
     except Exception:
-        is_manual_mode = False  # Fail safe: auto-execute if config unavailable
+        is_manual_mode = True  # Fail safe: never auto-close if config unavailable
 
     for position in active_positions:
         try:
@@ -307,16 +306,38 @@ def activate_circuit_breaker(
     circuit_breaker.positions_closed = positions_closed
     circuit_breaker.save()
 
-    # Notify if suggestions were sent (manual mode) vs positions auto-closed
-    if is_manual_mode and positions_pending > 0:
-        from apps.alerts.services.telegram_client import send_telegram_notification
+    # Notify — message reflects actual action taken
+    from apps.alerts.services.telegram_client import send_telegram_notification
+    if is_manual_mode:
+        if positions_pending > 0:
+            send_telegram_notification(
+                f"🚨 CIRCUIT BREAKER — MANUAL MODE\n\n"
+                f"Account: {account.account_name}\n"
+                f"Trigger: {trigger_type} | ₹{trigger_value:,.0f} > ₹{threshold_value:,.0f}\n\n"
+                f"⚠️ {positions_pending} exit suggestion(s) sent to Telegram.\n"
+                f"Positions will NOT close until you confirm.\n\n"
+                f"ACT NOW — confirm all exit suggestions immediately.",
+                notification_type='ERROR'
+            )
+        else:
+            send_telegram_notification(
+                f"🚨 CIRCUIT BREAKER ACTIVATED — MANUAL MODE\n\n"
+                f"Account: {account.account_name}\n"
+                f"Trigger: {trigger_type} | ₹{trigger_value:,.0f} > ₹{threshold_value:,.0f}\n\n"
+                f"No open positions found. Account has been deactivated.\n"
+                f"No new trades will be placed.",
+                notification_type='ERROR'
+            )
+    else:
         send_telegram_notification(
-            f"🚨 CIRCUIT BREAKER — MANUAL MODE\n\n"
+            f"🚨🚨 CIRCUIT BREAKER ACTIVATED 🚨🚨\n\n"
             f"Account: {account.account_name}\n"
             f"Trigger: {trigger_type} | ₹{trigger_value:,.0f} > ₹{threshold_value:,.0f}\n\n"
-            f"⚠️ {positions_pending} exit suggestion(s) sent.\n"
-            f"Positions will NOT close until you confirm in Telegram.\n\n"
-            f"ACT NOW — confirm all exit suggestions immediately.",
+            f"ACTIONS TAKEN:\n"
+            f"✅ {positions_closed} position(s) closed\n"
+            f"✅ Account deactivated\n"
+            f"✅ 24-hour cooldown activated\n\n"
+            f"⚠️ IMMEDIATE ATTENTION REQUIRED",
             notification_type='ERROR'
         )
 

@@ -35,16 +35,18 @@ class ConsolidatedSRCalculator:
     - For Resistance: Use the LOWER (closer) value between Pivot-R1 and OI-R1
     """
 
-    def __init__(self, symbol: str = 'NIFTY'):
+    def __init__(self, symbol: str = 'NIFTY', oi_symbol: str = None):
         """
         Initialize consolidated S/R calculator
 
         Args:
-            symbol: Symbol to analyze
+            symbol:    Symbol for HistoricalPrice queries (Breeze stock_code)
+            oi_symbol: Symbol for ContractData/OI queries (NSE code).
+                       Defaults to symbol when both are the same.
         """
         self.symbol = symbol
         self.pivot_calculator = SupportResistanceCalculator(symbol=symbol)
-        self.oi_calculator = OISupportResistanceCalculator(symbol=symbol)
+        self.oi_calculator = OISupportResistanceCalculator(symbol=oi_symbol or symbol)
 
     def calculate_all_sr_methods(self, current_price: float) -> Dict:
         """
