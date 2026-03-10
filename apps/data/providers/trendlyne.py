@@ -579,6 +579,8 @@ class TrendlyneProvider(BaseWebScraper):
 
         results = {}
 
+        discovered_ids = {}  # symbol -> trendlyne_id
+
         for label, url in self.FORECASTER_URLS.items():
             try:
                 self.logger.info(f"📊 Fetching: {label}")
@@ -599,6 +601,17 @@ class TrendlyneProvider(BaseWebScraper):
                     row = [td.get_text(strip=True) for td in tr.find_all("td")]
                     rows.append(row)
 
+                    # Extract trendlyne_id from equity links in each row
+                    equity_links = tr.find_all('a', href=re.compile(r'/equity/\d+/'))
+                    for link in equity_links:
+                        href = link.get('href', '')
+                        id_match = re.search(r'/equity/(\d+)/([^/]+)/', href)
+                        if id_match:
+                            tid = int(id_match.group(1))
+                            symbol = id_match.group(2).upper()
+                            if symbol not in discovered_ids:
+                                discovered_ids[symbol] = tid
+
                 df = pd.DataFrame(rows, columns=headers)
                 safe_label = label.replace(" ", "_").replace("%", "pct").replace("/", "_")
                 file_path = os.path.join(output_dir, f"trendlyne_{safe_label}.csv")
@@ -615,7 +628,161 @@ class TrendlyneProvider(BaseWebScraper):
                 self.logger.error(f"Error fetching {label}: {e}")
                 results[label] = {'success': False, 'error': str(e)}
 
+        # Bulk update trendlyne_ids in TLStockData
+        if discovered_ids:
+            try:
+                from apps.data.models import TLStockData
+                updated_count = 0
+                stocks_to_update = TLStockData.objects.filter(
+                    nsecode__in=list(discovered_ids.keys()),
+                    trendlyne_id__isnull=True
+                )
+                for stock in stocks_to_update:
+                    tid = discovered_ids.get(stock.nsecode)
+                    if tid:
+                        stock.trendlyne_id = tid
+                        stock.save(update_fields=['trendlyne_id'])
+                        updated_count += 1
+                self.logger.info(f"📝 Updated {updated_count} trendlyne_ids from forecaster tables (discovered {len(discovered_ids)} total)")
+                results['_trendlyne_ids_discovered'] = len(discovered_ids)
+                results['_trendlyne_ids_updated'] = updated_count
+            except Exception as e:
+                self.logger.warning(f"Error updating trendlyne_ids: {e}")
+
         return results
+
+    def discover_trendlyne_ids(self, symbols: list = None) -> Dict:
+        """
+        Discover trendlyne_ids for stocks by scraping Trendlyne screener pages.
+
+        Uses F&O stock list and forecaster screener pages which contain
+        equity links in the format /equity/{trendlyne_id}/{SYMBOL}/.
+
+        Args:
+            symbols: Optional list of specific symbols to discover IDs for.
+                     If None, discovers for all F&O stocks missing IDs.
+
+        Returns:
+            dict: {symbol: trendlyne_id} mapping of discovered IDs
+        """
+        if not self.driver:
+            self.init_driver()
+
+        discovered_ids = {}
+
+        # Pages that list stocks with equity links containing trendlyne_ids
+        discovery_urls = [
+            # F&O stock list - covers all F&O stocks
+            f"{self.BASE_URL}/futures-options/fno-stock-list/",
+            # Nifty 50 constituents
+            f"{self.BASE_URL}/equity/list/index/NIFTY/",
+            # Nifty Next 50
+            f"{self.BASE_URL}/equity/list/index/NIFTYNXT50/",
+        ]
+
+        for url in discovery_urls:
+            try:
+                self.logger.info(f"Discovering trendlyne_ids from: {url}")
+                self.driver.get(url)
+                time.sleep(3)
+
+                # Scroll to load lazy content
+                self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+                time.sleep(2)
+
+                soup = BeautifulSoup(self.driver.page_source, 'html5lib')
+
+                # Find all equity links: /equity/{id}/{SYMBOL}/
+                equity_links = soup.find_all('a', href=re.compile(r'/equity/\d+/'))
+                for link in equity_links:
+                    href = link.get('href', '')
+                    id_match = re.search(r'/equity/(\d+)/([^/]+)/', href)
+                    if id_match:
+                        tid = int(id_match.group(1))
+                        symbol = id_match.group(2).upper()
+                        if symbol not in discovered_ids:
+                            discovered_ids[symbol] = tid
+
+                self.logger.info(f"  Found {len(discovered_ids)} unique IDs so far")
+
+            except Exception as e:
+                self.logger.warning(f"Error discovering IDs from {url}: {e}")
+
+        # Also check paginated stock lists - Trendlyne may paginate
+        # Try scrolling/loading more on the FNO stock list
+        try:
+            self.driver.get(f"{self.BASE_URL}/futures-options/fno-stock-list/")
+            time.sleep(3)
+
+            # Try to click "Show More" or load all
+            for _ in range(5):
+                try:
+                    show_more = self.driver.find_element(By.XPATH, "//*[contains(text(), 'Show More') or contains(text(), 'Load More')]")
+                    show_more.click()
+                    time.sleep(2)
+                except:
+                    break
+
+            soup = BeautifulSoup(self.driver.page_source, 'html5lib')
+            for link in soup.find_all('a', href=re.compile(r'/equity/\d+/')):
+                href = link.get('href', '')
+                id_match = re.search(r'/equity/(\d+)/([^/]+)/', href)
+                if id_match:
+                    tid = int(id_match.group(1))
+                    symbol = id_match.group(2).upper()
+                    if symbol not in discovered_ids:
+                        discovered_ids[symbol] = tid
+
+        except Exception as e:
+            self.logger.warning(f"Error loading more FNO stocks: {e}")
+
+        self.logger.info(f"Total trendlyne_ids discovered: {len(discovered_ids)}")
+
+        # Bulk update TLStockData
+        if discovered_ids:
+            try:
+                from apps.data.models import TLStockData
+                updated_count = 0
+                stocks_to_update = TLStockData.objects.filter(
+                    nsecode__in=list(discovered_ids.keys()),
+                    trendlyne_id__isnull=True
+                )
+                for stock in stocks_to_update:
+                    tid = discovered_ids.get(stock.nsecode)
+                    if tid:
+                        stock.trendlyne_id = tid
+                        stock.save(update_fields=['trendlyne_id'])
+                        updated_count += 1
+                self.logger.info(f"Updated {updated_count} trendlyne_ids in TLStockData")
+            except Exception as e:
+                self.logger.warning(f"Error bulk-updating trendlyne_ids: {e}")
+
+        # For specific requested symbols still missing, try individual discovery
+        if symbols:
+            missing = [s for s in symbols if s.upper() not in discovered_ids]
+            for symbol in missing:
+                try:
+                    discover_url = f"{self.BASE_URL}/research-reports/stock/{symbol.upper()}/"
+                    self.driver.get(discover_url)
+                    time.sleep(3)
+                    current_url = self.driver.current_url
+                    match = re.search(r'/research-reports/stock/(\d+)/', current_url)
+                    if match:
+                        tid = int(match.group(1))
+                        discovered_ids[symbol.upper()] = tid
+                        # Update DB
+                        try:
+                            from apps.data.models import TLStockData
+                            TLStockData.objects.filter(
+                                nsecode__iexact=symbol,
+                                trendlyne_id__isnull=True
+                            ).update(trendlyne_id=tid)
+                        except Exception:
+                            pass
+                except Exception as e:
+                    self.logger.warning(f"Could not discover ID for {symbol}: {e}")
+
+        return discovered_ids
 
     # ===== ANALYST REPORTS SCRAPING =====
 

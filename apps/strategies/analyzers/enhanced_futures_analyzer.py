@@ -69,7 +69,7 @@ class EnhancedFuturesAnalyzer:
     MIN_FII_CHANGE_PCT = -2.0
     MIN_ANALYST_UPSIDE_PCT = 8.0
 
-    # Scoring weights (total 300 pts) - Phase 2 Enhanced
+    # Scoring weights (total 315 pts) - Phase 3 Enhanced
     WEIGHTS = {
         'oi_fno': 45,
         'technical_momentum': 35,
@@ -82,9 +82,10 @@ class EnhancedFuturesAnalyzer:
         'analyst_consensus': 20,
         'research_reports': 15,
         'investor_calls': 10,
-        'momentum_acceleration': 20,     # NEW: Phase 2
+        'momentum_acceleration': 20,     # Phase 2
+        'mtf_confluence': 15,            # Phase 3: Multi-Timeframe Confluence
     }
-    TOTAL_WEIGHT = sum(WEIGHTS.values())  # 300
+    TOTAL_WEIGHT = sum(WEIGHTS.values())  # 315
 
     # Position sizing adjustments based on beta
     BETA_POSITION_ADJUSTMENTS = {
@@ -95,7 +96,7 @@ class EnhancedFuturesAnalyzer:
         'very_low': {'threshold': 0.0, 'multiplier': 1.00},    # Standard (may lack movement)
     }
 
-    def __init__(self, symbol: str, direction: str, expiry: str = None):
+    def __init__(self, symbol: str, direction: str, expiry: str = None, regime: str = 'NORMAL'):
         """
         Initialize analyzer.
 
@@ -103,10 +104,12 @@ class EnhancedFuturesAnalyzer:
             symbol: Stock symbol (NSE code)
             direction: Trade direction ('LONG' or 'SHORT')
             expiry: Optional expiry date for F&O contracts
+            regime: Market regime (TRENDING, RANGING, VOLATILE, BREAKOUT, NORMAL)
         """
         self.symbol = symbol.upper()
         self.direction = direction.upper()
         self.expiry = expiry
+        self.regime = regime
 
         # Data holders (lazy loaded)
         self._tl_stock_data = None
@@ -225,7 +228,8 @@ class EnhancedFuturesAnalyzer:
             'scores': self.scores,
             'details': self.details,
             'recommendation': recommendation,
-            'entry_params': entry_params
+            'entry_params': entry_params,
+            'regime': self.regime,
         }
 
     # =========================================================================
@@ -552,8 +556,11 @@ class EnhancedFuturesAnalyzer:
         # 11. Investor Calls (10 pts)
         self.scores['investor_calls'] = self._score_investor_calls()
 
-        # 12. Momentum Acceleration (20 pts) - NEW Phase 2
+        # 12. Momentum Acceleration (20 pts) - Phase 2
         self.scores['momentum_acceleration'] = self._score_momentum_acceleration()
+
+        # 13. Multi-Timeframe Confluence (15 pts) - Phase 3
+        self.scores['mtf_confluence'] = self._score_mtf_confluence()
 
         # Log scores
         logger.info("")
@@ -895,7 +902,7 @@ class EnhancedFuturesAnalyzer:
                 score += range_score
                 details['price_range'] = {'position': position_in_range, 'score': range_score}
 
-        # Breakout Detection (5 pts)
+        # Breakout Detection (5 pts) — enhanced with volume confirmation & fake breakout penalty
         week_high = tl.week_high
         week_low = tl.week_low
         month_high = tl.month_high
@@ -904,20 +911,52 @@ class EnhancedFuturesAnalyzer:
         day_low = tl.day_low
 
         breakout_score = 0
+        breakout_details = {}
         if self.direction == 'LONG':
             if day_high and week_high and day_high >= week_high:
                 breakout_score += 2  # Weekly breakout
             if day_high and month_high and day_high >= month_high:
                 breakout_score += 3  # Monthly breakout
+            # Fake breakout penalty: broke resistance but closed below
+            if day_high and week_high and day_high >= week_high and price and price < week_high:
+                breakout_score = max(0, breakout_score - 3)
+                breakout_details['fake_breakout'] = True
         else:  # SHORT
             if day_low and week_low and day_low <= week_low:
                 breakout_score += 2  # Weekly breakdown
             if day_low and month_low and day_low <= month_low:
                 breakout_score += 3  # Monthly breakdown
+            # Fake breakdown penalty: broke support but closed above
+            if day_low and week_low and day_low <= week_low and price and price > week_low:
+                breakout_score = max(0, breakout_score - 3)
+                breakout_details['fake_breakout'] = True
+
+        # Breakout volume confirmation
+        vol = tl.day_volume
+        avg_vol = tl.month_volume_avg
+        if vol and avg_vol and avg_vol > 0:
+            vol_ratio = vol / avg_vol
+            if vol_ratio > 2.0:
+                breakout_score = min(breakout_score + 5, 5)  # Strong volume = full marks
+                breakout_details['volume_confirmation'] = 'STRONG'
+            elif vol_ratio > 1.5:
+                breakout_score = min(breakout_score + 2, 5)
+                breakout_details['volume_confirmation'] = 'MODERATE'
+            breakout_details['volume_ratio'] = round(vol_ratio, 2)
+
+        # Breakout proximity: within 2% = fresh, > 5% past = extended
+        if one_year_high and price and self.direction == 'LONG':
+            dist_from_high = (one_year_high - price) / one_year_high * 100 if one_year_high > 0 else 100
+            if dist_from_high <= 2:
+                breakout_score = min(breakout_score + 3, 5)
+                breakout_details['proximity'] = 'FRESH'
+            elif dist_from_high > 5:
+                breakout_details['proximity'] = 'EXTENDED'
 
         breakout_score = min(breakout_score, 5)
         score += breakout_score
-        details['breakout'] = {'score': breakout_score}
+        breakout_details['score'] = breakout_score
+        details['breakout'] = breakout_details
 
         # 52W Breakout Detection (5 pts) - NEW Phase 2
         fifty_two_week_score = 0
@@ -1906,12 +1945,96 @@ class EnhancedFuturesAnalyzer:
 
         return min(score, 20)
 
+    def _score_mtf_confluence(self) -> int:
+        """
+        Score Multi-Timeframe Confluence (max 15 pts) - Phase 3
+
+        Checks alignment of daily trend with weekly/monthly trends.
+        - Weekly trend matches daily: +5
+        - Monthly trend matches: +5
+        - Divergence penalty: daily LONG but weekly bearish = -5
+        """
+        score = 0
+        details = {}
+
+        if not self._tl_stock_data:
+            self.details['mtf_confluence'] = {'score': 0, 'reason': 'No data'}
+            return 0
+
+        tl = self._tl_stock_data
+        price = tl.current_price or 0
+
+        # Determine weekly trend from 5-day and 30-day SMAs
+        sma5 = tl.day5_sma
+        sma30 = tl.day30_sma
+        sma50 = tl.day50_sma
+        sma200 = tl.day200_sma
+
+        # Weekly trend: price vs 30-day SMA
+        weekly_bullish = None
+        if price and sma30:
+            weekly_bullish = price > sma30
+            details['weekly_trend'] = 'BULLISH' if weekly_bullish else 'BEARISH'
+
+        # Monthly trend: 50-day SMA slope (approximated by 50 vs 200 SMA)
+        monthly_bullish = None
+        if sma50 and sma200:
+            monthly_bullish = sma50 > sma200
+            details['monthly_trend'] = 'BULLISH' if monthly_bullish else 'BEARISH'
+
+        # Scoring
+        if self.direction == 'LONG':
+            if weekly_bullish is True:
+                score += 5
+                details['weekly_alignment'] = 'ALIGNED'
+            elif weekly_bullish is False:
+                score -= 5  # Divergence penalty
+                details['weekly_alignment'] = 'DIVERGENT'
+
+            if monthly_bullish is True:
+                score += 5
+                details['monthly_alignment'] = 'ALIGNED'
+            elif monthly_bullish is False:
+                score -= 5
+                details['monthly_alignment'] = 'DIVERGENT'
+        else:  # SHORT
+            if weekly_bullish is False:
+                score += 5
+                details['weekly_alignment'] = 'ALIGNED'
+            elif weekly_bullish is True:
+                score -= 5
+                details['weekly_alignment'] = 'DIVERGENT'
+
+            if monthly_bullish is False:
+                score += 5
+                details['monthly_alignment'] = 'ALIGNED'
+            elif monthly_bullish is True:
+                score -= 5
+                details['monthly_alignment'] = 'DIVERGENT'
+
+        # Short-term confirmation bonus: 5-day SMA alignment
+        if sma5 and sma30:
+            short_aligned = (sma5 > sma30) if self.direction == 'LONG' else (sma5 < sma30)
+            if short_aligned:
+                score += 5
+                details['short_term'] = 'CONFIRMED'
+            else:
+                details['short_term'] = 'NEUTRAL'
+
+        score = max(0, min(score, 15))
+        details['score'] = score
+
+        self.details['mtf_confluence'] = details
+        logger.info(f"  MTF Confluence: {score}/15")
+
+        return score
+
     # =========================================================================
     # ENTRY PARAMETERS & POSITION SIZING
     # =========================================================================
 
     def _calculate_entry_params(self) -> Dict:
-        """Calculate entry parameters including ATR-based SL/Target and position sizing"""
+        """Calculate entry parameters using adaptive SL/Target engine."""
         if not self._tl_stock_data:
             return {}
 
@@ -1919,69 +2042,50 @@ class EnhancedFuturesAnalyzer:
         price = tl.current_price or 0
         atr = tl.day_atr
 
-        # Try structural S/R-based SL/target first
-        _sr = compute_initial_sl_target(self.symbol, float(price), self.direction)
-        if _sr['stop_loss'] is not None and _sr['target'] is not None:
-            stop_loss = _sr['stop_loss']
-            target_1 = _sr['target']
-            target_2 = target_1  # no second target in SR mode
-        else:
-            # Fall through to existing ATR-based logic
-            if atr and atr > 0:
-                if self.direction == 'LONG':
-                    stop_loss = price - (2 * atr)
-                    target_1 = price + (2 * atr)
-                    target_2 = price + (3 * atr)
-                else:  # SHORT
-                    stop_loss = price + (2 * atr)
-                    target_1 = price - (2 * atr)
-                    target_2 = price - (3 * atr)
-            else:
-                # Fallback to percentage-based
-                sl_pct = 0.02  # 2%
-                target_pct = 0.04  # 4%
-                if self.direction == 'LONG':
-                    stop_loss = price * (1 - sl_pct)
-                    target_1 = price * (1 + target_pct)
-                    target_2 = price * (1 + target_pct * 1.5)
-                else:
-                    stop_loss = price * (1 + sl_pct)
-                    target_1 = price * (1 - target_pct)
-                    target_2 = price * (1 - target_pct * 1.5)
+        # Get volatility for Tier 3 fallback
+        volatility_pct = None
+        if self._contract_stock_data:
+            volatility_pct = self._contract_stock_data.annualized_volatility
 
-            # Use support/resistance for validation
-            s1 = tl.first_support_s1
-            r1 = tl.first_resistance_r1
+        # Composite score for context
+        composite_score = sum(self.scores.values())
+        scaled_score = int((composite_score / self.TOTAL_WEIGHT) * 100) if self.TOTAL_WEIGHT > 0 else 0
 
-            if self.direction == 'LONG' and s1:
-                # Use S1 as SL if it's tighter than ATR-based SL
-                if s1 > stop_loss:
-                    stop_loss = s1 * 0.995  # Slightly below S1
+        # Use adaptive SL/target engine (3-tier: SR → ATR → Volatility)
+        from apps.strategies.services.adaptive_sl_target import compute_adaptive_sl_target
+        sl_result = compute_adaptive_sl_target(
+            symbol=self.symbol,
+            price=float(price),
+            direction=self.direction,
+            atr=float(atr) if atr else None,
+            volatility_pct=float(volatility_pct) if volatility_pct else None,
+            composite_score=scaled_score,
+            regime=self.regime,
+            support_s1=float(tl.first_support_s1) if tl.first_support_s1 else None,
+            resistance_r1=float(tl.first_resistance_r1) if tl.first_resistance_r1 else None,
+        )
 
-            if self.direction == 'SHORT' and r1:
-                # Use R1 as SL if it's tighter than ATR-based SL
-                if r1 < stop_loss:
-                    stop_loss = r1 * 1.005  # Slightly above R1
-
-        # Calculate risk/reward
-        risk = abs(price - stop_loss)
-        reward = abs(target_1 - price)
-        rr_ratio = reward / risk if risk > 0 else 0
+        stop_loss = sl_result['stop_loss']
+        target_1 = sl_result['target_1']
+        target_2 = sl_result['target_2']
 
         # Calculate position sizing
-        position_sizing = self._calculate_position_sizing(price, stop_loss)
+        position_sizing = self._calculate_position_sizing(float(price), stop_loss)
 
         return {
-            'entry_price': price,
+            'entry_price': float(price),
             'stop_loss': round(stop_loss, 2),
             'target_1': round(target_1, 2),
             'target_2': round(target_2, 2),
             'atr': atr,
-            'risk': round(risk, 2),
-            'reward': round(reward, 2),
-            'risk_reward_ratio': round(rr_ratio, 2),
-            'support_s1': s1,
-            'resistance_r1': r1,
+            'risk': sl_result['risk'],
+            'reward': sl_result['reward'],
+            'risk_reward_ratio': sl_result['risk_reward_ratio'],
+            'sl_type': sl_result['sl_type'],
+            'regime': sl_result['regime'],
+            'rr_rejected': sl_result.get('rr_rejected', False),
+            'support_s1': float(tl.first_support_s1) if tl.first_support_s1 else None,
+            'resistance_r1': float(tl.first_resistance_r1) if tl.first_resistance_r1 else None,
             'position_sizing': position_sizing,
         }
 

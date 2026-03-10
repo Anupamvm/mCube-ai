@@ -25,6 +25,7 @@ MonitorLog: every P&L check and exit trigger is stored with IST timestamp.
 import logging
 from decimal import Decimal
 from celery import shared_task
+from django.core.cache import cache
 from django.utils import timezone
 
 from apps.positions.models import Position, MonitorLog
@@ -46,7 +47,41 @@ from apps.alerts.services.telegram_client import (
 )
 from apps.core.utils.decorators import task_enabled_guard
 
+# Redis key for monitor task distributed lock.
+# Timeout is set to 55 s — just under the 1-min beat interval so a
+# legitimate slow cycle can finish, but a crashed worker won't block
+# the next cycle indefinitely.
+_MONITOR_LOCK_KEY = 'monitor_and_manage_positions_lock'
+_MONITOR_LOCK_TTL = 55  # seconds
+
+# Redis key prefix for sync failure strike counters (per-account).
+# Three consecutive failures → CRITICAL Telegram alert.
+_SYNC_FAIL_KEY_PREFIX = 'pos_sync_fail_count'
+_SYNC_FAIL_THRESHOLD = 3
+_SYNC_FAIL_TTL = 600  # 10 min — resets if broker recovers
+
 logger = logging.getLogger(__name__)
+
+# Human-readable labels for exit reasons (avoids raw replace('_', ' ') output).
+_EXIT_REASON_LABELS = {
+    'SL_HIT': 'Stop-Loss Hit',
+    'TARGET_HIT': 'Target Hit',
+    'EXIT_ON_EXPIRY': 'Expiry Exit',
+    'EOD_EXIT': 'End of Day Exit',
+    'NEAR_SL_REQUEST': 'Near-SL Exit',
+    'STRUCTURAL_SL': 'Structural SL',
+    'TRAILING_SL': 'Trailing SL',
+    'SR_BREAKDOWN': 'S/R Breakdown',
+    'MANUAL': 'Manual Exit',
+}
+
+
+def _mode_footer(config) -> str:
+    """One-line config tag appended to actionable messages."""
+    return (
+        f"\n<i>⚙️ {config.get_notification_level_display_short()} "
+        f"· {config.get_position_sizing_display_short()}</i>"
+    )
 
 
 @shared_task(name='apps.positions.tasks.monitor_and_manage_positions')
@@ -68,6 +103,17 @@ def monitor_and_manage_positions():
       • Edits the live daily monitoring dashboard
       • On exit trigger: auto-executes immediately, sends result notification
     """
+    # ── Distributed lock — prevent overlapping monitor cycles ─────────────────
+    # cache.add() is atomic on Redis: returns True only if the key did NOT
+    # already exist (i.e., we are the first caller).  If another cycle is
+    # still running (broker call took >60 s) we skip rather than double-process.
+    acquired = cache.add(_MONITOR_LOCK_KEY, '1', timeout=_MONITOR_LOCK_TTL)
+    if not acquired:
+        logger.warning(
+            "monitor_and_manage_positions: previous cycle still running — skipping this tick"
+        )
+        return {'success': True, 'skipped': True, 'reason': 'lock_held'}
+
     try:
         from apps.core.models import TradingCoreConfig
         config = TradingCoreConfig.get_instance()
@@ -78,8 +124,21 @@ def monitor_and_manage_positions():
         try:
             from apps.positions.services.position_sync import sync_positions_from_brokers
             sync_positions_from_brokers(include_history=False)
+            # Reset strike counter on success — broker is healthy again
+            cache.delete(_SYNC_FAIL_KEY_PREFIX)
         except Exception as sync_err:
             logger.warning(f"Pre-monitor broker sync failed (continuing with DB state): {sync_err}")
+            # 3-strike alert: count consecutive failures and notify on breach
+            fail_count = cache.get(_SYNC_FAIL_KEY_PREFIX, 0) + 1
+            cache.set(_SYNC_FAIL_KEY_PREFIX, fail_count, timeout=_SYNC_FAIL_TTL)
+            if fail_count >= _SYNC_FAIL_THRESHOLD:
+                send_telegram_notification(
+                    f"🚨 <b>Position Sync Failing</b>\n\n"
+                    f"{fail_count} consecutive broker sync errors.\n"
+                    f"P&L calculations are using <b>stale prices</b>.\n\n"
+                    f"Last error: <code>{sync_err}</code>",
+                    notification_type='CRITICAL',
+                )
 
         all_open = Position.objects.filter(status='OPEN').select_related('account')
 
@@ -206,15 +265,47 @@ def monitor_and_manage_positions():
                     sr_data = dashboard.sr_tracking or {}
                     already_warned = sr_data.get('near_sl_warned', False)
                     if buffer_pct < 1.0 and not already_warned:  # within 1% of SL, once per day
-                        warn_msg = (
-                            f"🟡 <b>NEAR SL WARNING</b>\n\n"
-                            f"<b>{position.label}</b>\n"
-                            f"Current: ₹{price:,.2f}\n"
-                            f"SL:      ₹{sl:,.2f}\n"
-                            f"Buffer: {buffer_pct:.2f}% from SL\n\n"
-                            f"<i>Position approaching stop-loss — monitor closely.</i>"
+                        from apps.alerts.services.notification_payload import NotificationPayload
+                        from apps.alerts.services.telegram_client import send_notification as _send_notif
+                        _near_sl_payload = NotificationPayload(
+                            title='Near Stop-Loss',
+                            status='WARNING',
+                            instrument=position.instrument,
+                            strategy=(
+                                {'KOTAK': 'Kotak Neo', 'ICICI': 'ICICI Breeze'}.get(
+                                    position.account.broker if position.account else '',
+                                    position.account.broker if position.account else ''
+                                )
+                            ),
+                            task='monitor_and_manage_positions',
+                            timestamp=now,
+                            metrics={
+                                'Buffer': f"{buffer_pct:.2f}%",
+                                'SL': f"₹{sl:,.2f}",
+                                'Now': f"₹{price:,.2f}",
+                            },
+                            keyboard=[[
+                                {'text': '📊 View Exit Details', 'callback_data': f'request_exit_{position.id}'},
+                                {'text': '⏸ Dismiss',           'callback_data': f'hold_exit_{position.id}'},
+                            ]],
+                            position={
+                                'Direction': position.direction,
+                                'Current': f"₹{price:,.2f}",
+                                'SL': f"₹{sl:,.2f}",
+                                'Distance': f"₹{abs(price - sl):,.2f}  ({buffer_pct:.2f}% buffer)",
+                                'P&L': f"₹{float(pnl):+,.0f}",
+                            },
+                            context=[
+                                'Within 1% of stop-loss — once-per-day alert',
+                                'Tap [View Exit Details] for full confirmation screen',
+                            ],
+                            system={'Position ID': f"#{position.id}"},
+                            priority='WARNING',
+                            dedup_key=f'near_sl_{position.id}',
+                            mode_label=config.get_notification_level_display_short(),
+                            sizing_label=config.get_position_sizing_display_short(),
                         )
-                        send_telegram_notification(warn_msg, notification_type='WARNING')
+                        _send_notif(_near_sl_payload)
                         sr_data['near_sl_warned'] = True
                         dashboard.sr_tracking = sr_data
                         dashboard.save(update_fields=['sr_tracking'])
@@ -241,6 +332,7 @@ def monitor_and_manage_positions():
                         send_telegram_notification(
                             stage2['reason'],
                             notification_type='WARNING',
+                            dedup_key=f'struct_pressure_{position.id}',
                         )
                         logger.info(
                             f"Stage 2 structural pressure warning sent for pos #{position.id}"
@@ -303,22 +395,27 @@ def monitor_and_manage_positions():
                                     f"Failed to send exit suggestion for pos #{position.id}: {result}"
                                 )
                         else:
-                            # Same exit reason within cooldown — log but don't spam
+                            # Suppressed — either held by user or duplicate cooldown
+                            from apps.core.models import NseFlag
+                            hold_raw = NseFlag.get(f'position_hold_{position.id}', '')
+                            is_held = hold_raw and hold_raw != ''
+
                             MonitorLog.objects.create(
                                 position=position,
                                 check_type='EXIT_SUGGESTION',
-                                result='SKIPPED_DUPLICATE',
+                                result='HELD_BY_USER' if is_held else 'SKIPPED_DUPLICATE',
                                 message=(
                                     f"[{ist_datetime_str(now)}] "
                                     f"Exit condition ({reason}) still active — "
-                                    f"suggestion already pending, skipping duplicate."
+                                    f"{'user chose to hold, suppressing re-alert' if is_held else 'suggestion already pending, skipping duplicate'}."
                                 ),
                                 price_at_check=position.current_price,
                                 pnl_at_check=pnl,
-                                action_taken='DUPLICATE_SKIPPED',
+                                action_taken='HELD_BY_USER' if is_held else 'DUPLICATE_SKIPPED',
                             )
                             logger.debug(
-                                f"Exit suggestion deduped for pos #{position.id} / {reason}"
+                                f"Exit suggestion {'held' if is_held else 'deduped'} "
+                                f"for pos #{position.id} / {reason}"
                             )
 
                     else:
@@ -342,28 +439,47 @@ def monitor_and_manage_positions():
                             exit_reason=reason,
                         )
 
+                        from apps.alerts.services.notification_payload import NotificationPayload
+                        from apps.alerts.services.telegram_client import send_notification as _send_notif
+                        reason_label = _EXIT_REASON_LABELS.get(reason, reason.replace('_', ' ').title())
                         if success:
                             position.refresh_from_db()
                             pnl_result = position.realized_pnl
-                            send_telegram_notification(
-                                f"✅ AUTO-EXIT ({mode_label})\n\n"
-                                f"<b>{position.label}</b> | #{position.id}\n"
-                                f"Reason: {reason.replace('_', ' ')}\n"
-                                f"Exit: ₹{exit_price:,.2f}\n"
-                                f"P&L: {'+'if pnl_result>=0 else ''}₹{pnl_result:,.0f}",
-                                notification_type=(
-                                    'SUCCESS' if pnl_result >= 0 else 'WARNING'
-                                ),
+                            pnl_sign = "+" if pnl_result >= 0 else ""
+                            _auto_exit_payload = NotificationPayload(
+                                title='Auto-Exit Executed',
+                                status='SUCCESS' if pnl_result >= 0 else 'WARNING',
+                                instrument=position.instrument,
+                                strategy=mode_label,
+                                task='monitor_and_manage_positions',
+                                timestamp=now,
+                                metrics={
+                                    'P&L': f"{pnl_sign}₹{abs(pnl_result):,.0f}",
+                                    'Exit': f"₹{exit_price:,.2f}",
+                                    'Reason': reason_label,
+                                },
+                                system={'Position ID': f"#{position.id}"},
+                                priority='INFO',
+                                mode_label=config.get_notification_level_display_short(),
+                                sizing_label=config.get_position_sizing_display_short(),
                             )
+                            _send_notif(_auto_exit_payload)
                             exits_executed += 1
                         else:
-                            send_telegram_notification(
-                                f"🚨 AUTO-EXIT FAILED\n\n"
-                                f"Position #{position.id} | {position.label}\n"
-                                f"Reason: {reason}\n"
-                                f"Error: {message}",
-                                notification_type='ERROR',
+                            _auto_exit_fail_payload = NotificationPayload(
+                                title='Auto-Exit Failed',
+                                status='ERROR',
+                                instrument=position.instrument,
+                                task='monitor_and_manage_positions',
+                                timestamp=now,
+                                metrics={'Reason': reason_label},
+                                context=[message.splitlines()[0]],
+                                system={'Position ID': f"#{position.id}"},
+                                priority='CRITICAL',
+                                mode_label=config.get_notification_level_display_short(),
+                                sizing_label=config.get_position_sizing_display_short(),
                             )
+                            _send_notif(_auto_exit_fail_payload)
 
                 updated_count += 1
 
@@ -389,6 +505,17 @@ def monitor_and_manage_positions():
                 realized_today=realized_today,
             )
 
+        # ── Clear hold flags at end of trading day (>= 15:30 IST) ─────────
+        import pytz
+        ist_now = now.astimezone(pytz.timezone('Asia/Kolkata'))
+        if ist_now.hour >= 15 and ist_now.minute >= 30:
+            from apps.core.models import NseFlag
+            for position in active_positions:
+                hold_key = f'position_hold_{position.id}'
+                if NseFlag.get(hold_key, ''):
+                    NseFlag.set(hold_key, '', 'Auto-cleared at day end')
+                    logger.info(f"Hold flag cleared for pos #{position.id} (day end)")
+
         return {
             'success': True,
             'positions_updated': updated_count,
@@ -399,4 +526,173 @@ def monitor_and_manage_positions():
 
     except Exception as e:
         logger.error(f"Critical error in position monitor: {e}", exc_info=True)
+        return {'success': False, 'message': str(e)}
+    finally:
+        # Always release the distributed lock so the next cycle can run,
+        # even if this cycle raised an unhandled exception.
+        cache.delete(_MONITOR_LOCK_KEY)
+
+
+@shared_task(name='apps.positions.tasks.alert_open_positions_pre_close')
+@task_enabled_guard('alert-open-positions-pre-close')
+def alert_open_positions_pre_close():
+    """
+    Sends a consolidated summary of all open positions to Telegram at 15:15.
+
+    Scheduled: 15:15 Mon-Fri (10 min before close_trading_day fires at 15:25).
+
+    Purpose:
+    - Gives the trader a heads-up to review positions before EOD auto-close logic runs.
+    - No positions are modified — purely informational.
+    - In manual mode this acts as a prompt to decide: hold overnight or close now.
+    """
+    try:
+        open_positions = Position.objects.filter(status='OPEN').select_related('account')
+
+        if not open_positions.exists():
+            logger.info("alert_open_positions_pre_close: no open positions, nothing to report")
+            return {'success': True, 'positions': 0}
+
+        from apps.core.models import TradingCoreConfig
+        config = TradingCoreConfig.get_instance()
+
+        now = timezone.now()
+        lines = [
+            f"📋 <b>Pre-Close Position Summary</b>  [{ist_datetime_str(now)}]\n"
+        ]
+
+        for pos in open_positions:
+            pnl = pos.unrealized_pnl or 0
+            entry_val = pos.entry_value if pos.entry_value and pos.entry_value > 0 else (
+                pos.entry_price * pos.quantity if pos.entry_price else None
+            )
+            pnl_pct = (pnl / entry_val * 100) if entry_val else None
+
+            emoji = "🟢" if pnl >= 0 else "🔴"
+            pnl_str = f"₹{pnl:+,.0f}"
+            pnl_pct_str = f" ({pnl_pct:+.1f}%)" if pnl_pct is not None else ""
+
+            sl_str = f"SL ₹{pos.stop_loss:,.0f}" if pos.stop_loss else "SL —"
+            tgt_str = f"T ₹{pos.target:,.0f}" if pos.target else "T —"
+
+            lines.append(
+                f"{emoji} <b>{pos.label}</b>\n"
+                f"   P&L: {pnl_str}{pnl_pct_str} | {sl_str} | {tgt_str}"
+            )
+
+        lines.append("\n⏰ Market closes in ~15 min. close_trading_day runs at 15:25.")
+        lines.append(_mode_footer(config))
+
+        send_telegram_notification(
+            "\n".join(lines),
+            notification_type='HIGH',
+        )
+
+        return {'success': True, 'positions': open_positions.count()}
+
+    except Exception as e:
+        logger.error(f"alert_open_positions_pre_close failed: {e}", exc_info=True)
+        return {'success': False, 'message': str(e)}
+
+
+@shared_task(name='apps.positions.tasks.reconcile_positions_eod')
+@task_enabled_guard('reconcile-positions-eod')
+def reconcile_positions_eod():
+    """
+    End-of-day position reconciliation (15:45 Mon–Fri).
+
+    Runs a fresh broker sync after market close, then compares what the DB
+    thinks is open against actual broker state.  Reports three outcome types:
+
+    1. Clean  — all positions closed, DB and broker agree. ✅
+    2. Carry-forward — positions remain open (held overnight). Informational.
+    3. Mismatch — DB says OPEN but broker reports nothing for that instrument.
+                  This should never happen; requires immediate manual review. 🚨
+
+    Does NOT auto-close any position — purely observational.
+    """
+    try:
+        now = timezone.now()
+        now_str = ist_datetime_str(now)
+
+        # ── Step 1: Sync from brokers to get latest state ─────────────────────
+        from apps.positions.services.position_sync import sync_positions_from_brokers
+        sync_errors = []
+        try:
+            sync_result = sync_positions_from_brokers(include_history=False)
+            sync_errors = sync_result.get('errors', []) or []
+        except Exception as sync_err:
+            sync_errors = [str(sync_err)]
+            logger.error(f"reconcile_positions_eod: broker sync failed — {sync_err}")
+
+        # ── Step 2: Check what remains open after sync ───────────────────────
+        still_open = list(
+            Position.objects.filter(status='OPEN').select_related('account')
+        )
+
+        # ── Step 3: Build report ──────────────────────────────────────────────
+        if sync_errors:
+            # Can't trust reconciliation if sync itself failed
+            error_lines = "\n".join(f"  • {e}" for e in sync_errors[:5])
+            send_telegram_notification(
+                f"🚨 <b>EOD Reconciliation: Sync Failed</b>  [{now_str}]\n\n"
+                f"Broker sync had errors — position state may be unreliable:\n"
+                f"{error_lines}\n\n"
+                f"Manual broker check required.",
+                notification_type='CRITICAL',
+            )
+            return {'success': False, 'sync_errors': sync_errors}
+
+        if not still_open:
+            # Clean day — all positions resolved
+            send_telegram_notification(
+                f"✅ <b>EOD Reconciliation</b>  [{now_str}]\n\n"
+                f"All positions closed. Clean slate for tomorrow.",
+                notification_type='SUCCESS',
+            )
+            return {'success': True, 'open_count': 0, 'status': 'clean'}
+
+        # Positions still open after sync — either legitimate carry-forward
+        # or a mismatch.  Report them all so trader can verify.
+        lines = [
+            f"📋 <b>EOD Reconciliation</b>  [{now_str}]\n",
+            f"{len(still_open)} position(s) still open after market close:\n",
+        ]
+        for pos in still_open:
+            pnl = pos.unrealized_pnl or 0
+            entry_val = (
+                pos.entry_value
+                if pos.entry_value and pos.entry_value > 0
+                else (pos.entry_price * pos.quantity if pos.entry_price else None)
+            )
+            pnl_pct = (pnl / entry_val * 100) if entry_val else None
+            pnl_pct_str = f" ({pnl_pct:+.1f}%)" if pnl_pct is not None else ""
+            lines.append(
+                f"  • <b>{pos.label}</b> | "
+                f"P&L ₹{pnl:+,.0f}{pnl_pct_str} | "
+                f"Account: {pos.account}"
+            )
+
+        from apps.core.models import TradingCoreConfig
+        config = TradingCoreConfig.get_instance()
+
+        lines.append(
+            "\n⚠️ Carry-forward detected. Review positions in dashboard before tomorrow's open."
+        )
+        lines.append(_mode_footer(config))
+
+        send_telegram_notification(
+            "\n".join(lines),
+            notification_type='WARNING',
+        )
+
+        return {
+            'success': True,
+            'open_count': len(still_open),
+            'open_positions': [pos.label for pos in still_open],
+            'status': 'positions_open',
+        }
+
+    except Exception as e:
+        logger.error(f"reconcile_positions_eod failed: {e}", exc_info=True)
         return {'success': False, 'message': str(e)}

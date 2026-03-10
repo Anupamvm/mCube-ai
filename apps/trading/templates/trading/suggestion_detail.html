@@ -82,6 +82,52 @@
                             </p>
                         </div>
                     </div>
+                    <div class="row mb-3">
+                        <div class="col-4">
+                            <p class="text-muted mb-1">Score</p>
+                            <p class="h5 mb-0">
+                                {% with score=suggestion.composite_score %}
+                                    {% if score >= 80 %}
+                                        <span class="badge bg-success" style="font-size: 1.1rem;">{{ score }}/100</span>
+                                    {% elif score >= 65 %}
+                                        <span class="badge bg-warning text-dark" style="font-size: 1.1rem;">{{ score }}/100</span>
+                                    {% elif score > 0 %}
+                                        <span class="badge bg-danger" style="font-size: 1.1rem;">{{ score }}/100</span>
+                                    {% else %}
+                                        <span class="badge bg-secondary">-</span>
+                                    {% endif %}
+                                {% endwith %}
+                            </p>
+                        </div>
+                        <div class="col-4">
+                            <p class="text-muted mb-1">R:R Ratio</p>
+                            <p class="h6 mb-0">
+                                {% if suggestion.risk_reward_ratio %}
+                                    {% with rr=suggestion.risk_reward_ratio %}
+                                        {% if rr >= 2 %}
+                                            <span style="color: #059669; font-weight: 700;">1:{{ rr|floatformat:1 }}</span>
+                                        {% elif rr >= 1.5 %}
+                                            <span style="color: #d97706; font-weight: 700;">1:{{ rr|floatformat:1 }}</span>
+                                        {% else %}
+                                            <span style="color: #dc2626; font-weight: 700;">1:{{ rr|floatformat:1 }}</span>
+                                        {% endif %}
+                                    {% endwith %}
+                                {% else %}
+                                    -
+                                {% endif %}
+                            </p>
+                        </div>
+                        <div class="col-4">
+                            <p class="text-muted mb-1">Regime</p>
+                            <p class="h6 mb-0">
+                                {% if suggestion.regime %}
+                                    <span class="badge bg-light text-dark">{{ suggestion.regime }}</span>
+                                {% else %}
+                                    -
+                                {% endif %}
+                            </p>
+                        </div>
+                    </div>
                     <div class="row">
                         <div class="col-6">
                             <p class="text-muted mb-1">Created</p>

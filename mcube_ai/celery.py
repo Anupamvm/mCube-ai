@@ -46,6 +46,41 @@ def get_static_schedule():
     """
     return {
     # =========================================================================
+    # INFRASTRUCTURE HEALTH CHECKS
+    # =========================================================================
+
+    # Runs at 06:45 — 2+ hours before market open — so broker auth/network
+    # issues can be fixed before trading begins.
+    'health-check-brokers': {
+        'task': 'apps.core.tasks.health_check_brokers',
+        'schedule': crontab(hour=6, minute=45, day_of_week='1-5'),
+        'options': {'queue': 'risk'},
+    },
+
+    # Checks overnight news for every open (carried-forward) position.
+    # Fires 5 min before market open to give the trader time to react.
+    'review-overnight-positions': {
+        'task': 'apps.core.tasks.review_overnight_positions',
+        'schedule': crontab(hour=8, minute=55, day_of_week='1-5'),
+        'options': {'queue': 'monitoring'},
+    },
+
+    # Opening volatility sampling — runs every 5 min from 09:00 to 09:20.
+    # Sets market_stable_for_trading Redis flag consumed by evaluate_options_strategy.
+    'monitor-opening-volatility': {
+        'task': 'apps.core.tasks.monitor_opening_volatility',
+        'schedule': crontab(hour=9, minute='0,5,10,15,20', day_of_week='1-5'),
+        'options': {'queue': 'monitoring'},
+    },
+
+    # Single consolidated morning briefing replaces scattered pre-market msgs.
+    'send-morning-briefing': {
+        'task': 'apps.core.tasks.send_morning_briefing',
+        'schedule': crontab(hour=9, minute=0, day_of_week='1-5'),
+        'options': {'queue': 'monitoring'},
+    },
+
+    # =========================================================================
     # MARKET DATA TASKS
     # =========================================================================
 
@@ -156,6 +191,31 @@ def get_static_schedule():
         'task': 'apps.strategies.tasks.close_trading_day',
         'schedule': crontab(hour=15, minute=25, day_of_week='1-5'),  # 3:25 PM Mon-Fri (5 min buffer before close)
         'options': {'queue': 'strategies'},
+    },
+
+    # Strangle delta drift monitoring — every 15 min during market hours.
+    # Task exists in apps/strategies/tasks.py but was missing from schedule.
+    'monitor-all-strangle-deltas': {
+        'task': 'apps.strategies.tasks.monitor_all_strangle_deltas',
+        'schedule': crontab(hour='9-15', minute='*/15', day_of_week='1-5'),
+        'options': {'queue': 'strategies'},
+    },
+
+    # Pre-close position alert — informs trader of open positions 10 min
+    # before close_trading_day fires so they can make a conscious decision.
+    'alert-open-positions-pre-close': {
+        'task': 'apps.positions.tasks.alert_open_positions_pre_close',
+        'schedule': crontab(hour=15, minute=15, day_of_week='1-5'),
+        'options': {'queue': 'monitoring'},
+    },
+
+    # EOD reconciliation — syncs broker state and reports open positions
+    # after market close. Runs AFTER close_trading_day (15:25) and
+    # update_post_market_data (15:35) have had time to complete.
+    'reconcile-positions-eod': {
+        'task': 'apps.positions.tasks.reconcile_positions_eod',
+        'schedule': crontab(hour=15, minute=45, day_of_week='1-5'),
+        'options': {'queue': 'monitoring'},
     },
 
     # =========================================================================
@@ -454,6 +514,7 @@ app.conf.beat_scheduler = 'mcube_ai.celery:DBReloadScheduler'
 
 # Task routing - distribute tasks across queues for better performance
 app.conf.task_routes = {
+    'apps.core.tasks.*': {'queue': 'risk'},
     'apps.data.tasks.*': {'queue': 'data'},
     'apps.strategies.tasks.*': {'queue': 'strategies'},
     'apps.positions.tasks.*': {'queue': 'monitoring'},

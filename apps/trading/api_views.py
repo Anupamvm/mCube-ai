@@ -3351,7 +3351,11 @@ def get_pnl_snapshots(request):
 @login_required
 @require_POST
 def save_pnl_snapshot(request):
-    """Append a P&L snapshot to today's tracker."""
+    """Append a P&L snapshot to today's tracker.
+
+    Accepts optional per-position breakdown for chart filtering:
+    {pnl: float, ts: int, positions: [{sym, broker, type, pnl}, ...]}
+    """
     from apps.positions.models import PortfolioPnlTracker
     from django.utils import timezone
 
@@ -3362,9 +3366,52 @@ def save_pnl_snapshot(request):
     except (json.JSONDecodeError, TypeError, ValueError):
         return JsonResponse({'success': False, 'error': 'Invalid payload'}, status=400)
 
+    snapshot = {'pnl': pnl, 'ts': ts}
+
+    # Include per-position breakdown if provided (for chart filtering)
+    positions = data.get('positions')
+    if isinstance(positions, list):
+        snapshot['positions'] = positions[:50]  # cap for safety
+
     today = timezone.localdate()
     tracker, _ = PortfolioPnlTracker.objects.get_or_create(date=today)
-    tracker.snapshots.append({'pnl': pnl, 'ts': ts})
+    tracker.snapshots.append(snapshot)
     tracker.save(update_fields=['snapshots'])
 
     return JsonResponse({'success': True, 'count': len(tracker.snapshots)})
+
+
+@login_required
+@require_GET
+def get_pnl_snapshots_historical(request):
+    """Return P&L snapshots for the last N days (for Historical chart tab).
+
+    GET params:
+        days: number of days to look back (default 30, max 90)
+
+    Returns per-day entries with date and snapshots array.
+    """
+    from apps.positions.models import PortfolioPnlTracker
+    from django.utils import timezone
+    import datetime
+
+    try:
+        days = min(int(request.GET.get('days', 30)), 90)
+    except (TypeError, ValueError):
+        days = 30
+
+    start_date = timezone.localdate() - datetime.timedelta(days=days)
+    trackers = PortfolioPnlTracker.objects.filter(
+        date__gte=start_date
+    ).order_by('date')
+
+    result = []
+    for t in trackers:
+        if not t.snapshots:
+            continue
+        result.append({
+            'date': t.date.isoformat(),
+            'snapshots': t.snapshots,
+        })
+
+    return JsonResponse({'success': True, 'days': result})

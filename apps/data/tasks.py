@@ -17,7 +17,7 @@ from apps.core.utils.task_logger import TaskLogger
 from apps.core.utils.decorators import task_enabled_guard
 
 
-@shared_task(name='fetch_trendlyne_data', bind=True)
+@shared_task(name='fetch_trendlyne_data', bind=True, max_retries=3)
 def fetch_trendlyne_data(self):
     """
     Fetch data from Trendlyne (Daily - 8:30 AM)
@@ -55,8 +55,11 @@ def fetch_trendlyne_data(self):
 
     except Exception as e:
         logger.failure("Error fetching Trendlyne data", error=e, context={
-            'error_type': type(e).__name__
+            'error_type': type(e).__name__,
+            'retry': self.request.retries,
         })
+        if self.request.retries < self.max_retries:
+            raise self.retry(exc=e, countdown=int(60 * (2 ** self.request.retries)))
         return {"status": "error", "error": str(e)}
 
 
@@ -127,7 +130,7 @@ def import_trendlyne_data(self):
         return {"status": "error", "error": str(e)}
 
 
-@shared_task(name='update_live_market_data', bind=True)
+@shared_task(name='update_live_market_data', bind=True, max_retries=3)
 @task_enabled_guard('update-live-market-data')
 def update_live_market_data(self):
     """
@@ -163,11 +166,13 @@ def update_live_market_data(self):
         }
 
     except Exception as e:
-        logger.failure("Error updating live market data", error=e)
+        logger.failure("Error updating live market data", error=e, context={'retry': self.request.retries})
+        if self.request.retries < self.max_retries:
+            raise self.retry(exc=e, countdown=int(30 * (2 ** self.request.retries)))
         return {"status": "error", "error": str(e)}
 
 
-@shared_task(name='update_pre_market_data', bind=True)
+@shared_task(name='update_pre_market_data', bind=True, max_retries=3)
 @task_enabled_guard('update-pre-market-data')
 def update_pre_market_data(self):
     """
@@ -194,11 +199,13 @@ def update_pre_market_data(self):
         }
 
     except Exception as e:
-        logger.failure("Error updating pre-market data", error=e)
+        logger.failure("Error updating pre-market data", error=e, context={'retry': self.request.retries})
+        if self.request.retries < self.max_retries:
+            raise self.retry(exc=e, countdown=int(30 * (2 ** self.request.retries)))
         return {"status": "error", "error": str(e)}
 
 
-@shared_task(name='update_post_market_data', bind=True)
+@shared_task(name='update_post_market_data', bind=True, max_retries=3)
 @task_enabled_guard('update-post-market-data')
 def update_post_market_data(self):
     """
@@ -225,7 +232,9 @@ def update_post_market_data(self):
         }
 
     except Exception as e:
-        logger.failure("Error updating post-market data", error=e)
+        logger.failure("Error updating post-market data", error=e, context={'retry': self.request.retries})
+        if self.request.retries < self.max_retries:
+            raise self.retry(exc=e, countdown=int(30 * (2 ** self.request.retries)))
         return {"status": "error", "error": str(e)}
 
 
@@ -389,14 +398,16 @@ def fetch_analyst_reports_daily(self):
         from apps.data.models import TLStockData, ContractStockData, AnalystPriceTarget, AnalystReport
         from apps.data.providers.trendlyne import TrendlyneProvider
 
-        # Get F&O stocks with trendlyne_id
+        # Get ALL F&O stocks (including those without trendlyne_id)
         fno_symbols = set(ContractStockData.objects.values_list('nse_code', flat=True))
-        stocks_with_id = TLStockData.objects.filter(
-            nsecode__in=fno_symbols,
-            trendlyne_id__isnull=False
+        all_fno_stocks = TLStockData.objects.filter(
+            nsecode__in=fno_symbols
         ).values('nsecode', 'trendlyne_id', 'stock_name')
 
-        logger.step('fetching', f"Found {len(stocks_with_id)} F&O stocks with trendlyne_id")
+        stocks_with_id = [s for s in all_fno_stocks if s['trendlyne_id']]
+        stocks_without_id = [s for s in all_fno_stocks if not s['trendlyne_id']]
+
+        logger.step('fetching', f"Found {len(stocks_with_id)} F&O stocks with trendlyne_id, {len(stocks_without_id)} without")
 
         results = {
             'processed': 0,
@@ -405,20 +416,26 @@ def fetch_analyst_reports_daily(self):
             'errors': []
         }
 
+        results['ids_discovered'] = 0
+
         with TrendlyneProvider() as provider:
             # Login once
             if not provider.login():
                 logger.error('login_failed', "Could not login to Trendlyne")
                 return {"status": "error", "error": "Trendlyne login failed"}
 
-            for stock in stocks_with_id:
+            # Process ALL F&O stocks (with and without trendlyne_id)
+            # Stocks without ID will have it discovered via URL redirect
+            all_stocks = list(stocks_with_id) + list(stocks_without_id)
+
+            for stock in all_stocks:
                 try:
                     symbol = stock['nsecode']
-                    trendlyne_id = stock['trendlyne_id']
+                    trendlyne_id = stock['trendlyne_id']  # May be None
 
-                    logger.info('processing_stock', f"Processing {symbol} (ID: {trendlyne_id})")
+                    logger.info('processing_stock', f"Processing {symbol} (ID: {trendlyne_id or 'discovering...'})")
 
-                    # Fetch analyst data
+                    # Fetch analyst data (will discover trendlyne_id if None)
                     data = provider.fetch_analyst_data(
                         symbol=symbol,
                         trendlyne_id=trendlyne_id,
@@ -430,6 +447,21 @@ def fetch_analyst_reports_daily(self):
                         results['errors'].append(f"{symbol}: {data.get('error', 'Unknown error')}")
                         continue
 
+                    # Update trendlyne_id if discovered
+                    extracted_id = data.get('trendlyne_id')
+                    if extracted_id and not trendlyne_id:
+                        try:
+                            TLStockData.objects.filter(
+                                nsecode__iexact=symbol,
+                                trendlyne_id__isnull=True
+                            ).update(trendlyne_id=extracted_id)
+                            results['ids_discovered'] += 1
+                            logger.info('id_discovered', f"Discovered trendlyne_id for {symbol}: {extracted_id}")
+                        except Exception:
+                            pass
+                    # Use extracted_id for saving (fallback to original)
+                    save_id = extracted_id or trendlyne_id
+
                     # Save price target
                     price_target_data = data.get('price_target', {})
                     if price_target_data.get('success'):
@@ -437,7 +469,7 @@ def fetch_analyst_reports_daily(self):
                             nse_code=symbol,
                             defaults={
                                 'symbol': symbol,
-                                'trendlyne_id': trendlyne_id,
+                                'trendlyne_id': save_id,
                                 'stock_name': stock.get('stock_name', ''),
                                 'current_price': price_target_data.get('current_price'),
                                 'avg_target_price': price_target_data.get('avg_target_price'),
@@ -464,7 +496,7 @@ def fetch_analyst_reports_daily(self):
                                 author=report.get('author', '')[:200],
                                 defaults={
                                     'nse_code': symbol,
-                                    'trendlyne_id': trendlyne_id,
+                                    'trendlyne_id': save_id,
                                     'report_title': report.get('report_title', ''),
                                     'ltp_at_report': report.get('ltp_at_report'),
                                     'target_price': report.get('target_price'),
@@ -668,6 +700,71 @@ def process_analyst_report_pdfs(self, limit: int = 50):
         return {"status": "error", "error": str(e)}
 
 
+@shared_task(name='sync_trendlyne_ids', bind=True)
+def sync_trendlyne_ids(self):
+    """
+    Discover and sync trendlyne_ids for all F&O stocks (Daily - after data import)
+
+    Visits Trendlyne stock list pages to extract trendlyne_ids from
+    equity links (/equity/{id}/{SYMBOL}/) and updates TLStockData records.
+    This is needed because the Excel/CSV data downloads don't include IDs.
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+
+    try:
+        from apps.data.models import TLStockData, ContractStockData
+        from apps.data.providers.trendlyne import TrendlyneProvider
+
+        # Check how many F&O stocks are missing IDs
+        fno_symbols = set(ContractStockData.objects.values_list('nse_code', flat=True))
+        missing_ids = TLStockData.objects.filter(
+            nsecode__in=fno_symbols,
+            trendlyne_id__isnull=True
+        ).count()
+
+        if missing_ids == 0:
+            logger.info("[Sync IDs] All F&O stocks already have trendlyne_ids")
+            return {"status": "success", "message": "All IDs already populated", "missing": 0}
+
+        logger.info(f"[Sync IDs] {missing_ids} F&O stocks missing trendlyne_id, starting discovery...")
+
+        with TrendlyneProvider(headless=True) as provider:
+            provider.init_driver()
+            if not provider.login():
+                logger.error("[Sync IDs] Trendlyne login failed")
+                return {"status": "error", "error": "Login failed"}
+
+            # Discover IDs from stock list pages
+            missing_symbols = list(TLStockData.objects.filter(
+                nsecode__in=fno_symbols,
+                trendlyne_id__isnull=True
+            ).values_list('nsecode', flat=True))
+
+            discovered = provider.discover_trendlyne_ids(symbols=missing_symbols)
+
+            # Count how many were actually updated
+            still_missing = TLStockData.objects.filter(
+                nsecode__in=fno_symbols,
+                trendlyne_id__isnull=True
+            ).count()
+
+            result = {
+                "status": "success",
+                "discovered": len(discovered),
+                "previously_missing": missing_ids,
+                "still_missing": still_missing,
+                "updated": missing_ids - still_missing,
+                "timestamp": timezone.now().isoformat()
+            }
+            logger.info(f"[Sync IDs] Complete: {result}")
+            return result
+
+    except Exception as e:
+        logger.error(f"[Sync IDs] Error: {e}", exc_info=True)
+        return {"status": "error", "error": str(e)}
+
+
 @shared_task(name='morning_data_sync', bind=True)
 @task_enabled_guard('morning-data-sync')
 def morning_data_sync(self):
@@ -728,6 +825,20 @@ def morning_data_sync(self):
             'error': str(e)
         }
         logger.error('trendlyne_failed', f"Trendlyne sync failed: {e}")
+
+    # ==========================================================================
+    # STEP 1b: Sync Trendlyne IDs (if step 1 succeeded)
+    # ==========================================================================
+    if results['trendlyne'] and results['trendlyne'].get('status') == 'success':
+        try:
+            logger.step('sync_ids', "Step 1b: Syncing trendlyne_ids for F&O stocks")
+            id_result = sync_trendlyne_ids.apply()
+            id_data = id_result.result if id_result else {}
+            results['trendlyne_ids'] = id_data
+            logger.info('ids_synced', f"Trendlyne IDs synced: {id_data.get('updated', 0)} updated, {id_data.get('still_missing', '?')} still missing")
+        except Exception as e:
+            results['trendlyne_ids'] = {'status': 'error', 'error': str(e)}
+            logger.warning('ids_sync_failed', f"Trendlyne ID sync failed (non-critical): {e}")
 
     # ==========================================================================
     # STEP 2: Fetch and Process Market News

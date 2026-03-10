@@ -548,6 +548,28 @@ def _notify_task_completion(task_key, elapsed_seconds, result=None, error=None,
         logger.warning(f"Failed to send completion notification for {task_key}", exc_info=True)
 
 
+def _write_task_execution_log(task_key: str, status: str, duration_ms: int,
+                              result=None, error: str = '') -> None:
+    """Write one TaskExecutionLog row.  Swallows all exceptions so a DB
+    failure never disrupts the task itself."""
+    try:
+        from django.utils import timezone
+        from apps.core.models import TaskExecutionLog
+        TaskExecutionLog.objects.create(
+            task_key=task_key,
+            completed_at=timezone.now(),
+            status=status,
+            duration_ms=duration_ms,
+            result_summary=(
+                {k: str(v)[:200] for k, v in result.items()}
+                if isinstance(result, dict) else {}
+            ),
+            error_message=error[:1000] if error else '',
+        )
+    except Exception:
+        logger.debug(f"TaskExecutionLog write failed for {task_key}", exc_info=True)
+
+
 def task_enabled_guard(task_key):
     """
     Decorator to check if a Celery task is enabled before executing.
@@ -595,6 +617,8 @@ def task_enabled_guard(task_key):
                 if not enabled:
                     keys_str = ', '.join(task_keys)
                     logger.info(f"Task '{keys_str}' is disabled. Skipping execution.")
+                    _write_task_execution_log(primary_key, 'SKIPPED', 0,
+                                             result={'reason': 'Task disabled'})
                     return {
                         'status': 'skipped',
                         'reason': 'Task disabled',
@@ -614,11 +638,24 @@ def task_enabled_guard(task_key):
                 elapsed = time.time() - start
                 _notify_task_completion(primary_key, elapsed, result=result,
                                        message_id=msg_id, celery_task_id=celery_task_id)
+                _write_task_execution_log(primary_key, 'SUCCESS',
+                                         int(elapsed * 1000), result=result)
                 return result
             except Exception as exc:
+                # celery.exceptions.Retry is raised by self.retry() to signal
+                # a retry — it is NOT a failure.  Re-raise silently so Celery
+                # can schedule the next attempt without logging a false FAILURE.
+                try:
+                    from celery.exceptions import Retry as _CeleryRetry
+                    if isinstance(exc, _CeleryRetry):
+                        raise
+                except ImportError:
+                    pass
                 elapsed = time.time() - start
                 _notify_task_completion(primary_key, elapsed, error=str(exc),
                                        message_id=msg_id, celery_task_id=celery_task_id)
+                _write_task_execution_log(primary_key, 'FAILURE',
+                                         int(elapsed * 1000), error=str(exc))
                 raise
 
         return wrapper

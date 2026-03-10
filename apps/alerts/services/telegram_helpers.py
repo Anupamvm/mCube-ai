@@ -117,7 +117,7 @@ def close_all_positions_sync():
     total_pnl = Decimal('0.00')
 
     for pos in active_positions:
-        success, closed_pos, msg = close_position(
+        success, msg = close_position(
             position=pos,
             exit_price=pos.current_price,
             exit_reason="EMERGENCY_CLOSEALL_TELEGRAM_BOT"
@@ -125,7 +125,7 @@ def close_all_positions_sync():
 
         if success:
             closed_count += 1
-            total_pnl += closed_pos.realized_pnl
+            total_pnl += pos.realized_pnl
         else:
             failed_count += 1
 

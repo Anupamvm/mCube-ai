@@ -3,78 +3,100 @@
 # =============================================================================
 # mCube-ai Background Services Startup Script
 # =============================================================================
-# Starts Celery Beat (scheduler) and Workers for all queues
+# Starts Celery Beat (scheduler) and dedicated worker pools.
+#
+# Worker pools (Tier 2 dedicated architecture):
+#
+#   worker-critical  → monitoring + risk       (concurrency: 3)
+#     These tasks run every minute and must NEVER be delayed by slow
+#     data fetches or large analytics jobs.
+#
+#   worker-trading   → strategies              (concurrency: 2)
+#     Sequential strategy execution.  Low concurrency prevents two
+#     strategy tasks from racing to enter the same instrument.
+#
+#   worker-data      → data                    (concurrency: 4)
+#     Parallelisable data fetches and imports.
+#
+#   worker-reports   → reports                 (concurrency: 1)
+#     End-of-day analytics — non-urgent, single-threaded.
+#
 # Usage: ./scripts/startbk.sh
 # =============================================================================
 
-# Dynamically determine project directory (parent of scripts/)
 PROJECT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )/.." && pwd )"
 LOG_DIR="$PROJECT_DIR/logs"
 PID_DIR="$PROJECT_DIR/logs/pids"
 
-# Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
+NC='\033[0m'
 
-# Create directories if they don't exist
-mkdir -p "$LOG_DIR"
-mkdir -p "$PID_DIR"
+mkdir -p "$LOG_DIR" "$PID_DIR"
 
 cd "$PROJECT_DIR"
-
-# Activate virtual environment
 source "$PROJECT_DIR/venv/bin/activate"
 
-# =============================================================================
-# DYNAMIC CELERY CONCURRENCY
-# =============================================================================
-# Calculate concurrency based on available CPU cores (half of cores)
-if [[ "$OSTYPE" == "darwin"* ]]; then
-    CPU_CORES=$(sysctl -n hw.ncpu 2>/dev/null || echo 4)
-else
-    CPU_CORES=$(nproc 2>/dev/null || grep -c ^processor /proc/cpuinfo 2>/dev/null || echo 4)
-fi
-
-# Use half the cores, minimum 2, maximum 32
-CELERY_CONCURRENCY=$((CPU_CORES / 2))
-if [ "$CELERY_CONCURRENCY" -lt 2 ]; then
-    CELERY_CONCURRENCY=2
-elif [ "$CELERY_CONCURRENCY" -gt 32 ]; then
-    CELERY_CONCURRENCY=32
-fi
-
-export CELERY_CONCURRENCY
-
-echo -e "${YELLOW}=== mCube-ai Background Services ===${NC}"
-echo -e "CPU Cores: $CPU_CORES | Celery Workers: $CELERY_CONCURRENCY"
+echo -e "${YELLOW}=== mCube-ai Background Services (Dedicated Workers) ===${NC}"
 echo ""
 
-# Check if Redis is running
+# Verify Redis
 if ! redis-cli ping > /dev/null 2>&1; then
     echo -e "${RED}[ERROR] Redis is not running!${NC}"
-    echo "Start Redis first with: brew services start redis (macOS) or sudo systemctl start redis-server (Ubuntu)"
+    echo "Start Redis: sudo systemctl start redis-server"
     exit 1
 fi
 echo -e "${GREEN}[OK] Redis is running${NC}"
 
-# Function to stop existing processes
-stop_existing() {
-    echo -e "${YELLOW}Stopping any existing Celery processes...${NC}"
-    pkill -f "celery.*mcube_ai" 2>/dev/null
-    sleep 2
-}
+# Stop any existing Celery processes
+echo -e "${YELLOW}Stopping any existing Celery processes...${NC}"
+pkill -f "celery.*mcube_ai" 2>/dev/null
+sleep 2
 
-# Stop existing processes first
-stop_existing
-
-# Remove stale celerybeat-schedule.db so beat starts fresh from DB config
+# Remove stale beat schedule so it rebuilds cleanly from DB
 rm -f "$PROJECT_DIR/celerybeat-schedule.db"
 
-# Start Celery Beat (Scheduler) with DBReloadScheduler
-echo -e "${YELLOW}Starting Celery Beat (Scheduler)...${NC}"
-nohup "$PROJECT_DIR/venv/bin/python" -m celery -A mcube_ai beat --scheduler=mcube_ai.celery:DBReloadScheduler --loglevel=info >> "$LOG_DIR/celery_beat.log" 2>&1 &
+PYTHON="$PROJECT_DIR/venv/bin/python"
+CELERY_CMD="$PYTHON -m celery -A mcube_ai"
+
+# Helper: start a worker and save its PID
+start_worker() {
+    local name="$1"
+    local queues="$2"
+    local concurrency="$3"
+    local log_file="$LOG_DIR/celery_${name}.log"
+    local pid_file="$PID_DIR/celery_${name}.pid"
+
+    echo -e "${YELLOW}Starting worker-${name} (queues: ${queues}, concurrency: ${concurrency})...${NC}"
+
+    nohup $CELERY_CMD worker \
+        --queues="$queues" \
+        --concurrency="$concurrency" \
+        --hostname="${name}@%h" \
+        --loglevel=info \
+        --max-tasks-per-child=500 \
+        >> "$log_file" 2>&1 &
+
+    local pid=$!
+    echo $pid > "$pid_file"
+    sleep 1
+
+    if ps -p $pid > /dev/null 2>&1; then
+        echo -e "${GREEN}  [OK] worker-${name} started (PID: ${pid})${NC}"
+    else
+        echo -e "${RED}  [FAILED] worker-${name} failed to start — check $log_file${NC}"
+    fi
+}
+
+# =============================================================================
+# Celery Beat (Scheduler)
+# =============================================================================
+echo -e "${YELLOW}Starting Celery Beat...${NC}"
+nohup $CELERY_CMD beat \
+    --scheduler=mcube_ai.celery:DBReloadScheduler \
+    --loglevel=info \
+    >> "$LOG_DIR/celery_beat.log" 2>&1 &
 BEAT_PID=$!
 echo $BEAT_PID > "$PID_DIR/celery_beat.pid"
 sleep 2
@@ -85,27 +107,44 @@ else
     echo -e "${RED}[FAILED] Celery Beat failed to start${NC}"
 fi
 
-# Start Celery Worker with all queues
-echo -e "${YELLOW}Starting Celery Worker (all queues, concurrency=$CELERY_CONCURRENCY)...${NC}"
-nohup "$PROJECT_DIR/venv/bin/python" -m celery -A mcube_ai worker \
-    --queues=data,strategies,monitoring,risk,reports,celery \
-    --loglevel=info \
-    --concurrency=$CELERY_CONCURRENCY >> "$LOG_DIR/celery_worker.log" 2>&1 &
-WORKER_PID=$!
-echo $WORKER_PID > "$PID_DIR/celery_worker.pid"
+echo ""
+
+# =============================================================================
+# Dedicated Worker Pools
+# =============================================================================
+
+# CRITICAL — position monitoring + risk limits.
+# Must never be starved.  Runs every-minute tasks.
+start_worker "critical" "monitoring,risk" "3"
+
+# TRADING — strategy execution (options + futures).
+# Low concurrency: prevents two entry tasks running simultaneously.
+start_worker "trading" "strategies" "2"
+
+# DATA — market data fetches, Trendlyne imports, Breeze updates.
+# Higher concurrency: tasks are I/O bound and independent.
+start_worker "data" "data" "4"
+
+# REPORTS — EOD analytics, equity curves, P&L aggregation.
+# Single worker: non-urgent, keeps DB load predictable.
+start_worker "reports" "reports" "1"
+
 sleep 2
 
-if ps -p $WORKER_PID > /dev/null 2>&1; then
-    echo -e "${GREEN}[OK] Celery Worker started (PID: $WORKER_PID)${NC}"
-else
-    echo -e "${RED}[FAILED] Celery Worker failed to start${NC}"
-fi
-
-sleep 2
-
-# Verify processes are running
+# =============================================================================
+# Status
+# =============================================================================
 echo ""
 echo -e "${YELLOW}=== Status ===${NC}"
+
+check_worker() {
+    local name="$1"
+    if pgrep -f "celery.*worker.*${name}@" > /dev/null 2>&1; then
+        echo -e "${GREEN}[RUNNING] worker-${name}${NC}"
+    else
+        echo -e "${RED}[NOT RUNNING] worker-${name}${NC}"
+    fi
+}
 
 if pgrep -f "celery.*beat.*mcube_ai" > /dev/null; then
     echo -e "${GREEN}[RUNNING] Celery Beat${NC}"
@@ -113,16 +152,18 @@ else
     echo -e "${RED}[NOT RUNNING] Celery Beat${NC}"
 fi
 
-if pgrep -f "celery.*worker.*mcube_ai" > /dev/null; then
-    echo -e "${GREEN}[RUNNING] Celery Worker${NC}"
-else
-    echo -e "${RED}[NOT RUNNING] Celery Worker${NC}"
-fi
+check_worker "critical"
+check_worker "trading"
+check_worker "data"
+check_worker "reports"
 
 echo ""
 echo -e "${YELLOW}Logs:${NC}"
-echo "  Beat:   $LOG_DIR/celery_beat.log"
-echo "  Worker: $LOG_DIR/celery_worker.log"
+echo "  Beat:     $LOG_DIR/celery_beat.log"
+echo "  Critical: $LOG_DIR/celery_critical.log"
+echo "  Trading:  $LOG_DIR/celery_trading.log"
+echo "  Data:     $LOG_DIR/celery_data.log"
+echo "  Reports:  $LOG_DIR/celery_reports.log"
 echo ""
 echo -e "${YELLOW}To stop all services:${NC} ./scripts/stopbk.sh"
-echo -e "${YELLOW}To view logs:${NC} tail -f $LOG_DIR/celery_worker.log"
+echo -e "${YELLOW}To tail a worker:${NC}   tail -f $LOG_DIR/celery_critical.log"

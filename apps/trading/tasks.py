@@ -11,6 +11,11 @@ from django.utils import timezone
 
 from apps.core.utils.decorators import task_enabled_guard
 from apps.core.utils.task_logger import TaskLogger
+from apps.alerts.services.telegram_client import send_telegram_notification
+
+# Minutes after first revalidation before a CRITICAL escalation alert is sent.
+# Escalation fires once per suggestion — field suggestion.escalated guards repeats.
+_ESCALATION_MINUTES = 15
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +85,36 @@ def check_confirmation_timeouts(self):
                         'revalidate_error',
                         f"Error revalidating suggestion {suggestion.id}: {e}"
                     )
+
+            # ── Escalation: CRITICAL alert if pending for too long ────────────
+            # Fires once per suggestion (escalated flag prevents re-spamming).
+            # Condition: revalidation already sent AND still pending after
+            # _ESCALATION_MINUTES since confirmation was first requested.
+            if (
+                suggestion.revalidation_sent
+                and not suggestion.escalated
+            ):
+                escalation_threshold = (
+                    suggestion.confirmation_requested_at
+                    + timedelta(minutes=_ESCALATION_MINUTES)
+                )
+                if now > escalation_threshold:
+                    pending_min = int(
+                        (now - suggestion.confirmation_requested_at).total_seconds() / 60
+                    )
+                    instrument = getattr(suggestion, 'instrument', 'Unknown')
+                    strategy = suggestion.get_strategy_display() if hasattr(suggestion, 'get_strategy_display') else suggestion.strategy
+                    send_telegram_notification(
+                        f"🚨 <b>EXIT CONFIRMATION OVERDUE</b>\n\n"
+                        f"Instrument: <b>{instrument}</b>\n"
+                        f"Strategy: {strategy}\n"
+                        f"Pending: <b>{pending_min} min</b> with no response.\n\n"
+                        f"Position remains open. "
+                        f"<b>MANUAL ACTION REQUIRED.</b>",
+                        notification_type='CRITICAL',
+                    )
+                    suggestion.escalated = True
+                    suggestion.save(update_fields=['escalated'])
 
         task_logger.success("Timeout check completed", context={
             'checked': checked,

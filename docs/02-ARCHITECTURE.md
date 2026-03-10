@@ -98,7 +98,13 @@ Position tracking with entry/exit, P&L calculation, MonitorLog for position chec
 ### strategies
 Kotak strangle and ICICI futures strategy implementations.
 - `DynamicScheduler` for `TradingScheduleConfig`-based task scheduling
-- Enhanced futures analyzer with 12-component parallel analysis
+- Enhanced futures analyzer with 13-component parallel analysis (315pts → 100 scale)
+- **New services:**
+  - `adaptive_sl_target.py` — 3-tier SL/target engine (S/R → ATR×regime → volatility%)
+  - `market_regime.py` — Market regime detection (TRENDING/RANGING/VOLATILE/BREAKOUT/NORMAL)
+  - `contract_prefilter.py` — Lightweight DB-only contract pre-filter
+  - `trade_validation.py` — Post-score R:R and regime validation gate
+  - `llm_context_builder.py` — Enriched LLM context with regime + scoring summary
 
 ### risk
 RiskLimit model, circuit breakers, real-time monitoring.
@@ -134,6 +140,9 @@ Trading workflows, trade suggestions, approval system.
 - `TradeConfirmationService` — Telegram confirmation flow (futures, options, exit)
 - Two-step futures approval: selection screen → detail view → execute with batching
 - Order batching: orders > 10 lots split, 10-second delay, stop execution button
+- Hybrid Telegram format: compact headline with score/R:R/regime + labeled sections
+- Web UI: color-coded score badges, R:R display, regime badges, quality grades
+- `TradeSuggestion` model: `composite_score`, `regime`, `is_pending` properties
 
 ---
 
@@ -251,19 +260,25 @@ Tasks run via **Celery** and **Django background_task**:
 ```
 1. Market Data Sync (Celery/Trendlyne)
        ↓
-2. Strategy Evaluation
+2. Market Regime Detection (NIFTY ADX + ATR + VIX)
        ↓
-3. LLM Validation (futures only)
+3. Contract Pre-filter (ADX, Volume, RSI)
        ↓
-4. Human Approval (Telegram)
+4. Strategy Evaluation (13-factor scoring, 315pts → 100)
        ↓
-5. Order Placement (Broker API)
+5. Trade Validation Gate (R:R >= 1.5, regime checks)
        ↓
-6. Position Monitoring
+6. LLM Validation (enriched context with regime + scoring)
        ↓
-7. Exit Execution
+7. Human Approval (Telegram — hybrid format)
        ↓
-8. P&L Recording
+8. Order Placement (Broker API)
+       ↓
+9. Position Monitoring (adaptive SL/target, hold flag)
+       ↓
+10. Exit Execution (smart re-alert on held positions)
+       ↓
+11. P&L Recording
 ```
 
 ---

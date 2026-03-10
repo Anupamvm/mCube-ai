@@ -120,15 +120,30 @@ class ICICIFuturesStrategy(BaseStrategy):
         return base_filters + [self._llm_validation_filter]
 
     def _llm_validation_filter(self) -> Dict:
-        """LLM validation as a filter step."""
+        """LLM validation as a filter step with enriched context."""
         if not self.candidate:
             return {'passed': False, 'message': 'No candidate to validate'}
 
         try:
+            # Build enriched context for LLM
+            additional_context = None
+            try:
+                from apps.strategies.services.llm_context_builder import build_trade_context
+                analysis_result = self.candidate.get('analysis_result', {})
+                regime = self.candidate.get('regime', 'NORMAL')
+                validation = self.candidate.get('validation')
+                if analysis_result:
+                    additional_context = build_trade_context(
+                        analysis_result, regime=regime, validation=validation
+                    )
+            except Exception as ctx_err:
+                logger.warning(f"LLM context builder failed: {ctx_err}")
+
             self.llm_result = validate_trade(
                 symbol=self.candidate.get('symbol', 'UNKNOWN'),
                 direction=self.candidate.get('direction', 'LONG'),
-                strategy_type='FUTURES'
+                strategy_type='FUTURES',
+                additional_context=additional_context,
             )
 
             confidence = self.llm_result.get('confidence', 0)

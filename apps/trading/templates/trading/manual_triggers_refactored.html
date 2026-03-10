@@ -5088,7 +5088,7 @@ const TradeVerification = {
                 statusBadge: analystPassed ? 'status-pass' : 'status-fail',
                 statusText: analystPassed ? 'PASS' : 'BLOCKED',
                 expanded: !analystPassed,
-                content: this.buildAnalystVerificationContent(analystVerif)
+                content: this.buildAnalystVerificationContent(analystVerif, data.symbol)
             });
         }
 
@@ -5427,7 +5427,7 @@ const TradeVerification = {
     },
 
     // Helper: Build Analyst Verification content for collapsible (without outer wrapper)
-    buildAnalystVerificationContent(verification) {
+    buildAnalystVerificationContent(verification, stockSymbol) {
         if (!verification) return '<div style="padding: 20px; color: #6b7280; text-align: center;">No analyst verification data</div>';
 
         const tradeAllowed = verification.trade_allowed !== false;
@@ -5450,6 +5450,17 @@ const TradeVerification = {
             ? '<span style="background: rgba(255,255,255,0.3); padding: 2px 8px; border-radius: 10px; font-size: 0.65rem; font-weight: 600;">📦 CACHED</span>'
             : '<span style="background: rgba(255,255,255,0.2); padding: 2px 8px; border-radius: 10px; font-size: 0.65rem; font-weight: 600;">⚠️ NO DATA</span>';
 
+        // Refresh button (always visible)
+        const symbolForRefresh = stockSymbol || '';
+        const refreshBtn = symbolForRefresh
+            ? `<button id="analystRefreshBtn" onclick="TradeVerification.refreshAnalystData('${symbolForRefresh}')"
+                       style="background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.4); color: white; padding: 6px 14px; border-radius: 6px; font-size: 0.8rem; font-weight: 600; cursor: pointer; display: flex; align-items: center; gap: 5px; transition: background 0.2s;"
+                       onmouseover="this.style.background='rgba(255,255,255,0.35)'"
+                       onmouseout="this.style.background='rgba(255,255,255,0.2)'">
+                    🔄 Refresh Data
+                </button>`
+            : '';
+
         let html = `
             <!-- Header -->
             <div style="background: ${headerBg}; border-radius: 8px; padding: 15px; margin-bottom: 20px; color: white;">
@@ -5466,9 +5477,12 @@ const TradeVerification = {
                             </p>
                         </div>
                     </div>
-                    <div style="text-align: right;">
-                        <div style="font-size: 0.7rem; opacity: 0.9;">Recommendation</div>
-                        <div style="font-size: 1rem; font-weight: 700;">${verification.recommendation || 'PROCEED'}</div>
+                    <div style="display: flex; align-items: center; gap: 15px;">
+                        ${refreshBtn}
+                        <div style="text-align: right;">
+                            <div style="font-size: 0.7rem; opacity: 0.9;">Recommendation</div>
+                            <div style="font-size: 1rem; font-weight: 700;">${verification.recommendation || 'PROCEED'}</div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -5520,9 +5534,20 @@ const TradeVerification = {
             }
         } else {
             html += `
-                <div style="background: #fffbeb; border-radius: 8px; padding: 15px; text-align: center; border: 1px solid #fde68a;">
-                    <span style="font-size: 1.2rem;">⚠️</span>
-                    <span style="color: #92400e; font-weight: 500; margin-left: 10px;">No analyst price target data available</span>
+                <div style="background: #fffbeb; border-radius: 8px; padding: 20px; text-align: center; border: 1px solid #fde68a;">
+                    <div style="font-size: 1.5rem; margin-bottom: 8px;">⚠️</div>
+                    <div style="color: #92400e; font-weight: 600; margin-bottom: 12px;">No analyst price target data available</div>
+                    <p style="color: #78350f; font-size: 0.85rem; margin: 0 0 15px 0;">
+                        Analyst data could not be fetched automatically. Click below to retry fetching from Trendlyne.
+                    </p>
+                    ${symbolForRefresh ? `
+                        <button onclick="TradeVerification.refreshAnalystData('${symbolForRefresh}')"
+                                style="background: #f59e0b; color: white; border: none; padding: 10px 24px; border-radius: 6px; font-size: 0.9rem; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 6px;"
+                                onmouseover="this.style.background='#d97706'"
+                                onmouseout="this.style.background='#f59e0b'">
+                            🔄 Fetch Analyst Data from Trendlyne
+                        </button>
+                    ` : ''}
                 </div>
             `;
         }
@@ -5775,6 +5800,114 @@ const TradeVerification = {
                 </div>
             </div>
         `;
+    },
+
+    async refreshAnalystData(stockSymbol) {
+        const refreshBtn = document.getElementById('analystRefreshBtn');
+        const originalBtnHTML = refreshBtn ? refreshBtn.innerHTML : '';
+
+        try {
+            // Update all refresh buttons to loading state
+            document.querySelectorAll('[onclick*="refreshAnalystData"]').forEach(btn => {
+                btn.disabled = true;
+                btn.innerHTML = '⏳ Fetching from Trendlyne...';
+                btn.style.opacity = '0.7';
+                btn.style.cursor = 'wait';
+            });
+
+            UIBuilders.showNotification({
+                type: 'info',
+                message: `Fetching analyst data for ${stockSymbol} from Trendlyne... This may take 15-30 seconds.`,
+                icon: '🔄',
+                timeout: 10000
+            });
+
+            const formData = new FormData();
+            formData.append('symbol', stockSymbol);
+
+            const response = await fetch('{% url "trading:refresh_analyst_data" %}', {
+                method: 'POST',
+                headers: { 'X-CSRFToken': ApiClient.getCookie('csrftoken') },
+                body: formData
+            });
+
+            const data = await response.json();
+
+            if (data.success && data.price_target) {
+                // Update the analyst section in-place
+                const analystSection = document.getElementById('verify-analyst');
+                if (analystSection) {
+                    // Build updated verification object
+                    const updatedVerification = {
+                        trade_allowed: true,
+                        blocking_reasons: [],
+                        warnings: [],
+                        price_target: data.price_target,
+                        reports_summary: data.reports_saved > 0 ? { total_reports: data.reports_saved } : null,
+                        recommendation: 'PROCEED',
+                        data_source: 'fresh_fetch',
+                        fetch_status: 'fetch_success',
+                        debug_info: data.debug_info || [],
+                    };
+
+                    // Find the content container inside the collapsible and replace it
+                    const contentDiv = analystSection.querySelector('.collapsible-content, [style*="padding"]');
+                    if (contentDiv) {
+                        // Replace from the parent collapsible section
+                        const newContent = this.buildAnalystVerificationContent(updatedVerification, stockSymbol);
+                        // Find the actual content wrapper
+                        const wrapper = analystSection.querySelector('div[style*="overflow"]') || analystSection.lastElementChild;
+                        if (wrapper) {
+                            wrapper.innerHTML = newContent;
+                        }
+                    }
+
+                    // Also update the summary text in the header
+                    const summaryEl = analystSection.querySelector('.section-summary, [style*="font-size: 0.85rem"]');
+                    const pt = data.price_target;
+                    if (summaryEl && pt.avg_target_price) {
+                        summaryEl.textContent = `Target: ₹${pt.avg_target_price.toLocaleString('en-IN', {maximumFractionDigits: 0})} (${pt.upside_pct >= 0 ? '+' : ''}${pt.upside_pct.toFixed(1)}% upside) | ${pt.analyst_count} analysts`;
+                    }
+                }
+
+                UIBuilders.showNotification({
+                    type: 'success',
+                    message: `Analyst data refreshed for ${stockSymbol}: ₹${data.price_target.avg_target_price?.toLocaleString('en-IN') || 'N/A'} target, ${data.price_target.analyst_count} analysts, ${data.reports_saved} reports`,
+                    icon: '✅',
+                    timeout: 8000
+                });
+            } else if (data.success) {
+                UIBuilders.showNotification({
+                    type: 'warning',
+                    message: `Fetch completed but no analyst data found for ${stockSymbol}. Trendlyne may not have data for this stock.`,
+                    icon: '⚠️',
+                    timeout: 8000
+                });
+            } else {
+                UIBuilders.showNotification({
+                    type: 'error',
+                    message: `Failed to refresh analyst data: ${data.error || 'Unknown error'}`,
+                    icon: '❌',
+                    timeout: 8000
+                });
+            }
+        } catch (error) {
+            console.error('[Analyst] Refresh error:', error);
+            UIBuilders.showNotification({
+                type: 'error',
+                message: `Error refreshing analyst data: ${error.message}`,
+                icon: '❌',
+                timeout: 8000
+            });
+        } finally {
+            // Restore buttons
+            document.querySelectorAll('[onclick*="refreshAnalystData"]').forEach(btn => {
+                btn.disabled = false;
+                btn.innerHTML = '🔄 Refresh Data';
+                btn.style.opacity = '1';
+                btn.style.cursor = 'pointer';
+            });
+        }
     },
 
     async fetchAndDisplayNews(stockSymbol) {
@@ -6910,9 +7043,19 @@ const TradeVerification = {
         // Data freshness note
         if (priceTarget && priceTarget.is_stale) {
             html += `
-                <div style="margin-top: 15px; padding: 10px 15px; background: #f3f4f6; border-radius: 6px; font-size: 0.85rem; color: #6b7280; display: flex; align-items: center; gap: 8px;">
-                    <span>🔄</span>
-                    <span>Analyst data is being refreshed in the background. Check back later for updated information.</span>
+                <div style="margin-top: 15px; padding: 10px 15px; background: #f3f4f6; border-radius: 6px; font-size: 0.85rem; color: #6b7280; display: flex; align-items: center; justify-content: space-between;">
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <span>🔄</span>
+                        <span>Analyst data may be outdated.</span>
+                    </div>
+                    ${symbolForRefresh ? `
+                        <button onclick="TradeVerification.refreshAnalystData('${symbolForRefresh}')"
+                                style="background: #6b7280; color: white; border: none; padding: 5px 12px; border-radius: 4px; font-size: 0.8rem; font-weight: 600; cursor: pointer;"
+                                onmouseover="this.style.background='#4b5563'"
+                                onmouseout="this.style.background='#6b7280'">
+                            Refresh Now
+                        </button>
+                    ` : ''}
                 </div>
             `;
         }

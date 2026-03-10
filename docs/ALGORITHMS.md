@@ -272,12 +272,12 @@ BROKEN_IC_CONFIG = {
 ### What is This Strategy?
 
 This strategy trades stock futures (not options) with AI validation:
-1. **Pre-market scan** (8:30 AM) — screen stocks using 12 technical/fundamental factors
+1. **Pre-market scan** (8:30 AM) — screen stocks using 13 technical/fundamental factors
 2. **Active execution** (9:40 AM) — re-validate with live prices, send TOP 3 to Telegram
 3. **Validate with LLM** before taking the trade
 4. **Average down** if position goes against us (controlled risk)
 
-### The 12-Factor Composite Score (300 points scaled to 100)
+### The 13-Factor Composite Score (315 points scaled to 100)
 
 ```
 Factor Analysis Algorithm:
@@ -364,8 +364,48 @@ For each F&O stock, calculate:
    |      30-50% bullish = 50
    |      < 30% bullish = 25
 
-COMPOSITE SCORE = Sum(factor_score * weight)
-Range: 0-100
+10. TREND CONFIRMATION (Weight: 10%)
+    |-- Measures: Trend strength via DMA crossovers, ADX, breakout quality
+    |-- Source: TLStockData (sma_20, sma_50, sma_200, day_adx)
+    |
+    |-- Enhanced with breakout quality scoring:
+    |      Breakout volume > 2x 20-day avg = +5 bonus
+    |      Breakout volume 1.5-2x avg = +2 bonus
+    |      Fake breakout (broke level but closed back) = -3 penalty
+    |      Fresh breakout (within 2% of level) = +3 bonus
+
+11. SUPPORT/RESISTANCE PROXIMITY (Weight: 10%)
+    |-- Measures: Proximity to key S/R levels
+    |-- Source: Consolidated S/R Calculator
+    |
+    |-- Logic:
+    |      Near strong support (LONG) = 100
+    |      Near strong resistance (SHORT) = 100
+    |      In no-man's land = 50
+    |      Against S/R (LONG near resistance) = 25
+
+12. NEWS SENTIMENT (Weight: 10%)
+    |-- Measures: Recent news sentiment
+    |-- Source: GNews API + LLM analysis
+    |
+    |-- Logic:
+    |      Strong positive sentiment = 100
+    |      Mild positive = 75
+    |      Neutral = 50
+    |      Negative = 25
+
+13. MULTI-TIMEFRAME CONFLUENCE (Weight: 15 pts / ~5%)  ← NEW
+    |-- Measures: Trend alignment across timeframes
+    |-- Source: HistoricalPrice (5d, 30d, 50d, 200d SMAs)
+    |
+    |-- Logic:
+    |      Weekly trend (price vs 30-day SMA) matches daily: +5
+    |      Monthly trend (50d vs 200d SMA) matches daily: +5
+    |      Short-term (5d vs 30d SMA) confirms: +5
+    |      Divergence penalty: daily vs weekly mismatch: -5
+
+COMPOSITE SCORE = Sum of all 13 factor scores (max 315 points)
+Scaled to 0-100 range
 ```
 
 ### Algorithm Flow
@@ -378,7 +418,7 @@ Every Market Day — Two-Phase Process
    |
    |  screen-futures-opportunities task runs
    |  Scans top 50 F&O stocks by volume
-   |  Runs 12-factor scoring model (300 points scaled to 100)
+   |  Runs 13-factor scoring model (315 points scaled to 100)
    |  Results cached for Phase 2
    |
 --- PHASE 2: EXECUTION (9:40 AM) ---
@@ -389,11 +429,37 @@ Every Market Day — Two-Phase Process
 1. SCREEN ALL F&O STOCKS
    |
    |  For each stock in F&O list (~180 stocks):
-   |    Calculate 12-factor composite score
+   |    Calculate 13-factor composite score
    |
    |  Filter: composite_score >= 65
    |
    |  Result: List of potential candidates
+   |
+   v
+1b. CONTRACT PRE-FILTER (New)
+   |
+   |  Lightweight DB-only filter before full analysis:
+   |    ADX > 15 (minimum trend strength)
+   |    Volume > 20-day average (active trading)
+   |    RSI not in 45-55 dead zone (has directional bias)
+   |    Not at both 52-week extremes simultaneously
+   |
+   |  Reduces ~50 contracts to ~30-35 for analysis
+   |  Source: TLStockData fields (no API calls)
+   |
+   v
+1c. MARKET REGIME DETECTION (New)
+   |
+   |  Classify current market regime using NIFTY:
+   |    VOLATILE:  ATR expansion > 1.5x OR VIX > 22
+   |    BREAKOUT:  ADX rising from 20→25+
+   |    TRENDING:  ADX > 25 AND ATR expansion < 1.3x
+   |    RANGING:   ADX < 20 AND ATR expansion < 1.0x
+   |    NORMAL:    Default fallback
+   |
+   |  Priority: VOLATILE > BREAKOUT > TRENDING > RANGING > NORMAL
+   |  Regime passed to all downstream analysis
+   |  Source: TLStockData (day_adx, day_atr) + India VIX
    |
    v
 2. RANK CANDIDATES
@@ -447,6 +513,27 @@ Every Market Day — Two-Phase Process
    |  4c. Get LLM Response
    |      If confidence >= 70%: PROCEED
    |      If confidence < 70%: SKIP, try next candidate
+   |
+   |  4d. Enriched Context (New)
+   |      The LLM now receives structured context including:
+   |      - MARKET REGIME: Current regime + confidence
+   |      - SCORING SUMMARY: Top 3 strengths, bottom 2 weaknesses
+   |      - RISK PROFILE: R:R ratio, SL distance %, max loss
+   |      - KEY SIGNALS: OI buildup, DMA position, sector trend
+   |      - WARNINGS: Any validation warnings
+   |      Source: apps/strategies/services/llm_context_builder.py
+   |
+   v
+4b. TRADE VALIDATION GATE (New)
+   |
+   |  Post-score quality checks:
+   |    R:R ratio >= 1.5 required (reject if < 1.0)
+   |    RANGING regime: -10 score penalty
+   |    VOLATILE regime: require score >= 75
+   |    SL distance: must be 0.5% - 5% range
+   |    Target reachability vs days to expiry
+   |
+   |  Returns: {passed, adjusted_score, rejection_reason, rr_ratio, warnings}
    |
    v
 5. CALCULATE POSITION SIZE
@@ -556,6 +643,47 @@ When position is in loss (checked every 10 minutes, 9:30 AM - 3:00 PM):
    |  Recalculate target from new average
 ```
 
+### Adaptive SL/Target Engine (3-Tier)
+
+The futures algorithm uses a 3-tier fallback system for stop-loss and target calculation:
+
+```
+Tier Selection:
+
+TIER 1: S/R-Based (Preferred)
+   |  Uses compute_initial_sl_target() from SR Exit Engine
+   |  Adds ATR buffer: 0.3x ATR (strong level) or 0.5x ATR (standard)
+   |  Requires valid S1/R1 levels from Consolidated S/R Calculator
+   |
+   |  Falls through to Tier 2 if no valid S/R levels available
+   |
+TIER 2: ATR-Adaptive by Regime
+   |  SL and target multiplied by regime-specific factors:
+   |
+   |  Regime     | SL Multiplier | Target Multiplier
+   |  ---------- | ------------- | -----------------
+   |  TRENDING   | 1.5x ATR      | 3.0x ATR
+   |  RANGING    | 1.0x ATR      | 2.0x ATR
+   |  VOLATILE   | 2.0x ATR      | 3.5x ATR
+   |  BREAKOUT   | 1.2x ATR      | 3.0x ATR
+   |  NORMAL     | 2.0x ATR      | 2.0x ATR (legacy)
+   |
+   |  Falls through to Tier 3 if no ATR data available
+   |
+TIER 3: Volatility-Scaled Percentage
+   |  Base: 2% SL, 4% target
+   |  Scale factor: volatility_pct / 30
+   |  SL clamped to [1.5%, 3.5%]
+   |  Target = SL × 2
+
+Additional Features:
+   • Dual targets: target_1 (conservative) + target_2 (1.5x stretch)
+   • R:R gate: Reject trade if R:R < 1.5 (configurable)
+   • S1/R1 tightening: Uses S/R levels to tighten SL placement
+
+Source: apps/strategies/services/adaptive_sl_target.py
+```
+
 ### Key Configuration
 
 ```python
@@ -566,8 +694,10 @@ FUTURES_CONFIG = {
     'this_month_volume': 1000,      # Min volume for current month contracts
     'next_month_volume': 800,       # Min volume for next month contracts
     'llm_confidence_threshold': 70, # Minimum LLM confidence
-    'stop_loss_pct': 2,             # 2% stop-loss (initial)
+    'stop_loss_pct': 'adaptive',    # 3-tier: S/R → ATR×regime → volatility%
     'stop_loss_after_avg': 0.5,     # 0.5% stop-loss (after averaging)
+    'min_rr_ratio': 1.5,            # Minimum risk:reward ratio
+    'regime_detection': True,        # Market regime awareness
     'max_lots': 5,                  # Maximum lots per position
     'margin_usage': 50,             # Use 50% of available margin
     'averaging_enabled': True,
@@ -579,10 +709,15 @@ FUTURES_CONFIG = {
 ### Files to Study
 
 1. `apps/strategies/services/icici_futures.py` - Main algorithm
-2. `apps/trading/services/futures_analyzer.py` - 9-factor analysis
-3. `apps/llm/services/trade_validator.py` - LLM validation
-4. `apps/llm/services/rag_system.py` - Context gathering
-5. `apps/positions/services/averaging_manager.py` - Averaging logic
+2. `apps/strategies/analyzers/enhanced_futures_analyzer.py` - 13-factor analysis
+3. `apps/strategies/services/adaptive_sl_target.py` - 3-tier SL/target engine
+4. `apps/strategies/services/market_regime.py` - Market regime detection
+5. `apps/strategies/services/trade_validation.py` - Post-score validation gate
+6. `apps/strategies/services/contract_prefilter.py` - Contract pre-filter
+7. `apps/strategies/services/llm_context_builder.py` - Enriched LLM context
+8. `apps/llm/services/trade_validator.py` - LLM validation
+9. `apps/llm/services/rag_system.py` - Context gathering
+10. `apps/positions/services/averaging_manager.py` - Averaging logic
 
 ---
 
@@ -716,6 +851,28 @@ Positions are exited in this priority order:
    |-- Via web interface
 ```
 
+### Position Hold Flag (Smart Re-alert)
+
+When a user taps "Hold / Wait" on an exit suggestion in Telegram, the system stores the hold decision with context:
+
+```
+Hold Flag Storage:
+  NseFlag.set('position_hold_<id>', {
+      held: true,
+      held_at: ISO timestamp,
+      price: current price at hold time,
+      reason: exit reason at hold time
+  })
+```
+
+Smart re-alert rules — only re-notify a held position when:
+1. **Reason changed**: e.g., was near-SL warning, now SL actually hit
+2. **Price moved >1%**: Price moved further against position since hold
+3. **Market close approaching**: After 15:00 IST, auto-clear holds
+4. **Day end**: All hold flags cleared at 15:30 IST
+
+Source: `apps/positions/services/monitor_dashboard.py` (should_send_exit_suggestion)
+
 ### Market Hours Check
 
 ```python
@@ -782,7 +939,7 @@ Example in Strangle:
 3. Run in test mode (paper trading) to see the flow
 
 **Week 4: Study Futures Algorithm**
-1. Read `apps/trading/services/futures_analyzer.py` - 9-factor analysis
+1. Read `apps/strategies/analyzers/enhanced_futures_analyzer.py` - 13-factor analysis
 2. Read `apps/strategies/services/icici_futures.py` - Main algorithm
 3. Read `apps/llm/services/trade_validator.py` - LLM validation
 
@@ -856,7 +1013,7 @@ tail -f logs/mcube.log | grep -E "(strangle|futures|position)"
 |-----------|------|------|------|
 | Short Strangle | Thursday expiry | Sell CE + PE | Unlimited |
 | Broken IC | Thursday expiry | Sell CE + PE, Buy PE hedge | Limited downside |
-| LLM Futures | Daily (scan 8:30 AM, execute 9:40 AM) | Long/Short futures with 12-factor + AI validation | Controlled with SL + averaging |
+| LLM Futures | Daily (scan 8:30 AM, execute 9:40 AM) | Long/Short futures with 13-factor + AI validation + regime-aware adaptive SL | Controlled with SL + averaging |
 
 All algorithms share:
 - ONE POSITION PER ACCOUNT rule

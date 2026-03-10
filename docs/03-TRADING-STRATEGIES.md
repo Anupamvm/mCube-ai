@@ -273,15 +273,23 @@ def monitor_delta(position):
 ```
 1. Liquidity Filter → Top 50 stocks by volume
        ↓
-2. OI Analysis → Primary signal from futures + options OI
+2. Contract Pre-filter → ADX > 15, Volume > avg, RSI not dead zone
        ↓
-3. Sector Analysis → ALL timeframes (3D, 7D, 21D) must align
+3. Market Regime Detection → TRENDING/RANGING/VOLATILE/BREAKOUT/NORMAL
        ↓
-4. Technical Analysis → Support/resistance, RSI, trend
+4. OI Analysis → Primary signal from futures + options OI
        ↓
-5. Scoring → Minimum 65/100 composite score
+5. Sector Analysis → ALL timeframes (3D, 7D, 21D) must align
        ↓
-6. LLM Validation → Final gate with human approval
+6. Technical Analysis → Support/resistance, RSI, trend, MTF confluence
+       ↓
+7. Scoring → 13-factor composite, minimum 65/100
+       ↓
+8. Trade Validation → R:R >= 1.5, regime checks, SL distance
+       ↓
+9. LLM Validation → Enriched context with regime + scoring summary
+       ↓
+10. Telegram Confirmation → Hybrid format with score/R:R/regime
 ```
 
 ### OI Analysis (Primary Signal)
@@ -354,9 +362,23 @@ def validate_with_llm(candidate):
     Evaluate this trade:
     Symbol: {candidate.symbol}
     Direction: {candidate.direction}
-    OI Signal: {candidate.oi_signal}
-    Sector Trend: {candidate.sector_trend}
-    Technical Score: {candidate.tech_score}
+
+    MARKET REGIME: {regime} (confidence: {confidence}%)
+
+    SCORING SUMMARY:
+    - Composite Score: {candidate.tech_score}/100
+    - Top Strengths: {top_3_strengths}
+    - Key Weaknesses: {bottom_2_weaknesses}
+
+    RISK PROFILE:
+    - R:R Ratio: {rr_ratio}
+    - SL Distance: {sl_pct}%
+    - Max Loss: Rs {max_loss}
+
+    KEY SIGNALS:
+    - OI Signal: {candidate.oi_signal}
+    - Sector Trend: {candidate.sector_trend}
+    - DMA Position: {dma_status}
 
     Provide confidence score (0-100) and recommendation.
     """
@@ -405,10 +427,12 @@ def calculate_futures_position_size(account, symbol, direction):
 
 | Condition | Action |
 |-----------|--------|
-| Stop-loss hit (0.5%) | Exit immediately |
-| Target hit (1.0%) | Exit immediately |
+| Stop-loss hit (adaptive: S/R → ATR → %) | Exit immediately |
+| Target hit (adaptive, dual targets) | Exit immediately (T1 conservative, T2 stretch) |
+| R:R < 1.0 at entry | Reject trade (validation gate) |
 | EOD | Exit only if >= 50% target |
 | Averaging trigger (1% loss) | Consider adding (max 3x) |
+| User holds exit suggestion | Respect hold; re-alert only on reason change, >1% move, or market close |
 
 ---
 
@@ -480,12 +504,15 @@ Level 4: Adaptive Risk
 ### Entry Checklist
 
 - [ ] No active position exists
+- [ ] Contract passes pre-filter (ADX, volume, RSI)
+- [ ] Market regime detected and passed to analysis
 - [ ] Within entry time window
-- [ ] All filters passed
+- [ ] All filters passed (13-factor scoring >= 65)
+- [ ] R:R ratio >= 1.5 (validation gate)
 - [ ] Expiry > minimum days
 - [ ] Margin calculated at 50%
-- [ ] LLM approved (futures only)
-- [ ] Human approval received
+- [ ] LLM approved with enriched context
+- [ ] Human approval received via Telegram
 
 ### Exit Checklist
 

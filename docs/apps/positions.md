@@ -201,7 +201,7 @@ success, position, message = create_position(
 Closes a position and calculates realized P&L.
 
 ```python
-success, closed_position, message = close_position(
+success, message = close_position(
     position=position,
     exit_price=150,
     exit_reason="Stop-loss triggered"

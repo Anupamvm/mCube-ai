@@ -670,11 +670,21 @@ def verify_future_trade(request):
             expiry=expiry_date
         ).first()
 
-        # Run enhanced futures analysis (12-component scoring with hard reject filters)
+        # Detect market regime before analysis so it feeds into scoring
+        try:
+            from apps.strategies.services.market_regime import get_market_regime
+            regime_data = get_market_regime('NIFTY')
+            regime = regime_data.get('regime', 'NORMAL')
+        except Exception:
+            logger.warning("Market regime detection failed, using NORMAL")
+            regime = 'NORMAL'
+
+        # Run enhanced futures analysis (13-component scoring with hard reject filters)
         analysis_result = enhanced_futures_analysis(
             stock_symbol=stock_symbol,
             expiry_date=expiry_date,
-            contract=contract
+            contract=contract,
+            regime=regime,
         )
 
         if not analysis_result.get('success'):
@@ -1493,7 +1503,7 @@ def verify_future_trade(request):
                 'debug_info': analyst_verification.get('debug_info', []),
                 'report_quick_summaries': analyst_verification.get('report_quick_summaries', [])
             },
-            # Enhanced Analysis Results (12-component scoring)
+            # Enhanced Analysis Results (13-component scoring)
             'enhanced_analysis': {
                 'hard_reject': hard_reject,
                 'reject_reason': reject_reason,
@@ -1503,7 +1513,8 @@ def verify_future_trade(request):
                 'scores': analysis_result.get('scores', {}),
                 'component_scores': analysis_result.get('component_scores', {}),
                 'details': analysis_result.get('details', {}),
-                'entry_params': analysis_result.get('entry_params')
+                'entry_params': analysis_result.get('entry_params'),
+                'regime': regime,
             }
         }
 
@@ -1586,18 +1597,44 @@ def verify_future_trade(request):
                 logger.error(f"Error serializing position_details: {e}")
                 position_details_safe = {'error': 'Serialization error'}
 
-            # Calculate stop loss and target using structural S/R levels
+            # Calculate stop loss and target using adaptive SL/target engine
             futures_price_decimal = Decimal(str(futures_price))
-            _sr = compute_initial_sl_target(stock_symbol, float(futures_price), direction)
-            if direction == 'LONG':
-                stop_loss_price = Decimal(str(round(_sr['stop_loss'] or float(futures_price_decimal) * 0.98, 2)))
-                target_price = Decimal(str(round(_sr['target'] or float(futures_price_decimal) * 1.04, 2)))
-            elif direction == 'SHORT':
-                stop_loss_price = Decimal(str(round(_sr['stop_loss'] or float(futures_price_decimal) * 1.02, 2)))
-                target_price = Decimal(str(round(_sr['target'] or float(futures_price_decimal) * 0.96, 2)))
-            else:
-                stop_loss_price = futures_price_decimal * Decimal('0.98')
-                target_price = futures_price_decimal * Decimal('1.02')
+            try:
+                from apps.strategies.services.adaptive_sl_target import compute_adaptive_sl_target
+
+                # Get ATR and S/R levels if available
+                from apps.data.models import TLStockData
+                tl = TLStockData.objects.filter(nsecode=stock_symbol).first()
+                atr_val = float(tl.day_atr) if tl and tl.day_atr else None
+                vol_val = None
+                s1_val = float(tl.first_support_s1) if tl and tl.first_support_s1 else None
+                r1_val = float(tl.first_resistance_r1) if tl and tl.first_resistance_r1 else None
+
+                sl_result = compute_adaptive_sl_target(
+                    symbol=stock_symbol,
+                    price=float(futures_price),
+                    direction=direction,
+                    atr=atr_val,
+                    volatility_pct=vol_val,
+                    composite_score=int(composite_score),
+                    regime=regime,
+                    support_s1=s1_val,
+                    resistance_r1=r1_val,
+                )
+                stop_loss_price = Decimal(str(round(sl_result['stop_loss'], 2)))
+                target_price = Decimal(str(round(sl_result['target_1'], 2)))
+            except Exception as sl_err:
+                logger.warning(f"Adaptive SL/target failed, using SR fallback: {sl_err}")
+                _sr = compute_initial_sl_target(stock_symbol, float(futures_price), direction)
+                if direction == 'LONG':
+                    stop_loss_price = Decimal(str(round(_sr['stop_loss'] or float(futures_price_decimal) * 0.98, 2)))
+                    target_price = Decimal(str(round(_sr['target'] or float(futures_price_decimal) * 1.04, 2)))
+                elif direction == 'SHORT':
+                    stop_loss_price = Decimal(str(round(_sr['stop_loss'] or float(futures_price_decimal) * 1.02, 2)))
+                    target_price = Decimal(str(round(_sr['target'] or float(futures_price_decimal) * 0.96, 2)))
+                else:
+                    stop_loss_price = futures_price_decimal * Decimal('0.98')
+                    target_price = futures_price_decimal * Decimal('1.02')
 
             # Get margin data
             margin_data = position_sizing.get('margin_data', {}) if position_sizing else {}
@@ -1622,6 +1659,24 @@ def verify_future_trade(request):
             risk_reward_ratio_value = Decimal('0')
             if max_loss_value > 0:
                 risk_reward_ratio_value = max_profit_value / max_loss_value
+
+            # Apply post-score trade validation gate
+            trade_validation = None
+            try:
+                from apps.strategies.services.trade_validation import TradeValidationLayer
+                # Enrich analysis_result with computed entry params for validation
+                validation_input = dict(analysis_result)
+                validation_input['entry_params'] = {
+                    'entry_price': float(futures_price),
+                    'stop_loss': float(stop_loss_price),
+                    'target_1': float(target_price),
+                    'risk_reward_ratio': float(risk_reward_ratio_value),
+                    'days_to_expiry': (expiry_dt.date() - datetime.now().date()).days,
+                }
+                validator = TradeValidationLayer()
+                trade_validation = validator.validate(validation_input, regime=regime)
+            except Exception as val_err:
+                logger.warning(f"Trade validation gate error: {val_err}")
 
             # Fetch VIX for the suggestion record
             try:
@@ -1669,6 +1724,157 @@ def verify_future_trade(request):
 
     except Exception as e:
         logger.error(f"Error in verify_future_trade: {e}", exc_info=True)
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        })
+
+
+@login_required
+@require_POST
+def refresh_analyst_data(request):
+    """
+    Refresh analyst data for a specific stock by re-fetching from Trendlyne.
+    Clears stale data and forces a fresh scrape.
+    """
+    stock_symbol = request.POST.get('symbol', '').strip().upper()
+    if not stock_symbol:
+        return JsonResponse({'success': False, 'error': 'No symbol provided'})
+
+    try:
+        from apps.data.models import AnalystPriceTarget, AnalystReport, TLStockData
+        from apps.data.providers.trendlyne import TrendlyneProvider
+
+        debug_info = []
+
+        # Get trendlyne_id from TLStockData if available
+        tl_stock = TLStockData.objects.filter(nsecode__iexact=stock_symbol).first()
+        trendlyne_id = tl_stock.trendlyne_id if tl_stock else None
+        debug_info.append(f"TLStockData found: {tl_stock is not None}, trendlyne_id: {trendlyne_id}")
+
+        with TrendlyneProvider(headless=True) as provider:
+            debug_info.append("Initializing Chrome driver...")
+            provider.init_driver()
+
+            debug_info.append("Attempting Trendlyne login...")
+            login_success = provider.login()
+            debug_info.append(f"Login result: {login_success}")
+
+            if not login_success:
+                return JsonResponse({
+                    'success': False,
+                    'error': 'Could not login to Trendlyne',
+                    'debug_info': debug_info
+                })
+
+            # Fetch analyst data
+            fetch_result = provider.fetch_analyst_data(
+                symbol=stock_symbol,
+                trendlyne_id=trendlyne_id,
+                months_back=3,
+                download_pdfs=False
+            )
+
+            debug_info.append(f"Fetch result success: {fetch_result.get('success')}")
+
+            if not fetch_result.get('success'):
+                return JsonResponse({
+                    'success': False,
+                    'error': fetch_result.get('error', 'Fetch failed'),
+                    'debug_info': debug_info
+                })
+
+            extracted_id = fetch_result.get('trendlyne_id')
+
+            # Update TLStockData with trendlyne_id if found
+            if extracted_id and tl_stock and not tl_stock.trendlyne_id:
+                tl_stock.trendlyne_id = extracted_id
+                tl_stock.save()
+                debug_info.append(f"Saved trendlyne_id {extracted_id}")
+
+            # Save price target data
+            price_target_data = fetch_result.get('price_target', {})
+            has_price_data = price_target_data.get('avg_target_price') is not None
+            has_analyst_data = price_target_data.get('analyst_count', 0) > 0
+            has_upside_data = price_target_data.get('upside_pct') is not None
+
+            if has_price_data or has_analyst_data or has_upside_data:
+                AnalystPriceTarget.objects.update_or_create(
+                    nse_code=stock_symbol,
+                    defaults={
+                        'symbol': stock_symbol,
+                        'trendlyne_id': extracted_id,
+                        'stock_name': tl_stock.stock_name if tl_stock else '',
+                        'current_price': price_target_data.get('current_price'),
+                        'avg_target_price': price_target_data.get('avg_target_price'),
+                        'upside_pct': price_target_data.get('upside_pct'),
+                        'analyst_count': price_target_data.get('analyst_count', 0),
+                        'strong_buy_count': price_target_data.get('strong_buy_count', 0),
+                        'buy_count': price_target_data.get('buy_count', 0),
+                        'hold_count': price_target_data.get('hold_count', 0),
+                        'sell_count': price_target_data.get('sell_count', 0),
+                        'strong_sell_count': price_target_data.get('strong_sell_count', 0),
+                        'source_url': price_target_data.get('source_url', ''),
+                        'scrape_success': True,
+                    }
+                )
+                debug_info.append(f"Saved price target: ₹{price_target_data.get('avg_target_price')}, {price_target_data.get('analyst_count')} analysts")
+
+            # Save reports
+            reports_data = fetch_result.get('reports', {})
+            reports_saved = 0
+            for report in reports_data.get('reports', []):
+                try:
+                    AnalystReport.objects.update_or_create(
+                        symbol=stock_symbol,
+                        report_date=report.get('report_date'),
+                        author=report.get('author', '')[:200],
+                        defaults={
+                            'nse_code': stock_symbol,
+                            'trendlyne_id': extracted_id,
+                            'report_title': report.get('report_title', ''),
+                            'ltp_at_report': report.get('ltp_at_report'),
+                            'target_price': report.get('target_price'),
+                            'upside_pct': report.get('upside_pct'),
+                            'recommendation_type': report.get('recommendation_type', 'UNKNOWN'),
+                            'pdf_url': report.get('pdf_url', ''),
+                            'pdf_local_path': report.get('pdf_local_path', ''),
+                            'pdf_download_success': bool(report.get('pdf_local_path')),
+                        }
+                    )
+                    reports_saved += 1
+                except Exception as re:
+                    logger.warning(f"[Refresh Analyst] Error saving report: {re}")
+
+            debug_info.append(f"Saved {reports_saved} reports")
+
+            # Build response with fresh data
+            price_target_response = None
+            fresh_pt = AnalystPriceTarget.objects.filter(nse_code__iexact=stock_symbol).first()
+            if fresh_pt:
+                price_target_response = {
+                    'current_price': float(fresh_pt.current_price) if fresh_pt.current_price else None,
+                    'avg_target_price': float(fresh_pt.avg_target_price) if fresh_pt.avg_target_price else None,
+                    'upside_pct': float(fresh_pt.upside_pct) if fresh_pt.upside_pct else None,
+                    'analyst_count': fresh_pt.analyst_count,
+                    'strong_buy_count': fresh_pt.strong_buy_count,
+                    'buy_count': fresh_pt.buy_count,
+                    'hold_count': fresh_pt.hold_count,
+                    'sell_count': fresh_pt.sell_count,
+                    'strong_sell_count': fresh_pt.strong_sell_count,
+                }
+
+            return JsonResponse({
+                'success': True,
+                'symbol': stock_symbol,
+                'price_target': price_target_response,
+                'reports_saved': reports_saved,
+                'trendlyne_id': extracted_id,
+                'debug_info': debug_info,
+            })
+
+    except Exception as e:
+        logger.error(f"[Refresh Analyst] Error: {e}", exc_info=True)
         return JsonResponse({
             'success': False,
             'error': str(e)

@@ -138,6 +138,131 @@
         display: none;
     }
 
+    /* ── P&L Chart Section ── */
+    .pnl-chart-card {
+        background: var(--white);
+        border-radius: var(--radius-lg);
+        box-shadow: var(--shadow-md);
+        margin-bottom: 1.5rem;
+        overflow: hidden;
+    }
+
+    .pnl-chart-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 0.75rem 1.25rem;
+        border-bottom: 1px solid var(--lighter);
+    }
+
+    .pnl-chart-title {
+        font-size: 0.875rem;
+        font-weight: 700;
+        color: var(--dark);
+    }
+
+    .pnl-chart-controls {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+    }
+
+    .chart-toggle-pills {
+        display: flex;
+        background: var(--lighter);
+        border-radius: var(--radius-md);
+        padding: 2px;
+    }
+
+    .chart-pill {
+        padding: 0.3rem 0.75rem;
+        border: none;
+        background: transparent;
+        border-radius: var(--radius-sm);
+        font-size: 0.75rem;
+        font-weight: 600;
+        color: var(--gray);
+        cursor: pointer;
+        transition: all 0.15s ease;
+    }
+
+    .chart-pill.active {
+        background: var(--white);
+        color: var(--primary);
+        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+
+    .chart-filters {
+        display: flex;
+        gap: 0.4rem;
+        align-items: center;
+    }
+
+    .chart-filter-select {
+        padding: 0.25rem 0.5rem;
+        border: 1px solid #e5e7eb;
+        border-radius: var(--radius-sm);
+        font-size: 0.7rem;
+        color: var(--dark);
+        background: var(--white);
+        cursor: pointer;
+        outline: none;
+        max-width: 130px;
+    }
+
+    .chart-filter-select:focus {
+        border-color: var(--primary);
+    }
+
+    .chart-expand-btn {
+        background: none;
+        border: 1px solid #e5e7eb;
+        border-radius: var(--radius-sm);
+        padding: 0.2rem 0.5rem;
+        cursor: pointer;
+        color: var(--gray);
+        font-size: 0.7rem;
+        transition: all 0.15s ease;
+    }
+
+    .chart-expand-btn:hover {
+        border-color: var(--primary);
+        color: var(--primary);
+    }
+
+    .pnl-chart-body {
+        padding: 0.5rem 1rem 0.75rem;
+        height: 180px;
+        transition: height 0.3s ease;
+    }
+
+    .pnl-chart-body.expanded {
+        height: 320px;
+    }
+
+    .pnl-chart-empty {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        height: 100%;
+        color: var(--gray);
+        font-size: 0.8rem;
+    }
+
+    @media (max-width: 768px) {
+        .pnl-chart-header {
+            flex-direction: column;
+            gap: 0.5rem;
+            align-items: flex-start;
+        }
+        .pnl-chart-controls {
+            flex-wrap: wrap;
+        }
+        .chart-filters {
+            flex-wrap: wrap;
+        }
+    }
+
     .positions-summary-bar {
         display: flex;
         gap: 1rem;
@@ -799,6 +924,39 @@
         </div>
     </div>
 
+    <!-- P&L Chart Section -->
+    <div class="pnl-chart-card" id="pnlChartCard">
+        <div class="pnl-chart-header">
+            <div class="pnl-chart-title">P&L Trend</div>
+            <div class="pnl-chart-controls">
+                <div class="chart-toggle-pills">
+                    <button class="chart-pill active" data-mode="today" onclick="switchChartMode('today')">Today</button>
+                    <button class="chart-pill" data-mode="historical" onclick="switchChartMode('historical')">Historical</button>
+                </div>
+                <div class="chart-filters" id="chartFilters">
+                    <select id="chartFilterBroker" class="chart-filter-select" onchange="applyChartFilters()">
+                        <option value="all">All Brokers</option>
+                        <option value="breeze">Breeze</option>
+                        <option value="neo">Neo</option>
+                    </select>
+                    <select id="chartFilterType" class="chart-filter-select" onchange="applyChartFilters()">
+                        <option value="all">All Types</option>
+                        <option value="FUT">Futures</option>
+                        <option value="OPT">Options</option>
+                        <option value="EQ">Equity</option>
+                    </select>
+                    <select id="chartFilterInstrument" class="chart-filter-select" onchange="applyChartFilters()">
+                        <option value="all">All Instruments</option>
+                    </select>
+                </div>
+                <button class="chart-expand-btn" onclick="toggleChartExpand()" title="Expand / collapse chart">&#x2195;</button>
+            </div>
+        </div>
+        <div class="pnl-chart-body" id="pnlChartBody">
+            <canvas id="pnlChart"></canvas>
+        </div>
+    </div>
+
     <!-- Breeze Positions -->
     <div class="broker-section" id="breezeSection">
         <div class="broker-header">
@@ -920,6 +1078,7 @@
     </div>
 </div>
 
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script>
 let currentPosition = null;
 let isOrderProcessing = false;
@@ -955,18 +1114,41 @@ async function loadPnlSnapshots() {
 }
 
 function savePnlSnapshot(pnl, ts) {
+    // Build per-position breakdown for chart filtering
+    const positions = [];
+    for (const [broker, posList] of Object.entries(positionsCache)) {
+        for (const pos of (posList || [])) {
+            positions.push({
+                sym: pos.trading_symbol || pos.symbol,
+                broker: broker,
+                type: deriveInstrumentType(pos.trading_symbol || pos.symbol),
+                pnl: parseFloat(pos.unrealized_pnl || 0),
+            });
+        }
+    }
+
     fetch('/trading/api/pnl-snapshots/save/', {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
             'X-CSRFToken': getCsrfToken(),
         },
-        body: JSON.stringify({ pnl, ts }),
+        body: JSON.stringify({ pnl, ts, positions }),
     }).catch(() => {});
+}
+
+// Derive instrument type from symbol name
+function deriveInstrumentType(symbol) {
+    if (!symbol) return 'EQ';
+    const s = symbol.toUpperCase();
+    if (s.endsWith('CE') || s.endsWith('PE')) return 'OPT';
+    if (s.includes('FUT')) return 'FUT';
+    return 'EQ';
 }
 
 document.addEventListener('DOMContentLoaded', async function() {
     await loadPnlSnapshots();
+    initPnlChart();
     brokersLoadedThisCycle.clear();
     loadPositions('breeze');
     loadPositions('neo');
@@ -1053,6 +1235,7 @@ function updatePositionsSummary() {
     setPnlEl('summaryTotalPnl', totalPnl);
 
     recordPnlSnapshot(totalPnl);
+    populateInstrumentFilter();
 }
 
 // Debounced snapshot recording — waits for both brokers to load in the CURRENT
@@ -1067,6 +1250,7 @@ function recordPnlSnapshot(totalPnl) {
         savePnlSnapshot(snapshot.pnl, snapshot.ts);
     }, 500);
     updateTrendChips(totalPnl);
+    pushLiveChartPoint(totalPnl);
 }
 
 // Show P&L movement: Δ1 = since 1 refresh ago, Δ5 = since 5 ago, etc.
@@ -1103,9 +1287,11 @@ function manualRefreshAll() {
     loadPositions('neo');
 }
 
-async function loadPositions(broker) {
+async function loadPositions(broker, attempt = 1) {
+    const maxAttempts = 2;
     const container = document.getElementById(`${broker}Positions`);
-    container.innerHTML = '<div class="loading-spinner">Loading positions...</div>';
+    const retryLabel = attempt > 1 ? ` (retry ${attempt - 1}/${maxAttempts - 1})` : '';
+    container.innerHTML = `<div class="loading-spinner">Loading positions...${retryLabel}</div>`;
 
     try {
         const response = await fetch(`/trading/api/get-positions/?broker=${broker}`);
@@ -1122,7 +1308,7 @@ async function loadPositions(broker) {
             displayPositions(broker, data.positions);
             updatePositionsSummary();
         } else if (data.auth_required) {
-            // Session expired - show login link
+            // Auth required is NOT retryable — show login link
             const baseLoginUrl = (data.login_url || '/brokers/breeze/login/').split('?')[0];
             const loginUrl = baseLoginUrl + '?next=' + encodeURIComponent(window.location.pathname);
             container.innerHTML = `
@@ -1134,9 +1320,23 @@ async function loadPositions(broker) {
                     </a>
                 </div>`;
         } else {
+            // API error — auto-retry if attempts remain
+            if (attempt < maxAttempts) {
+                console.warn(`${broker} load failed (attempt ${attempt}), retrying in 3s...`, data.error);
+                container.innerHTML = `<div class="loading-spinner">Retrying ${broker}...</div>`;
+                await new Promise(r => setTimeout(r, 3000));
+                return loadPositions(broker, attempt + 1);
+            }
             container.innerHTML = `<div class="error-message">Error: ${data.error}</div>`;
         }
     } catch (error) {
+        // Network / fetch error — auto-retry if attempts remain
+        if (attempt < maxAttempts) {
+            console.warn(`${broker} fetch error (attempt ${attempt}), retrying in 3s...`, error);
+            container.innerHTML = `<div class="loading-spinner">Retrying ${broker}...</div>`;
+            await new Promise(r => setTimeout(r, 3000));
+            return loadPositions(broker, attempt + 1);
+        }
         console.error(`Error loading ${broker} positions:`, error);
         container.innerHTML = `<div class="error-message">Failed to load positions. Please try again.</div>`;
     }
@@ -2304,6 +2504,272 @@ function clearAvgOverride(tradingSymbol) {
     .catch(err => {
         alert('Network error: ' + err.message);
     });
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// P&L CHART — Today (intraday from snapshots) & Historical (multi-day)
+// ════════════════════════════════════════════════════════════════════════════
+
+let pnlChart = null;
+let chartMode = 'today';  // 'today' or 'historical'
+let historicalData = null; // cached historical API response
+
+function initPnlChart() {
+    const ctx = document.getElementById('pnlChart');
+    if (!ctx) return;
+
+    pnlChart = new Chart(ctx, {
+        type: 'line',
+        data: { labels: [], datasets: [{ data: [] }] },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    backgroundColor: '#1f2937',
+                    titleFont: { size: 11 },
+                    bodyFont: { size: 12, weight: '600' },
+                    padding: 10,
+                    cornerRadius: 8,
+                    callbacks: {
+                        label: function(ctx) {
+                            const v = ctx.parsed.y;
+                            const sign = v >= 0 ? '+' : '-';
+                            return `P&L: ${sign}₹${formatIndianNumber(Math.abs(v).toFixed(0))}`;
+                        }
+                    }
+                }
+            },
+            scales: {
+                x: {
+                    grid: { display: false },
+                    ticks: { font: { size: 10 }, color: '#9ca3af', maxTicksLimit: 10 }
+                },
+                y: {
+                    grid: { color: '#f3f4f6' },
+                    ticks: {
+                        font: { size: 10 },
+                        color: '#9ca3af',
+                        callback: function(v) {
+                            const sign = v >= 0 ? '+' : '-';
+                            const abs = Math.abs(v);
+                            if (abs >= 100000) return sign + '₹' + (abs / 100000).toFixed(1) + 'L';
+                            if (abs >= 1000) return sign + '₹' + (abs / 1000).toFixed(1) + 'K';
+                            return sign + '₹' + abs;
+                        }
+                    }
+                }
+            },
+            elements: {
+                point: { radius: 0, hoverRadius: 4 },
+                line: { tension: 0.35, borderWidth: 2 }
+            }
+        }
+    });
+
+    renderChart();
+}
+
+function switchChartMode(mode) {
+    chartMode = mode;
+    document.querySelectorAll('.chart-pill').forEach(pill => {
+        pill.classList.toggle('active', pill.dataset.mode === mode);
+    });
+    renderChart();
+}
+
+function toggleChartExpand() {
+    const body = document.getElementById('pnlChartBody');
+    body.classList.toggle('expanded');
+    if (pnlChart) pnlChart.resize();
+}
+
+function applyChartFilters() {
+    renderChart();
+}
+
+// Populate instrument filter dropdown from current positions
+function populateInstrumentFilter() {
+    const select = document.getElementById('chartFilterInstrument');
+    if (!select) return;
+    const current = select.value;
+    const symbols = new Set();
+
+    for (const [, posList] of Object.entries(positionsCache)) {
+        for (const pos of (posList || [])) {
+            symbols.add(pos.trading_symbol || pos.symbol);
+        }
+    }
+
+    const sorted = [...symbols].sort();
+    select.innerHTML = '<option value="all">All Instruments</option>';
+    for (const sym of sorted) {
+        const opt = document.createElement('option');
+        opt.value = sym;
+        opt.textContent = sym.length > 18 ? sym.substring(0, 18) + '…' : sym;
+        select.appendChild(opt);
+    }
+    // Preserve selection if still valid
+    if (sorted.includes(current)) select.value = current;
+}
+
+function getActiveFilters() {
+    return {
+        broker: document.getElementById('chartFilterBroker')?.value || 'all',
+        type: document.getElementById('chartFilterType')?.value || 'all',
+        instrument: document.getElementById('chartFilterInstrument')?.value || 'all',
+    };
+}
+
+// Compute filtered P&L from a snapshot's positions array
+function filteredPnl(snapshot, filters) {
+    if (!snapshot.positions || !Array.isArray(snapshot.positions)) {
+        // Old snapshot without per-position data — only show if no filter active
+        if (filters.broker === 'all' && filters.type === 'all' && filters.instrument === 'all') {
+            return snapshot.pnl;
+        }
+        return null;  // can't filter
+    }
+    let total = 0;
+    for (const p of snapshot.positions) {
+        if (filters.broker !== 'all' && p.broker !== filters.broker) continue;
+        if (filters.type !== 'all' && p.type !== filters.type) continue;
+        if (filters.instrument !== 'all' && p.sym !== filters.instrument) continue;
+        total += (p.pnl || 0);
+    }
+    return total;
+}
+
+function renderChart() {
+    if (!pnlChart) return;
+
+    if (chartMode === 'today') {
+        renderTodayChart();
+    } else {
+        renderHistoricalChart();
+    }
+}
+
+function renderTodayChart() {
+    const filters = getActiveFilters();
+    const labels = [];
+    const data = [];
+
+    for (const snap of pnlSnapshots) {
+        const val = filteredPnl(snap, filters);
+        if (val === null) continue;
+        const d = new Date(snap.ts);
+        labels.push(d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false }));
+        data.push(Math.round(val));
+    }
+
+    updateChartDataset(labels, data);
+}
+
+async function renderHistoricalChart() {
+    if (!historicalData) {
+        // Show loading state
+        updateChartDataset([], []);
+        try {
+            const resp = await fetch('/trading/api/pnl-snapshots/historical/?days=30');
+            const json = await resp.json();
+            if (json.success) historicalData = json.days;
+        } catch (e) {
+            console.error('Failed to load historical P&L data', e);
+            return;
+        }
+    }
+
+    if (!historicalData || historicalData.length === 0) {
+        updateChartDataset([], []);
+        return;
+    }
+
+    const filters = getActiveFilters();
+    const labels = [];
+    const data = [];
+
+    for (const day of historicalData) {
+        if (!day.snapshots || day.snapshots.length === 0) continue;
+        // Use last snapshot of the day as "closing" P&L
+        const lastSnap = day.snapshots[day.snapshots.length - 1];
+        const val = filteredPnl(lastSnap, filters);
+        if (val === null) continue;
+
+        const d = new Date(day.date + 'T00:00:00');
+        labels.push(d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }));
+        data.push(Math.round(val));
+    }
+
+    // Also add today's latest if we have snapshots
+    if (pnlSnapshots.length > 0) {
+        const lastToday = pnlSnapshots[pnlSnapshots.length - 1];
+        const val = filteredPnl(lastToday, filters);
+        if (val !== null) {
+            labels.push('Today');
+            data.push(Math.round(val));
+        }
+    }
+
+    updateChartDataset(labels, data);
+}
+
+function updateChartDataset(labels, data) {
+    if (!pnlChart) return;
+
+    // Determine color based on last value
+    const lastVal = data.length > 0 ? data[data.length - 1] : 0;
+    const isPositive = lastVal >= 0;
+    const lineColor = isPositive ? '#10b981' : '#ef4444';
+    const fillColor = isPositive ? 'rgba(16, 185, 129, 0.08)' : 'rgba(239, 68, 68, 0.08)';
+
+    pnlChart.data.labels = labels;
+    pnlChart.data.datasets = [{
+        data: data,
+        borderColor: lineColor,
+        backgroundColor: fillColor,
+        fill: true,
+        pointBackgroundColor: lineColor,
+    }];
+    pnlChart.update('none');
+}
+
+// Push live point to chart without full re-render (called from recordPnlSnapshot)
+function pushLiveChartPoint(totalPnl) {
+    if (!pnlChart || chartMode !== 'today') return;
+
+    const filters = getActiveFilters();
+    // Build a temporary snapshot-like object from current positionsCache
+    const positions = [];
+    for (const [broker, posList] of Object.entries(positionsCache)) {
+        for (const pos of (posList || [])) {
+            positions.push({
+                sym: pos.trading_symbol || pos.symbol,
+                broker: broker,
+                type: deriveInstrumentType(pos.trading_symbol || pos.symbol),
+                pnl: parseFloat(pos.unrealized_pnl || 0),
+            });
+        }
+    }
+    const val = filteredPnl({ pnl: totalPnl, positions }, filters);
+    if (val === null) return;
+
+    const now = new Date();
+    const label = now.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false });
+
+    const ds = pnlChart.data.datasets[0];
+    pnlChart.data.labels.push(label);
+    ds.data.push(Math.round(val));
+
+    // Update color based on latest value
+    const isPositive = val >= 0;
+    ds.borderColor = isPositive ? '#10b981' : '#ef4444';
+    ds.backgroundColor = isPositive ? 'rgba(16, 185, 129, 0.08)' : 'rgba(239, 68, 68, 0.08)';
+    ds.pointBackgroundColor = isPositive ? '#10b981' : '#ef4444';
+
+    pnlChart.update('none');
 }
 
 // ── Edit Average Price Modal ──

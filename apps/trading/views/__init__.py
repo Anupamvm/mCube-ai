@@ -44,6 +44,7 @@ from .verification_views import (
     start_trendlyne_fetch,
     stream_trendlyne_logs,
     fetch_trade_news,
+    refresh_analyst_data,
     news_details_page,
     stream_market_news,
 )
@@ -99,6 +100,7 @@ __all__ = [
     'start_trendlyne_fetch',
     'stream_trendlyne_logs',
     'fetch_trade_news',
+    'refresh_analyst_data',
     'news_details_page',
 
     # Execution views

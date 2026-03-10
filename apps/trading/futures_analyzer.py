@@ -1436,7 +1436,8 @@ def comprehensive_futures_analysis(
 def enhanced_futures_analysis(
     stock_symbol: str,
     expiry_date: str,
-    contract: Optional[ContractData] = None
+    contract: Optional[ContractData] = None,
+    regime: str = 'NORMAL',
 ) -> Dict:
     """
     Enhanced futures analysis using EnhancedFuturesAnalyzer with Breeze API prices.
@@ -1670,7 +1671,8 @@ def enhanced_futures_analysis(
         analyzer = EnhancedFuturesAnalyzer(
             symbol=stock_symbol,
             direction=initial_direction,
-            expiry=expiry_date
+            expiry=expiry_date,
+            regime=regime,
         )
 
         analysis_result = analyzer.analyze()

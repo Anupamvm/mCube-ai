@@ -549,10 +549,91 @@ def should_send_exit_suggestion(
 
     Deduplication rules:
     - First suggestion of the day → always send
+    - User explicitly held with same reason → suppress (respect hold)
+    - User held but reason changed substantially → clear hold, re-alert
     - Different reason than last time → always send
     - Same reason but cooldown elapsed → send again (reminder)
     - Same reason within cooldown → skip (already pending)
     """
+    import json
+
+    # Approaching market close (last 30 min) — always re-alert regardless of hold
+    import pytz
+    ist_now = _to_ist(timezone.now())
+    approaching_close = (ist_now.hour == 15 and ist_now.minute >= 0) or ist_now.hour >= 16
+    if approaching_close:
+        # Clear any hold flag — market closing, must decide
+        position_id = dashboard.position_id
+        if position_id:
+            from apps.core.models import NseFlag
+            hold_raw = NseFlag.get(f'position_hold_{position_id}', '')
+            if hold_raw and hold_raw != '':
+                NseFlag.set(
+                    f'position_hold_{position_id}', '',
+                    'Cleared: approaching market close'
+                )
+                logger.info(
+                    f"Hold cleared for pos #{position_id}: approaching market close"
+                )
+        # Apply normal cooldown logic (don't spam every minute in last 30 min)
+
+    # Check if user explicitly held this position
+    position_id = dashboard.position_id
+    if position_id and not approaching_close:
+        from apps.core.models import NseFlag
+        hold_raw = NseFlag.get(f'position_hold_{position_id}', '')
+        if hold_raw and hold_raw != '':
+            # Parse hold data (may be 'true' or JSON with reason/price)
+            hold_data = _parse_hold_data(hold_raw)
+            held_reason = hold_data.get('reason', '')
+            held_price = hold_data.get('price')
+
+            # Same reason as when user held → respect the hold decision
+            if held_reason and held_reason == reason:
+                logger.info(
+                    f"Exit suggestion suppressed for pos #{position_id}: "
+                    f"user held with same reason '{reason}'"
+                )
+                return False
+
+            if not held_reason and dashboard.last_exit_reason == reason:
+                # Old-style hold flag ('true') — same reason as last sent
+                logger.info(
+                    f"Exit suggestion suppressed for pos #{position_id}: "
+                    f"user held (legacy flag), same reason '{reason}'"
+                )
+                return False
+
+            # Price moved significantly against position since hold? Re-alert.
+            if held_price and dashboard.position:
+                try:
+                    current_price = float(dashboard.position.current_price or 0)
+                    price_move_pct = abs(current_price - held_price) / held_price * 100
+                    if price_move_pct > 1.0:
+                        logger.info(
+                            f"Clearing hold for pos #{position_id}: "
+                            f"price moved {price_move_pct:.1f}% since hold"
+                        )
+                        NseFlag.set(
+                            f'position_hold_{position_id}', '',
+                            'Cleared: price moved >1% since hold'
+                        )
+                        # Fall through to normal logic — will re-alert
+                except (ValueError, TypeError):
+                    pass
+
+            # Reason changed substantially → clear hold and re-alert
+            if held_reason and held_reason != reason:
+                logger.info(
+                    f"Clearing hold for pos #{position_id}: "
+                    f"reason changed from '{held_reason}' to '{reason}'"
+                )
+                NseFlag.set(
+                    f'position_hold_{position_id}', '',
+                    f'Cleared: reason changed to {reason}'
+                )
+                return True
+
     if not dashboard.last_exit_sent_at:
         return True
     if dashboard.last_exit_reason != reason:
@@ -562,6 +643,19 @@ def should_send_exit_suggestion(
     if elapsed.total_seconds() >= cooldown_minutes * 60:
         return True
     return False
+
+
+def _parse_hold_data(raw: str) -> dict:
+    """Parse hold flag value — may be 'true' (legacy) or JSON."""
+    import json
+    if not raw or raw == '':
+        return {}
+    if raw == 'true':
+        return {'held': True}
+    try:
+        return json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return {'held': True}
 
 
 def record_exit_suggestion(dashboard, reason: str, message_id: Optional[int] = None):

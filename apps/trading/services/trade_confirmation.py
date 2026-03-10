@@ -177,17 +177,22 @@ class TradeConfirmationService:
         for i, suggestion in enumerate(suggestions[:3], 1):
             symbol = suggestion.instrument
             direction = suggestion.direction
-            score = suggestion.position_details.get('composite_score', 0) if suggestion.position_details else 0
-            entry_price = suggestion.position_details.get('entry_price', 0) if suggestion.position_details else 0
+            det = suggestion.position_details or {}
+            score = det.get('composite_score', 0)
+            entry_price = det.get('entry_price', 0)
+            rr = suggestion.risk_reward_ratio or det.get('risk_reward_ratio', 0) or 0
+            regime_label = det.get('regime', '')
 
             direction_emoji = "🟢" if direction == "LONG" else "🔴"
+            rr_str = f" | R:R 1:{float(rr):.1f}" if rr else ""
+            regime_str = f" | {regime_label}" if regime_label else ""
 
             message_lines.append(
                 f"\n{i}️⃣ <b>{symbol}</b> {direction_emoji} {direction}\n"
-                f"   Score: <b>{score}/100</b> | Entry: ₹{entry_price:,.0f}"
+                f"   Score: <b>{score}/100</b>{rr_str}{regime_str}"
             )
 
-        message_lines.append("\n\n<i>Click 'View Details' to see full analysis before approving.</i>")
+        message_lines.append("\n\n<i>Select a trade to view details.</i>")
 
         message = '\n'.join(message_lines)
 
@@ -275,84 +280,74 @@ class TradeConfirmationService:
         # Check for news warning from analysis details
         news_warning = details.get('news_warning', '')
 
-        # Build detailed message
-        message = (
-            f"📊 <b>TRADE CONFIRMATION</b>\n"
-            f"{'─' * 25}\n\n"
-        )
-
-        if news_warning:
-            message += (
-                f"⚠️ <b>NEWS WARNING</b>\n"
-                f"{news_warning}\n"
-                f"{'─' * 25}\n\n"
-            )
-
         # Extract expiry info
         expiry_date_str = details.get('expiry_date', '')
         expiry_changed = details.get('expiry_changed', False)
         original_expiry = details.get('original_expiry', '')
+        regime = details.get('regime', '')
 
         expiry_display = ''
+        days_to_exp = 0
         if expiry_date_str:
             try:
                 from datetime import date
                 expiry_dt = datetime.strptime(expiry_date_str, '%Y-%m-%d').date()
                 days_to_exp = (expiry_dt - date.today()).days
-                expiry_display = f"{expiry_dt.strftime('%d-%b-%Y')} ({days_to_exp}d)"
+                expiry_display = f"{expiry_dt.strftime('%d-%b')} ({days_to_exp}d)"
             except (ValueError, TypeError):
                 expiry_display = expiry_date_str
 
-        message += (
-            f"<b>Symbol:</b> {symbol}\n"
-            f"<b>Direction:</b> {direction_emoji} {direction}\n"
-            f"<b>Score:</b> {score}/100\n"
-        )
+        # SL/Target % from entry
+        sl_pct = abs(entry_price - stop_loss) / entry_price * 100 if entry_price > 0 else 0
+        tgt_pct = abs(target - entry_price) / entry_price * 100 if entry_price > 0 else 0
+        sl_sign = "-" if direction == 'LONG' else "+"
+        tgt_sign = "+" if direction == 'LONG' else "-"
 
+        # Compact margin display
+        total_margin = margin_per_lot * recommended_lots
+        margin_compact = f"₹{total_margin / 100000:.2f}L" if total_margin >= 100000 else f"₹{total_margin:,.0f}"
+
+        # Build hybrid format message — compact headline + labeled sections
+        message = f"{direction_emoji} <b>{symbol} {direction}</b> | {score}/100\n"
+
+        regime_str = f"{regime} | " if regime else ""
+        message += f"{regime_str}R:R 1:{rr_ratio:.1f}"
         if expiry_display:
-            message += f"<b>📅 Expiry:</b> {expiry_display}\n"
-            if expiry_changed:
-                message += f"⚠️ <i>Changed from original: {original_expiry}</i>\n"
+            message += f" | Expiry {expiry_display}"
+        message += "\n"
+
+        if news_warning:
+            message += f"⚠️ {news_warning}\n"
+
+        if expiry_changed:
+            message += f"⚠️ <i>Expiry changed from {original_expiry}</i>\n"
 
         message += (
-            f"\n"
-            f"<b>📍 PRICE LEVELS</b>\n"
-            f"  Entry: ₹{entry_price:,.2f}\n"
-            f"  Stop-Loss: ₹{stop_loss:,.2f}\n"
-            f"  Target: ₹{target:,.2f}\n\n"
+            f"\n📍 <b>Price Levels</b>\n"
+            f"  Entry: ₹{entry_price:,.2f} | "
+            f"SL: ₹{stop_loss:,.2f} ({sl_sign}{sl_pct:.1f}%) | "
+            f"Target: ₹{target:,.2f} ({tgt_sign}{tgt_pct:.1f}%)\n"
 
-            f"<b>📐 POSITION SIZE</b>\n"
-            f"  Lots: {recommended_lots}\n"
-            f"  Lot Size: {lot_size}\n"
-            f"  Margin Required: ₹{margin_per_lot * recommended_lots:,.0f}\n\n"
+            f"\n📐 <b>Position</b>\n"
+            f"  {recommended_lots} lots × {lot_size} | Margin: {margin_compact}\n"
 
-            f"<b>⚖️ RISK/REWARD</b>\n"
-            f"  Risk: ₹{risk_amount:,.0f}\n"
-            f"  Reward: ₹{reward_amount:,.0f}\n"
-            f"  Ratio: 1:{rr_ratio:.1f}\n\n"
+            f"\n⚖️ <b>Risk / Reward</b>\n"
+            f"  Risk: ₹{risk_amount:,.0f} | Reward: ₹{reward_amount:,.0f}\n"
 
-            f"<b>🔬 ANALYSIS SIGNALS</b>\n"
-            f"  OI: {oi_signal}\n"
-            f"  DMA: {dma_signal}\n"
-            f"  Sector: {sector_signal}\n\n"
-
-            f"{'─' * 25}\n"
-            f"<i>Click 'Confirm Trade' to execute.</i>\n"
-            f"<i>Trade will execute in background with batching.</i>"
+            f"\n🔬 <b>Signals</b>\n"
+            f"  OI: {oi_signal} | DMA: {dma_signal} | Sector: {sector_signal}"
         )
 
-        # Build keyboard for Step 2
+        # Build keyboard for Step 2 — compact labels
         keyboard = {
             'inline_keyboard': [
                 [
-                    {'text': f'✅ Confirm Trade ({recommended_lots}L)', 'callback_data': f'confirm_futures_{suggestion.id}'},
+                    {'text': f'✅ Confirm ({margin_compact})', 'callback_data': f'confirm_futures_{suggestion.id}'},
+                    {'text': '📊 Lots', 'callback_data': f'resize_futures_{suggestion.id}'},
                 ],
                 [
-                    {'text': '📊 Change Lots', 'callback_data': f'resize_futures_{suggestion.id}'},
-                    {'text': '📅 Change Expiry', 'callback_data': f'expiry_futures_{suggestion.id}'},
-                ],
-                [
-                    {'text': '◀️ Back to List', 'callback_data': 'back_futures_list'},
+                    {'text': '📅 Expiry', 'callback_data': f'expiry_futures_{suggestion.id}'},
+                    {'text': '◀️ Back', 'callback_data': 'back_futures_list'},
                     {'text': '❌ Skip', 'callback_data': f'reject_futures_{suggestion.id}'},
                 ],
             ]
@@ -369,18 +364,18 @@ class TradeConfirmationService:
         """
         Send exit suggestion for user confirmation (Manual mode).
 
-        Includes all context a trader needs to decide:
-        - Exit trigger and reason
-        - Current vs entry price
-        - P&L in absolute and %
-        - Stop-loss / target reference
-        - Clear note that system will NOT auto-execute
+        Uses NotificationPayload + TelegramMessageFormatter for a structured,
+        mobile-optimised message that puts the most critical info (P&L, price,
+        trigger) at the top and full context in the expandable details section.
 
         Returns:
             Tuple[bool, str]: (success, message_id or error)
         """
         from django.utils import timezone
+        from apps.alerts.services.notification_payload import NotificationPayload
+        from apps.alerts.services.notification_formatter import format_notification
 
+        now = timezone.now()
         pnl = current_pnl if current_pnl is not None else (position.unrealized_pnl or Decimal('0'))
 
         # P&L % — entry_value may be 0 for broker-synced positions; derive it
@@ -390,91 +385,115 @@ class TradeConfirmationService:
         pnl_pct = (pnl / entry_val * Decimal('100')) if entry_val > 0 else Decimal('0')
 
         pnl_sign = "+" if pnl >= 0 else ""
-        pnl_str = f"{pnl_sign}₹{abs(pnl):,.0f} ({pnl_sign}{pnl_pct:.1f}%)"
         pnl_emoji = "📈" if pnl >= 0 else "📉"
+        if pnl < 0:
+            pnl_display = f"{pnl_emoji} -₹{abs(pnl):,.0f} ({pnl_pct:.1f}%)"
+        else:
+            pnl_display = f"{pnl_emoji} +₹{abs(pnl):,.0f} ({pnl_sign}{pnl_pct:.1f}%)"
 
-        # Lot display — quantity in DB is total units; show lots
+        # Lot / size display
         lot_size = position.lot_size or 1
         lots = position.quantity // lot_size if lot_size > 1 else position.quantity
-        size_str = f"{lots} lots"
+        lots_str = f"{lots} lot{'s' if lots != 1 else ''}"
 
-        # Broker / account label
-        broker_label = ""
-        if position.account:
-            broker_map = {'KOTAK': 'Kotak Neo', 'ICICI': 'ICICI Breeze'}
-            broker_name = broker_map.get(position.account.broker, position.account.broker)
-            broker_label = f"🏦 {broker_name}"
+        # Broker label
+        broker_map = {'KOTAK': 'Kotak Neo', 'ICICI': 'ICICI Breeze'}
+        broker_name = broker_map.get(
+            position.account.broker if position.account else '',
+            position.account.broker if position.account else 'Unknown'
+        )
 
-        reason_meta = {
-            'STOP_LOSS': ('🛑', 'STOP-LOSS HIT', 'high'),
-            'STOP_LOSS_HIT': ('🛑', 'STOP-LOSS HIT', 'high'),
-            'TARGET': ('🎯', 'TARGET HIT', 'medium'),
-            'TARGET_HIT': ('🎯', 'TARGET HIT', 'medium'),
-            'EOD': ('⏰', 'END OF DAY EXIT', 'medium'),
-            'EOD_THURSDAY': ('⏰', 'EOD THURSDAY EXIT', 'medium'),
-            'FRIDAY_EOD': ('⏰', 'FRIDAY EOD EXIT', 'medium'),
-            'EXPIRY_DAY': ('📅', 'EXPIRY DAY EXIT', 'high'),
-            'MANUAL': ('👤', 'MANUAL EXIT', 'low'),
+        # Reason → status + title mapping
+        _REASON_MAP = {
+            'STOP_LOSS':       ('ACTION_REQUIRED', 'Stop-Loss Hit'),
+            'STOP_LOSS_HIT':   ('ACTION_REQUIRED', 'Stop-Loss Hit'),
+            'SL_HIT':          ('ACTION_REQUIRED', 'Stop-Loss Hit'),
+            'STRUCTURAL_SL':   ('ACTION_REQUIRED', 'Structural SL Triggered'),
+            'SR_BREAKDOWN':    ('ACTION_REQUIRED', 'S/R Breakdown Exit'),
+            'TARGET':          ('ACTION_REQUIRED', 'Target Hit'),
+            'TARGET_HIT':      ('ACTION_REQUIRED', 'Target Hit'),
+            'EOD':             ('ACTION_REQUIRED', 'End-of-Day Exit'),
+            'EOD_THURSDAY':    ('ACTION_REQUIRED', 'EOD Thursday Exit'),
+            'FRIDAY_EOD':      ('ACTION_REQUIRED', 'Friday EOD Exit'),
+            'EXPIRY_DAY':      ('ACTION_REQUIRED', 'Expiry Day Exit'),
+            'NEAR_SL_REQUEST': ('WARNING',         'Near Stop-Loss — Exit?'),
+            'MANUAL':          ('ACTION_REQUIRED', 'Manual Exit Request'),
         }
-        emoji, reason_label, urgency = reason_meta.get(reason, ('📊', reason.replace('_', ' '), 'medium'))
-
-        urgency_header = {'high': '🚨', 'medium': '⚠️', 'low': '📌'}.get(urgency, '⚠️')
-        now_str = self._ist_time_str()
-
-        # ── Build message ─────────────────────────────────────────────────────
-        direction_arrow = "▲" if position.direction == 'LONG' else ("▼" if position.direction == 'SHORT' else "◆")
-
-        msg = (
-            f"{urgency_header} <b>EXIT SUGGESTION</b>  [{now_str}]\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        )
-        if broker_label:
-            msg += f"{broker_label}\n"
-        msg += (
-            f"{emoji} <b>{reason_label}</b>\n\n"
-            f"<b>{position.instrument}</b> | {direction_arrow} {position.direction} | {size_str}\n"
-        )
+        status, title = _REASON_MAP.get(reason, ('ACTION_REQUIRED', 'Exit Suggestion'))
 
         # Price context
         price_diff = position.current_price - position.entry_price
         diff_sign = "+" if price_diff >= 0 else ""
-        msg += (
-            f"\nEntry:   ₹{position.entry_price:,.2f}\n"
-            f"Current: ₹{position.current_price:,.2f}  ({diff_sign}₹{price_diff:,.2f}/unit)\n"
-        )
+        price_move = f"{diff_sign}₹{price_diff:,.2f}/unit"
+
+        # SL / Target display strings
+        sl_str = "—"
+        tgt_str = "—"
+        context_bullets = []
         if position.stop_loss:
             sl_dist = position.current_price - position.stop_loss
-            triggered = " ← triggered" if position.is_stop_loss_hit() else ""
-            msg += f"SL:      ₹{position.stop_loss:,.2f}  ({sl_dist:+,.2f} away){triggered}\n"
+            sl_flag = " ✓ triggered" if position.is_stop_loss_hit() else f" ({sl_dist:+,.2f} away)"
+            sl_str = f"₹{position.stop_loss:,.2f}{sl_flag}"
         if position.target:
             tgt_dist = position.target - position.current_price
-            triggered = " ← triggered" if position.is_target_hit() else ""
-            msg += f"Target:  ₹{position.target:,.2f}  ({tgt_dist:+,.2f} away){triggered}\n"
+            tgt_flag = " ✓ triggered" if position.is_target_hit() else f" ({tgt_dist:+,.2f} away)"
+            tgt_str = f"₹{position.target:,.2f}{tgt_flag}"
+            # Also show % upside from entry for targets
+            if position.entry_price > 0:
+                tgt_pct = abs(float(position.target) - float(position.entry_price)) / float(position.entry_price) * 100
+                tgt_str += f"  ({tgt_pct:.1f}%)"
 
-        # P&L — show negative clearly with ₹ sign
-        if pnl < 0:
-            pnl_display = f"-₹{abs(pnl):,.0f} ({pnl_pct:.1f}%)"
-        else:
-            pnl_display = f"+₹{abs(pnl):,.0f} ({pnl_sign}{pnl_pct:.1f}%)"
-        msg += f"\n{pnl_emoji} <b>P&L: {pnl_display}</b>\n"
+        context_bullets.append(f"Trigger: {title}")
+        context_bullets.append("System will NOT auto-execute in manual mode")
 
-        # Manual mode notice
-        msg += (
-            f"\n─────────────────────────\n"
-            f"<i>⚙️ Manual mode — system will NOT auto-execute.\n"
-            f"Choose your action below:</i>"
+        # Config mode tag
+        mode_label = sizing_label = None
+        try:
+            from apps.core.models import TradingCoreConfig
+            config = TradingCoreConfig.get_instance()
+            mode_label = config.get_notification_level_display_short()
+            sizing_label = config.get_position_sizing_display_short()
+        except Exception:
+            pass
+
+        payload = NotificationPayload(
+            title=title,
+            status=status,
+            instrument=position.instrument,
+            strategy=broker_name,
+            task='monitor_and_manage_positions',
+            timestamp=now,
+            metrics={
+                'P&L': pnl_display,
+                'Move': price_move,
+                'Entry': f"₹{position.entry_price:,.2f}",
+                'Now': f"₹{position.current_price:,.2f}",
+            },
+            keyboard=[[
+                {'text': '✅ Close Now',   'callback_data': f'confirm_exit_{position.id}'},
+                {'text': '⏸ Hold / Wait', 'callback_data': f'hold_exit_{position.id}'},
+            ]],
+            position={
+                'Direction': f"{position.direction}  ·  {lots_str}",
+                'Entry': f"₹{position.entry_price:,.2f}",
+                'Current': f"₹{position.current_price:,.2f}  ({price_move})",
+                'SL': sl_str,
+                'Target': tgt_str,
+            },
+            context=context_bullets,
+            system={
+                'Position ID': f"#{position.id}",
+                'Account': broker_name,
+            },
+            priority='CRITICAL' if status == 'ACTION_REQUIRED' else 'WARNING',
+            dedup_key=f'exit_suggestion_{position.id}',
+            mode_label=mode_label,
+            sizing_label=sizing_label,
         )
 
-        keyboard = {
-            'inline_keyboard': [
-                [
-                    {'text': '✅ Close Now', 'callback_data': f'confirm_exit_{position.id}'},
-                    {'text': '⏸️ Hold / Wait', 'callback_data': f'hold_exit_{position.id}'},
-                ],
-            ]
-        }
-
-        return self._send_with_keyboard(msg, keyboard)
+        message = format_notification(payload)
+        keyboard_dict = {'inline_keyboard': payload.keyboard}
+        return self._send_with_keyboard(message, keyboard_dict)
 
     def _ist_time_str(self) -> str:
         """Return current time as HH:MM IST string."""

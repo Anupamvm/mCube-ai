@@ -10,6 +10,7 @@ Features:
 - Error handling and retry logic
 """
 
+import hashlib
 import logging
 import os
 from typing import Dict, Optional, Tuple
@@ -26,6 +27,16 @@ class TelegramClient:
         TELEGRAM_BOT_TOKEN: Bot token from @BotFather
         TELEGRAM_CHAT_ID: Default chat ID to send messages
     """
+
+    # Rate limits per priority: (max_messages, window_seconds)
+    # Keyed on the first 100 chars of the message to deduplicate identical alerts.
+    # CRITICAL is never rate-limited (circuit breakers, SL hits, broker failures).
+    _RATE_LIMITS = {
+        'WARNING':  (1, 300),   # 1 identical warning per 5 min
+        'INFO':     (1, 60),    # 1 identical info per 1 min
+        'HIGH':     (3, 600),   # 3 identical high-priority per 10 min
+        'CRITICAL': (0, 0),     # no limit
+    }
 
     def __init__(self):
         """Initialize Telegram client with credentials from environment or Django settings"""
@@ -166,11 +177,45 @@ class TelegramClient:
             logger.error(error_msg, exc_info=True)
             return False, error_msg
 
+    def _is_rate_limited(self, message: str, priority: str, dedup_key: Optional[str] = None) -> bool:
+        """
+        Redis-backed per-message rate limiter for outbound notifications.
+
+        When `dedup_key` is provided (e.g. 'near_sl_42'), it is used directly
+        as the cache key suffix so that per-position alerts are tracked
+        independently and do not suppress alerts for other positions.
+
+        Without `dedup_key`, falls back to hashing the first 100 characters of
+        the message — identical repeated alerts are suppressed within the window.
+
+        Returns True if this message should be suppressed, False otherwise.
+        CRITICAL priority is always allowed through (returns False).
+        If Redis is unavailable the limiter fails-open (returns False).
+        """
+        max_count, window = self._RATE_LIMITS.get(priority, (0, 0))
+        if max_count == 0 or window == 0:
+            return False
+        try:
+            from django.core.cache import cache
+            if dedup_key:
+                key = f'tg_rate_{priority}_{dedup_key}'
+            else:
+                msg_hash = hashlib.md5(message[:100].encode()).hexdigest()
+                key = f'tg_rate_{priority}_{msg_hash}'
+            current = cache.get(key, 0)
+            if current >= max_count:
+                return True
+            cache.set(key, current + 1, timeout=window)
+            return False
+        except Exception:
+            return False  # fail-open: never block a notification if Redis is down
+
     def send_priority_message(
         self,
         message: str,
         priority: str,
-        chat_id: Optional[str] = None
+        chat_id: Optional[str] = None,
+        dedup_key: Optional[str] = None,
     ) -> Tuple[bool, str]:
         """
         Send a message with priority-based formatting
@@ -183,6 +228,10 @@ class TelegramClient:
         Returns:
             Tuple[bool, str]: (success, response)
         """
+        if self._is_rate_limited(message, priority, dedup_key=dedup_key):
+            logger.debug(f"Telegram [{priority}] suppressed by rate limiter: {message[:60]!r}")
+            return True, "rate_limited"
+
         # Add emoji based on priority
         emoji_map = {
             'CRITICAL': '\U0001F6A8\U0001F6A8\U0001F6A8',  # 🚨🚨🚨
@@ -202,6 +251,44 @@ class TelegramClient:
             formatted_message,
             chat_id=chat_id,
             disable_notification=disable_notification
+        )
+
+    def send_notification(
+        self,
+        payload: 'NotificationPayload',
+        chat_id: Optional[str] = None,
+    ) -> Tuple[bool, str]:
+        """
+        Send a structured NotificationPayload via Telegram.
+
+        Renders the payload with TelegramMessageFormatter, then delivers it
+        with the correct priority, dedup key, and inline keyboard (if any).
+
+        This is the preferred entry point for all new notifications —
+        it enforces consistent layout and dedup behaviour.
+        """
+        from apps.alerts.services.notification_formatter import format_notification
+
+        if not self.enabled:
+            return False, "Telegram client not configured"
+
+        message = format_notification(payload)
+
+        if payload.keyboard:
+            # keyboard is a list of rows; wrap in the API dict format
+            keyboard_dict = {'inline_keyboard': payload.keyboard}
+            return self.send_message(
+                message,
+                chat_id=chat_id,
+                reply_markup=keyboard_dict,
+            )
+
+        # No keyboard — use priority rate-limiting
+        return self.send_priority_message(
+            message,
+            priority=payload.priority,
+            chat_id=chat_id,
+            dedup_key=payload.dedup_key,
         )
 
     def send_position_alert(
@@ -406,11 +493,29 @@ def get_telegram_client() -> TelegramClient:
     return _telegram_client
 
 
+def send_notification(
+    payload: 'NotificationPayload',
+    chat_id: Optional[str] = None,
+) -> Tuple[bool, str]:
+    """
+    Send a structured NotificationPayload via Telegram.
+
+    Preferred entry point for all new notification code.  Uses
+    TelegramMessageFormatter for consistent mobile-optimised layout.
+    """
+    client = get_telegram_client()
+    if not client.is_enabled():
+        logger.warning("Telegram notifications disabled - client not configured")
+        return False, "Telegram client not configured"
+    return client.send_notification(payload, chat_id=chat_id)
+
+
 def send_telegram_notification(
     message: str,
     priority: str = 'INFO',
     chat_id: Optional[str] = None,
-    notification_type: Optional[str] = None
+    notification_type: Optional[str] = None,
+    dedup_key: Optional[str] = None,
 ) -> Tuple[bool, str]:
     """
     Convenience function to send a Telegram notification
@@ -420,6 +525,8 @@ def send_telegram_notification(
         priority: Message priority level
         chat_id: Target chat ID (optional)
         notification_type: Alias for priority (takes precedence if provided)
+        dedup_key: Optional explicit dedup key (e.g. 'near_sl_42') — overrides
+                   message-hash dedup so per-position alerts don't suppress each other
 
     Returns:
         Tuple[bool, str]: (success, response)
@@ -433,4 +540,4 @@ def send_telegram_notification(
         logger.warning("Telegram notifications disabled - client not configured")
         return False, "Telegram client not configured"
 
-    return client.send_priority_message(message, priority, chat_id)
+    return client.send_priority_message(message, priority, chat_id, dedup_key=dedup_key)

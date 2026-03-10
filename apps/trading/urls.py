@@ -23,6 +23,7 @@ urlpatterns = [
     path('trigger/start-trendlyne-fetch/', views.start_trendlyne_fetch, name='start_trendlyne_fetch'),
     path('trigger/trendlyne-logs/<str:session_id>/', views.stream_trendlyne_logs, name='stream_trendlyne_logs'),
     path('trigger/fetch-news/', views.fetch_trade_news, name='fetch_trade_news'),
+    path('trigger/refresh-analyst-data/', views.refresh_analyst_data, name='refresh_analyst_data'),
     path('news-details/', views.news_details_page, name='news_details'),
     path('stream-market-news/', views.stream_market_news, name='stream_market_news'),
     path('trigger/update-breeze-session/', views.update_breeze_session, name='update_breeze_session'),
@@ -80,6 +81,7 @@ urlpatterns = [
     # Portfolio P&L Trend
     path('api/pnl-snapshots/', api_views.get_pnl_snapshots, name='api_get_pnl_snapshots'),
     path('api/pnl-snapshots/save/', api_views.save_pnl_snapshot, name='api_save_pnl_snapshot'),
+    path('api/pnl-snapshots/historical/', api_views.get_pnl_snapshots_historical, name='api_get_pnl_snapshots_historical'),
 
     # Manual Trade Execution (Live Orders)
     path('manual/prepare/', views.prepare_manual_execution, name='prepare_manual_execution'),

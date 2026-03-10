@@ -281,6 +281,68 @@ class NseFlag(models.Model):
             return default
 
 
+class TaskExecutionLog(models.Model):
+    """
+    One row per Celery task run — lightweight audit trail.
+
+    Complements BkLog (which stores step-by-step entries) with a
+    single summary record per execution: outcome, duration, and a
+    condensed result snapshot.  Useful for answering:
+      - "Did monitor_and_manage_positions run at 09:15 today?"
+      - "How many times did check_risk_limits fail this week?"
+      - "What was the average monitor cycle time yesterday?"
+
+    Written automatically by task_enabled_guard for every guarded task.
+    """
+
+    STATUS_CHOICES = [
+        ('SUCCESS', 'Success'),
+        ('FAILURE', 'Failure'),
+        ('SKIPPED', 'Skipped'),
+    ]
+
+    task_key = models.CharField(
+        max_length=120,
+        db_index=True,
+        help_text="Beat schedule key, e.g. 'monitor-and-manage-positions'",
+    )
+    started_at = models.DateTimeField(
+        auto_now_add=True,
+        db_index=True,
+    )
+    completed_at = models.DateTimeField(null=True, blank=True)
+    status = models.CharField(
+        max_length=10,
+        choices=STATUS_CHOICES,
+        default='SUCCESS',
+        db_index=True,
+    )
+    duration_ms = models.IntegerField(
+        null=True,
+        blank=True,
+        help_text="Wall-clock duration in milliseconds",
+    )
+    result_summary = models.JSONField(
+        default=dict,
+        help_text="Condensed return value from the task function",
+    )
+    error_message = models.TextField(
+        blank=True,
+        help_text="Exception message on FAILURE; empty on SUCCESS/SKIPPED",
+    )
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['task_key', 'started_at']),
+            models.Index(fields=['status', 'started_at']),
+        ]
+        ordering = ['-started_at']
+
+    def __str__(self):
+        dur = f"{self.duration_ms}ms" if self.duration_ms else "?"
+        return f"[{self.status}] {self.task_key} @ {self.started_at:%H:%M:%S} ({dur})"
+
+
 class BkLog(models.Model):
     """
     Background task execution logs

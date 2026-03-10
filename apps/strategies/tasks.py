@@ -229,18 +229,22 @@ def evaluate_kotak_strangle_exit(profit_threshold=10000, mandatory=False):
             # Autonomous mode: auto-execute
             from apps.positions.services.position_manager import close_position
 
-            success, closed_position, message = close_position(
+            success, message = close_position(
                 position=position,
                 exit_price=position.current_price,
                 exit_reason=reason
             )
 
+            mode_label = config.get_notification_level_display_short()
+            sizing_label = config.get_position_sizing_display_short()
+            _footer = f"\n<i>⚙️ {mode_label} · {sizing_label}</i>"
             if success:
                 send_telegram_notification(
                     f"✅ POSITION CLOSED\n\n"
                     f"Position: #{position.id}\n"
                     f"Reason: {reason}\n"
-                    f"P&L: ₹{closed_position.realized_pnl:,.0f}",
+                    f"P&L: ₹{position.realized_pnl:,.0f}"
+                    + _footer,
                     notification_type='SUCCESS'
                 )
                 return {'success': True, 'message': f'Position closed: {reason}'}
@@ -248,7 +252,8 @@ def evaluate_kotak_strangle_exit(profit_threshold=10000, mandatory=False):
                 send_telegram_notification(
                     f"❌ POSITION CLOSE FAILED\n\n"
                     f"Position: #{position.id}\n"
-                    f"Error: {message}",
+                    f"Error: {message.splitlines()[0]}"
+                    + _footer,
                     notification_type='ERROR'
                 )
                 return {'success': False, 'message': message}
@@ -411,12 +416,36 @@ def setup_trading_day(self):
         setup.overnight_risk_level = overnight_risk
 
         # Check broker connection
+        # Primary: count active accounts in DB (existing logic)
+        # Secondary: read live health-check result stored by health_check_brokers at 06:45
         try:
             from apps.accounts.models import BrokerAccount
             active_accounts = BrokerAccount.objects.filter(is_active=True).count()
             setup.broker_connection_ok = active_accounts > 0
         except Exception:
             setup.broker_connection_ok = False
+
+        # Enrich with live API health check result (if task ran at 06:45)
+        from django.core.cache import cache
+        from apps.core.tasks import BROKER_HEALTH_KEY
+        broker_health = cache.get(BROKER_HEALTH_KEY)
+        broker_health_failures = []
+        if broker_health:
+            for broker_name, status in broker_health.items():
+                if status not in ('OK', 'NO_ACCOUNT') and not status.startswith('OK'):
+                    broker_health_failures.append(f"{broker_name}: {status}")
+            if broker_health_failures:
+                setup.broker_connection_ok = False
+                setup.setup_reason = (
+                    "Broker API health check failed: "
+                    + "; ".join(broker_health_failures)
+                )
+        else:
+            # Health check task did not run — log but don't block trading
+            logger.warning(
+                "setup_trading_day: broker_health not in cache — "
+                "health-check-brokers task may not have run at 06:45"
+            )
 
         task_logger.step('decision', "Making setup tradability decision")
 
@@ -700,6 +729,41 @@ def evaluate_options_strategy(self):
             task_logger.info('skipped', "Day not tradable, skipping options evaluation")
             return {'success': True, 'skipped': True, 'reason': setup.tradable_reason}
 
+        # ── Opening volatility soft gate ──────────────────────────────────────
+        # monitor_opening_volatility (09:00–09:20) writes this flag.
+        # If False → market opened wild; mark strategy as WAIT so
+        # start_options_trade (09:40) does not enter. We do NOT auto-reschedule:
+        # conditions may change and the trader is already notified.
+        from django.core.cache import cache
+        from apps.core.tasks import MARKET_STABLE_KEY, MARKET_VIX_KEY, MARKET_GAP_KEY
+        market_stable = cache.get(MARKET_STABLE_KEY)  # None = task didn't run
+        if market_stable is False:
+            vix_now = cache.get(MARKET_VIX_KEY, 'N/A')
+            gap_now = cache.get(MARKET_GAP_KEY, 'N/A')
+            task_logger.info(
+                'market_unstable',
+                f"Opening volatility gate triggered (VIX={vix_now}, gap={gap_now}%). "
+                f"Setting strategy=WAIT."
+            )
+            setup.options_strategy_evaluated = True
+            setup.options_evaluated_at = timezone.now()
+            setup.options_strategy_selected = 'WAIT'
+            setup.save()
+            send_telegram_notification(
+                f"⏸️ <b>Options Evaluation Deferred</b>\n\n"
+                f"Market opened with elevated volatility "
+                f"(VIX={vix_now}, Gap={gap_now}%).\n"
+                f"Strategy set to WAIT — no options entry at 09:40.",
+                notification_type='WARNING',
+            )
+            return {
+                'success': True,
+                'deferred': True,
+                'reason': 'market_unstable_at_open',
+                'vix': vix_now,
+                'gap_pct': gap_now,
+            }
+
         task_logger.step('movement_check', "Checking first 15 minute movement")
 
         # TODO: Calculate actual 9:15 to 9:30 movement
@@ -859,6 +923,35 @@ def start_options_trade(self):
         account = BrokerAccount.objects.filter(broker='KOTAK', is_active=True).first()
         if not account:
             return {'success': False, 'error': 'No active Kotak account'}
+
+        # ── Pre-trade validation ─────────────────────────────────────────────
+        from apps.trading.services.pre_trade_validator import PreTradeValidator
+        from apps.core.constants import (
+            STRATEGY_KOTAK_STRANGLE,
+            STRATEGY_KOTAK_BROKEN_IRON_CONDOR,
+        )
+        strategy_type_map = {
+            'STRANGLE': STRATEGY_KOTAK_STRANGLE,
+            'SHORT_STRANGLE': STRATEGY_KOTAK_STRANGLE,
+            'BROKEN_IRON_CONDOR': STRATEGY_KOTAK_BROKEN_IRON_CONDOR,
+            'IRON_CONDOR': STRATEGY_KOTAK_BROKEN_IRON_CONDOR,
+        }
+        validator = PreTradeValidator()
+        is_ok, reasons = validator.validate(
+            account,
+            strategy_type=strategy_type_map.get(strategy, strategy),
+        )
+        if not is_ok:
+            reason_text = "\n".join(f"  • {r}" for r in reasons)
+            task_logger.warning('pre_trade_blocked', f"Pre-trade validation failed: {reasons}")
+            send_telegram_notification(
+                f"⛔ <b>Options Trade Blocked</b> ({strategy})\n\n"
+                f"Pre-trade checks failed:\n{reason_text}\n\n"
+                f"No order placed.",
+                notification_type='WARNING',
+            )
+            return {'success': False, 'blocked_by': reasons}
+        # ────────────────────────────────────────────────────────────────────
 
         # Call existing entry functions which generate suggestions
         # These functions return a dict with 'suggestion' if successful
@@ -1399,7 +1492,7 @@ def close_trading_day(self):
                 continue  # Don't close yet - wait for confirmation
 
             try:
-                success, closed_pos, msg = close_position(
+                success, msg = close_position(
                     position=position,
                     exit_price=position.current_price,
                     exit_reason=close_reason
@@ -1407,11 +1500,11 @@ def close_trading_day(self):
 
                 if success:
                     close_results['closed'] += 1
-                    close_results['total_pnl'] += closed_pos.realized_pnl or Decimal('0')
+                    close_results['total_pnl'] += position.realized_pnl or Decimal('0')
                     close_results['details'].append({
                         'position_id': position.id,
                         'symbol': position.instrument,
-                        'pnl': float(closed_pos.realized_pnl or 0),
+                        'pnl': float(position.realized_pnl or 0),
                         'action': 'closed',
                         'reason': close_reason
                     })
@@ -1619,13 +1712,14 @@ def check_futures_averaging():
     soft_time_limit=540,  # 9 minutes soft limit (return partial results)
     time_limit=720,       # 12 minutes hard limit (3 min grace for graceful shutdown)
 )
-def analyze_futures_batch(self, contract_ids, min_score=65):
+def analyze_futures_batch(self, contract_ids, min_score=65, regime='NORMAL'):
     """
     Analyze a batch of futures contracts (subtask for parallel execution).
 
     Args:
         contract_ids: List of ContractData IDs to analyze
         min_score: Minimum score for qualification
+        regime: Market regime (TRENDING, RANGING, VOLATILE, BREAKOUT, NORMAL)
 
     Returns:
         dict: {
@@ -1669,7 +1763,8 @@ def analyze_futures_batch(self, contract_ids, min_score=65):
                 analysis_result = enhanced_futures_analysis(
                     stock_symbol=contract.symbol,
                     expiry_date=contract.expiry,
-                    contract=contract
+                    contract=contract,
+                    regime=regime,
                 )
                 contract_elapsed = time.time() - contract_start
                 logger.info(f"Analyzed {contract.symbol} in {contract_elapsed:.1f}s")
@@ -1680,18 +1775,41 @@ def analyze_futures_batch(self, contract_ids, min_score=65):
                 hard_reject = analysis_result.get('hard_reject', False)
 
                 if verdict == 'PASS':
+                    # Post-score validation gate
+                    validation = None
+                    try:
+                        from apps.strategies.services.trade_validation import TradeValidationLayer
+                        validator = TradeValidationLayer()
+                        validation = validator.validate(analysis_result, regime=regime)
+                        if not validation['passed']:
+                            logger.info(
+                                f"Validation gate rejected {contract.symbol}: "
+                                f"{validation.get('rejection_reason', 'unknown')}"
+                            )
+                    except Exception as val_err:
+                        logger.warning(f"Validation gate error for {contract.symbol}: {val_err}")
+
                     # Build summary for notification
+                    adjusted_score = validation['adjusted_score'] if validation else composite_score
+                    rr_ratio = validation.get('rr_ratio', 0) if validation else 0
                     summary = {
                         'symbol': contract.symbol,
                         'expiry': str(contract.expiry),
-                        'score': composite_score,
+                        'score': adjusted_score,
                         'verdict': verdict,
                         'direction': direction,
                         'hard_reject': hard_reject,
                         'reject_reason': analysis_result.get('reject_reason'),
                         'news_warning': analysis_result.get('news_warning'),
                         'recommendation': analysis_result.get('recommendation', 'N/A'),
-                        'qualified': composite_score >= min_score and not hard_reject
+                        'qualified': (
+                            adjusted_score >= min_score
+                            and not hard_reject
+                            and (validation['passed'] if validation else True)
+                        ),
+                        'rr_ratio': rr_ratio,
+                        'regime': regime,
+                        'validation_warnings': validation.get('warnings', []) if validation else [],
                     }
                     passed_summary.append(summary)
 
@@ -1728,7 +1846,7 @@ def analyze_futures_batch(self, contract_ids, min_score=65):
 
 
 @shared_task(name='apps.strategies.tasks.aggregate_futures_results', bind=True)
-def aggregate_futures_results(self, batch_results, min_score=65, orchestrator_task_id=None):
+def aggregate_futures_results(self, batch_results, min_score=65, orchestrator_task_id=None, regime='NORMAL'):
     """
     Aggregate results from parallel futures analysis batches (chord callback).
 
@@ -1890,7 +2008,7 @@ def aggregate_futures_results(self, batch_results, min_score=65, orchestrator_ta
 
         message_lines = [
             f"🎯 FUTURES ALGORITHM ({mode_label})\n",
-            f"📅 {today.strftime('%d %b %Y')}",
+            f"📅 {today.strftime('%d %b %Y')} | Regime: {regime}",
             f"📊 Analyzed: {total_analyzed} | Passed: {len(all_passed_summary)} | Qualified: {len(qualified_candidates)}",
             f"📏 Sizing: {sizing_label}"
         ]
@@ -1901,9 +2019,11 @@ def aggregate_futures_results(self, batch_results, min_score=65, orchestrator_ta
         message_lines.append("\nTOP CANDIDATES:")
 
         for i, candidate in enumerate(qualified_candidates[:5], 1):
+            rr = candidate.get('rr_ratio', 0)
+            rr_str = f" | R:R 1:{rr:.1f}" if rr > 0 else ""
             message_lines.append(
                 f"\n{i}. {candidate['symbol']} ({candidate['direction']})"
-                f"\n   Score: {candidate['score']}/100 | {candidate['recommendation']}"
+                f"\n   Score: {candidate['score']}/100{rr_str} | {candidate['recommendation']}"
             )
 
         if len(qualified_candidates) > 5:
@@ -2157,6 +2277,38 @@ def execute_futures_algorithm(self, this_month_volume=1000, next_month_volume=80
 
         task_logger.info('account_found', f"Using account: {icici_account.account_name}")
 
+        # ===== PRE-TRADE VALIDATION =====
+        if not _manual_trigger:
+            from apps.trading.services.pre_trade_validator import PreTradeValidator
+            from apps.core.constants import STRATEGY_KOTAK_BROKEN_IRON_CONDOR
+            validator = PreTradeValidator()
+            is_ok, reasons = validator.validate(
+                icici_account,
+                strategy_type='LLM_VALIDATED_FUTURES',
+            )
+            if not is_ok:
+                reason_text = "\n".join(f"  • {r}" for r in reasons)
+                task_logger.warning('pre_trade_blocked', f"Pre-trade validation failed: {reasons}")
+                send_telegram_notification(
+                    f"⛔ <b>Futures Trade Blocked</b>\n\n"
+                    f"Pre-trade checks failed:\n{reason_text}\n\n"
+                    f"No order placed.",
+                    notification_type='WARNING',
+                )
+                return {'success': False, 'blocked_by': reasons}
+
+        # ===== STEP 2b: Detect market regime =====
+        task_logger.step('regime', "Detecting market regime")
+        try:
+            from apps.strategies.services.market_regime import get_market_regime
+            regime_data = get_market_regime('NIFTY')
+            regime = regime_data.get('regime', 'NORMAL')
+            task_logger.info('regime_detected', f"Market regime: {regime}", context=regime_data)
+        except Exception as regime_err:
+            logger.warning(f"Regime detection failed, using NORMAL: {regime_err}")
+            regime = 'NORMAL'
+            regime_data = {'regime': 'NORMAL', 'confidence': 0}
+
         # ===== STEP 3: Get filtered contracts =====
         task_logger.step('get_contracts', f"Screening top {top_contracts} futures contracts by volume")
 
@@ -2169,15 +2321,26 @@ def execute_futures_algorithm(self, this_month_volume=1000, next_month_volume=80
 
         # Get contract IDs for subtasks
         contract_ids = list(futures_contracts.values_list('id', flat=True))
+        pre_filter_count = len(contract_ids)
+
+        # ===== STEP 3b: Pre-filter contracts (lightweight, no API calls) =====
+        try:
+            from apps.strategies.services.contract_prefilter import prefilter_contracts
+            contract_ids = prefilter_contracts(futures_contracts, max_count=top_contracts)
+            task_logger.info('prefiltered', f"Pre-filter: {pre_filter_count} → {len(contract_ids)} contracts")
+        except Exception as pf_err:
+            logger.warning(f"Contract pre-filter failed, using all: {pf_err}")
+
         contract_count = len(contract_ids)
 
-        task_logger.info('contracts_found', f"Found {contract_count} contracts matching volume criteria", context={
+        task_logger.info('contracts_found', f"Found {contract_count} contracts (from {pre_filter_count} pre-filter)", context={
             'this_month_volume': this_month_volume,
-            'next_month_volume': next_month_volume
+            'next_month_volume': next_month_volume,
+            'pre_filter_count': pre_filter_count,
         })
 
         if contract_count == 0:
-            task_logger.warning('no_contracts', "No contracts match volume criteria")
+            task_logger.warning('no_contracts', "No contracts match volume/filter criteria")
             send_telegram_notification(
                 f"📊 FUTURES ALGORITHM\n\n"
                 f"📅 {today.strftime('%d %b %Y')}\n\n"
@@ -2198,15 +2361,16 @@ def execute_futures_algorithm(self, this_month_volume=1000, next_month_volume=80
             'total_contracts': contract_count
         })
 
-        # Create chord: parallel subtasks + callback
+        # Create chord: parallel subtasks + callback (pass regime to batches)
         subtasks = [
-            analyze_futures_batch.s(batch, min_score=min_score)
+            analyze_futures_batch.s(batch, min_score=min_score, regime=regime)
             for batch in batches
         ]
 
         callback = aggregate_futures_results.s(
             min_score=min_score,
-            orchestrator_task_id=self.request.id
+            orchestrator_task_id=self.request.id,
+            regime=regime,
         )
 
         # Dispatch chord

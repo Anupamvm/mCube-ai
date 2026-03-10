@@ -8,10 +8,13 @@ Automated tasks for risk monitoring and enforcement:
 """
 
 import logging
+from decimal import Decimal
 from celery import shared_task
+from django.core.cache import cache
 from django.utils import timezone
 
 from apps.accounts.models import BrokerAccount
+from apps.positions.models import Position
 from apps.risk.models import CircuitBreaker
 from apps.risk.services.risk_manager import (
     check_risk_limits,
@@ -22,6 +25,18 @@ from apps.alerts.services.telegram_client import send_telegram_notification
 from apps.core.utils.decorators import task_enabled_guard
 
 logger = logging.getLogger(__name__)
+
+# Intraday unrealized drawdown thresholds.
+# WARNING fires once per account per day; CRITICAL once per account per day.
+_INTRADAY_WARN_PCT = 10      # % of allocated_capital
+_INTRADAY_CRITICAL_PCT = 15  # % — approach circuit breaker level
+
+# Cache key templates — one counter per account per calendar date.
+# TTL = 26 hours so yesterday's flag never bleeds into today.
+_DRAWDOWN_WARN_KEY = 'intraday_drawdown_warn_{account_id}_{date}'
+_DRAWDOWN_CRIT_KEY = 'intraday_drawdown_crit_{account_id}_{date}'
+_PORTFOLIO_WARN_KEY = 'portfolio_drawdown_warn_{date}'
+_DRAWDOWN_FLAG_TTL = 26 * 3600
 
 
 @shared_task(name='apps.risk.tasks.check_risk_limits_all_accounts')
@@ -102,17 +117,87 @@ def check_risk_limits_all_accounts():
                         for limit in risk_check['warnings']
                     ])
 
-                    send_telegram_notification(
-                        f"⚠️ RISK WARNING ⚠️\n\n"
-                        f"Account: {account.account_name}\n"
-                        f"Broker: {account.broker}\n\n"
-                        f"LIMITS APPROACHING:\n{warning_details}\n\n"
-                        f"⚠️ Exercise caution with new positions",
-                        notification_type='WARNING'
+                    from apps.alerts.services.notification_payload import NotificationPayload
+                    from apps.alerts.services.telegram_client import send_notification as _send_notif
+                    _limit_lines = [
+                        f"{limit.limit_type}: ₹{limit.current_value:,.0f} / ₹{limit.limit_value:,.0f} "
+                        f"({limit.get_utilization_pct():.1f}%)"
+                        for limit in risk_check['warnings']
+                    ]
+                    _rw_payload = NotificationPayload(
+                        title='Risk Warning',
+                        status='WARNING',
+                        instrument=account.account_name,
+                        strategy=account.broker,
+                        task='check_risk_limits_all_accounts',
+                        context=_limit_lines + ["Exercise caution with new positions"],
+                        actions=["Review open positions", "Avoid new entries until below threshold"],
+                        system={'Account': account.account_name, 'Broker': account.broker},
+                        priority='WARNING',
+                        dedup_key=f'risk_warn_{account.id}_{timezone.localdate().isoformat()}',
                     )
+                    _send_notif(_rw_payload)
 
                 else:
                     logger.info(f"✅ All risk limits OK for {account.account_name}")
+
+                # ── Intraday unrealized drawdown check ────────────────────────
+                # Runs regardless of realized limit status above.
+                # Uses allocated_capital as the denominator.
+                try:
+                    open_pos = Position.objects.filter(account=account, status='OPEN')
+                    total_unrealized = sum(
+                        (p.unrealized_pnl or Decimal('0')) for p in open_pos
+                    )
+                    if total_unrealized < 0 and account.allocated_capital:
+                        drawdown_pct = float(
+                            abs(total_unrealized) / account.allocated_capital * 100
+                        )
+                        today_str = timezone.localdate().isoformat()
+
+                        try:
+                            from apps.core.models import TradingCoreConfig
+                            _cfg = TradingCoreConfig.get_instance()
+                            _mode_tag = (
+                                f"\n<i>⚙️ {_cfg.get_notification_level_display_short()} "
+                                f"· {_cfg.get_position_sizing_display_short()}</i>"
+                            )
+                        except Exception:
+                            _mode_tag = ''
+
+                        if drawdown_pct >= _INTRADAY_CRITICAL_PCT:
+                            crit_key = _DRAWDOWN_CRIT_KEY.format(
+                                account_id=account.id, date=today_str
+                            )
+                            if cache.add(crit_key, '1', timeout=_DRAWDOWN_FLAG_TTL):
+                                send_telegram_notification(
+                                    f"🚨 <b>Critical Intraday Drawdown</b>\n\n"
+                                    f"Account: <b>{account.account_name}</b>\n"
+                                    f"Unrealized loss: ₹{abs(total_unrealized):,.0f} "
+                                    f"(<b>{drawdown_pct:.1f}%</b> of capital)\n\n"
+                                    f"Approaching circuit breaker threshold."
+                                    + _mode_tag,
+                                    notification_type='CRITICAL',
+                                )
+
+                        elif drawdown_pct >= _INTRADAY_WARN_PCT:
+                            warn_key = _DRAWDOWN_WARN_KEY.format(
+                                account_id=account.id, date=today_str
+                            )
+                            if cache.add(warn_key, '1', timeout=_DRAWDOWN_FLAG_TTL):
+                                send_telegram_notification(
+                                    f"⚠️ <b>Intraday Drawdown Warning</b>\n\n"
+                                    f"Account: {account.account_name}\n"
+                                    f"Unrealized loss: ₹{abs(total_unrealized):,.0f} "
+                                    f"({drawdown_pct:.1f}% of capital)\n\n"
+                                    f"Monitor open positions closely."
+                                    + _mode_tag,
+                                    notification_type='WARNING',
+                                )
+                except Exception as dd_err:
+                    logger.error(
+                        f"Intraday drawdown check failed for {account.account_name}: {dd_err}"
+                    )
 
                 accounts_checked += 1
 
@@ -121,6 +206,48 @@ def check_risk_limits_all_accounts():
                     f"Error checking risk limits for {account.account_name}: {e}",
                     exc_info=True
                 )
+
+        # ── Portfolio-level aggregate drawdown check ──────────────────────────
+        # Aggregates unrealized P&L across ALL accounts — catches cases where
+        # individual accounts are within limits but combined exposure is high.
+        try:
+            all_open = Position.objects.filter(status='OPEN').select_related('account')
+            portfolio_unrealized = sum(
+                (p.unrealized_pnl or Decimal('0')) for p in all_open
+            )
+            total_capital = sum(
+                (acc.allocated_capital or Decimal('0'))
+                for acc in active_accounts
+                if acc.allocated_capital
+            )
+            if portfolio_unrealized < 0 and total_capital > 0:
+                portfolio_dd_pct = float(
+                    abs(portfolio_unrealized) / total_capital * 100
+                )
+                if portfolio_dd_pct >= _INTRADAY_WARN_PCT:
+                    today_str = timezone.localdate().isoformat()
+                    port_key = _PORTFOLIO_WARN_KEY.format(date=today_str)
+                    if cache.add(port_key, '1', timeout=_DRAWDOWN_FLAG_TTL):
+                        try:
+                            from apps.core.models import TradingCoreConfig
+                            _cfg = TradingCoreConfig.get_instance()
+                            _port_mode_tag = (
+                                f"\n<i>⚙️ {_cfg.get_notification_level_display_short()} "
+                                f"· {_cfg.get_position_sizing_display_short()}</i>"
+                            )
+                        except Exception:
+                            _port_mode_tag = ''
+                        send_telegram_notification(
+                            f"⚠️ <b>Portfolio Drawdown Warning</b>\n\n"
+                            f"Total unrealized loss across all accounts:\n"
+                            f"₹{abs(portfolio_unrealized):,.0f} "
+                            f"({portfolio_dd_pct:.1f}% of total capital)\n\n"
+                            f"Review all open positions."
+                            + _port_mode_tag,
+                            notification_type='WARNING',
+                        )
+        except Exception as port_err:
+            logger.error(f"Portfolio drawdown check failed: {port_err}")
 
         logger.info(
             f"✅ Risk check complete: {accounts_checked} accounts checked, "
@@ -211,8 +338,10 @@ def monitor_circuit_breakers():
                 elif (current_time - breaker.created_at).total_seconds() > 86400:  # 24 hours
                     hours_active = (current_time - breaker.created_at).total_seconds() / 3600
 
-                    # Send reminder every 6 hours
-                    if int(hours_active) % 6 == 0:
+                    # Send reminder every 6 hours — use Redis atomic add (TTL=6h) instead
+                    # of modulo-on-float which is unreliable for tasks running every 30s.
+                    cb_reminder_key = f'cb_reminder_{breaker.id}'
+                    if cache.add(cb_reminder_key, '1', timeout=6 * 3600):
                         reminders_sent += 1
 
                         logger.warning(

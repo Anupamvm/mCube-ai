@@ -161,6 +161,10 @@ class TradeSuggestion(models.Model):
         default=False,
         help_text="Whether a revalidation message was sent after timeout"
     )
+    escalated = models.BooleanField(
+        default=False,
+        help_text="Whether a CRITICAL escalation alert was sent due to prolonged pending state"
+    )
 
     class Meta:
         ordering = ['-created_at']
@@ -177,7 +181,7 @@ class TradeSuggestion(models.Model):
     @property
     def is_pending(self):
         """Check if suggestion is still pending action"""
-        return self.status == 'SUGGESTED'
+        return self.status in ('SUGGESTED', 'PENDING_CONFIRMATION')
 
     @property
     def is_active(self):
@@ -196,6 +200,22 @@ class TradeSuggestion(models.Model):
         if self.expires_at and timezone.now() > self.expires_at:
             return False
         return self.status == 'SUGGESTED'
+
+    @property
+    def composite_score(self):
+        """Get composite score from position_details JSON."""
+        if self.position_details:
+            return self.position_details.get('composite_score', 0)
+        if self.algorithm_reasoning:
+            return self.algorithm_reasoning.get('composite_score', 0)
+        return 0
+
+    @property
+    def regime(self):
+        """Get market regime from position_details JSON."""
+        if self.position_details:
+            return self.position_details.get('regime', '')
+        return ''
 
     def mark_taken(self, user_notes=''):
         """Mark suggestion as taken by user"""

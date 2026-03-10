@@ -814,6 +814,11 @@ class TelegramBotHandler(MenuMixin, DataMixin, TradeMixin):
         elif data.startswith("monitor_back"):
             await self._handle_monitor_back(query)
 
+        # Near-SL "View Exit Details" — triggers full exit confirmation message
+        elif data.startswith("request_exit_"):
+            position_id = int(data.split("_")[2])
+            await self._handle_request_exit(query, position_id)
+
         # Exit confirmation (SL/Target hit)
         elif data.startswith("confirm_exit_"):
             position_id = int(data.split("_")[2])
@@ -2183,6 +2188,43 @@ class TelegramBotHandler(MenuMixin, DataMixin, TradeMixin):
         ]
         return {'message': message, 'keyboard': keyboard}
 
+    async def _handle_request_exit(self, query, position_id: int):
+        """
+        Handle 'View Exit Details' tapped from Near-SL warning.
+
+        Sends the full rich exit-confirmation message (with P&L context and
+        [✅ Close Now] / [⏸️ Hold] buttons) by delegating to
+        TradeConfirmationService.request_exit_confirmation().
+        """
+        await query.answer()
+        try:
+            from apps.positions.models import Position
+
+            position = await sync_to_async(
+                lambda: Position.objects.select_related('account').get(id=position_id)
+            )()
+            pnl = position.unrealized_pnl or 0
+
+            from apps.trading.services.trade_confirmation import get_confirmation_service
+            conf_service = get_confirmation_service()
+            success, result = await sync_to_async(conf_service.request_exit_confirmation)(
+                position, reason='NEAR_SL_REQUEST', current_pnl=pnl
+            )
+
+            if success:
+                await query.edit_message_text(
+                    "📊 Exit details sent — check next message.",
+                    parse_mode='HTML',
+                )
+            else:
+                await query.edit_message_text(
+                    f"⚠️ Could not send exit details: {str(result)[:120]}",
+                    parse_mode='HTML',
+                )
+        except Exception as e:
+            logger.error(f"_handle_request_exit error for pos #{position_id}: {e}")
+            await query.edit_message_text(f"Error: {str(e)[:200]}")
+
     async def _handle_exit_confirm(self, query, position_id: int):
         """Handle exit confirmation (close position)"""
         await query.edit_message_text("Closing position...")
@@ -2214,8 +2256,11 @@ class TelegramBotHandler(MenuMixin, DataMixin, TradeMixin):
         try:
             await self._mark_position_hold(position_id)
             await query.edit_message_text(
-                "Position will be held.\n\n"
-                "You will not receive another alert for this trigger level."
+                "✅ Position held.\n\n"
+                "You will only be re-alerted if:\n"
+                "• Exit reason changes\n"
+                "• Price moves >1% further against position\n"
+                "• Market close approaches (last 30 min)"
             )
         except Exception as e:
             logger.error(f"Error marking position hold: {e}")
@@ -2384,18 +2429,34 @@ class TelegramBotHandler(MenuMixin, DataMixin, TradeMixin):
 
     @sync_to_async(thread_sensitive=False)
     def _mark_position_hold(self, position_id: int):
-        """Mark a position to be held (ignore SL/Target alert)"""
+        """Mark a position to be held — stores reason, price, and timestamp."""
+        import json
         from django.db import close_old_connections
         close_old_connections()
 
         try:
             from apps.core.models import NseFlag
+            from apps.positions.models import Position
+            from django.utils import timezone as tz
 
-            # Use NseFlag to track that user chose to hold
+            # Get current position state for context
+            hold_data = {'held': True, 'held_at': tz.now().isoformat()}
+            try:
+                pos = Position.objects.get(id=position_id)
+                hold_data['price'] = float(pos.current_price or 0)
+
+                # Get the last exit reason from the dashboard
+                from apps.positions.services.monitor_dashboard import get_or_create_dashboard
+                dashboard, _ = get_or_create_dashboard(pos)
+                if dashboard.last_exit_reason:
+                    hold_data['reason'] = dashboard.last_exit_reason
+            except Position.DoesNotExist:
+                pass
+
             NseFlag.set(
                 f'position_hold_{position_id}',
-                'true',
-                'User chose to hold position despite SL/Target alert'
+                json.dumps(hold_data),
+                'User chose to hold position despite exit alert'
             )
 
         except Exception as e:
