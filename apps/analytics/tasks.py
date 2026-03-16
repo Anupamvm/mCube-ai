@@ -244,21 +244,59 @@ def generate_daily_pnl_report():
                 report_lines.append(f"Total Unrealized: ₹{grand_unrealized:,.0f} (from entry)\n")
             report_lines.append(f"Net Day P&L: ₹{net_day_pnl:+,.0f}\n")
 
-        # Send report
+        # ── Build structured notification ────────────────────────────────────
         grand_today_change = _portfolio_today_change
         net_day_pnl = grand_realized + grand_today_change
         day_status = 'SUCCESS' if net_day_pnl >= 0 else 'WARNING'
+
+        # Build per-account summary lines for the expandable section
+        acct_summary = []
+        for account in all_accounts:
+            open_pos = Position.objects.filter(
+                account=account, status__in=['OPEN', 'ACTIVE']
+            )
+            closed_pos = Position.objects.filter(
+                account=account, status='CLOSED', exit_time__date=today
+            )
+            if not open_pos.exists() and not closed_pos.exists():
+                continue
+
+            acct_pnl = (open_pos.aggregate(total=Sum('unrealized_pnl'))['total'] or Decimal('0'))
+            icon = "🟢" if acct_pnl > 0 else "🔴" if acct_pnl < 0 else "⚪"
+            acct_summary.append(
+                f"{icon} {account.account_name}: ₹{acct_pnl:+,.0f} ({open_pos.count()} open)"
+            )
+            # Per-position compact lines
+            for pos in open_pos:
+                if not pos.entry_time:
+                    continue
+                u = pos.unrealized_pnl or Decimal('0')
+                pct = _calc_pnl_pct(pos.entry_price, pos.current_price, pos.direction)
+                days = (today - pos.entry_time.date()).days if pos.entry_time else 0
+                tag = "NEW" if days == 0 else f"D{days}"
+                acct_summary.append(
+                    f"  {pos.instrument} {pos.direction} [{tag}] ₹{u:+,.0f} ({pct})"
+                )
+            if closed_pos.exists():
+                r = closed_pos.aggregate(total=Sum('realized_pnl'))['total'] or Decimal('0')
+                acct_summary.append(f"  Closed: {closed_pos.count()} trades, ₹{r:+,.0f}")
+
+        # Headline metrics (always visible above fold)
+        metrics = {
+            "Day P&L": f"₹{net_day_pnl:+,.0f}",
+            "Unrealized": f"₹{grand_unrealized:,.0f}",
+        }
+        if grand_closed_count > 0:
+            metrics["Realized"] = f"₹{grand_realized:+,.0f}"
+            metrics["Win Rate"] = f"{grand_winners}W/{grand_losers}L"
+
         notify('JOB_COMPLETED',
-            title='Daily P&L Report · Market Closed',
+            title='Daily P&L Report',
             status=day_status,
             task='generate_daily_pnl_report',
-            metrics={
-                "Net Day P&L": f"₹{net_day_pnl:+,.0f}",
-                "Today's Change": f"₹{grand_today_change:+,.0f}",
-                'Closed Trades': str(grand_closed_count),
-                'Open Positions': str(grand_open_count),
-            },
-            context=report_lines[3:],  # skip header lines already in title
+            metrics=metrics,
+            context=acct_summary if acct_summary else ['No activity today'],
+            collapsible=True,
         )
 
         grand_total = grand_realized + grand_unrealized

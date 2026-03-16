@@ -1251,18 +1251,140 @@ def batch_options_averaging(self):
         return {'success': False, 'error': str(e)}
 
 
+def _save_screening_as_trade_suggestions(top_candidates, today):
+    """
+    Create TradeSuggestion records from screening results so they appear at
+    /trading/triggers/#futures.
+
+    The screening task uses FuturesSuggestion, but the web UI reads TradeSuggestion.
+    This helper bridges the gap by creating lightweight TradeSuggestion records
+    with the data available from screening (no full algo details — those come later
+    from execute_futures_algorithm at 9:40 AM which deduplicates by symbol+expiry).
+    """
+    try:
+        from django.contrib.auth import get_user_model
+        from apps.data.models import ContractData
+        from apps.trading.models import TradeSuggestion
+
+        User = get_user_model()
+        user = User.objects.filter(is_superuser=True).first()
+        if not user:
+            logger.warning("No superuser found — skipping TradeSuggestion creation from screening")
+            return
+
+        # Pre-fetch nearest future expiry for all symbols in one query
+        symbol_list = [c['symbol'] for c in top_candidates]
+        contracts = (
+            ContractData.objects
+            .filter(symbol__in=symbol_list, option_type='FUTURE', expiry__gte=str(today))
+            .order_by('symbol', 'expiry')
+            .values('symbol', 'expiry', 'price', 'lot_size')
+        )
+        # Keep only nearest expiry per symbol
+        nearest = {}
+        for row in contracts:
+            sym = row['symbol']
+            if sym not in nearest:
+                nearest[sym] = row
+
+        # Existing TradeSuggestion records for today (dedup by instrument+expiry_date)
+        existing = set(
+            TradeSuggestion.objects.filter(
+                created_at__date=today,
+                suggestion_type='FUTURES',
+                strategy='icici_futures',
+            ).values_list('instrument', 'expiry_date')
+        )
+
+        saved = 0
+        for candidate in top_candidates:
+            symbol = candidate['symbol']
+            contract = nearest.get(symbol)
+            if not contract:
+                logger.debug(f"No ContractData found for {symbol} — skipping TradeSuggestion")
+                continue
+
+            try:
+                from datetime import datetime as _dt
+                expiry_date = _dt.strptime(contract['expiry'], '%Y-%m-%d').date()
+            except Exception:
+                continue
+
+            if (symbol, expiry_date) in existing:
+                logger.debug(f"TradeSuggestion already exists for {symbol} {expiry_date} — skipping")
+                continue
+
+            oi_data = candidate.get('oi_analysis', {})
+            tech_data = candidate.get('technical_analysis', {})
+            sector_data = candidate.get('sector_analysis', {})
+
+            # Normalize direction to LONG/SHORT
+            raw_dir = candidate.get('direction', 'NEUTRAL')
+            direction = 'LONG' if raw_dir == 'BULLISH' else ('SHORT' if raw_dir == 'BEARISH' else raw_dir)
+
+            algorithm_reasoning = {
+                'composite_score': candidate['composite_score'],
+                'source': 'screening',
+                'oi_analysis': oi_data,
+                'technical_analysis': tech_data,
+                'sector_analysis': sector_data,
+                'metrics': {
+                    'futures_price': float(contract.get('price') or 0),
+                    'lot_size': contract.get('lot_size') or 0,
+                    'volume_rank': candidate.get('volume_rank', 0),
+                    'oi_buildup_type': oi_data.get('buildup_type', ''),
+                    'oi_change_pct': oi_data.get('oi_change_pct'),
+                },
+                'scores': {
+                    'oi': oi_data.get('score', 0),
+                    'technical': tech_data.get('score', 0),
+                    'sector': sector_data.get('score', 0),
+                },
+                'explanation': [
+                    f"OI: {oi_data.get('buildup_type', 'N/A')} (change: {oi_data.get('oi_change_pct', 'N/A')}%)",
+                    f"Technical: {tech_data.get('verdict', 'N/A')}",
+                    f"Sector: {sector_data.get('verdict', 'N/A')}",
+                ],
+                'execution_log': [f"Screened at 9:30 AM — score {candidate['composite_score']}/100"],
+            }
+
+            TradeSuggestion.objects.create(
+                user=user,
+                source='auto',
+                strategy='icici_futures',
+                suggestion_type='FUTURES',
+                instrument=symbol,
+                direction=direction,
+                spot_price=contract.get('price'),
+                expiry_date=expiry_date,
+                days_to_expiry=(expiry_date - today).days,
+                status='SUGGESTED',
+                algorithm_reasoning=algorithm_reasoning,
+                position_details={'lot_size': contract.get('lot_size') or 0},
+            )
+            existing.add((symbol, expiry_date))
+            saved += 1
+            logger.info(f"Created TradeSuggestion for {symbol} ({direction}) from screening")
+
+        logger.info(f"Screening → TradeSuggestion: saved {saved}/{len(top_candidates)}")
+
+    except Exception as e:
+        logger.warning(f"Could not create TradeSuggestion from screening results: {e}")
+
+
 @shared_task(name='apps.strategies.tasks.screen_futures_opportunities')
 @task_enabled_guard('screen-futures-opportunities')
 def screen_futures_opportunities_task():
     """
-    Screen Futures Opportunities (9:45 AM Daily)
+    Screen Futures Opportunities (9:30 AM Daily)
 
+    Runs 15 min after market open (9:15 AM) for price stability.
     Screens top 30 futures by volume and saves top 5 suggestions:
     1. Get top 30 futures by volume
     2. Analyze OI buildup, technical, sector
     3. Score and rank candidates
-    4. Save top 5 to database
-    5. Send notification
+    4. Save top 5 to FuturesSuggestion + TradeSuggestion (for web UI at /trading/triggers/#futures)
+    5. Send Telegram notification
     """
     logger.info("=" * 80)
     logger.info("CELERY TASK: Futures Opportunity Screening")
@@ -1326,6 +1448,11 @@ def screen_futures_opportunities_task():
             setup.save()
         except Exception:
             pass
+
+        # ===== ALSO SAVE AS TradeSuggestion FOR WEB UI =====
+        # The /trading/triggers/#futures page reads TradeSuggestion, not FuturesSuggestion.
+        # Look up the nearest ContractData expiry per symbol and create lightweight records.
+        _save_screening_as_trade_suggestions(top_5, today)
 
         # Send notification
         candidate_lines = []

@@ -633,14 +633,18 @@ class BreezeAutoLogin:
             NseFlag.set(OTP_FLAG_VALUE, "", "Awaiting OTP value")
             NseFlag.set(OTP_FLAG_TASK, self.task_name, "Task requesting OTP")
 
-            # Send Telegram message
-            message = (
-                "<b>Breeze OTP Required</b>\n\n"
-                f"mCube needs Breeze OTP for: <b>{self.task_name}</b>\n\n"
-                "Reply with the OTP digits (4-6 digits).\n"
-                "Or enter it directly in the browser window."
+            # Send Telegram message via structured template
+            from apps.alerts.services.notification_service import notify
+            success, resp = notify('BROKER_HEALTH',
+                title='Breeze OTP Required',
+                instrument='ICICI Breeze',
+                task=self.task_name,
+                context=[
+                    'Reply with the OTP digits (4-6 digits)',
+                    'Or enter it directly in the browser window',
+                ],
+                collapsible=False,
             )
-            success, resp = client.send_message(message)
 
             if success:
                 logger.info("Telegram OTP request sent successfully")

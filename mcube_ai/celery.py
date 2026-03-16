@@ -173,7 +173,7 @@ def get_static_schedule():
 
     'screen-futures-opportunities': {
         'task': 'apps.strategies.tasks.screen_futures_opportunities',
-        'schedule': crontab(hour=8, minute=30, day_of_week='1-5'),  # 8:30 AM Mon-Fri (pre-market)
+        'schedule': crontab(hour=9, minute=30, day_of_week='1-5'),  # 9:30 AM Mon-Fri (15 min after market open)
         'options': {'queue': 'strategies'},
     },
 

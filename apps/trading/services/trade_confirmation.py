@@ -24,6 +24,10 @@ from typing import Dict, List, Tuple
 from datetime import datetime
 from django.utils import timezone
 
+from apps.alerts.services.notification_payload import NotificationPayload
+from apps.alerts.services.notification_formatter import format_notification
+from apps.alerts.services.notification_service import notify
+
 logger = logging.getLogger(__name__)
 
 
@@ -67,57 +71,67 @@ class TradeConfirmationService:
         total_premium = suggestion.total_premium or 0
         lots = suggestion.recommended_lots or config.options_lots
 
-        # Expiry display
-        expiry_line = ''
+        # Expiry context
+        context_lines = []
         if suggestion.expiry_date:
             from datetime import date
             days_to_exp = (suggestion.expiry_date - date.today()).days
             expiry_fmt = suggestion.expiry_date.strftime('%d-%b-%Y')
-            expiry_line = f"<b>📅 Expiry:</b> {expiry_fmt} ({days_to_exp}d)\n"
+            context_lines.append(f"Expiry: {expiry_fmt} ({days_to_exp}d)")
 
             # Check if expiry was changed
             details = suggestion.position_details or {}
             if details.get('expiry_changed'):
                 original = details.get('original_expiry', '')
-                expiry_line += f"⚠️ <i>Changed from original: {original}</i>\n"
+                context_lines.append(f"Expiry changed from: {original}")
 
-        message = (
-            f"📊 <b>OPTIONS TRADE CONFIRMATION</b>\n\n"
-            f"Strategy: {strategy}\n"
-            f"Instrument: {suggestion.instrument}\n"
-            f"Direction: {suggestion.direction}\n"
-            f"{expiry_line}\n"
-            f"<b>Strikes:</b>\n"
-            f"  • Call: {call_strike:,.0f}\n"
-            f"  • Put: {put_strike:,.0f}\n\n"
-            f"<b>Position:</b>\n"
-            f"  • Lots: {lots}\n"
-            f"  • Premium: ₹{total_premium:,.0f}\n"
-            f"  • Margin: ₹{suggestion.margin_required or 0:,.0f}\n\n"
-            f"<b>Risk:</b>\n"
-            f"  • Max Loss: ₹{suggestion.max_loss or 0:,.0f}\n"
-            f"  • R:R Ratio: {suggestion.risk_reward_ratio or 0:.2f}\n\n"
-            f"⏱️ Auto-expires in {config.confirmation_timeout_minutes} minutes\n\n"
-            f"<i>Reply with lot count to modify, or use buttons below:</i>"
+        margin = suggestion.margin_required or 0
+        max_loss = suggestion.max_loss or 0
+        rr = suggestion.risk_reward_ratio or 0
+        timeout = config.confirmation_timeout_minutes
+
+        context_lines.extend([
+            f'Max Loss: ₹{max_loss:,.0f}',
+            f'R:R Ratio: {rr:.2f}',
+            f'Auto-expires in {timeout} min',
+        ])
+
+        # Build inline keyboard rows
+        keyboard_rows = [
+            [
+                {'text': f'✅ Confirm ({lots} lots)', 'callback_data': f'confirm_options_{suggestion.id}'},
+            ],
+            [
+                {'text': '📊 Change Size', 'callback_data': f'resize_options_{suggestion.id}'},
+                {'text': '📅 Change Expiry', 'callback_data': f'expiry_options_{suggestion.id}'},
+            ],
+            [
+                {'text': '❌ Reject', 'callback_data': f'reject_options_{suggestion.id}'},
+            ],
+        ]
+
+        payload = NotificationPayload(
+            title='Options Trade Confirmation',
+            status='ACTION_REQUIRED',
+            instrument=suggestion.instrument,
+            metrics={
+                'Strategy': strategy,
+                'Lots': str(lots),
+                'Premium': f'₹{total_premium:,.0f}',
+            },
+            position={
+                'Call Strike': str(call_strike),
+                'Put Strike': str(put_strike),
+                'Margin': f'₹{margin:,.0f}',
+            },
+            context=context_lines,
+            keyboard=keyboard_rows,
+            collapsible=True,
         )
 
-        # Build inline keyboard
-        keyboard = {
-            'inline_keyboard': [
-                [
-                    {'text': f'✅ Confirm ({lots} lots)', 'callback_data': f'confirm_options_{suggestion.id}'},
-                ],
-                [
-                    {'text': '📊 Change Size', 'callback_data': f'resize_options_{suggestion.id}'},
-                    {'text': '📅 Change Expiry', 'callback_data': f'expiry_options_{suggestion.id}'},
-                ],
-                [
-                    {'text': '❌ Reject', 'callback_data': f'reject_options_{suggestion.id}'},
-                ],
-            ]
-        }
-
-        success, result = self._send_with_keyboard(message, keyboard)
+        message = format_notification(payload)
+        keyboard_dict = {'inline_keyboard': payload.keyboard}
+        success, result = self._send_with_keyboard(message, keyboard_dict)
 
         if success:
             # Update suggestion with confirmation tracking
@@ -166,20 +180,15 @@ class TradeConfirmationService:
         # =====================================================================
         # STEP 1: SELECTION SCREEN - Show summary with "View Details" buttons
         # =====================================================================
-        message_lines = [
-            "📈 <b>FUTURES OPPORTUNITIES</b>\n",
-            f"💰 Available Margin: ₹{available:,.0f}",
-            f"⏱️ Expires in {config.confirmation_timeout_minutes} min\n",
-            "─" * 20,
-            "\n<i>Select a trade to view details:</i>\n",
-        ]
+        timeout = config.confirmation_timeout_minutes
 
+        # Build compact per-suggestion context lines
+        context_lines = ['Select a trade to view details:']
         for i, suggestion in enumerate(suggestions[:3], 1):
             symbol = suggestion.instrument
             direction = suggestion.direction
             det = suggestion.position_details or {}
             score = det.get('composite_score', 0)
-            entry_price = det.get('entry_price', 0)
             rr = suggestion.risk_reward_ratio or det.get('risk_reward_ratio', 0) or 0
             regime_label = det.get('regime', '')
 
@@ -187,14 +196,9 @@ class TradeConfirmationService:
             rr_str = f" | R:R 1:{float(rr):.1f}" if rr else ""
             regime_str = f" | {regime_label}" if regime_label else ""
 
-            message_lines.append(
-                f"\n{i}️⃣ <b>{symbol}</b> {direction_emoji} {direction}\n"
-                f"   Score: <b>{score}/100</b>{rr_str}{regime_str}"
+            context_lines.append(
+                f"{i}. {symbol} {direction_emoji} {direction} — Score: {score}/100{rr_str}{regime_str}"
             )
-
-        message_lines.append("\n\n<i>Select a trade to view details.</i>")
-
-        message = '\n'.join(message_lines)
 
         # Build keyboard with "View Details" button for each
         keyboard_rows = []
@@ -207,9 +211,21 @@ class TradeConfirmationService:
             {'text': '❌ Skip All', 'callback_data': 'futures_skip_all'},
         ])
 
-        keyboard = {'inline_keyboard': keyboard_rows}
+        payload = NotificationPayload(
+            title='Futures Opportunities',
+            status='ACTION_REQUIRED',
+            metrics={
+                'Margin Available': f'₹{available:,.0f}',
+                'Expires': f'{timeout} min',
+            },
+            context=context_lines,
+            keyboard=keyboard_rows,
+            collapsible=True,
+        )
 
-        success, result = self._send_with_keyboard(message, keyboard)
+        message = format_notification(payload)
+        keyboard_dict = {'inline_keyboard': payload.keyboard}
+        success, result = self._send_with_keyboard(message, keyboard_dict)
 
         if success:
             # Update all suggestions with confirmation tracking
@@ -372,8 +388,6 @@ class TradeConfirmationService:
             Tuple[bool, str]: (success, message_id or error)
         """
         from django.utils import timezone
-        from apps.alerts.services.notification_payload import NotificationPayload
-        from apps.alerts.services.notification_formatter import format_notification
 
         now = timezone.now()
         pnl = current_pnl if current_pnl is not None else (position.unrealized_pnl or Decimal('0'))
@@ -526,43 +540,54 @@ class TradeConfirmationService:
         current_pnl = position.unrealized_pnl or Decimal('0')
         pnl_str = f"+₹{current_pnl:,.0f}" if current_pnl >= 0 else f"-₹{abs(current_pnl):,.0f}"
 
-        message = (
-            f"📊 <b>AVERAGING RECOMMENDATION</b>\n\n"
-            f"Position: #{position.id}\n"
-            f"Symbol: {position.instrument}\n"
-            f"Direction: {position.direction}\n\n"
-            f"Current P&L: <b>{pnl_str}</b>\n"
-            f"Entry: ₹{position.entry_price:,.0f}\n"
-            f"Current: ₹{position.current_price:,.0f}\n\n"
-        )
+        # Build position details with averaging preview
+        position_details = {
+            'Direction': position.direction,
+            'Position ID': f'#{position.id}',
+        }
+        context_lines = []
 
         if averaging_preview:
-            message += (
-                f"<b>If you average with {recommended_lots} lots:</b>\n"
-                f"  • New Avg Entry: ₹{averaging_preview.get('new_average_entry', 0):,.0f}\n"
-                f"  • New Stop-Loss: ₹{averaging_preview.get('new_stop_loss', 0):,.0f}\n"
-                f"  • Additional Margin: ₹{averaging_preview.get('additional_margin', 0):,.0f}\n\n"
-            )
+            position_details.update({
+                'New Avg Entry': f"₹{averaging_preview.get('new_average_entry', 0):,.0f}",
+                'New Stop-Loss': f"₹{averaging_preview.get('new_stop_loss', 0):,.0f}",
+                'Additional Margin': f"₹{averaging_preview.get('additional_margin', 0):,.0f}",
+            })
+            context_lines.append(f'Preview for adding {recommended_lots} lots')
 
-        message += "<i>Confirm to add to position:</i>"
+        context_lines.append('Confirm to add to position')
 
-        keyboard = {
-            'inline_keyboard': [
-                [
-                    {'text': f'✅ Add {recommended_lots} lots', 'callback_data': f'confirm_avg_{position.id}_{recommended_lots}'},
-                ],
-                [
-                    {'text': '1 lot', 'callback_data': f'confirm_avg_{position.id}_1'},
-                    {'text': '2 lots', 'callback_data': f'confirm_avg_{position.id}_2'},
-                    {'text': '5 lots', 'callback_data': f'confirm_avg_{position.id}_5'},
-                ],
-                [
-                    {'text': '❌ Skip', 'callback_data': f'skip_avg_{position.id}'},
-                ],
-            ]
-        }
+        keyboard_rows = [
+            [
+                {'text': f'✅ Add {recommended_lots} lots', 'callback_data': f'confirm_avg_{position.id}_{recommended_lots}'},
+            ],
+            [
+                {'text': '1 lot', 'callback_data': f'confirm_avg_{position.id}_1'},
+                {'text': '2 lots', 'callback_data': f'confirm_avg_{position.id}_2'},
+                {'text': '5 lots', 'callback_data': f'confirm_avg_{position.id}_5'},
+            ],
+            [
+                {'text': '❌ Skip', 'callback_data': f'skip_avg_{position.id}'},
+            ],
+        ]
 
-        return self._send_with_keyboard(message, keyboard)
+        payload = NotificationPayload(
+            title='Averaging Recommendation',
+            status='ACTION_REQUIRED',
+            instrument=position.instrument,
+            metrics={
+                'P&L': pnl_str,
+                'Current': f'₹{position.current_price:,.0f}',
+            },
+            position=position_details,
+            context=context_lines,
+            keyboard=keyboard_rows,
+            collapsible=True,
+        )
+
+        message = format_notification(payload)
+        keyboard_dict = {'inline_keyboard': payload.keyboard}
+        return self._send_with_keyboard(message, keyboard_dict)
 
     def revalidate_after_timeout(self, suggestion) -> Tuple[bool, str]:
         """
@@ -605,28 +630,31 @@ class TradeConfirmationService:
             logger.warning(f"Could not check movement: {e}")
 
         if is_valid:
-            message = (
-                f"⏰ <b>TIMEOUT - REVALIDATED</b>\n\n"
-                f"You took some time. Let me recheck...\n\n"
-                f"✅ Position still valid! Original parameters apply.\n\n"
-                f"Confirm to proceed?"
+            keyboard_rows = [[
+                {'text': '✅ Confirm Now', 'callback_data': f'confirm_options_{suggestion.id}'},
+                {'text': '❌ Cancel', 'callback_data': f'reject_options_{suggestion.id}'},
+            ]]
+
+            payload = NotificationPayload(
+                title='Timeout - Revalidated',
+                status='ACTION_REQUIRED',
+                context=['Position still valid — original parameters apply.', 'Confirm to proceed?'],
+                keyboard=keyboard_rows,
+                collapsible=False,
             )
-            keyboard = {
-                'inline_keyboard': [
-                    [
-                        {'text': '✅ Confirm Now', 'callback_data': f'confirm_options_{suggestion.id}'},
-                        {'text': '❌ Cancel', 'callback_data': f'reject_options_{suggestion.id}'},
-                    ],
-                ]
-            }
+
+            message = format_notification(payload)
+            keyboard_dict = {'inline_keyboard': payload.keyboard}
         else:
-            message = (
-                f"⏰ <b>TIMEOUT - EXPIRED</b>\n\n"
-                f"You took some time. Position no longer viable.\n\n"
-                f"Reason: {reason}\n\n"
-                f"Will try again tomorrow."
+            payload = NotificationPayload(
+                title='Timeout - Expired',
+                status='WARNING',
+                context=[reason, 'Will try again tomorrow.'],
+                collapsible=False,
             )
-            keyboard = None
+
+            message = format_notification(payload)
+            keyboard_dict = None
 
             # Mark as expired
             suggestion.status = 'EXPIRED'
@@ -636,8 +664,8 @@ class TradeConfirmationService:
         suggestion.revalidation_sent = True
         suggestion.save()
 
-        if keyboard:
-            return self._send_with_keyboard(message, keyboard)
+        if keyboard_dict:
+            return self._send_with_keyboard(message, keyboard_dict)
         else:
             return self.telegram.send_message(message)
 
@@ -650,28 +678,35 @@ class TradeConfirmationService:
         is_valid = current_score >= 60
 
         if is_valid:
-            message = (
-                f"⏰ <b>TIMEOUT - STILL VALID</b>\n\n"
-                f"Symbol: {suggestion.instrument}\n"
-                f"Score: {current_score}/100\n\n"
-                f"Opportunity still available. Confirm to proceed?"
+            keyboard_rows = [[
+                {'text': '✅ Confirm', 'callback_data': f'confirm_futures_{suggestion.id}'},
+                {'text': '❌ Skip', 'callback_data': f'reject_futures_{suggestion.id}'},
+            ]]
+
+            payload = NotificationPayload(
+                title='Timeout - Still Valid',
+                status='ACTION_REQUIRED',
+                instrument=suggestion.instrument,
+                metrics={'Score': f'{current_score}/100'},
+                context=['Opportunity still available. Confirm to proceed?'],
+                keyboard=keyboard_rows,
+                collapsible=False,
             )
-            keyboard = {
-                'inline_keyboard': [
-                    [
-                        {'text': '✅ Confirm', 'callback_data': f'confirm_futures_{suggestion.id}'},
-                        {'text': '❌ Skip', 'callback_data': f'reject_futures_{suggestion.id}'},
-                    ],
-                ]
-            }
+
+            message = format_notification(payload)
+            keyboard_dict = {'inline_keyboard': payload.keyboard}
         else:
-            message = (
-                f"⏰ <b>TIMEOUT - EXPIRED</b>\n\n"
-                f"Symbol: {suggestion.instrument}\n"
-                f"Current Score: {current_score}/100\n\n"
-                f"Opportunity no longer meets criteria."
+            payload = NotificationPayload(
+                title='Timeout - Expired',
+                status='WARNING',
+                instrument=suggestion.instrument,
+                metrics={'Score': f'{current_score}/100'},
+                context=['Opportunity no longer meets criteria.'],
+                collapsible=False,
             )
-            keyboard = None
+
+            message = format_notification(payload)
+            keyboard_dict = None
 
             suggestion.status = 'EXPIRED'
             suggestion.user_notes = f"Revalidation: Score dropped to {current_score}"
@@ -680,8 +715,8 @@ class TradeConfirmationService:
         suggestion.revalidation_sent = True
         suggestion.save()
 
-        if keyboard:
-            return self._send_with_keyboard(message, keyboard)
+        if keyboard_dict:
+            return self._send_with_keyboard(message, keyboard_dict)
         else:
             return self.telegram.send_message(message)
 
@@ -933,13 +968,9 @@ class TradeConfirmationService:
             # Check for simulated mode
             if config.is_simulated():
                 logger.info(f"SIMULATED: Would execute {symbol} {direction} {final_lots} lots")
-                self.telegram.send_message(
-                    f"📝 SIMULATED FUTURES TRADE\n\n"
-                    f"Symbol: {symbol}\n"
-                    f"Direction: {direction}\n"
-                    f"Lots: {final_lots}\n\n"
-                    f"Paper trade - no real order placed."
-                )
+                notify('SYSTEM_STATUS', title='Simulated Futures Trade', instrument=symbol,
+                       metrics={'Direction': direction, 'Lots': str(final_lots)},
+                       context=['Paper trade - no real order placed.'], collapsible=False)
                 suggestion.status = 'SIMULATED'
                 suggestion.save()
                 return {'success': True, 'simulated': True, 'lots': final_lots}
@@ -965,14 +996,10 @@ class TradeConfirmationService:
                 )
 
                 # Send progress update
-                self.telegram.send_message(
-                    f"🚀 STARTING FUTURES EXECUTION\n\n"
-                    f"Symbol: {symbol} ({direction})\n"
-                    f"Total Lots: {final_lots}\n"
-                    f"Batch Size: {BATCH_SIZE}\n"
-                    f"Batches: {execution_control.total_batches}\n\n"
-                    f"⏳ Executing..."
-                )
+                total_batches = execution_control.total_batches
+                notify('SYSTEM_STATUS', title='Starting Futures Execution', instrument=symbol,
+                       metrics={'Total Lots': str(final_lots), 'Batches': str(total_batches)},
+                       collapsible=False)
 
                 # Progress callback
                 def on_progress(completed, total, orders):
@@ -1077,20 +1104,19 @@ class TradeConfirmationService:
                 suggestion.executed_lots = lots_executed
                 suggestion.save()
 
-                # Build result message
-                msg_parts = [
-                    f"✅ FUTURES TRADE EXECUTED\n",
-                    f"Symbol: {symbol}",
-                    f"Direction: {direction}",
-                    f"Lots: {lots_executed}",
-                ]
+                # Build result notification
+                exec_metrics = {'Lots': str(lots_executed)}
                 if order_result.get('average_price'):
-                    msg_parts.append(f"Avg Price: ₹{order_result['average_price']:,.2f}")
+                    exec_metrics['Avg Price'] = f"₹{order_result['average_price']:,.2f}"
+                exec_context = None
                 if order_result.get('cancelled'):
-                    msg_parts.append(f"\n⚠️ Partially executed (cancelled)")
-                    msg_parts.append(f"Pending: {final_lots - lots_executed} lots")
+                    exec_context = [
+                        f'Partially executed (cancelled)',
+                        f'Pending: {final_lots - lots_executed} lots',
+                    ]
 
-                self.telegram.send_message('\n'.join(msg_parts))
+                notify('TRADE_EXECUTED', title='Futures Trade Executed', instrument=symbol,
+                       metrics=exec_metrics, context=exec_context, collapsible=False)
 
                 return {
                     'success': True,
@@ -1113,11 +1139,9 @@ class TradeConfirmationService:
                 suggestion.user_notes = f"Execution failed: {order_result.get('error', 'Unknown')}"
                 suggestion.save()
 
-                self.telegram.send_message(
-                    f"❌ FUTURES TRADE FAILED\n\n"
-                    f"Symbol: {symbol}\n"
-                    f"Error: {order_result.get('error', 'Unknown')}"
-                )
+                error_msg = str(order_result.get('error', 'Unknown'))[:200]
+                notify('TASK_ERROR', title='Futures Trade Failed', instrument=symbol,
+                       context=[error_msg], collapsible=False)
 
                 return order_result
 

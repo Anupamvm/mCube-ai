@@ -50,14 +50,17 @@ def save_futures_suggestions(passed_results, user=None, source='manual'):
 
     today = date.today()
 
-    # Get existing suggestions for today to avoid duplicates
+    # Get existing full-algo suggestions for today (exclude lightweight screening records,
+    # which should be overwritten by the full algorithm run).
     existing_suggestions = set(
         TradeSuggestion.objects.filter(
             created_at__date=today,
             suggestion_type='FUTURES'
+        ).exclude(
+            algorithm_reasoning__source='screening'
         ).values_list('instrument', 'expiry_date')
     )
-    logger.info(f"Found {len(existing_suggestions)} existing futures suggestions for today")
+    logger.info(f"Found {len(existing_suggestions)} existing full-algo futures suggestions for today")
 
     # Resolve user
     if user is None:
@@ -115,11 +118,20 @@ def save_futures_suggestions(passed_results, user=None, source='manual'):
                 expiry_dt = datetime.strptime(str(expiry_date_raw), '%Y-%m-%d')
                 expiry_date_str = str(expiry_date_raw)
 
-            # DEDUPLICATION: Skip if already saved today
+            # DEDUPLICATION: Skip if already saved today by full-algo (screening records are overwritten)
             if (symbol, expiry_dt.date()) in existing_suggestions:
                 logger.info(f"Skipping duplicate suggestion for {symbol} (expiry: {expiry_date_str}) - already exists today")
                 suggestion_ids.append(None)
                 continue
+
+            # Delete any lightweight screening record so it gets replaced by this full-algo result
+            TradeSuggestion.objects.filter(
+                created_at__date=today,
+                strategy='icici_futures',
+                instrument=symbol,
+                expiry_date=expiry_dt.date(),
+                algorithm_reasoning__source='screening',
+            ).delete()
 
             # Get contract details
             contract = ContractData.objects.filter(
