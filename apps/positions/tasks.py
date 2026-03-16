@@ -46,6 +46,7 @@ from apps.alerts.services.telegram_client import (
     send_telegram_notification,
 )
 from apps.core.utils.decorators import task_enabled_guard
+from apps.alerts.services.notification_service import notify
 
 # Redis key for monitor task distributed lock.
 # Timeout is set to 55 s — just under the 1-min beat interval so a
@@ -132,12 +133,18 @@ def monitor_and_manage_positions():
             fail_count = cache.get(_SYNC_FAIL_KEY_PREFIX, 0) + 1
             cache.set(_SYNC_FAIL_KEY_PREFIX, fail_count, timeout=_SYNC_FAIL_TTL)
             if fail_count >= _SYNC_FAIL_THRESHOLD:
-                send_telegram_notification(
-                    f"🚨 <b>Position Sync Failing</b>\n\n"
-                    f"{fail_count} consecutive broker sync errors.\n"
-                    f"P&L calculations are using <b>stale prices</b>.\n\n"
-                    f"Last error: <code>{sync_err}</code>",
-                    notification_type='CRITICAL',
+                notify('CRITICAL_ERROR',
+                    title='Position Sync Failing',
+                    task='monitor_and_manage_positions',
+                    metrics={
+                        'Failures': f'{fail_count} consecutive',
+                        'P&L': 'stale',
+                    },
+                    context=[
+                        f'{fail_count} consecutive broker sync errors',
+                        'P&L calculations using stale prices',
+                    ],
+                    system={'Last error': str(sync_err)[:200]},
                 )
 
         all_open = Position.objects.filter(status='OPEN').select_related('account')
@@ -329,10 +336,13 @@ def monitor_and_manage_positions():
                             price_at_check=position.current_price,
                             pnl_at_check=pnl,
                         )
-                        send_telegram_notification(
-                            stage2['reason'],
-                            notification_type='WARNING',
+                        notify('RISK_WARNING',
+                            title='Structural Pressure',
+                            instrument=position.instrument,
+                            task='monitor_and_manage_positions',
+                            context=[stage2['reason']],
                             dedup_key=f'struct_pressure_{position.id}',
+                            position_id=position.id,
                         )
                         logger.info(
                             f"Stage 2 structural pressure warning sent for pos #{position.id}"
@@ -557,35 +567,28 @@ def alert_open_positions_pre_close():
         config = TradingCoreConfig.get_instance()
 
         now = timezone.now()
-        lines = [
-            f"📋 <b>Pre-Close Position Summary</b>  [{ist_datetime_str(now)}]\n"
-        ]
 
+        _position_items = []
         for pos in open_positions:
             pnl = pos.unrealized_pnl or 0
             entry_val = pos.entry_value if pos.entry_value and pos.entry_value > 0 else (
                 pos.entry_price * pos.quantity if pos.entry_price else None
             )
             pnl_pct = (pnl / entry_val * 100) if entry_val else None
-
-            emoji = "🟢" if pnl >= 0 else "🔴"
-            pnl_str = f"₹{pnl:+,.0f}"
             pnl_pct_str = f" ({pnl_pct:+.1f}%)" if pnl_pct is not None else ""
-
             sl_str = f"SL ₹{pos.stop_loss:,.0f}" if pos.stop_loss else "SL —"
             tgt_str = f"T ₹{pos.target:,.0f}" if pos.target else "T —"
-
-            lines.append(
-                f"{emoji} <b>{pos.label}</b>\n"
-                f"   P&L: {pnl_str}{pnl_pct_str} | {sl_str} | {tgt_str}"
+            _position_items.append(
+                f"{pos.label}: ₹{pnl:+,.0f}{pnl_pct_str} | {sl_str} | {tgt_str}"
             )
 
-        lines.append("\n⏰ Market closes in ~15 min. close_trading_day runs at 15:25.")
-        lines.append(_mode_footer(config))
-
-        send_telegram_notification(
-            "\n".join(lines),
-            notification_type='HIGH',
+        notify('SYSTEM_STATUS',
+            title='Pre-Close Position Summary',
+            task='alert_open_positions_pre_close',
+            metrics={'Positions': str(open_positions.count())},
+            context=_position_items + ['Market closes in ~15 min. close_trading_day runs at 15:25.'],
+            collapsible=True,
+            priority='HIGH',
         )
 
         return {'success': True, 'positions': open_positions.count()}
@@ -633,31 +636,28 @@ def reconcile_positions_eod():
         # ── Step 3: Build report ──────────────────────────────────────────────
         if sync_errors:
             # Can't trust reconciliation if sync itself failed
-            error_lines = "\n".join(f"  • {e}" for e in sync_errors[:5])
-            send_telegram_notification(
-                f"🚨 <b>EOD Reconciliation: Sync Failed</b>  [{now_str}]\n\n"
-                f"Broker sync had errors — position state may be unreliable:\n"
-                f"{error_lines}\n\n"
-                f"Manual broker check required.",
-                notification_type='CRITICAL',
+            error_lines = [str(e)[:200] for e in sync_errors[:5]]
+            notify('CRITICAL_ERROR',
+                title='EOD Reconciliation: Sync Failed',
+                task='reconcile_positions_eod',
+                context=['Broker sync had errors — position state may be unreliable'] + error_lines,
+                actions=['Manual broker check required'],
             )
             return {'success': False, 'sync_errors': sync_errors}
 
         if not still_open:
             # Clean day — all positions resolved
-            send_telegram_notification(
-                f"✅ <b>EOD Reconciliation</b>  [{now_str}]\n\n"
-                f"All positions closed. Clean slate for tomorrow.",
-                notification_type='SUCCESS',
+            notify('JOB_COMPLETED',
+                title='EOD Reconciliation',
+                task='reconcile_positions_eod',
+                context=['All positions closed. Clean slate for tomorrow.'],
+                collapsible=False,
             )
             return {'success': True, 'open_count': 0, 'status': 'clean'}
 
         # Positions still open after sync — either legitimate carry-forward
         # or a mismatch.  Report them all so trader can verify.
-        lines = [
-            f"📋 <b>EOD Reconciliation</b>  [{now_str}]\n",
-            f"{len(still_open)} position(s) still open after market close:\n",
-        ]
+        _carry_items = []
         for pos in still_open:
             pnl = pos.unrealized_pnl or 0
             entry_val = (
@@ -667,23 +667,14 @@ def reconcile_positions_eod():
             )
             pnl_pct = (pnl / entry_val * 100) if entry_val else None
             pnl_pct_str = f" ({pnl_pct:+.1f}%)" if pnl_pct is not None else ""
-            lines.append(
-                f"  • <b>{pos.label}</b> | "
-                f"P&L ₹{pnl:+,.0f}{pnl_pct_str} | "
-                f"Account: {pos.account}"
-            )
+            _carry_items.append(f"{pos.label} | P&L ₹{pnl:+,.0f}{pnl_pct_str} | {pos.account}")
 
-        from apps.core.models import TradingCoreConfig
-        config = TradingCoreConfig.get_instance()
-
-        lines.append(
-            "\n⚠️ Carry-forward detected. Review positions in dashboard before tomorrow's open."
-        )
-        lines.append(_mode_footer(config))
-
-        send_telegram_notification(
-            "\n".join(lines),
-            notification_type='WARNING',
+        notify('RISK_WARNING',
+            title='EOD Reconciliation',
+            task='reconcile_positions_eod',
+            metrics={'Positions Open': str(len(still_open))},
+            context=_carry_items,
+            actions=['Carry-forward detected. Review positions before tomorrow\'s open.'],
         )
 
         return {

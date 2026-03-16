@@ -407,4 +407,18 @@ def view_trades(request):
     """
     View all active trades across Breeze and Neo accounts
     """
-    return render(request, 'trading/view_trades.html')
+    from apps.core.models import TradingSchedule
+    from django.utils import timezone
+
+    today = timezone.localdate()
+    schedule = TradingSchedule.objects.filter(date=today).first()
+
+    # Defaults from model if no schedule exists for today
+    import datetime as dt
+    market_open = schedule.open_time.strftime('%H:%M') if schedule else '09:15'
+    market_close = schedule.mkt_close_time.strftime('%H:%M') if schedule else '15:32'
+
+    return render(request, 'trading/view_trades.html', {
+        'market_open': market_open,
+        'market_close': market_close,
+    })

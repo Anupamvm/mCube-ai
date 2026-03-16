@@ -22,6 +22,7 @@ from apps.risk.services.risk_manager import (
     get_risk_status
 )
 from apps.alerts.services.telegram_client import send_telegram_notification
+from apps.alerts.services.notification_service import notify
 from apps.core.utils.decorators import task_enabled_guard
 
 logger = logging.getLogger(__name__)
@@ -170,14 +171,16 @@ def check_risk_limits_all_accounts():
                                 account_id=account.id, date=today_str
                             )
                             if cache.add(crit_key, '1', timeout=_DRAWDOWN_FLAG_TTL):
-                                send_telegram_notification(
-                                    f"🚨 <b>Critical Intraday Drawdown</b>\n\n"
-                                    f"Account: <b>{account.account_name}</b>\n"
-                                    f"Unrealized loss: ₹{abs(total_unrealized):,.0f} "
-                                    f"(<b>{drawdown_pct:.1f}%</b> of capital)\n\n"
-                                    f"Approaching circuit breaker threshold."
-                                    + _mode_tag,
-                                    notification_type='CRITICAL',
+                                notify('RISK_WARNING',
+                                    title='Critical Intraday Drawdown',
+                                    instrument=account.account_name,
+                                    task='check_risk_limits_all_accounts',
+                                    metrics={
+                                        'Unrealized Loss': f"₹{abs(total_unrealized):,.0f}",
+                                        'Drawdown': f"{drawdown_pct:.1f}% of capital",
+                                    },
+                                    context=["Approaching circuit breaker threshold"],
+                                    collapsible=False,
                                 )
 
                         elif drawdown_pct >= _INTRADAY_WARN_PCT:
@@ -185,14 +188,16 @@ def check_risk_limits_all_accounts():
                                 account_id=account.id, date=today_str
                             )
                             if cache.add(warn_key, '1', timeout=_DRAWDOWN_FLAG_TTL):
-                                send_telegram_notification(
-                                    f"⚠️ <b>Intraday Drawdown Warning</b>\n\n"
-                                    f"Account: {account.account_name}\n"
-                                    f"Unrealized loss: ₹{abs(total_unrealized):,.0f} "
-                                    f"({drawdown_pct:.1f}% of capital)\n\n"
-                                    f"Monitor open positions closely."
-                                    + _mode_tag,
-                                    notification_type='WARNING',
+                                notify('RISK_WARNING',
+                                    title='Intraday Drawdown Warning',
+                                    instrument=account.account_name,
+                                    task='check_risk_limits_all_accounts',
+                                    metrics={
+                                        'Unrealized Loss': f"₹{abs(total_unrealized):,.0f}",
+                                        'Drawdown': f"{drawdown_pct:.1f}% of capital",
+                                    },
+                                    context=["Monitor open positions closely"],
+                                    collapsible=False,
                                 )
                 except Exception as dd_err:
                     logger.error(
@@ -237,14 +242,15 @@ def check_risk_limits_all_accounts():
                             )
                         except Exception:
                             _port_mode_tag = ''
-                        send_telegram_notification(
-                            f"⚠️ <b>Portfolio Drawdown Warning</b>\n\n"
-                            f"Total unrealized loss across all accounts:\n"
-                            f"₹{abs(portfolio_unrealized):,.0f} "
-                            f"({portfolio_dd_pct:.1f}% of total capital)\n\n"
-                            f"Review all open positions."
-                            + _port_mode_tag,
-                            notification_type='WARNING',
+                        notify('RISK_WARNING',
+                            title='Portfolio Drawdown Warning',
+                            task='check_risk_limits_all_accounts',
+                            metrics={
+                                'Unrealized Loss': f"₹{abs(portfolio_unrealized):,.0f}",
+                                'Drawdown': f"{portfolio_dd_pct:.1f}% of total capital",
+                            },
+                            context=["Total unrealized loss across all accounts", "Review all open positions"],
+                            collapsible=False,
                         )
         except Exception as port_err:
             logger.error(f"Portfolio drawdown check failed: {port_err}")
@@ -267,9 +273,11 @@ def check_risk_limits_all_accounts():
 
     except Exception as e:
         logger.error(f"Error in risk limits check task: {e}", exc_info=True)
-        send_telegram_notification(
-            f"❌ ERROR: Risk limits check task failed\n{str(e)}",
-            notification_type='ERROR'
+        notify('TASK_ERROR',
+            title='Risk Limits Check Failed',
+            task='check_risk_limits_all_accounts',
+            context=[str(e)[:200]],
+            collapsible=False,
         )
         return {'success': False, 'message': str(e)}
 
@@ -312,26 +320,39 @@ def monitor_circuit_breakers():
                 if breaker.cooldown_until and current_time >= breaker.cooldown_until:
                     cooldowns_expired += 1
 
+                    # One-shot dedup: only notify ONCE per breaker until manually reset.
+                    # Without this, the 30s task loop fires every cycle for days.
+                    cb_expired_key = f'cb_expired_notified_{breaker.id}'
+                    if not cache.add(cb_expired_key, '1', timeout=24 * 3600):
+                        # Already notified within 24h — skip
+                        breakers_monitored += 1
+                        continue
+
                     logger.warning(
                         f"⏰ Circuit breaker cooldown expired: {account.account_name}, "
                         f"Trigger: {breaker.trigger_type}"
                     )
 
-                    # Send notification for manual review
-                    send_telegram_notification(
-                        f"⏰ CIRCUIT BREAKER COOLDOWN EXPIRED\n\n"
-                        f"Account: {account.account_name}\n"
-                        f"Broker: {account.broker}\n"
-                        f"Trigger: {breaker.trigger_type}\n"
-                        f"Triggered: {breaker.created_at.strftime('%Y-%m-%d %H:%M:%S')}\n"
-                        f"Cooldown Ended: {breaker.cooldown_until.strftime('%Y-%m-%d %H:%M:%S')}\n\n"
-                        f"MANUAL REVIEW REQUIRED:\n"
-                        f"1. Review account status\n"
-                        f"2. Verify all positions closed\n"
-                        f"3. Check margin availability\n"
-                        f"4. Reset circuit breaker manually if approved\n\n"
-                        f"⚠️ Account remains deactivated until manual reset",
-                        notification_type='WARNING'
+                    # Send notification for manual review (via unified notify API)
+                    notify('CIRCUIT_BREAKER',
+                        title="Circuit Breaker Expired",
+                        instrument=f"{account.account_name}",
+                        task='monitor_circuit_breakers',
+                        metrics={
+                            "Trigger": breaker.trigger_type,
+                            "Since": breaker.created_at.strftime('%-d %b %H:%M'),
+                        },
+                        actions=[
+                            "Review account status",
+                            "Verify all positions closed",
+                            "Check margin availability",
+                            "Reset circuit breaker manually if approved",
+                        ],
+                        system={
+                            "Triggered": breaker.created_at.strftime('%Y-%m-%d %H:%M:%S'),
+                            "Cooldown Ended": breaker.cooldown_until.strftime('%Y-%m-%d %H:%M:%S'),
+                        },
+                        context=["Account remains deactivated until manual reset"],
                     )
 
                 # Check for long-running circuit breakers (> 24 hours)
@@ -349,15 +370,19 @@ def monitor_circuit_breakers():
                             f"{account.account_name}"
                         )
 
-                        send_telegram_notification(
-                            f"⚠️ CIRCUIT BREAKER STILL ACTIVE\n\n"
-                            f"Account: {account.account_name}\n"
-                            f"Broker: {account.broker}\n"
-                            f"Trigger: {breaker.trigger_type}\n"
-                            f"Active For: {hours_active:.1f} hours\n"
-                            f"Positions Closed: {breaker.positions_closed}\n\n"
-                            f"⚠️ Manual review and reset required",
-                            notification_type='WARNING'
+                        notify('CIRCUIT_BREAKER',
+                            title="Circuit Breaker Still Active",
+                            instrument=f"{account.account_name}",
+                            task='monitor_circuit_breakers',
+                            metrics={
+                                "Trigger": breaker.trigger_type,
+                                "Active For": f"{hours_active:.1f} hours",
+                            },
+                            system={
+                                "Positions Closed": str(breaker.positions_closed),
+                                "Broker": str(account.broker),
+                            },
+                            context=["Manual review and reset required"],
                         )
 
                 breakers_monitored += 1
@@ -470,10 +495,15 @@ def generate_daily_risk_report():
         )
 
         # Send report
-        report_text = "".join(report_lines)
-        send_telegram_notification(
-            report_text,
-            notification_type='INFO'
+        notify('JOB_COMPLETED',
+            title='Daily Risk Report',
+            task='generate_daily_risk_report',
+            metrics={
+                'Accounts': str(accounts_reported),
+                'Breaches': str(total_breaches),
+                'Warnings': str(total_warnings),
+            },
+            context=report_lines[2:],  # skip header lines already in title
         )
 
         logger.info(f"✅ Daily risk report generated for {accounts_reported} accounts")
@@ -488,8 +518,10 @@ def generate_daily_risk_report():
 
     except Exception as e:
         logger.error(f"Error generating daily risk report: {e}", exc_info=True)
-        send_telegram_notification(
-            f"❌ ERROR: Daily risk report generation failed\n{str(e)}",
-            notification_type='ERROR'
+        notify('TASK_ERROR',
+            title='Risk Report Failed',
+            task='generate_daily_risk_report',
+            context=[str(e)[:200]],
+            collapsible=False,
         )
         return {'success': False, 'message': str(e)}

@@ -887,8 +887,8 @@
                     <span class="pnl-trend-chip hidden" id="trendDeltaDay"><span class="trend-label">Day</span> <span class="trend-val">--</span></span>
                 </div>
                 <div class="auto-refresh-indicator" id="autoRefreshBtn" onclick="manualRefreshAll()" title="Click to refresh now">
-                    <span class="auto-refresh-dot"></span>
-                    Auto-refresh <span id="autoRefreshCountdown">2:00</span>
+                    <span class="auto-refresh-dot" id="autoRefreshDot"></span>
+                    <span id="autoRefreshLabel">Auto-refresh</span> <span id="autoRefreshCountdown">2:00</span>
                 </div>
             </div>
         </div>
@@ -1094,6 +1094,18 @@ let closeExecutionState = {
 let countdownInterval = null;
 let countdownSeconds = 120;
 
+// Market hours from server (TradingSchedule)
+const MARKET_OPEN = '{{ market_open }}';   // e.g. '09:15'
+const MARKET_CLOSE = '{{ market_close }}'; // e.g. '15:32'
+
+function isMarketOpen() {
+    const now = new Date();
+    const hhmm = now.getHours() * 100 + now.getMinutes();
+    const [oh, om] = MARKET_OPEN.split(':').map(Number);
+    const [ch, cm] = MARKET_CLOSE.split(':').map(Number);
+    return hhmm >= (oh * 100 + om) && hhmm <= (ch * 100 + cm);
+}
+
 // P&L trend tracking — persisted server-side via PortfolioPnlTracker model.
 // Snapshots are only recorded once both brokers have loaded in the CURRENT cycle.
 let pnlSnapshots = [];
@@ -1164,13 +1176,25 @@ document.addEventListener('DOMContentLoaded', async function() {
     });
 });
 
-// Auto-refresh: countdown from 120s, refresh all positions when it hits 0
+// Auto-refresh: countdown from 120s during market hours, paused otherwise
 function startAutoRefresh() {
+    if (!isMarketOpen()) {
+        setMarketClosedUI();
+        return;
+    }
+    setMarketOpenUI();
     countdownSeconds = 120;
     updateCountdownDisplay();
 
     if (countdownInterval) clearInterval(countdownInterval);
     countdownInterval = setInterval(() => {
+        // Re-check market hours every tick — transition cleanly at close
+        if (!isMarketOpen()) {
+            clearInterval(countdownInterval);
+            countdownInterval = null;
+            setMarketClosedUI();
+            return;
+        }
         countdownSeconds--;
         if (countdownSeconds <= 0) {
             countdownSeconds = 120;
@@ -1187,6 +1211,26 @@ function updateCountdownDisplay() {
         const secs = countdownSeconds % 60;
         el.textContent = `${mins}:${secs.toString().padStart(2, '0')}`;
     }
+}
+
+function setMarketClosedUI() {
+    const dot = document.getElementById('autoRefreshDot');
+    const label = document.getElementById('autoRefreshLabel');
+    const countdown = document.getElementById('autoRefreshCountdown');
+    const btn = document.getElementById('autoRefreshBtn');
+    if (dot) { dot.style.background = '#9ca3af'; dot.style.animation = 'none'; }
+    if (label) label.textContent = 'Market Closed';
+    if (countdown) countdown.textContent = '';
+    if (btn) btn.title = 'Click to refresh manually';
+}
+
+function setMarketOpenUI() {
+    const dot = document.getElementById('autoRefreshDot');
+    const label = document.getElementById('autoRefreshLabel');
+    const btn = document.getElementById('autoRefreshBtn');
+    if (dot) { dot.style.background = '#10b981'; dot.style.animation = ''; }
+    if (label) label.textContent = 'Auto-refresh';
+    if (btn) btn.title = 'Click to refresh now';
 }
 
 function autoRefreshAll() {
@@ -1280,11 +1324,17 @@ function updateTrendChips(currentPnl) {
 
 // Manual refresh via the auto-refresh button click
 function manualRefreshAll() {
-    countdownSeconds = 120;
-    updateCountdownDisplay();
     brokersLoadedThisCycle.clear();
     loadPositions('breeze');
     loadPositions('neo');
+
+    if (isMarketOpen()) {
+        // Reset countdown and restart auto-refresh if not already running
+        countdownSeconds = 120;
+        updateCountdownDisplay();
+        if (!countdownInterval) startAutoRefresh();
+    }
+    // Outside market hours: one-time fetch, no auto-refresh restart
 }
 
 async function loadPositions(broker, attempt = 1) {
@@ -1406,7 +1456,7 @@ function displayPositions(broker, positions) {
                         </td>
                         <td><strong>${pos.symbol}</strong><br><small style="color: var(--gray);">${pos.product}${pos.lot_size ? ' (lot:' + pos.lot_size + ')' : ''}</small></td>
                         <td><span class="direction-${pos.direction.toLowerCase()}">${pos.direction}</span></td>
-                        <td>${pos.lot_size > 1 ? Math.floor(pos.quantity / pos.lot_size) : pos.quantity}${pos.lot_size > 1 ? '<br><small style="color:var(--gray);">x' + pos.lot_size + '</small>' : ''}</td>
+                        <td>${pos.quantity}${pos.lot_size > 1 ? '<br><small style="color:var(--gray);">x' + pos.lot_size + '</small>' : ''}</td>
                         <td>
                             ₹${parseFloat(pos.average_price).toFixed(2)}
                             <button onclick="showEditAvgModal('${pos.trading_symbol || pos.symbol}', ${parseFloat(pos.average_price)})" style="background:none;border:none;color:var(--gray);cursor:pointer;padding:2px 4px;font-size:0.75rem;" title="Edit avg price">&#9998;</button>

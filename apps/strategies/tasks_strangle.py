@@ -29,6 +29,7 @@ from apps.strategies.models import (
 )
 from apps.strategies.strategies.kotak_strangle import execute_kotak_strangle_entry
 from apps.alerts.services.telegram_client import send_telegram_notification
+from apps.alerts.services.notification_service import notify
 
 logger = logging.getLogger(__name__)
 
@@ -200,15 +201,42 @@ def premarket_data_fetch():
                 message += f" (WARNING: {blocking} blocking!)"
             message += "\n"
 
-        send_telegram_notification(message, notification_type='INFO')
+        # Build context lines from message
+        context_lines = []
+        if results.get('sgx_nifty', {}).get('success'):
+            context_lines.append(f"SGX Nifty: {results['sgx_nifty']['change_percent']:+.2f}%")
+        if results.get('us_markets', {}).get('success'):
+            context_lines.append(f"US Nasdaq: {results['us_markets']['nasdaq_change']:+.2f}%")
+            context_lines.append(f"US Dow: {results['us_markets']['dow_change']:+.2f}%")
+        if results.get('vix', {}).get('success'):
+            context_lines.append(f"India VIX: {results['vix']['value']:.2f}")
+        if results.get('news_sentiment', {}).get('success'):
+            ns = results['news_sentiment']
+            outlook = ns.get('market_outlook', 'UNKNOWN')
+            avg_score = ns.get('average_sentiment', 0.0)
+            articles = ns.get('articles_analyzed', 0)
+            blocking = ns.get('blocking_articles', 0)
+            news_line = f"News: {outlook} ({avg_score:+.2f}), {articles} articles"
+            if blocking > 0:
+                news_line += f" (WARNING: {blocking} blocking!)"
+            context_lines.append(news_line)
+
+        notify('SYSTEM_STATUS',
+            title=f'Pre-Market Data ({trading_date})',
+            task='premarket_data_fetch',
+            metrics={'Successful': f"{successful_fetches}/{total_fetches}"},
+            context=context_lines,
+        )
 
         return {'success': True, 'results': results}
 
     except Exception as e:
         logger.error(f"❌ Pre-market task failed: {e}", exc_info=True)
-        send_telegram_notification(
-            f"❌ PRE-MARKET TASK FAILED\n{str(e)}",
-            notification_type='ERROR'
+        notify('TASK_ERROR',
+            title='Pre-Market Task Failed',
+            task='premarket_data_fetch',
+            context=[str(e)[:200]],
+            collapsible=False,
         )
         return {'success': False, 'error': str(e)}
 
@@ -316,18 +344,25 @@ def market_opening_validation():
         logger.info("=" * 80)
 
         # Send Telegram notification
-        message = f"📈 MARKET OPENING ({trading_date})\n\n"
-        message += f"Nifty: ₹{nifty_open:,.2f}\n"
-        message += f"Gap: {gap_points:+,.0f} pts ({gap_percent:+.2f}%)\n"
-        message += f"Type: {gap_type}\n"
-        message += f"Sentiment: {opening_sentiment}\n"
-        message += f"VIX: {vix_current:.2f}\n"
+        opening_context = []
         if is_expiry_day:
-            message += f"\n⚠️ EXPIRY DAY\n"
+            opening_context.append("EXPIRY DAY")
         if is_event_day:
-            message += f"\n⚠️ EVENT DAY\n"
+            opening_context.append("EVENT DAY")
 
-        send_telegram_notification(message, notification_type='INFO')
+        notify('SYSTEM_STATUS',
+            title=f'Market Opening ({trading_date})',
+            task='market_opening_validation',
+            metrics={
+                'Nifty': f"₹{nifty_open:,.2f}",
+                'Gap': f"{gap_points:+,.0f} pts ({gap_percent:+.2f}%)",
+                'Type': gap_type,
+                'Sentiment': opening_sentiment,
+                'VIX': f"{vix_current:.2f}",
+            },
+            context=opening_context if opening_context else None,
+            collapsible=False,
+        )
 
         return {
             'success': True,
@@ -338,9 +373,11 @@ def market_opening_validation():
 
     except Exception as e:
         logger.error(f"❌ Market opening validation failed: {e}", exc_info=True)
-        send_telegram_notification(
-            f"❌ MARKET OPENING VALIDATION FAILED\n{str(e)}",
-            notification_type='ERROR'
+        notify('TASK_ERROR',
+            title='Market Opening Validation Failed',
+            task='market_opening_validation',
+            context=[str(e)[:200]],
+            collapsible=False,
         )
         return {'success': False, 'error': str(e)}
 
@@ -403,12 +440,15 @@ def trade_start_evaluation():
         # Check if we should proceed with entry
         if not is_substantial:
             logger.warning("❌ Movement not substantial (<0.5%), skipping entry")
-            send_telegram_notification(
-                f"⏸️ TRADE START SKIPPED\n\n"
-                f"9:15-9:30 Movement: {movement_percent:+.2f}%\n"
-                f"Threshold: ±0.5%\n\n"
-                f"Movement too small, waiting for better conditions",
-                notification_type='INFO'
+            notify('SYSTEM_STATUS',
+                title='Trade Start Skipped',
+                task='trade_start_evaluation',
+                metrics={
+                    '9:15-9:30 Movement': f"{movement_percent:+.2f}%",
+                    'Threshold': '±0.5%',
+                },
+                context=["Movement too small, waiting for better conditions"],
+                collapsible=False,
             )
             return {
                 'success': True,
@@ -435,20 +475,24 @@ def trade_start_evaluation():
             # Schedule staggered entries (every 5 mins from 9:30 to 10:00)
             schedule_staggered_entries.delay()
 
-            send_telegram_notification(
-                f"🚀 TRADE START INITIATED\n\n"
-                f"9:15-9:30 Movement: {movement_percent:+.2f}%\n"
-                f"Entry conditions met\n\n"
-                f"Staggered entries scheduled (9:30-10:00)",
-                notification_type='SUCCESS'
+            notify('SYSTEM_STATUS',
+                title='Trade Start Initiated',
+                task='trade_start_evaluation',
+                metrics={'9:15-9:30 Movement': f"{movement_percent:+.2f}%"},
+                context=[
+                    "Entry conditions met",
+                    "Staggered entries scheduled (9:30-10:00)",
+                ],
+                collapsible=False,
             )
         else:
             logger.warning(f"❌ Entry evaluation failed: {entry_result['message']}")
-            send_telegram_notification(
-                f"⏸️ TRADE START BLOCKED\n\n"
-                f"Movement: {movement_percent:+.2f}% (substantial)\n"
-                f"Reason: {entry_result['message']}",
-                notification_type='WARNING'
+            notify('RISK_WARNING',
+                title='Trade Start Blocked',
+                task='trade_start_evaluation',
+                metrics={'Movement': f"{movement_percent:+.2f}% (substantial)"},
+                context=[f"Reason: {entry_result['message']}"],
+                collapsible=False,
             )
 
         logger.info("=" * 80)
@@ -462,9 +506,11 @@ def trade_start_evaluation():
 
     except Exception as e:
         logger.error(f"❌ Trade start evaluation failed: {e}", exc_info=True)
-        send_telegram_notification(
-            f"❌ TRADE START EVALUATION FAILED\n{str(e)}",
-            notification_type='ERROR'
+        notify('TASK_ERROR',
+            title='Trade Start Evaluation Failed',
+            task='trade_start_evaluation',
+            context=[str(e)[:200]],
+            collapsible=False,
         )
         return {'success': False, 'error': str(e)}
 
@@ -623,11 +669,14 @@ def day_close_reconciliation():
         logger.info("=" * 80)
 
         # Send Telegram notification
-        send_telegram_notification(
-            f"🔒 DAY CLOSE ({trading_date})\n\n"
-            f"Active Positions: {active_positions.count()}\n"
-            f"Total P&L: ₹{total_pnl:,.2f}",
-            notification_type='INFO'
+        notify('JOB_COMPLETED',
+            title=f'Day Close ({trading_date})',
+            task='day_close_reconciliation',
+            metrics={
+                'Active Positions': str(active_positions.count()),
+                'Total P&L': f"₹{total_pnl:,.2f}",
+            },
+            collapsible=False,
         )
 
         return {
@@ -638,9 +687,11 @@ def day_close_reconciliation():
 
     except Exception as e:
         logger.error(f"❌ Day close reconciliation failed: {e}", exc_info=True)
-        send_telegram_notification(
-            f"❌ DAY CLOSE FAILED\n{str(e)}",
-            notification_type='ERROR'
+        notify('TASK_ERROR',
+            title='Day Close Failed',
+            task='day_close_reconciliation',
+            context=[str(e)[:200]],
+            collapsible=False,
         )
         return {'success': False, 'error': str(e)}
 
@@ -777,29 +828,27 @@ def analyze_day():
         logger.info("=" * 80)
 
         # Send comprehensive Telegram report
-        message = f"📊 DAY ANALYSIS ({trading_date})\n\n"
-        message += f"═══ PERFORMANCE ═══\n"
-        message += f"Trades: {total_trades} ({trades_exited} closed, {trades_open} open)\n"
-        message += f"Win Rate: {win_rate:.1f}% ({winning_trades}W/{losing_trades}L)\n"
-        message += f"Total P&L: ₹{total_pnl:,.0f}\n\n"
-
-        message += f"═══ MARKET ═══\n"
-        message += f"Regime: {market_regime}\n"
-        message += f"Nifty: ₹{nifty_close:,.0f}\n"
-        message += f"VIX: {vix_close:.2f}\n\n"
-
+        analysis_context = []
         if key_learnings:
-            message += f"═══ KEY LEARNINGS ═══\n"
-            for learning in key_learnings[:3]:  # Top 3
-                message += f"• {learning}\n"
-            message += "\n"
-
+            for learning in key_learnings[:3]:
+                analysis_context.append(learning)
         if recommendations:
-            message += f"═══ RECOMMENDATIONS ═══\n"
-            for rec in recommendations[:3]:  # Top 3
-                message += f"• {rec}\n"
+            for rec in recommendations[:3]:
+                analysis_context.append(rec)
 
-        send_telegram_notification(message, notification_type='INFO')
+        notify('JOB_COMPLETED',
+            title=f'Day Analysis ({trading_date})',
+            task='analyze_day',
+            metrics={
+                'Trades': f"{total_trades} ({trades_exited} closed, {trades_open} open)",
+                'Win Rate': f"{win_rate:.1f}% ({winning_trades}W/{losing_trades}L)",
+                'Total P&L': f"₹{total_pnl:,.0f}",
+                'Regime': market_regime,
+                'Nifty': f"₹{nifty_close:,.0f}",
+                'VIX': f"{vix_close:.2f}",
+            },
+            context=analysis_context if analysis_context else None,
+        )
 
         return {
             'success': True,
@@ -811,9 +860,11 @@ def analyze_day():
 
     except Exception as e:
         logger.error(f"❌ Day analysis failed: {e}", exc_info=True)
-        send_telegram_notification(
-            f"❌ DAY ANALYSIS FAILED\n{str(e)}",
-            notification_type='ERROR'
+        notify('TASK_ERROR',
+            title='Day Analysis Failed',
+            task='analyze_day',
+            context=[str(e)[:200]],
+            collapsible=False,
         )
         return {'success': False, 'error': str(e)}
 

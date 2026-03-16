@@ -424,13 +424,17 @@ class BreezeSessionManager:
     def _notify_login_failed(self, service: str):
         """Send Telegram notification that auto-login failed."""
         try:
-            from apps.alerts.services.telegram_client import send_telegram_notification
+            from apps.alerts.services.notification_service import notify
             name = 'Breeze' if service == 'breeze' else service.title()
-            send_telegram_notification(
-                f"Auto-Login Failed: {name}\n\n"
-                f"No more auto-login attempts today.\n"
-                f"Please login manually via the web UI.",
-                notification_type='WARNING'
+            notify('BROKER_HEALTH',
+                title='Auto-Login Failed',
+                instrument=name,
+                task='breeze_session_get_client',
+                context=[
+                    "No more auto-login attempts today",
+                    "Please login manually via the web UI",
+                ],
+                collapsible=False,
             )
         except Exception as e:
             logger.warning(f"Failed to send login-failed notification: {e}")

@@ -33,6 +33,7 @@ from django.utils import timezone
 
 from apps.positions.models import Position
 from apps.alerts.services.telegram_client import send_telegram_notification
+from apps.alerts.services.notification_service import notify
 
 logger = logging.getLogger(__name__)
 
@@ -265,9 +266,19 @@ def monitor_delta(position: Position, delta_threshold: Decimal = Decimal('300'))
                     f"RECOMMENDATION:\n{recommendation}"
                 )
 
-                send_telegram_notification(
-                    message=alert_message,
-                    notification_type='WARNING'
+                notify('RISK_WARNING',
+                    title='Delta Alert',
+                    instrument=f"Position {position.id}",
+                    task='monitor_delta',
+                    metrics={
+                        'Net Delta': f"{net_delta:.2f}",
+                        'Threshold': f"{delta_threshold:.2f}",
+                        'Spot': f"₹{current_spot:,.0f}",
+                        'Call': f"{position.call_strike}CE (Δ={call_delta:.4f})",
+                        'Put': f"{position.put_strike}PE (Δ={put_delta:.4f})",
+                    },
+                    context=[recommendation[:200] if recommendation else "Adjustment needed"],
+                    collapsible=False,
                 )
 
                 alert_sent = True

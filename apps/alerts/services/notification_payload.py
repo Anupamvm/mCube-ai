@@ -146,3 +146,6 @@ class NotificationPayload:
     # ── Mode / sizing footer ──────────────────────────────────────────────────
     mode_label: Optional[str] = None
     sizing_label: Optional[str] = None
+
+    # ── Collapsible detail sections ──────────────────────────────────────────
+    collapsible: bool = True  # Wrap detail sections in <blockquote expandable>

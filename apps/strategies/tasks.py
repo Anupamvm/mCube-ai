@@ -66,6 +66,7 @@ from apps.positions.services.exit_manager import should_exit_position
 
 # Core utilities (shared with web app)
 from apps.alerts.services.telegram_client import send_telegram_notification
+from apps.alerts.services.notification_service import notify
 from apps.core.utils.task_logger import TaskLogger
 from apps.core.utils.decorators import task_enabled_guard
 from apps.core.services.trading_context import get_trading_context
@@ -109,30 +110,33 @@ def evaluate_kotak_strangle_entry():
 
         # Send notification
         if result['success']:
-            message = (
-                f"✅ KOTAK STRANGLE ENTRY\n\n"
-                f"Position Created: #{result['position'].id}\n"
-                f"Call Strike: {result['details']['strikes']['call_strike']}\n"
-                f"Put Strike: {result['details']['strikes']['put_strike']}\n"
-                f"Premium Collected: ₹{result['details']['premium_collected']:,.0f}\n"
-                f"Margin Used: ₹{result['details']['margin_used']:,.0f}"
+            notify('JOB_COMPLETED',
+                title='Kotak Strangle Entry',
+                instrument=f"Position #{result['position'].id}",
+                metrics={
+                    'Call Strike': str(result['details']['strikes']['call_strike']),
+                    'Put Strike': str(result['details']['strikes']['put_strike']),
+                    'Premium': f"₹{result['details']['premium_collected']:,.0f}",
+                    'Margin': f"₹{result['details']['margin_used']:,.0f}",
+                },
+                collapsible=False,
             )
-            send_telegram_notification(message, notification_type='SUCCESS')
         else:
-            message = (
-                f"ℹ️ KOTAK STRANGLE ENTRY SKIPPED\n\n"
-                f"Reason: {result['message']}"
+            notify('SYSTEM_STATUS',
+                title='Kotak Strangle Entry Skipped',
+                context=[result['message']],
+                collapsible=False,
             )
-            send_telegram_notification(message, notification_type='INFO')
 
         logger.info("=" * 80)
         return result
 
     except Exception as e:
         logger.error(f"Error in Kotak entry evaluation: {e}", exc_info=True)
-        send_telegram_notification(
-            f"❌ ERROR: Kotak entry evaluation failed\n{str(e)}",
-            notification_type='ERROR'
+        notify('TASK_ERROR',
+            title='Kotak Entry Failed',
+            context=[str(e)],
+            task='evaluate_kotak_strangle_entry',
         )
         return {'success': False, 'message': str(e)}
 
@@ -216,13 +220,12 @@ def evaluate_kotak_strangle_exit(profit_threshold=10000, mandatory=False):
                         'message': f'Exit suggestion sent ({mode_label}): {reason}',
                     }
                 else:
-                    send_telegram_notification(
-                        f"⚠️ EXIT SUGGESTION FAILED TO SEND ({mode_label})\n\n"
-                        f"Position: #{position.id} | {position.instrument}\n"
-                        f"Reason: {reason}\n"
-                        f"P&L: ₹{position.unrealized_pnl:,.0f}\n\n"
-                        f"⚠️ Please review and close manually.",
-                        notification_type='WARNING'
+                    notify('TASK_ERROR',
+                        title='Exit Suggestion Failed',
+                        instrument=position.instrument,
+                        metrics={'P&L': f"₹{position.unrealized_pnl:,.0f}"},
+                        context=[reason, 'Please review and close manually.'],
+                        position_id=position.id,
                     )
                     return {'success': False, 'message': f'Suggestion send failed: {result}'}
 
@@ -235,26 +238,21 @@ def evaluate_kotak_strangle_exit(profit_threshold=10000, mandatory=False):
                 exit_reason=reason
             )
 
-            mode_label = config.get_notification_level_display_short()
-            sizing_label = config.get_position_sizing_display_short()
-            _footer = f"\n<i>⚙️ {mode_label} · {sizing_label}</i>"
             if success:
-                send_telegram_notification(
-                    f"✅ POSITION CLOSED\n\n"
-                    f"Position: #{position.id}\n"
-                    f"Reason: {reason}\n"
-                    f"P&L: ₹{position.realized_pnl:,.0f}"
-                    + _footer,
-                    notification_type='SUCCESS'
+                notify('TRADE_EXECUTED',
+                    title='Position Closed',
+                    instrument=position.instrument,
+                    metrics={'P&L': f"₹{position.realized_pnl:,.0f}"},
+                    context=[reason],
+                    position_id=position.id,
                 )
                 return {'success': True, 'message': f'Position closed: {reason}'}
             else:
-                send_telegram_notification(
-                    f"❌ POSITION CLOSE FAILED\n\n"
-                    f"Position: #{position.id}\n"
-                    f"Error: {message.splitlines()[0]}"
-                    + _footer,
-                    notification_type='ERROR'
+                notify('TASK_ERROR',
+                    title='Position Close Failed',
+                    instrument=position.instrument,
+                    context=[message.splitlines()[0]],
+                    position_id=position.id,
                 )
                 return {'success': False, 'message': message}
         else:
@@ -263,9 +261,9 @@ def evaluate_kotak_strangle_exit(profit_threshold=10000, mandatory=False):
 
     except Exception as e:
         logger.error(f"Error in Kotak exit evaluation: {e}", exc_info=True)
-        send_telegram_notification(
-            f"❌ ERROR: Kotak exit evaluation failed\n{str(e)}",
-            notification_type='ERROR'
+        notify('TASK_ERROR',
+            title='Kotak Exit Failed',
+            context=[str(e)],
         )
         return {'success': False, 'message': str(e)}
 
@@ -468,21 +466,20 @@ def setup_trading_day(self):
 
         # Send notification
         if setup.setup_tradable:
-            send_telegram_notification(
-                f"✅ TRADING DAY SETUP\n\n"
-                f"Date: {today}\n"
-                f"Data Fresh: Trendlyne ✓ News {'✓' if setup.news_data_fresh else '✗'}\n"
-                f"Risk Level: {overnight_risk}\n"
-                f"SGX Change: {setup.sgx_nifty_change or 'N/A'}%\n\n"
-                f"Day cleared for trading. Waiting for market open validation at 9:15 AM.",
-                notification_type='SUCCESS'
+            notify('SYSTEM_STATUS',
+                title='Trading Day Setup',
+                metrics={
+                    'Risk Level': overnight_risk,
+                    'SGX Change': f"{setup.sgx_nifty_change or 'N/A'}%",
+                },
+                context=['Day cleared for trading. Waiting for market open validation at 9:15 AM.'],
+                collapsible=False,
             )
         else:
-            send_telegram_notification(
-                f"❌ NO TRADING TODAY\n\n"
-                f"Date: {today}\n"
-                f"Reason: {setup.setup_reason}",
-                notification_type='WARNING'
+            notify('SYSTEM_STATUS',
+                title='No Trading Today',
+                context=[setup.setup_reason],
+                collapsible=False,
             )
 
         task_logger.success("Trading day setup completed", context={
@@ -656,24 +653,28 @@ def start_trading_day(self):
 
         # Send notification
         if setup.is_tradable:
-            send_telegram_notification(
-                f"✅ TRADING DAY STARTED\n\n"
-                f"Nifty Open: {setup.nifty_open or 'N/A'}\n"
-                f"Gap: {setup.gap_percent:.2f}%\n" if setup.gap_percent else "" +
-                f"VIX: {setup.vix_open} ({setup.vix_level})\n"
-                f"Near 52W High: {'Yes' if setup.near_52w_high else 'No'}\n\n"
-                f"Recommended: {setup.get_recommended_strategy_display()}\n"
-                f"Futures: {'✓' if setup.futures_trading_allowed else '✗'}\n"
-                f"Strangle: {'✓' if setup.options_strangle_allowed else '✗'}\n"
-                f"Iron Condor: {'✓' if setup.options_iron_condor_allowed else '✗'}",
-                notification_type='SUCCESS'
+            strategy_lines = [
+                f"Recommended: {setup.get_recommended_strategy_display()}",
+                f"Futures: {'Enabled' if setup.futures_trading_allowed else 'Disabled'}",
+                f"Strangle: {'Enabled' if setup.options_strangle_allowed else 'Disabled'}",
+                f"Iron Condor: {'Enabled' if setup.options_iron_condor_allowed else 'Disabled'}",
+            ]
+            metrics = {
+                'VIX': f"{setup.vix_open} ({setup.vix_level})",
+                'Near 52W High': 'Yes' if setup.near_52w_high else 'No',
+            }
+            if setup.gap_percent:
+                metrics['Gap'] = f"{setup.gap_percent:.2f}%"
+            notify('SYSTEM_STATUS',
+                title='Trading Day Started',
+                metrics=metrics,
+                context=strategy_lines,
+                collapsible=False,
             )
         else:
-            send_telegram_notification(
-                f"❌ TRADING PAUSED\n\n"
-                f"Reason: {setup.start_reason}\n\n"
-                f"Will re-evaluate conditions.",
-                notification_type='WARNING'
+            notify('RISK_WARNING',
+                title='Trading Paused',
+                context=[setup.start_reason, 'Will re-evaluate conditions.'],
             )
 
         task_logger.success("Trading day validation completed", context={
@@ -749,12 +750,10 @@ def evaluate_options_strategy(self):
             setup.options_evaluated_at = timezone.now()
             setup.options_strategy_selected = 'WAIT'
             setup.save()
-            send_telegram_notification(
-                f"⏸️ <b>Options Evaluation Deferred</b>\n\n"
-                f"Market opened with elevated volatility "
-                f"(VIX={vix_now}, Gap={gap_now}%).\n"
-                f"Strategy set to WAIT — no options entry at 09:40.",
-                notification_type='WARNING',
+            notify('SYSTEM_STATUS',
+                title='Options Evaluation Deferred',
+                metrics={'VIX': str(vix_now), 'Gap': f"{gap_now}%"},
+                context=['Strategy set to WAIT — no options entry at 09:40.'],
             )
             return {
                 'success': True,
@@ -801,21 +800,23 @@ def evaluate_options_strategy(self):
 
         # Send notification
         if selected_strategy == 'WAIT':
-            send_telegram_notification(
-                f"⏸️ OPTIONS STRATEGY: WAIT\n\n"
-                f"Reason: {', '.join(strategy_reason)}\n\n"
-                f"Will re-evaluate at 9:40 AM.",
-                notification_type='INFO'
+            notify('SYSTEM_STATUS',
+                title='Options Strategy: Wait',
+                context=[
+                    f"Reason: {', '.join(strategy_reason)}",
+                    'Will re-evaluate at 9:40 AM.',
+                ],
+                collapsible=False,
             )
         else:
-            send_telegram_notification(
-                f"📊 OPTIONS STRATEGY SELECTED\n\n"
-                f"Strategy: {selected_strategy}\n"
-                f"VIX: {setup.vix_open} ({setup.vix_level})\n"
-                f"Near 52W High: {'Yes' if setup.near_52w_high else 'No'}\n"
-                f"Reason: {', '.join(strategy_reason) if strategy_reason else 'Default conditions'}\n\n"
-                f"Trade will start at 9:40 AM.",
-                notification_type='SUCCESS'
+            notify('SYSTEM_STATUS',
+                title='Options Strategy Selected',
+                metrics={
+                    'Strategy': selected_strategy,
+                    'VIX': f"{setup.vix_open} ({setup.vix_level})",
+                },
+                context=['Trade will start at 9:40 AM.'],
+                collapsible=False,
             )
 
         task_logger.success("Options strategy evaluation completed", context={
@@ -868,9 +869,10 @@ def start_options_trade(self):
         # Check if options trading is enabled
         if not config.is_options_enabled():
             task_logger.info('skipped', "Options trading disabled in Core Config")
-            send_telegram_notification(
-                "Options trade skipped - trading disabled in Core Config",
-                notification_type='INFO'
+            notify('SYSTEM_STATUS',
+                title='Options Trade Skipped',
+                context=['Trading disabled in Core Config'],
+                collapsible=False,
             )
             return {'success': True, 'skipped': True, 'reason': 'Options trading disabled'}
 
@@ -888,13 +890,14 @@ def start_options_trade(self):
         current_movement = _calculate_movement_since_open()
 
         if abs(current_movement) > float(config.movement_threshold):
-            message = (
-                f"⚠️ OPTIONS ENTRY SKIPPED\n\n"
-                f"Movement since open: {current_movement:.2f}%\n"
-                f"Threshold: {config.movement_threshold}%\n\n"
-                f"Market too volatile for safe entry."
+            notify('RISK_WARNING',
+                title='Options Entry Skipped',
+                metrics={
+                    'Movement': f"{current_movement:.2f}%",
+                    'Threshold': f"{config.movement_threshold}%",
+                },
+                context=['Market too volatile for safe entry.'],
             )
-            send_telegram_notification(message, notification_type='WARNING')
             task_logger.info('movement_exceeded', f"Movement {current_movement:.2f}% exceeds threshold")
             return {'success': False, 'reason': 'movement_exceeded', 'movement': current_movement}
 
@@ -942,13 +945,12 @@ def start_options_trade(self):
             strategy_type=strategy_type_map.get(strategy, strategy),
         )
         if not is_ok:
-            reason_text = "\n".join(f"  • {r}" for r in reasons)
             task_logger.warning('pre_trade_blocked', f"Pre-trade validation failed: {reasons}")
-            send_telegram_notification(
-                f"⛔ <b>Options Trade Blocked</b> ({strategy})\n\n"
-                f"Pre-trade checks failed:\n{reason_text}\n\n"
-                f"No order placed.",
-                notification_type='WARNING',
+            notify('RISK_WARNING',
+                title='Options Trade Blocked',
+                instrument=strategy,
+                context=reasons,
+                actions=['No order placed.'],
             )
             return {'success': False, 'blocked_by': reasons}
         # ────────────────────────────────────────────────────────────────────
@@ -997,13 +999,15 @@ def start_options_trade(self):
             suggestion.status = 'SIMULATED'
             suggestion.save()
 
-            send_telegram_notification(
-                f"📝 SIMULATED OPTIONS TRADE\n\n"
-                f"Strategy: {strategy}\n"
-                f"Lots: {lots}\n"
-                f"Movement: {current_movement:.2f}%\n\n"
-                f"This is a paper trade - no real orders placed.",
-                notification_type='INFO'
+            notify('SYSTEM_STATUS',
+                title='Simulated Options Trade',
+                metrics={
+                    'Strategy': strategy,
+                    'Lots': str(lots),
+                    'Movement': f"{current_movement:.2f}%",
+                },
+                context=['Paper trade mode - no real orders placed.'],
+                collapsible=False,
             )
             return {'success': True, 'simulated': True, 'lots': lots, 'strategy': strategy}
 
@@ -1052,12 +1056,13 @@ def start_options_trade(self):
                 task_logger.warning('telegram_failed', f"Failed to send Telegram: {result}")
                 # Manual mode: Telegram failed — do NOT fall through to auto-execute.
                 # The suggestion is pending but undelivered; abort and alert.
-                send_telegram_notification(
-                    f"⚠️ CONFIRMATION REQUEST FAILED\n\n"
-                    f"Strategy: {strategy}\n"
-                    f"Telegram delivery failed. Trade NOT executed.\n\n"
-                    f"Please trigger manually if desired.",
-                    notification_type='WARNING'
+                notify('TASK_ERROR',
+                    title='Confirmation Request Failed',
+                    instrument=strategy,
+                    context=[
+                        'Telegram delivery failed. Trade NOT executed.',
+                        'Please trigger manually if desired.',
+                    ],
                 )
                 return {
                     'success': False,
@@ -1078,20 +1083,20 @@ def start_options_trade(self):
         setup.save()
 
         if result.get('success'):
-            send_telegram_notification(
-                f"✅ OPTIONS TRADE EXECUTED ({mode_label})\n\n"
-                f"Strategy: {strategy}\n"
-                f"Lots: {lots}\n"
-                f"Sizing: {config.get_position_sizing_display_short()}\n\n"
-                f"Averaging will continue until 10:30 AM.",
-                notification_type='SUCCESS'
+            notify('TRADE_EXECUTED',
+                title='Options Trade Executed',
+                metrics={
+                    'Strategy': strategy,
+                    'Lots': str(lots),
+                    'Sizing': config.get_position_sizing_display_short(),
+                },
+                context=['Averaging will continue until 10:30 AM.'],
             )
         else:
-            send_telegram_notification(
-                f"❌ OPTIONS TRADE FAILED\n\n"
-                f"Strategy: {strategy}\n"
-                f"Reason: {result.get('error', 'Unknown error')}",
-                notification_type='ERROR'
+            notify('TASK_ERROR',
+                title='Options Trade Failed',
+                instrument=strategy,
+                context=[result.get('error', 'Unknown error')],
             )
 
         task_logger.success("Options trade completed", context=result)
@@ -1323,18 +1328,20 @@ def screen_futures_opportunities_task():
             pass
 
         # Send notification
-        message = "📊 FUTURES SCREENING - TOP 5\n\n"
-
+        candidate_lines = []
         for i, candidate in enumerate(top_5, 1):
-            message += (
-                f"{i}. {candidate['symbol']} - {candidate['direction']}\n"
-                f"   Score: {candidate['composite_score']}/100\n"
-                f"   OI: {candidate.get('oi_analysis', {}).get('buildup_type', 'N/A')}\n\n"
+            candidate_lines.append(
+                f"{i}. {candidate['symbol']} ({candidate['direction']}) — "
+                f"Score: {candidate['composite_score']}/100, "
+                f"OI: {candidate.get('oi_analysis', {}).get('buildup_type', 'N/A')}"
             )
 
-        message += "\nView in Futures Algorithm page for details."
-
-        send_telegram_notification(message, notification_type='INFO')
+        notify('JOB_COMPLETED',
+            title='Futures Screening',
+            metrics={'Candidates': str(len(candidates))},
+            context=candidate_lines,
+            collapsible=True,
+        )
 
         logger.info(f"✅ Found {len(candidates)} candidates, saved top 5")
 
@@ -1346,9 +1353,9 @@ def screen_futures_opportunities_task():
 
     except Exception as e:
         logger.error(f"Error in futures screening: {e}", exc_info=True)
-        send_telegram_notification(
-            f"❌ ERROR: Futures screening failed\n{str(e)}",
-            notification_type='ERROR'
+        notify('TASK_ERROR',
+            title='Futures Screening Failed',
+            context=[str(e)],
         )
         return {'success': False, 'message': str(e)}
 
@@ -1415,12 +1422,14 @@ def close_trading_day(self):
         if config.is_simulated():
             total_pnl = sum(p.unrealized_pnl or Decimal('0') for p in option_positions)
             task_logger.info('simulated', f"SIMULATED: Would close {option_positions.count()} positions, P&L: {total_pnl}")
-            send_telegram_notification(
-                f"📝 SIMULATED DAY CLOSE\n\n"
-                f"Positions: {option_positions.count()}\n"
-                f"Hypothetical P&L: ₹{total_pnl:,.0f}\n\n"
-                f"Paper trade mode - no real closes.",
-                notification_type='INFO'
+            notify('SYSTEM_STATUS',
+                title='Simulated Day Close',
+                metrics={
+                    'Positions': str(option_positions.count()),
+                    'Hypothetical P&L': f"₹{total_pnl:,.0f}",
+                },
+                context=['Paper trade mode - no real closes.'],
+                collapsible=False,
             )
             return {'success': True, 'simulated': True, 'positions': option_positions.count()}
 
@@ -1538,15 +1547,18 @@ def close_trading_day(self):
 
         # Send notification
         pending_count = len([d for d in close_results['details'] if d.get('action') == 'pending_confirmation'])
-        send_telegram_notification(
-            f"📊 TRADING DAY CLOSED ({mode_label})\n\n"
-            f"Positions: {close_results['total']}\n"
-            f"Closed: {close_results['closed']}\n"
-            f"Skipped (low profit): {close_results['skipped']}\n"
-            f"Force Closed: {close_results['forced']}\n"
-            f"{'Pending Confirmation: ' + str(pending_count) + chr(10) if pending_count > 0 else ''}"
-            f"\nTotal P&L: ₹{close_results['total_pnl']:,.0f}",
-            notification_type='SUCCESS' if close_results['total_pnl'] >= 0 else 'WARNING'
+        close_metrics = {
+            'Closed': str(close_results['closed']),
+            'Skipped': str(close_results['skipped']),
+            'P&L': f"₹{close_results['total_pnl']:,.0f}",
+        }
+        if pending_count > 0:
+            close_metrics['Pending'] = str(pending_count)
+        notify('JOB_COMPLETED',
+            title='Trading Day Closed',
+            status='SUCCESS' if close_results['total_pnl'] >= 0 else 'WARNING',
+            metrics=close_metrics,
+            collapsible=False,
         )
 
         task_logger.success("Trading day close completed", context={
@@ -1558,9 +1570,9 @@ def close_trading_day(self):
 
     except Exception as e:
         task_logger.failure("Error in close_trading_day", error=e)
-        send_telegram_notification(
-            f"❌ ERROR: Close trading day failed\n{str(e)}",
-            notification_type='ERROR'
+        notify('TASK_ERROR',
+            title='Close Trading Day Failed',
+            context=[str(e)],
         )
         return {'success': False, 'error': str(e)}
 
@@ -1648,18 +1660,22 @@ def check_futures_averaging():
                             averaging_recommendations += 1
                         else:
                             # Fallback to simple notification
-                            ctx.notify_warning(
-                                f"⚠️ AVERAGING RECOMMENDATION ({mode_label})\n\n"
-                                f"Position: #{position.id}\n"
-                                f"Symbol: {position.instrument}\n"
-                                f"Direction: {position.direction}\n\n"
-                                f"Current Entry: ₹{preview['current_entry']:,.2f}\n"
-                                f"Current Price: ₹{preview['averaging_price']:,.2f}\n"
-                                f"Loss: {recommendation['details']['loss_pct']:.2f}%\n\n"
-                                f"RECOMMENDATION:\n"
-                                f"Add {preview['quantity_to_add']} quantity\n"
-                                f"New Avg Entry: ₹{preview['new_average_entry']:,.2f}\n\n"
-                                f"ℹ️ Confirmation required"
+                            notify('SYSTEM_STATUS',
+                                title='Averaging Recommendation',
+                                instrument=position.instrument,
+                                task='check_futures_averaging',
+                                metrics={
+                                    'Loss': f"{recommendation['details']['loss_pct']:.2f}%",
+                                    'Current': f"₹{preview['averaging_price']:,.2f}",
+                                },
+                                position={
+                                    'Direction': position.direction,
+                                    'Entry': f"₹{preview['current_entry']:,.2f}",
+                                    'Add': f"{preview['quantity_to_add']} qty",
+                                    'New Avg': f"₹{preview['new_average_entry']:,.2f}",
+                                },
+                                context=['Confirmation required'],
+                                position_id=position.id,
                             )
                             averaging_recommendations += 1
                     else:
@@ -1670,12 +1686,16 @@ def check_futures_averaging():
 
                         if result.get('success'):
                             auto_executed += 1
-                            ctx.notify(
-                                f"🤖 AUTO-AVERAGED ({mode_label})\n\n"
-                                f"Position: {position.instrument}\n"
-                                f"Added: {lots} lots\n"
-                                f"New Avg: ₹{result.get('new_avg', 0):,.2f}",
-                                notification_type='INFO'
+                            notify('TRADE_EXECUTED',
+                                title='Auto-Averaged',
+                                instrument=position.instrument,
+                                task='check_futures_averaging',
+                                metrics={
+                                    'Added': f"{lots} lots",
+                                    'New Avg': f"₹{result.get('new_avg', 0):,.2f}",
+                                },
+                                position_id=position.id,
+                                collapsible=False,
                             )
                         else:
                             logger.warning(f"Auto-averaging failed for {position.id}: {result.get('error')}")
@@ -1931,19 +1951,23 @@ def aggregate_futures_results(self, batch_results, min_score=65, orchestrator_ta
     # Check for simulated mode - no real order confirmations
     if config.is_simulated():
         task_logger.info('simulated', f"SIMULATED MODE: {len(qualified_candidates)} qualified candidates (no real orders)")
-        message_lines = [
-            "📝 SIMULATED FUTURES RESULTS\n",
-            f"📅 {today.strftime('%d %b %Y')}",
-            f"📊 Analyzed: {total_analyzed} | Passed: {len(all_passed_summary)} | Qualified: {len(qualified_candidates)}\n",
-            f"🧪 Simulated Lots: {config.simulated_futures_lots}"
-        ]
+        sim_context = []
         for i, candidate in enumerate(qualified_candidates[:5], 1):
-            message_lines.append(
-                f"\n{i}. {candidate['symbol']} ({candidate['direction']})"
-                f"\n   Score: {candidate['score']}/100"
+            sim_context.append(
+                f"{i}. {candidate['symbol']} ({candidate['direction']}) — Score: {candidate['score']}/100"
             )
-        message_lines.append("\n\n📝 Paper trade mode - no real orders")
-        send_telegram_notification('\n'.join(message_lines), notification_type='INFO')
+        sim_context.append('Paper trade mode - no real orders')
+        notify('SYSTEM_STATUS',
+            title='Simulated Futures Results',
+            metrics={
+                'Analyzed': str(total_analyzed),
+                'Passed': str(len(all_passed_summary)),
+                'Qualified': str(len(qualified_candidates)),
+                'Simulated Lots': str(config.simulated_futures_lots),
+            },
+            context=sim_context,
+            collapsible=True,
+        )
 
         task_logger.success("Simulated aggregation completed", context={
             'total_analyzed': total_analyzed, 'qualified': len(qualified_candidates)
@@ -2003,69 +2027,67 @@ def aggregate_futures_results(self, batch_results, min_score=65, orchestrator_ta
 
     elif qualified_candidates:
         # SUPERVISED or AUTONOMOUS mode - send notification (no confirmation required)
-        mode_label = config.get_notification_level_display_short()
         sizing_label = config.get_position_sizing_display_short()
 
-        message_lines = [
-            f"🎯 FUTURES ALGORITHM ({mode_label})\n",
-            f"📅 {today.strftime('%d %b %Y')} | Regime: {regime}",
-            f"📊 Analyzed: {total_analyzed} | Passed: {len(all_passed_summary)} | Qualified: {len(qualified_candidates)}",
-            f"📏 Sizing: {sizing_label}"
-        ]
-
+        qual_context = []
         if timed_out_batches > 0:
-            message_lines.append(f"\n⏱️ {timed_out_batches} batch(es) timed out ({partial_contracts} contracts skipped)")
-
-        message_lines.append("\nTOP CANDIDATES:")
+            qual_context.append(f"{timed_out_batches} batch(es) timed out ({partial_contracts} contracts skipped)")
 
         for i, candidate in enumerate(qualified_candidates[:5], 1):
             rr = candidate.get('rr_ratio', 0)
             rr_str = f" | R:R 1:{rr:.1f}" if rr > 0 else ""
-            message_lines.append(
-                f"\n{i}. {candidate['symbol']} ({candidate['direction']})"
-                f"\n   Score: {candidate['score']}/100{rr_str} | {candidate['recommendation']}"
+            qual_context.append(
+                f"{i}. {candidate['symbol']} ({candidate['direction']}) — "
+                f"Score: {candidate['score']}/100{rr_str} | {candidate['recommendation']}"
             )
 
         if len(qualified_candidates) > 5:
-            message_lines.append(f"\n\n... and {len(qualified_candidates) - 5} more")
+            qual_context.append(f"... and {len(qualified_candidates) - 5} more")
 
         if config.is_autonomous():
-            message_lines.append("\n\n🤖 Autonomous mode - no confirmation needed")
+            qual_context.append('Autonomous mode - no confirmation needed')
         else:
-            message_lines.append("\n\n✅ Ready for manual verification")
+            qual_context.append('Ready for manual verification')
 
-        send_telegram_notification(
-            '\n'.join(message_lines),
-            notification_type='SUCCESS'
+        notify('JOB_COMPLETED',
+            title='Futures Algorithm',
+            metrics={
+                'Analyzed': str(total_analyzed),
+                'Passed': str(len(all_passed_summary)),
+                'Qualified': str(len(qualified_candidates)),
+                'Regime': regime,
+                'Sizing': sizing_label,
+            },
+            context=qual_context,
+            collapsible=True,
         )
     else:
         # No qualified candidates - show top 3 highest-scoring stocks
         all_passed_sorted = sorted(all_passed_summary, key=lambda x: x['score'], reverse=True)
         top_3 = all_passed_sorted[:3]
 
-        message_lines = [
-            "📊 FUTURES ALGORITHM\n",
-            f"📅 {today.strftime('%d %b %Y')}",
-            f"Analyzed: {total_analyzed} | Passed: {len(all_passed_summary)} | Errors: {len(all_errors)}"
-        ]
+        no_qual_context = [f'No candidates above threshold (score >= {min_score})']
 
         if timed_out_batches > 0:
-            message_lines.append(f"\n⏱️ {timed_out_batches} batch(es) timed out ({partial_contracts} contracts skipped)")
-
-        message_lines.append(f"\n⚠️ No candidates above threshold (score >= {min_score})")
+            no_qual_context.append(f"{timed_out_batches} batch(es) timed out ({partial_contracts} contracts skipped)")
 
         if top_3:
-            message_lines.append("\n\nTOP 3 BY SCORE:")
+            no_qual_context.append('Top 3 by score:')
             for i, candidate in enumerate(top_3, 1):
-                message_lines.append(
-                    f"\n{i}. {candidate['symbol']} ({candidate['direction']})"
-                    f"\n   Score: {candidate['score']}/100"
+                no_qual_context.append(
+                    f"{i}. {candidate['symbol']} ({candidate['direction']}) — Score: {candidate['score']}/100"
                 )
-            message_lines.append("\n\n💡 Consider manual review if scores are close to threshold")
+            no_qual_context.append('Consider manual review if scores are close to threshold')
 
-        send_telegram_notification(
-            '\n'.join(message_lines),
-            notification_type='INFO'
+        notify('SYSTEM_STATUS',
+            title='Futures Algorithm',
+            metrics={
+                'Analyzed': str(total_analyzed),
+                'Passed': str(len(all_passed_summary)),
+                'Errors': str(len(all_errors)),
+            },
+            context=no_qual_context,
+            collapsible=True,
         )
 
     task_logger.success("Aggregation completed", context={
@@ -2099,31 +2121,30 @@ def _send_futures_summary_notification(
 
     Called when confirmation flow fails or as fallback.
     """
-    message_lines = [
-        "🎯 FUTURES ALGORITHM RESULTS\n",
-        f"📅 {today.strftime('%d %b %Y')}",
-        f"📊 Analyzed: {total_analyzed} | Passed: {len(all_passed_summary)} | Qualified: {len(qualified_candidates)}"
-    ]
+    fallback_context = []
 
     if timed_out_batches > 0:
-        message_lines.append(f"\n⏱️ {timed_out_batches} batch(es) timed out ({partial_contracts} contracts skipped)")
-
-    message_lines.append("\nTOP CANDIDATES:")
+        fallback_context.append(f"{timed_out_batches} batch(es) timed out ({partial_contracts} contracts skipped)")
 
     for i, candidate in enumerate(qualified_candidates[:5], 1):
-        message_lines.append(
-            f"\n{i}. {candidate['symbol']} ({candidate['direction']})"
-            f"\n   Score: {candidate['score']}/100 | {candidate['recommendation']}"
+        fallback_context.append(
+            f"{i}. {candidate['symbol']} ({candidate['direction']}) — "
+            f"Score: {candidate['score']}/100 | {candidate['recommendation']}"
         )
 
     if len(qualified_candidates) > 5:
-        message_lines.append(f"\n\n... and {len(qualified_candidates) - 5} more")
+        fallback_context.append(f"... and {len(qualified_candidates) - 5} more")
 
-    message_lines.append("\n\n✅ Ready for manual verification")
+    fallback_context.append('Ready for manual verification')
 
-    send_telegram_notification(
-        '\n'.join(message_lines),
-        notification_type='SUCCESS'
+    notify('JOB_COMPLETED',
+        title='Futures Algorithm Results',
+        metrics={
+            'Analyzed': str(total_analyzed),
+            'Passed': str(len(all_passed_summary)),
+            'Qualified': str(len(qualified_candidates)),
+        },
+        context=fallback_context,
     )
 
 
@@ -2253,9 +2274,10 @@ def execute_futures_algorithm(self, this_month_volume=1000, next_month_volume=80
             core_config = TradingCoreConfig.get_instance()
             if not core_config.is_futures_enabled():
                 task_logger.info('skipped', "Futures trading disabled in Core Config")
-                send_telegram_notification(
-                    "Futures algorithm skipped - trading disabled in Core Config",
-                    notification_type='INFO'
+                notify('SYSTEM_STATUS',
+                    title='Futures Algorithm Skipped',
+                    context=['Trading disabled in Core Config'],
+                    collapsible=False,
                 )
                 return {'success': True, 'skipped': True, 'reason': 'Futures trading disabled'}
 
@@ -2269,9 +2291,9 @@ def execute_futures_algorithm(self, this_month_volume=1000, next_month_volume=80
 
         if not icici_account:
             task_logger.warning('no_account', "No active ICICI account found")
-            send_telegram_notification(
-                "⚠️ FUTURES ALGORITHM\n\nNo active ICICI account found. Please configure account.",
-                notification_type='WARNING'
+            notify('RISK_WARNING',
+                title='Futures Algorithm',
+                context=['No active ICICI account found. Please configure account.'],
             )
             return {'success': False, 'error': 'No active ICICI account'}
 
@@ -2287,13 +2309,11 @@ def execute_futures_algorithm(self, this_month_volume=1000, next_month_volume=80
                 strategy_type='LLM_VALIDATED_FUTURES',
             )
             if not is_ok:
-                reason_text = "\n".join(f"  • {r}" for r in reasons)
                 task_logger.warning('pre_trade_blocked', f"Pre-trade validation failed: {reasons}")
-                send_telegram_notification(
-                    f"⛔ <b>Futures Trade Blocked</b>\n\n"
-                    f"Pre-trade checks failed:\n{reason_text}\n\n"
-                    f"No order placed.",
-                    notification_type='WARNING',
+                notify('RISK_WARNING',
+                    title='Futures Trade Blocked',
+                    context=reasons,
+                    actions=['No order placed.'],
                 )
                 return {'success': False, 'blocked_by': reasons}
 
@@ -2341,11 +2361,11 @@ def execute_futures_algorithm(self, this_month_volume=1000, next_month_volume=80
 
         if contract_count == 0:
             task_logger.warning('no_contracts', "No contracts match volume/filter criteria")
-            send_telegram_notification(
-                f"📊 FUTURES ALGORITHM\n\n"
-                f"📅 {today.strftime('%d %b %Y')}\n\n"
-                f"No contracts match volume criteria",
-                notification_type='INFO'
+            notify('SYSTEM_STATUS',
+                title='Futures Algorithm',
+                metrics={'Contracts': '0'},
+                context=['No contracts match volume criteria'],
+                collapsible=False,
             )
             return {'success': True, 'candidates_found': 0, 'qualified': 0}
 
@@ -2393,8 +2413,8 @@ def execute_futures_algorithm(self, this_month_volume=1000, next_month_volume=80
 
     except Exception as e:
         task_logger.failure("Futures Algorithm failed", error=e)
-        send_telegram_notification(
-            f"❌ FUTURES ALGORITHM FAILED\n\n{str(e)}",
-            notification_type='ERROR'
+        notify('TASK_ERROR',
+            title='Futures Algorithm Failed',
+            context=[str(e)],
         )
         return {'success': False, 'error': str(e)}

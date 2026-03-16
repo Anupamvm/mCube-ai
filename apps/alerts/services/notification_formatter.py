@@ -104,8 +104,14 @@ class TelegramMessageFormatter:
         # ── 4. Detail sections ────────────────────────────────────────────────
         detail_sections = self._details(payload)
         if detail_sections:
-            parts.append(f"\n{_SEP}")
-            parts.extend(detail_sections)
+            inner = "\n".join(detail_sections)
+            if payload.collapsible:
+                # Telegram Bot API 7.0+: expandable blockquote
+                # Collapses to ~3 lines natively, user taps to expand
+                parts.append(f"\n<blockquote expandable>{inner}\n</blockquote>")
+            else:
+                parts.append(f"\n{_SEP}")
+                parts.extend(detail_sections)
 
         # ── 5. Footer ─────────────────────────────────────────────────────────
         footer = self._footer(payload)

@@ -22,6 +22,7 @@ from django.core.cache import cache
 from django.utils import timezone
 
 from apps.alerts.services.telegram_client import send_telegram_notification
+from apps.alerts.services.notification_service import notify
 from apps.core.utils.decorators import task_enabled_guard
 
 logger = logging.getLogger(__name__)
@@ -121,13 +122,14 @@ def health_check_brokers():
                 clean_failures.append(f"{broker_name}: {_broker_error_summary(Exception(err))}")
             else:
                 clean_failures.append(f)
-        failure_lines = "\n".join(f"  • {f}" for f in clean_failures)
-        send_telegram_notification(
-            f"🚨 <b>Broker Health Check FAILED</b> (06:45)\n\n"
-            f"{failure_lines}\n\n"
-            f"Market opens in ~2.5 hours.\n"
-            f"Resolve authentication issues before 09:15.",
-            notification_type='CRITICAL',
+        notify('BROKER_HEALTH',
+            title='Broker Health Check Failed',
+            task='health_check_brokers',
+            context=clean_failures + [
+                "Market opens in ~2.5 hours",
+                "Resolve authentication issues before 09:15",
+            ],
+            collapsible=False,
         )
     else:
         active_brokers = [k for k, v in results.items() if v == 'OK']
@@ -203,11 +205,15 @@ def monitor_opening_volatility():
                 reasons.append(f"VIX={vix:.1f} (≥{_VIX_WARN_THRESHOLD})")
             if abs(gap_pct) >= _GAP_WARN_THRESHOLD:
                 reasons.append(f"Gap={gap_pct:+.2f}% (≥±{_GAP_WARN_THRESHOLD}%)")
-            send_telegram_notification(
-                f"⚠️ <b>Market Open: Elevated Volatility</b>\n\n"
-                f"{'  |  '.join(reasons)}\n\n"
-                f"Strategy evaluation may be deferred until market stabilises.",
-                notification_type='WARNING',
+            notify('RISK_WARNING',
+                title='Market Open: Elevated Volatility',
+                task='monitor_opening_volatility',
+                metrics={
+                    'VIX': f"{vix:.1f}",
+                    'Gap': f"{gap_pct:+.2f}%",
+                },
+                context=reasons + ["Strategy evaluation may be deferred until market stabilises"],
+                collapsible=False,
             )
 
         return {
@@ -284,9 +290,15 @@ def review_overnight_positions():
                 "\nReview positions before market opens. "
                 "Consider tightening stop-losses."
             )
-            send_telegram_notification(
-                "\n".join(lines),
-                notification_type='WARNING',
+            at_risk_lines = [f"{item['symbol']}: {item['title']}" for item in at_risk]
+            notify('RISK_WARNING',
+                title='Overnight Position Risk',
+                task='review_overnight_positions',
+                context=at_risk_lines + [
+                    "Review positions before market opens",
+                    "Consider tightening stop-losses",
+                ],
+                collapsible=False,
             )
         else:
             logger.info(

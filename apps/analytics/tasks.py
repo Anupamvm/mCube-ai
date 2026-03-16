@@ -27,6 +27,7 @@ from apps.analytics.services.learning_engine import LearningEngine
 from apps.positions.models import Position
 from apps.accounts.models import BrokerAccount
 from apps.alerts.services.telegram_client import send_telegram_notification
+from apps.alerts.services.notification_service import notify
 from apps.core.utils.decorators import task_enabled_guard
 
 logger = logging.getLogger(__name__)
@@ -70,11 +71,47 @@ def generate_daily_pnl_report():
 
         grand_realized = Decimal('0.00')
         grand_unrealized = Decimal('0.00')
+        grand_today_change = Decimal('0.00')  # Today's actual P&L change
         grand_closed_count = 0
         grand_open_count = 0
         grand_winners = 0
         grand_losers = 0
         any_activity = False
+
+        # ── Portfolio-level today's change from PortfolioPnlTracker ─────────
+        # The open positions page auto-saves P&L snapshots every ~2 min,
+        # including live prices from BOTH brokers. This is the authoritative
+        # source for today's P&L — more accurate than MonitorLog which may
+        # have stale prices for some brokers.
+        from apps.positions.models import PortfolioPnlTracker
+        from datetime import timedelta
+
+        _portfolio_today_change = Decimal('0')
+        _portfolio_day_open = None
+        _portfolio_now = None
+        _has_portfolio_tracker = False
+
+        today_tracker = PortfolioPnlTracker.objects.filter(date=today).first()
+        if today_tracker and today_tracker.snapshots:
+            snaps = today_tracker.snapshots
+            _portfolio_day_open = Decimal(str(snaps[0]['pnl']))
+            _portfolio_now = Decimal(str(snaps[-1]['pnl']))
+            _portfolio_today_change = _portfolio_now - _portfolio_day_open
+            _has_portfolio_tracker = True
+
+        # Also find previous trading day's close for reference
+        _prev_day_close_pnl = None
+        for days_back in range(1, 8):
+            check_date = today - timedelta(days=days_back)
+            prev_tracker = PortfolioPnlTracker.objects.filter(date=check_date).first()
+            if prev_tracker and prev_tracker.snapshots:
+                _prev_day_close_pnl = Decimal(str(prev_tracker.snapshots[-1]['pnl']))
+                break
+
+        # Today's change = current P&L - day open P&L (first snapshot)
+        # This captures the actual intraday move since market open,
+        # which is what the user sees on the broker dashboard.
+        # (Prev close may differ due to weekend gaps, corporate actions, etc.)
 
         for account in all_accounts:
             try:
@@ -116,10 +153,11 @@ def generate_daily_pnl_report():
                     for pos in closed_today.order_by('-realized_pnl'):
                         pnl_pct = _calc_pnl_pct(pos.entry_price, pos.exit_price, pos.direction)
                         icon = "✅" if pos.realized_pnl > 0 else "❌" if pos.realized_pnl < 0 else "➖"
+                        lot_label = f"{pos.lots} lot{'s' if pos.lots != 1 else ''}" if pos.lot_size > 1 else f"Qty: {pos.quantity}"
                         report_lines.append(
                             f"  {icon} {pos.instrument} {pos.direction}\n"
                             f"     Entry: ₹{pos.entry_price:,.2f} → Exit: ₹{pos.exit_price:,.2f} ({pnl_pct})\n"
-                            f"     P&L: ₹{pos.realized_pnl:,.0f} | Qty: {pos.quantity}\n"
+                            f"     P&L: ₹{pos.realized_pnl:,.0f} | {lot_label}\n"
                         )
                         if pos.exit_reason:
                             report_lines.append(f"     Reason: {pos.exit_reason}\n")
@@ -131,6 +169,8 @@ def generate_daily_pnl_report():
 
                 # -- Open positions section --
                 if open_positions.exists():
+                    from apps.positions.models import MonitorLog
+
                     open_entered_today = open_positions.filter(entry_time__date=today)
                     open_carried = open_positions.exclude(entry_time__date=today)
 
@@ -148,10 +188,11 @@ def generate_daily_pnl_report():
                             pnl_pct = _calc_pnl_pct(pos.entry_price, pos.current_price, pos.direction)
                             u_pnl = pos.unrealized_pnl or Decimal('0')
                             icon = "🟢" if u_pnl > 0 else "🔴" if u_pnl < 0 else "⚪"
+                            lot_label = f"{pos.lots} lot{'s' if pos.lots != 1 else ''}" if pos.lot_size > 1 else f"Qty: {pos.quantity}"
                             report_lines.append(
                                 f"  {icon} {pos.instrument} {pos.direction}\n"
                                 f"     Avg: ₹{pos.entry_price:,.2f} → LTP: ₹{pos.current_price:,.2f} ({pnl_pct})\n"
-                                f"     P&L: ₹{u_pnl:,.0f} | Qty: {pos.quantity}\n"
+                                f"     P&L: ₹{u_pnl:,.0f} | {lot_label}\n"
                             )
                             if pos.stop_loss:
                                 report_lines.append(f"     SL: ₹{pos.stop_loss:,.2f}")
@@ -166,10 +207,11 @@ def generate_daily_pnl_report():
                             u_pnl = pos.unrealized_pnl or Decimal('0')
                             icon = "🟢" if u_pnl > 0 else "🔴" if u_pnl < 0 else "⚪"
                             days_held = (today - pos.entry_time.date()).days
+                            lot_label = f"{pos.lots} lot{'s' if pos.lots != 1 else ''}" if pos.lot_size > 1 else f"Qty: {pos.quantity}"
                             report_lines.append(
                                 f"  {icon} {pos.instrument} {pos.direction} (Day {days_held})\n"
                                 f"     Avg: ₹{pos.entry_price:,.2f} → LTP: ₹{pos.current_price:,.2f} ({pnl_pct})\n"
-                                f"     P&L: ₹{u_pnl:,.0f} | Qty: {pos.quantity}\n"
+                                f"     P&L: ₹{u_pnl:,.0f} | {lot_label}\n"
                             )
 
                     grand_unrealized += acct_unrealized
@@ -187,8 +229,10 @@ def generate_daily_pnl_report():
         if not any_activity:
             report_lines.append("📭 No positions or trades today.\n")
         else:
-            grand_total = grand_realized + grand_unrealized
-            overall_icon = "📈" if grand_total > 0 else "📉" if grand_total < 0 else "➖"
+            # Today's P&L from PortfolioPnlTracker (live broker prices, auto-saved)
+            grand_today_change = _portfolio_today_change
+            net_day_pnl = grand_realized + grand_today_change
+            overall_icon = "📈" if net_day_pnl > 0 else "📉" if net_day_pnl < 0 else "➖"
 
             report_lines.append(f"{overall_icon} DAY SUMMARY\n")
             if grand_closed_count > 0:
@@ -196,14 +240,25 @@ def generate_daily_pnl_report():
                 report_lines.append(f"Realized P&L: ₹{grand_realized:,.0f} ({grand_closed_count} closed)\n")
                 report_lines.append(f"Win Rate: {overall_win_rate:.0f}% ({grand_winners}W/{grand_losers}L)\n")
             if grand_open_count > 0:
-                report_lines.append(f"Unrealized P&L: ₹{grand_unrealized:,.0f} ({grand_open_count} open)\n")
-            report_lines.append(f"Net Day P&L: ₹{grand_total:,.0f}\n")
+                report_lines.append(f"Today's Move: ₹{grand_today_change:+,.0f} ({grand_open_count} open)\n")
+                report_lines.append(f"Total Unrealized: ₹{grand_unrealized:,.0f} (from entry)\n")
+            report_lines.append(f"Net Day P&L: ₹{net_day_pnl:+,.0f}\n")
 
         # Send report
-        report_text = "".join(report_lines)
-        send_telegram_notification(
-            report_text,
-            notification_type='INFO'
+        grand_today_change = _portfolio_today_change
+        net_day_pnl = grand_realized + grand_today_change
+        day_status = 'SUCCESS' if net_day_pnl >= 0 else 'WARNING'
+        notify('JOB_COMPLETED',
+            title='Daily P&L Report · Market Closed',
+            status=day_status,
+            task='generate_daily_pnl_report',
+            metrics={
+                "Net Day P&L": f"₹{net_day_pnl:+,.0f}",
+                "Today's Change": f"₹{grand_today_change:+,.0f}",
+                'Closed Trades': str(grand_closed_count),
+                'Open Positions': str(grand_open_count),
+            },
+            context=report_lines[3:],  # skip header lines already in title
         )
 
         grand_total = grand_realized + grand_unrealized
@@ -220,9 +275,11 @@ def generate_daily_pnl_report():
 
     except Exception as e:
         logger.error(f"Error generating daily P&L report: {e}", exc_info=True)
-        send_telegram_notification(
-            f"❌ ERROR: Daily P&L report generation failed\n{str(e)}",
-            notification_type='ERROR'
+        notify('TASK_ERROR',
+            title='P&L Report Failed',
+            task='generate_daily_pnl_report',
+            context=[str(e)[:200]],
+            collapsible=False,
         )
         return {'success': False, 'message': str(e)}
 

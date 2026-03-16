@@ -12,6 +12,7 @@ from django.utils import timezone
 from apps.core.utils.decorators import task_enabled_guard
 from apps.core.utils.task_logger import TaskLogger
 from apps.alerts.services.telegram_client import send_telegram_notification
+from apps.alerts.services.notification_service import notify
 
 # Minutes after first revalidation before a CRITICAL escalation alert is sent.
 # Escalation fires once per suggestion — field suggestion.escalated guards repeats.
@@ -104,14 +105,19 @@ def check_confirmation_timeouts(self):
                     )
                     instrument = getattr(suggestion, 'instrument', 'Unknown')
                     strategy = suggestion.get_strategy_display() if hasattr(suggestion, 'get_strategy_display') else suggestion.strategy
-                    send_telegram_notification(
-                        f"🚨 <b>EXIT CONFIRMATION OVERDUE</b>\n\n"
-                        f"Instrument: <b>{instrument}</b>\n"
-                        f"Strategy: {strategy}\n"
-                        f"Pending: <b>{pending_min} min</b> with no response.\n\n"
-                        f"Position remains open. "
-                        f"<b>MANUAL ACTION REQUIRED.</b>",
-                        notification_type='CRITICAL',
+                    notify('CRITICAL_ERROR',
+                        title='Exit Confirmation Overdue',
+                        instrument=str(instrument),
+                        strategy=str(strategy),
+                        task='check_confirmation_timeouts',
+                        metrics={
+                            'Pending': f"{pending_min} min",
+                        },
+                        context=[
+                            "Position remains open",
+                            "MANUAL ACTION REQUIRED",
+                        ],
+                        collapsible=False,
                     )
                     suggestion.escalated = True
                     suggestion.save(update_fields=['escalated'])

@@ -1692,6 +1692,48 @@ def get_lot_size(request):
         })
 
 
+def _resolve_lot_size(symbol: str, db_lot_size: int) -> int:
+    """Resolve lot size for a position.
+
+    Uses DB value if > 1 (Neo saves this), otherwise falls back to a
+    static map for common F&O symbols.
+    """
+    if db_lot_size and db_lot_size > 1:
+        return db_lot_size
+
+    # Static fallback for Breeze (which doesn't save lot_size)
+    _LOT_SIZES = [
+        ('MIDCPNIFTY', 50),
+        ('BANKNIFTY', 30),
+        ('FINNIFTY', 40),
+        ('NIFTY', 75),
+        ('HDFCBANK', 550),
+        ('ICICIBANK', 700),
+        ('AXISBANK', 625),
+        ('RELIANCE', 250),
+        ('TCS', 150),
+        ('INFY', 300),
+        ('SBIN', 750),
+        ('TATAMOTORS', 575),
+        ('ITC', 1600),
+        ('BAJFINANCE', 125),
+        ('LT', 150),
+        ('MARUTI', 100),
+        ('BHARTIARTL', 950),
+        ('KOTAKBANK', 400),
+        ('TATASTEEL', 1125),
+        ('HINDUNILVR', 300),
+        ('WIPRO', 1500),
+        ('ADANIENT', 500),
+        ('JIOFIN', 1500),
+    ]
+    sym = (symbol or '').upper()
+    for key, lot in _LOT_SIZES:
+        if key in sym:
+            return lot
+    return 1
+
+
 @login_required
 @require_GET
 def get_active_positions(request):
@@ -1753,14 +1795,19 @@ def get_active_positions(request):
                     investment = avg_price * abs(net_qty)
                     pnl_pct = (unrealized_pnl / investment * 100) if investment > 0 else 0
 
+                    lot_size = _resolve_lot_size(pos.symbol, pos.lot_size or 1)
+                    net_qty_lots = abs(net_qty) // lot_size if lot_size > 1 else abs(net_qty)
+
                     positions_data.append({
                         'symbol': pos.symbol,
+                        'trading_symbol': pos.trading_symbol or pos.symbol,
                         'exchange': pos.exchange_segment or 'NFO',
                         'product': pos.product or 'NRML',
                         'direction': direction,
-                        'quantity': abs(net_qty),
-                        'net_quantity': net_qty,
+                        'quantity': net_qty_lots,
+                        'net_quantity': (net_qty // lot_size) if lot_size > 1 else net_qty,
                         'net_quantity_shares': net_qty,
+                        'lot_size': lot_size,
                         'average_price': avg_price,
                         'ltp': ltp if ltp > 0 else None,
                         'unrealized_pnl': round(unrealized_pnl, 2),
@@ -1775,8 +1822,25 @@ def get_active_positions(request):
                 return handle_breeze_auth_error(request, e, is_ajax=True)
 
             except Exception as e:
-                # Use centralized handler for any session-related errors
-                return handle_breeze_auth_error(request, e, is_ajax=True)
+                # Only treat session/auth-related errors as auth failures.
+                # Network errors (connection refused, DNS, timeout) are transient
+                # and should NOT show a "Login" prompt.
+                error_str = str(e).lower()
+                is_auth_error = any(kw in error_str for kw in [
+                    'session', 'expired', 'unauthorized', 'login required',
+                    'invalid token', 'token expired',
+                ])
+                if is_auth_error:
+                    return handle_breeze_auth_error(request, e, is_ajax=True)
+
+                # Transient / network error — return as retryable
+                logger.warning(f"Breeze positions fetch error (non-auth): {e}", exc_info=True)
+                return JsonResponse({
+                    'success': False,
+                    'error': f'Failed to fetch Breeze positions: {e}',
+                    'error_type': 'connection',
+                    'is_retryable': True,
+                })
 
         elif broker == 'neo':
             from apps.brokers.integrations.kotak_neo import (

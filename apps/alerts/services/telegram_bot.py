@@ -847,6 +847,64 @@ class TelegramBotHandler(MenuMixin, DataMixin, TradeMixin):
         elif data == "refresh_all":
             await self._show_all_positions(query)
 
+        # ── Notification framework callbacks ─────────────────────────────
+        elif data.startswith("ack_alert_"):
+            await self._handle_ack_alert(query, data)
+
+        elif data.startswith("retry_task_"):
+            await self._handle_retry_task(query, data)
+
+        elif data.startswith("view_positions_"):
+            # Re-use existing positions view
+            await self._show_all_positions(query)
+
+    # =========================================================================
+    # NOTIFICATION FRAMEWORK CALLBACK HANDLERS
+    # =========================================================================
+
+    async def _handle_ack_alert(self, query, data: str):
+        """Acknowledge a notification — append timestamp to message."""
+        from django.utils import timezone
+        import pytz
+
+        ist = pytz.timezone('Asia/Kolkata')
+        now_ist = timezone.now().astimezone(ist).strftime('%-d %b %H:%M')
+
+        try:
+            original_text = query.message.text_html or query.message.text or ''
+            await query.edit_message_text(
+                original_text + f"\n\n<i>✅ Acknowledged at {now_ist}</i>",
+                parse_mode='HTML',
+            )
+        except Exception as e:
+            logger.warning(f"Failed to ack alert: {e}")
+            await query.answer("Acknowledged ✅")
+
+    async def _handle_retry_task(self, query, data: str):
+        """Retry a failed Celery task."""
+        from django.utils import timezone
+        import pytz
+
+        # Extract task name: retry_task_{task_name}
+        task_name = data.split("_", 2)[2] if data.count("_") >= 2 else ''
+
+        ist = pytz.timezone('Asia/Kolkata')
+        now_ist = timezone.now().astimezone(ist).strftime('%-d %b %H:%M')
+
+        try:
+            if task_name:
+                from celery import current_app
+                current_app.send_task(task_name)
+
+            original_text = query.message.text_html or query.message.text or ''
+            await query.edit_message_text(
+                original_text + f"\n\n<i>🔄 Retry queued at {now_ist}</i>",
+                parse_mode='HTML',
+            )
+        except Exception as e:
+            logger.warning(f"Failed to retry task {task_name}: {e}")
+            await query.answer(f"Retry queued for {task_name}")
+
     # =========================================================================
     # OTP MESSAGE HANDLER (for Breeze auto-login)
     # =========================================================================

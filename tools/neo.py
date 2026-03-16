@@ -362,8 +362,12 @@ class NeoAPI(BrokerInterface if isinstance(BrokerInterface, type) else object):
     def _send_telegram(self, message: str):
         """Send a Telegram notification (convenience wrapper)."""
         try:
-            from apps.alerts.services.telegram_client import send_telegram_notification
-            send_telegram_notification(message, notification_type='INFO')
+            from apps.alerts.services.notification_service import notify
+            notify('SYSTEM_STATUS',
+                title='Kotak Neo Login',
+                context=[message],
+                collapsible=False,
+            )
         except Exception as e:
             logger.warning(f"Failed to send Telegram notification: {e}")
 

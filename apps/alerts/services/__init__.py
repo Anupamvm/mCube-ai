@@ -17,6 +17,8 @@ from .alert_manager import (
     send_risk_alert,
 )
 
+from .notification_service import notify
+
 __all__ = [
     # Telegram
     'TelegramClient',
@@ -28,4 +30,7 @@ __all__ = [
     'get_alert_manager',
     'send_position_alert',
     'send_risk_alert',
+
+    # Unified notification API
+    'notify',
 ]

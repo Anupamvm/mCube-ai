@@ -27,6 +27,13 @@ MAX_SNAPSHOTS = 3
 # Re-send exit suggestion only after this many minutes if same reason
 EXIT_SUGGESTION_COOLDOWN_MINUTES = 5
 
+# Minimum further adverse price move (%) to re-alert after initial suggestion
+# Without this, the same SL hit re-fires every 5 min with near-identical P&L
+EXIT_RE_ALERT_PRICE_MOVE_PCT = 0.5
+
+# Minimum further adverse price move (%) to clear a user hold and re-alert
+HOLD_CLEAR_PRICE_MOVE_PCT = 0.5
+
 # Broker display names
 BROKER_DISPLAY = {'KOTAK': 'Kotak Neo', 'ICICI': 'ICICI Breeze'}
 
@@ -609,16 +616,20 @@ def should_send_exit_suggestion(
                 try:
                     current_price = float(dashboard.position.current_price or 0)
                     price_move_pct = abs(current_price - held_price) / held_price * 100
-                    if price_move_pct > 1.0:
+                    if price_move_pct > HOLD_CLEAR_PRICE_MOVE_PCT:
                         logger.info(
                             f"Clearing hold for pos #{position_id}: "
-                            f"price moved {price_move_pct:.1f}% since hold"
+                            f"price moved {price_move_pct:.1f}% since hold "
+                            f"(threshold {HOLD_CLEAR_PRICE_MOVE_PCT}%)"
                         )
                         NseFlag.set(
                             f'position_hold_{position_id}', '',
-                            'Cleared: price moved >1% since hold'
+                            f'Cleared: price moved >{HOLD_CLEAR_PRICE_MOVE_PCT}% since hold'
                         )
                         # Fall through to normal logic — will re-alert
+                    else:
+                        # Price hasn't moved enough — keep respecting hold
+                        return False
                 except (ValueError, TypeError):
                     pass
 
@@ -638,11 +649,39 @@ def should_send_exit_suggestion(
         return True
     if dashboard.last_exit_reason != reason:
         return True
+
+    # Same reason as last alert — only re-send if BOTH:
+    #   (a) time cooldown elapsed, AND
+    #   (b) price has moved further against position by EXIT_RE_ALERT_PRICE_MOVE_PCT
+    # This prevents the same SL hit from re-firing every 5 min with 0.1% P&L diff.
     from datetime import timedelta
     elapsed = timezone.now() - dashboard.last_exit_sent_at
-    if elapsed.total_seconds() >= cooldown_minutes * 60:
-        return True
-    return False
+    if elapsed.total_seconds() < cooldown_minutes * 60:
+        return False  # Too soon
+
+    # Time cooldown passed — now check price movement
+    if position_id and dashboard.position:
+        try:
+            from django.core.cache import cache
+            price_key = f'tg_exit_price_{position_id}'
+            last_alert_price = cache.get(price_key)
+            current_price = float(dashboard.position.current_price or 0)
+
+            if last_alert_price is not None and current_price > 0:
+                move_pct = abs(current_price - float(last_alert_price)) / float(last_alert_price) * 100
+                if move_pct < EXIT_RE_ALERT_PRICE_MOVE_PCT:
+                    logger.debug(
+                        f"Exit re-alert suppressed for pos #{position_id}: "
+                        f"price moved only {move_pct:.2f}% (need {EXIT_RE_ALERT_PRICE_MOVE_PCT}%)"
+                    )
+                    return False
+
+            # Record current price for next comparison
+            cache.set(price_key, str(current_price), timeout=3600)
+        except Exception:
+            pass  # Fail-open: if cache fails, allow re-alert
+
+    return True
 
 
 def _parse_hold_data(raw: str) -> dict:
@@ -665,3 +704,15 @@ def record_exit_suggestion(dashboard, reason: str, message_id: Optional[int] = N
     if message_id is not None:
         dashboard.last_exit_msg_id = message_id
     dashboard.save(update_fields=['last_exit_reason', 'last_exit_sent_at', 'last_exit_msg_id'])
+
+    # Record the price at alert time for re-alert price-change gating
+    position_id = dashboard.position_id
+    if position_id and dashboard.position:
+        try:
+            from django.core.cache import cache
+            price_key = f'tg_exit_price_{position_id}'
+            current_price = float(dashboard.position.current_price or 0)
+            if current_price > 0:
+                cache.set(price_key, str(current_price), timeout=3600)
+        except Exception:
+            pass

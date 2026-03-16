@@ -26,6 +26,7 @@ from django.db import transaction
 
 from apps.positions.models import Position
 from apps.alerts.services.telegram_client import send_telegram_notification
+from apps.alerts.services.notification_service import notify
 
 logger = logging.getLogger(__name__)
 
@@ -288,9 +289,22 @@ def execute_averaging(position: Position, current_price: Decimal) -> Tuple[bool,
                 f"Averaging Count: {position.averaging_count}/3"
             )
 
-            send_telegram_notification(
-                message=alert_message,
-                notification_type='WARNING'
+            notify('SYSTEM_STATUS',
+                title='Position Averaged',
+                instrument=position.label,
+                task='execute_averaging',
+                metrics={
+                    'Direction': position.direction,
+                    'Prev Lots': str(original_quantity // (position.lot_size or 1)),
+                    'Added Lots': str(additional_quantity // (position.lot_size or 1)),
+                    'New Lots': str(new_total_quantity // (position.lot_size or 1)),
+                    'Prev Entry': f"₹{original_entry_price:,.2f}",
+                    'Avg Price': f"₹{current_price:,.2f}",
+                    'New Avg Entry': f"₹{new_average_price:,.2f}",
+                    'New SL': f"₹{new_stop_loss:,.2f} (0.5% from avg)",
+                },
+                context=[f"Averaging Count: {position.averaging_count}/3"],
+                collapsible=False,
             )
 
             logger.info("✅ Alert sent")

@@ -307,38 +307,57 @@ def activate_circuit_breaker(
     circuit_breaker.save()
 
     # Notify — message reflects actual action taken
-    from apps.alerts.services.telegram_client import send_telegram_notification
+    from apps.alerts.services.notification_service import notify
     if is_manual_mode:
         if positions_pending > 0:
-            send_telegram_notification(
-                f"🚨 CIRCUIT BREAKER — MANUAL MODE\n\n"
-                f"Account: {account.account_name}\n"
-                f"Trigger: {trigger_type} | ₹{trigger_value:,.0f} > ₹{threshold_value:,.0f}\n\n"
-                f"⚠️ {positions_pending} exit suggestion(s) sent to Telegram.\n"
-                f"Positions will NOT close until you confirm.\n\n"
-                f"ACT NOW — confirm all exit suggestions immediately.",
-                notification_type='ERROR'
+            notify('CIRCUIT_BREAKER',
+                title='Circuit Breaker — Manual Mode',
+                instrument=account.account_name,
+                task='activate_circuit_breaker',
+                metrics={
+                    'Trigger': f"{trigger_type}",
+                    'Value': f"₹{trigger_value:,.0f} > ₹{threshold_value:,.0f}",
+                    'Pending Exits': str(positions_pending),
+                },
+                context=[
+                    f"{positions_pending} exit suggestion(s) sent to Telegram",
+                    "Positions will NOT close until you confirm",
+                    "ACT NOW — confirm all exit suggestions immediately",
+                ],
+                collapsible=False,
             )
         else:
-            send_telegram_notification(
-                f"🚨 CIRCUIT BREAKER ACTIVATED — MANUAL MODE\n\n"
-                f"Account: {account.account_name}\n"
-                f"Trigger: {trigger_type} | ₹{trigger_value:,.0f} > ₹{threshold_value:,.0f}\n\n"
-                f"No open positions found. Account has been deactivated.\n"
-                f"No new trades will be placed.",
-                notification_type='ERROR'
+            notify('CIRCUIT_BREAKER',
+                title='Circuit Breaker Activated — Manual Mode',
+                instrument=account.account_name,
+                task='activate_circuit_breaker',
+                metrics={
+                    'Trigger': f"{trigger_type}",
+                    'Value': f"₹{trigger_value:,.0f} > ₹{threshold_value:,.0f}",
+                },
+                context=[
+                    "No open positions found",
+                    "Account has been deactivated",
+                    "No new trades will be placed",
+                ],
+                collapsible=False,
             )
     else:
-        send_telegram_notification(
-            f"🚨🚨 CIRCUIT BREAKER ACTIVATED 🚨🚨\n\n"
-            f"Account: {account.account_name}\n"
-            f"Trigger: {trigger_type} | ₹{trigger_value:,.0f} > ₹{threshold_value:,.0f}\n\n"
-            f"ACTIONS TAKEN:\n"
-            f"✅ {positions_closed} position(s) closed\n"
-            f"✅ Account deactivated\n"
-            f"✅ 24-hour cooldown activated\n\n"
-            f"⚠️ IMMEDIATE ATTENTION REQUIRED",
-            notification_type='ERROR'
+        notify('CIRCUIT_BREAKER',
+            title='Circuit Breaker Activated',
+            instrument=account.account_name,
+            task='activate_circuit_breaker',
+            metrics={
+                'Trigger': f"{trigger_type}",
+                'Value': f"₹{trigger_value:,.0f} > ₹{threshold_value:,.0f}",
+                'Positions Closed': str(positions_closed),
+            },
+            context=[
+                "Account deactivated",
+                "24-hour cooldown activated",
+                "IMMEDIATE ATTENTION REQUIRED",
+            ],
+            collapsible=False,
         )
 
     # Step 2: Deactivate account
