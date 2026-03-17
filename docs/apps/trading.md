@@ -13,6 +13,7 @@ The trading app provides the user interface and workflow for trade suggestions, 
 3. **Execution Control** - Manages order placement with progress tracking
 4. **Position Sizing** - Calculates optimal position sizes
 5. **Trading UI** - Web interface for manual trading
+6. **Trade Confirmation Service** - Telegram confirmation flow for futures, options, and exit actions
 
 ---
 
@@ -27,6 +28,7 @@ The trading app provides the user interface and workflow for trade suggestions, 
 | `api/` | Refactored API modules |
 | `services/` | Business logic |
 | `futures_analyzer.py` | 9-step futures analysis (126KB) |
+| `services/trade_confirmation.py` | Telegram confirmation flow (futures selection, options, exit) |
 | `urls.py` | URL routing |
 
 ---
@@ -76,6 +78,14 @@ position_details = JSONField()      # Recommended parameters
 # Tracking
 is_auto_trade = BooleanField()      # Auto-approved?
 executed_position = OneToOneField(Position)  # Linked position
+
+# Enhanced Fields (March 2026)
+composite_score = IntegerField()    # 0-100 composite score
+regime = CharField()                # Market regime at time of suggestion
+confirmation_requested_at = DateTimeField()  # When confirmation was sent
+confirmation_timeout_minutes = IntegerField()  # Timeout period
+revalidation_sent = BooleanField()  # One revalidation per suggestion
+escalated = BooleanField()          # Escalation alert sent
 ```
 
 ### Status Flow
@@ -382,6 +392,34 @@ while batch_num <= control.total_batches:
 # Mark complete
 control.mark_complete()
 ```
+
+### Trade Confirmation Service (`services/trade_confirmation.py`)
+
+Telegram-based confirmation for all trade actions.
+
+```python
+from apps.trading.services.trade_confirmation import TradeConfirmationService
+
+service = TradeConfirmationService()
+
+# Exit confirmation (manual mode)
+service.request_exit_confirmation(position, reason, current_pnl)
+# Sends rich message with P&L %, price context, [✅ Close Now] [⏸️ Hold] buttons
+
+# Options confirmation
+service.request_options_confirmation(suggestion, config)
+
+# Futures confirmation (two-step)
+service.request_futures_confirmation(suggestions, breeze)
+# Step 1: Selection screen with top 3 candidates
+# Step 2: Detail view with full analysis
+```
+
+**Confirmation Timeout Flow** (via `check_confirmation_timeouts` task):
+1. Find pending suggestions past timeout
+2. Call `revalidate_after_timeout()` — market may have changed
+3. Set `revalidation_sent=True` (once per suggestion)
+4. After 15 min escalation: send CRITICAL alert, set `escalated=True`
 
 ---
 

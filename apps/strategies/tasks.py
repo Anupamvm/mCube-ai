@@ -717,8 +717,10 @@ def evaluate_options_strategy(self):
 
     try:
         from apps.strategies.models import TradingDaySetup
+        from apps.core.models import TradingCoreConfig
 
         today = date.today()
+        config = TradingCoreConfig.get_instance()
 
         try:
             setup = TradingDaySetup.objects.get(trading_date=today)
@@ -809,13 +811,19 @@ def evaluate_options_strategy(self):
                 collapsible=False,
             )
         else:
+            if config.requires_confirmation('ENTRY'):
+                next_step = 'Position will be presented for your verification at 9:40 AM.'
+            else:
+                next_step = 'Trade will execute automatically at 9:40 AM.'
+
             notify('SYSTEM_STATUS',
                 title='Options Strategy Selected',
                 metrics={
                     'Strategy': selected_strategy,
                     'VIX': f"{setup.vix_open} ({setup.vix_level})",
+                    'Mode': config.get_notification_level_display_short(),
                 },
-                context=['Trade will start at 9:40 AM.'],
+                context=[next_step],
                 collapsible=False,
             )
 

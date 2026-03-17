@@ -2,8 +2,8 @@
 
 **Complete Module-by-Module Documentation for Understanding and Modifying the Codebase**
 
-**Version:** 3.0
-**Last Updated:** February 2026
+**Version:** 4.0
+**Last Updated:** March 2026
 **Document Type:** Developer Reference Manual
 
 ---
@@ -773,6 +773,50 @@ def sync_positions_from_broker(account: BrokerAccount):
 
 ---
 
+#### `sr_exit_engine.py` *(March 2026)*
+**Location:** `apps/positions/services/sr_exit_engine.py`
+**Purpose:** Support/Resistance-based exit engine with adaptive SL and structural pressure detection
+
+**Public API:**
+```python
+def apply_sl_and_target(position, dashboard, now) -> dict:
+    """
+    Returns:
+        {
+            'sl_triggered': bool,
+            'sl_reason': str,
+            'structural_pressure': dict  # Stage 2 warning (Cond A met, Cond B pending)
+        }
+    Called BEFORE should_exit_position() in monitor task.
+    """
+```
+
+**SR Enhancement Files (all additive):**
+| File | Purpose |
+|------|---------|
+| `sr_mtf_enricher.py` | MTFSREnricher — 4-timeframe swing HL stacking |
+| `sr_level_strength.py` | LevelStrengthAnnotator + LevelConfidenceScorer (0-100) |
+| `order_block_detector.py` | OrderBlockDetector — base candle zones |
+| `oi_wall_enricher.py` | OIWallEnricher — gamma walls, OI delta, strike pinning |
+| `sr_strategy_adapter.py` | FuturesStrategyAdapter, StrangleRangeGuard, BrokenIronCondorGuard |
+| `sr_risk_interface.py` | AdaptiveSLPlacer, StructuralPressureMonitor, PartialCloseAdvisor |
+
+**Score-gated trigger rules (LevelConfidenceScorer 0-100):**
+- >= 76 (institutional): Condition A alone triggers
+- 56-75 (strong): A or B + 15-min confirmation
+- < 56: both A+B required
+- Strict mode (expiry day before 14:00 / low-liquidity): always requires both A+B
+
+---
+
+#### `monitor_dashboard.py` *(March 2026)*
+**Location:** `apps/positions/services/monitor_dashboard.py`
+**Purpose:** Anti-spam position monitoring dashboard
+
+**Model:** `PositionMonitorDashboard` (one per trading day) — edits a single Telegram message instead of sending new ones. Shows day-start snapshot + last 3 position snapshots with IST timestamps.
+
+---
+
 ## 7. Strategies App (`apps/strategies`)
 
 ### 7.1 Purpose
@@ -808,7 +852,12 @@ apps/strategies/
 │   ├── entry_point_detector.py
 │   ├── greeks_calculator.py
 │   ├── historical_analysis.py
-│   └── psychological_levels.py
+│   ├── psychological_levels.py
+│   ├── adaptive_sl_target.py     # Adaptive SL/Target (March 2026)
+│   ├── market_regime.py          # Market regime detection (March 2026)
+│   ├── contract_prefilter.py     # Contract prefilter (March 2026)
+│   ├── trade_validation.py       # Trade validation layer (March 2026)
+│   └── llm_context_builder.py    # LLM context builder (March 2026)
 └── shared/
     ├── strike_calculator.py   # Strike calculation utilities
     └── market_data.py         # Market data fetching utilities
@@ -986,6 +1035,20 @@ def calculate_bollinger_bands(prices, period=20, std_dev=2) -> Dict:
 def calculate_support_resistance(price, historical_data) -> Dict:
     """Calculate support and resistance levels."""
 ```
+
+#### Futures Algorithm — Enhanced (March 2026)
+
+**13-component scoring system** (315pts raw -> normalized to 100 scale). The 13th component is **MTF Confluence** (multi-timeframe trend alignment), added in March 2026.
+
+**New Services:**
+
+| File | Purpose |
+|------|---------|
+| `adaptive_sl_target.py` | `compute_adaptive_sl_target()` — 3-tier: SR-based -> ATR-adaptive by regime -> Volatility-scaled % |
+| `market_regime.py` | `MarketRegimeDetector.classify()` — TRENDING/RANGING/VOLATILE/BREAKOUT/NORMAL |
+| `contract_prefilter.py` | `prefilter_contracts()` — ADX > 15, Volume > 20d avg, RSI not dead zone (~50 -> ~30-35 contracts) |
+| `trade_validation.py` | `TradeValidationLayer.validate()` — R:R gate (reject < 1.0), regime-appropriate direction, SL distance 0.5%-5% |
+| `llm_context_builder.py` | `build_trade_context()` — Enriched context: regime, score summary, risk profile, signals, warnings |
 
 ---
 
@@ -1548,7 +1611,28 @@ Full interactive trading control via Telegram bot + alert notifications.
 
 **Key Design:** `button_callback()` calls `query.answer()` once at top; handlers only use `edit_message_text`.
 
-### 14.3 Alert Manager
+### 14.3 Unified Notification Framework *(March 2026)*
+
+All notifications now flow through a single `notify()` API, replacing 89+ raw `send_telegram_notification()` calls.
+
+| File | Purpose |
+|------|---------|
+| `notification_service.py` | Unified `notify(event_type, **kwargs)` API — single entry point for all notifications |
+| `notification_templates.py` | 12 event type templates with auto-defaults (status, priority, buttons, dedup_key) |
+| `notification_payload.py` | `NotificationPayload` dataclass with `collapsible: bool = True` field |
+| `notification_formatter.py` | `TelegramMessageFormatter` — HTML formatting with `<blockquote expandable>` (Telegram Bot API 7.0+) |
+| `button_registry.py` | 6 button sets for inline keyboards (exit confirm, options confirm, futures confirm, ack, retry, view) |
+| `aggregation_buffer.py` | Redis-backed alert grouping — groups similar alerts within 30-60s window |
+| `escalation_tracker.py` | Priority auto-upgrade after 3/5/10 repeated occurrences |
+
+**Message Format:** Always-visible header (emoji + title + instrument + time + metrics) with collapsible `<blockquote expandable>` detail sections. Footer shows mode and sizing. Short messages use `collapsible=False` with flat separator.
+
+**Anti-spam features:**
+- P&L change gate: won't re-alert unless P&L moves 2%+ (SL) or 1%+ (exit suggestion)
+- Exit suggestion dedup: same reason within 5-min cooldown is skipped
+- Aggregation buffer flushes via `flush_notification_buffer` Celery task
+
+### 14.4 Alert Manager (Legacy)
 
 #### `alert_manager.py`
 **Purpose:** Route alerts to appropriate channels
@@ -1573,7 +1657,7 @@ def send_alert(message, priority='INFO'):
 **Location:** `mcube_ai/celery.py`
 
 **Key Components:**
-- `get_static_schedule()` — Defines ~20 static tasks
+- `get_static_schedule()` — Defines ~27 static tasks
 - `load_beat_schedule()` — Reads DB, filters disabled tasks, applies custom schedules
 - `_build_custom_schedule()` — Builds per-hour crontabs from `CeleryTaskState`
 - `DBReloadScheduler` — Custom `PersistentScheduler` subclass that reloads from DB
@@ -1591,19 +1675,26 @@ def send_alert(message, priority='INFO'):
 
 | Time | Task | Purpose |
 |------|------|---------|
+| 06:45 | `health_check_brokers` | Broker connectivity health check |
 | 07:00 | `morning_data_sync` | Full market data update |
 | 08:30 | `fetch_trendlyne_data` | Trendlyne data fetch |
 | 08:50 | `update_pre_market_data` | Pre-market update |
 | 08:55 | `setup_trading_day` | Trading day setup |
+| 08:55 | `review_overnight_positions` | Review overnight position status |
+| 09:00 | `send_morning_briefing` | Morning market briefing via Telegram |
+| 09:00-09:20 | `monitor_opening_volatility` | Opening volatility monitor (every 5 min) |
 | 09:15 | `start_trading_day` | Market open validation |
 | 09:30 | `evaluate_options_strategy` | Check strangle entry |
 | 09:40 | `start_options_trade` | Execute options trade |
 | 09:40-10:15 | `batch_options_averaging` | Averaging checks (every 5 min) |
 | 09:45 | `screen_futures_opportunities` | Futures screening |
 | Every 10 min | `check_futures_averaging` | Futures averaging |
+| Every 15 min | `monitor_all_strangle_deltas` | Strangle delta monitoring |
 | Every 10 sec | `monitor_all_positions` | Position monitoring |
+| 15:15 | `alert_open_positions_pre_close` | Pre-close open position alert |
 | 15:25 | `close_trading_day` | Market close routine |
 | 15:35 | `update_post_market_data` | After-hours data |
+| 15:45 | `reconcile_positions_eod` | End-of-day position reconciliation |
 | 16:00 | `calculate_daily_pnl` | Daily P&L |
 | Every hour | `check_daily_loss` | Risk monitoring |
 

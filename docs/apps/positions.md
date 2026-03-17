@@ -13,6 +13,9 @@ The positions app manages the complete lifecycle of trading positions - from ent
 3. **Exit Management** - Handles stop-loss, target, and EOD exits
 4. **Averaging** - Manages position averaging (adding to losing positions)
 5. **Delta Monitoring** - Tracks option Greeks for strangle positions
+6. **S/R Exit Engine** - Structural stop-loss and target management with multi-timeframe analysis
+7. **Position Monitor Dashboard** - Anti-spam single-message Telegram dashboard per trading day
+8. **Hold Flag Management** - Smart re-alert logic when user holds an exit suggestion
 
 ---
 
@@ -29,6 +32,15 @@ The positions app manages the complete lifecycle of trading positions - from ent
 | `services/delta_monitor.py` | Option delta monitoring |
 | `services/pnl_updater.py` | P&L calculations |
 | `services/position_sync.py` | Sync with broker data |
+| `services/monitor_dashboard.py` | Anti-spam dashboard (one Telegram message per day, edited) |
+| `services/sr_exit_engine.py` | S/R exit engine — `apply_sl_and_target()` public API |
+| `services/sr_exit_engine_utils.py` | Pure Python utilities for SR calculations |
+| `services/sr_mtf_enricher.py` | Multi-timeframe S/R enrichment (4 timeframes) |
+| `services/sr_level_strength.py` | Level strength annotator + confidence scorer (0-100) |
+| `services/order_block_detector.py` | Order block (base candle zone) detection |
+| `services/oi_wall_enricher.py` | OI wall enrichment (gamma walls, OI delta, strike pinning) |
+| `services/sr_strategy_adapter.py` | Strategy-specific S/R adapters (Futures, Strangle, BIC) |
+| `services/sr_risk_interface.py` | Adaptive SL placer, structural pressure monitor, partial close advisor |
 
 ---
 
@@ -71,6 +83,9 @@ margin_used = DecimalField()             # Margin deployed
 # Averaging
 averaging_count = IntegerField()         # How many times averaged
 original_entry_price = DecimalField()    # Price before any averaging
+
+# S/R Tracking (March 2026)
+sr_tracking = JSONField()           # SR cache, MTF cache, OB cache, OI wall cache, volatility event flag
 ```
 
 ### Key Methods
@@ -240,6 +255,40 @@ result = check_exit_conditions(position)
 3. EOD Exit (3:15 PM) → Only if profit >= 50%
 4. Expiry Day → MANDATORY EXIT by 3:20 PM
 
+### S/R Exit Engine (`services/sr_exit_engine.py`)
+
+Structural stop-loss and target management.
+
+```python
+from apps.positions.services.sr_exit_engine import apply_sl_and_target
+
+result = apply_sl_and_target(position, dashboard, now=None)
+# Returns:
+# {
+#     'sl_triggered': bool,
+#     'sl_reason': 'STRUCTURAL_SL' or similar,
+#     'structural_pressure': {
+#         'should_warn': bool,
+#         'reason': str,
+#         'level': float,
+#         'score': int (0-100),
+#     } or None,
+#     'updated_sl': price,
+#     'updated_target': price,
+# }
+```
+
+**3-Stage Warning System**:
+1. **NEAR_SL** — Within 1% of stop-loss (once per day per position)
+2. **STRUCTURAL_PRESSURE** — Condition A met, Condition B pending (5 min lead time)
+3. **TRIGGER** — Both conditions met → exit fired
+
+**Score-Gated Trigger Rules** (LevelConfidenceScorer 0-100):
+- ≥76 (institutional): Condition A alone triggers
+- 56-75 (strong): A or B + 15-min confirmation
+- <56 (moderate): Both A+B required
+- Strict mode (expiry day before 14:00 IST): Always requires both A+B
+
 ### Averaging Manager (`services/averaging_manager.py`)
 
 Handles position averaging (futures only).
@@ -337,9 +386,7 @@ P&L = premium_collected - current_exit_cost
 
 | Task | Frequency | Purpose |
 |------|-----------|---------|
-| `monitor_all_positions` | Every 10 sec | Update prices |
-| `update_position_pnl` | Every 15 sec | Recalculate P&L |
-| `check_exit_conditions` | Every 30 sec | Check exits |
+| `monitor_and_manage_positions` | Every 1 min (9 AM-3:59 PM) | Full monitoring cycle: P&L, SR engine, dashboard, exit checks |
 
 ---
 
@@ -350,11 +397,27 @@ Audit trail for all monitoring events.
 ```python
 # Fields
 position = ForeignKey(Position)
-check_type = CharField()         # PRICE_UPDATE, SL_CHECK, DELTA_CHECK
-result = CharField()             # OK, WARNING, ALERT
-message = TextField()            # Description
+check_type = CharField()         # PNL_UPDATE, EXIT_SUGGESTION, STRUCTURAL_PRESSURE, AUTO_EXIT, NEAR_SL
+result = CharField()             # OK, SUGGESTION_SENT, HELD_BY_USER, DUPLICATE_SKIPPED, EXECUTING
+message = TextField()            # Description with IST timestamp
 price_at_check = DecimalField()  # Price at time of check
 pnl_at_check = DecimalField()    # P&L at time of check
+action_taken = CharField()       # SUGGESTION_SENT, HELD_BY_USER, DUPLICATE_SKIPPED, AUTO_EXIT
+```
+
+---
+
+## PositionMonitorDashboard
+
+Anti-spam dashboard — one Telegram message per trading day, edited in place.
+
+```python
+# Fields
+trading_date = DateField()          # One per trading day
+message_id = IntegerField()         # Telegram message ID (for editing)
+snapshots = JSONField()             # Last 3 snapshots [{price, pnl, pnl_pct, time}]
+sr_tracking = JSONField()           # SR cache, gap flag, near_sl_warned, volatility_event_flag
+last_snapshot = DateTimeField()     # Last update timestamp
 ```
 
 ---
@@ -395,9 +458,11 @@ pnl_at_check = DecimalField()    # P&L at time of check
 
 1. **ONE POSITION PER ACCOUNT** - Checked before any entry
 2. **Exit Priority** - SL > Target > EOD > Expiry
-3. **Averaging Limit** - Maximum 3 averaging attempts
+3. **Averaging Limit** - Maximum 2 averaging attempts
 4. **Delta Threshold** - Alert at |delta| > 300
 5. **50% Profit Rule** - EOD exit only if profit >= 50%
+6. **Hold Flag** - User can hold exit suggestion; re-alert only on reason change, >1% price move, or market close
+7. **Dashboard Anti-Spam** - One Telegram message per day, edited in place with last 3 snapshots
 
 ---
 

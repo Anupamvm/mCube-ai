@@ -92,10 +92,9 @@ EOD (3:15 PM)  → Exit ONLY if >= 50% of target achieved
 ### Rule 5: FUTURES AVERAGING PROTOCOL
 
 ```
-Maximum 3 averaging attempts per position
+Maximum 2 averaging attempts per position (3 entries total)
 Average 1st: 20% of current balance
 Average 2nd: 50% of current balance
-Average 3rd: 50% of current balance
 
 Trigger: Position down by 1% from entry
 Action: Add equal quantity at current price
@@ -163,33 +162,55 @@ User executes adjustments (NOT automated)
 ```python
 def calculate_strikes(spot_price, days_to_expiry, vix):
     """
-    Formula:
-        strike_distance = spot × (adjusted_delta / 100) × days_to_expiry
+    Multi-factor strike distance calculation via StrangleDeltaAlgorithm.
 
-    Base delta: 0.5%
-    VIX Adjustments:
-        Normal (< 15):    0.5% base
-        Elevated (15-18): 0.5% × 1.10 = 0.55%
-        High (> 18):      0.5% × 1.20 = 0.60%
+    Formula:
+        strike_distance = spot × (base_delta% / 100) × days_to_expiry × vix_mult × trend × vol × oi × pcr
+
+    Base delta:
+        ≤ 2 days to expiry: 0.75%
+        > 2 days to expiry: 0.50%
+
+    VIX Multiplier (primary adjustment):
+        VIX < 10:      0.9× (tighter — higher premium density)
+        VIX 10-12.5:   1.0× (standard)
+        VIX 12.5-14:   1.5× (wider — safety +50%)
+        VIX 14-18:     1.8× (much wider — +80%)
+        VIX > 18:      2.0× (extreme volatility)
+
+    Additional adjustment factors:
+        Trend:      1.1-1.3× (asymmetric — widen one side based on direction)
+        Volatility: Scaled by 5-day historical vol
+        OI:         Open Interest buildup patterns
+        PCR:        Put-Call Ratio analysis
+        News:       Asymmetric call/put skew from news sentiment
 
     Example:
         Nifty = 24,000
         Days = 4
-        VIX = 14 (normal)
+        VIX = 12 (standard, multiplier = 1.0)
 
-        strike_distance = 24,000 × 0.005 × 4 = 480 points
+        strike_distance = 24,000 × 0.005 × 4 × 1.0 = 480 points
         Call Strike = 24,500 (rounded)
         Put Strike = 23,500 (rounded)
     """
 
-    base_delta = 0.5
+    base_delta = 0.75 if days_to_expiry <= 2 else 0.50
 
+    # VIX multiplier
     if vix > 18:
-        adjusted_delta = base_delta * 1.20
-    elif vix > 15:
-        adjusted_delta = base_delta * 1.10
+        vix_mult = 2.0
+    elif vix > 14:
+        vix_mult = 1.8
+    elif vix > 12.5:
+        vix_mult = 1.5
+    elif vix >= 10:
+        vix_mult = 1.0
     else:
-        adjusted_delta = base_delta
+        vix_mult = 0.9
+
+    adjusted_delta = base_delta * vix_mult
+    # Further adjustments for trend, vol, OI, PCR, news applied here
 
     strike_distance = spot_price * (adjusted_delta / 100) * days_to_expiry
 
@@ -431,7 +452,7 @@ def calculate_futures_position_size(account, symbol, direction):
 | Target hit (adaptive, dual targets) | Exit immediately (T1 conservative, T2 stretch) |
 | R:R < 1.0 at entry | Reject trade (validation gate) |
 | EOD | Exit only if >= 50% target |
-| Averaging trigger (1% loss) | Consider adding (max 3x) |
+| Averaging trigger (1% loss) | Consider adding (max 2 additional) |
 | User holds exit suggestion | Respect hold; re-alert only on reason change, >1% move, or market close |
 
 ---

@@ -48,10 +48,10 @@ For any new position, use only 50% of available margin. The remaining 50% is res
     │  │    Frontend (Templates + Bootstrap 5 + HTMX)    │    │
     │  └─────────────────────────────────────────────────┘    │
     │  ┌─────────────────────────────────────────────────┐    │
-    │  │           Django Backend (11 Apps)               │    │
+    │  │           Django Backend (13 Apps)               │    │
     │  │    core | accounts | positions | strategies |    │    │
     │  │    risk | data | llm | analytics | alerts |      │    │
-    │  │    brokers | trading                             │    │
+    │  │    brokers | trading | algo_test                 │    │
     │  └─────────────────────────────────────────────────┘    │
     │  ┌─────────────────────────────────────────────────┐    │
     │  │    Celery Workers + Django Background Tasks      │    │
@@ -92,7 +92,7 @@ mCube-ai/
 │   ├── urls.py
 │   └── celery.py
 │
-├── apps/               # Django applications (11 apps)
+├── apps/               # Django applications (13 apps)
 │   ├── core/          # Shared utilities, credentials, scheduling
 │   ├── accounts/      # Broker accounts, margin management
 │   ├── positions/     # Position tracking, P&L, exit logic
@@ -103,7 +103,8 @@ mCube-ai/
 │   ├── analytics/     # P&L tracking, learning patterns
 │   ├── alerts/        # Telegram bot
 │   ├── brokers/       # Broker API integrations, orders
-│   └── trading/       # Trading workflows, UI
+│   ├── trading/       # Trading workflows, UI
+│   └── algo_test/     # Algorithm testing
 │
 ├── tools/             # Standalone broker utilities
 │   └── neo.py        # Kotak Neo API wrapper
@@ -116,7 +117,7 @@ mCube-ai/
 
 ---
 
-## The 11 Django Apps
+## The 13 Django Apps
 
 | App | Purpose | Key Responsibilities |
 |-----|---------|---------------------|
@@ -128,9 +129,10 @@ mCube-ai/
 | **data** | Market Data | Trendlyne, analyzers, validators, signals |
 | **llm** | AI Integration | Trade validation, news processing, RAG |
 | **analytics** | Performance | P&L reports, pattern discovery, learning |
-| **alerts** | Notifications | Telegram bot with 14 commands |
+| **alerts** | Notifications | Unified notification framework + Telegram bot with 9 commands |
 | **brokers** | Broker APIs | Kotak Neo, ICICI Breeze integrations |
 | **trading** | Trading UI | Suggestions, approval, execution |
+| **algo_test** | Algorithm Testing | Strategy backtesting and validation |
 
 For detailed documentation of each app, see the [apps/](apps/) directory.
 
@@ -159,9 +161,9 @@ For detailed documentation of each app, see the [apps/](apps/) directory.
 
 **Concept**: Directional futures trading with AI validation.
 
-- **Screening**: 9-factor composite scoring (OI, sector, technical)
+- **Screening**: 13-factor composite scoring (315pts → 100 scale)
 - **Validation**: LLM with 70% minimum confidence
-- **Averaging**: Up to 3 averaging attempts if position goes against
+- **Averaging**: Up to 2 averaging attempts if position goes against
 
 See [03-TRADING-STRATEGIES.md](03-TRADING-STRATEGIES.md) for full algorithm details.
 
@@ -206,19 +208,14 @@ tail -f logs/mcube_ai.log
 | Command | Description |
 |---------|-------------|
 | `/start` | Welcome message |
-| `/help` | List all commands |
-| `/status` | System overview |
+| `/test` | System health check |
 | `/positions` | All active positions |
-| `/position <id>` | Specific position details |
-| `/accounts` | Account balances |
-| `/risk` | Risk limits status |
+| `/core` | Core trading config |
+| `/trade` | Trading interface |
+| `/orders` | Recent orders |
+| `/margin` | Account margins |
 | `/pnl` | Today's P&L |
-| `/pnl_week` | This week's P&L |
-| `/close <id>` | Close specific position |
-| `/closeall` | Emergency close all |
-| `/pause` | Pause trading |
-| `/resume` | Resume trading |
-| `/logs` | Recent system events |
+| `/analytics` | Analytics dashboard |
 
 ---
 
@@ -323,4 +320,4 @@ For complete system design with all formulas and implementation details:
 
 ---
 
-*Last Updated: February 2026*
+*Last Updated: March 2026*

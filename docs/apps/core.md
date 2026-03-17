@@ -320,22 +320,56 @@ is_paper = config.is_simulated()
 kotak_account = ctx.get_kotak_account()
 ```
 
-### TradingCoreConfig (in `models.py`) — NEW (Feb 2026)
+### TradingCoreConfig (in `models.py`) — Singleton
 
-Singleton model for centralized trading control.
+Centralized trading control. Access: `TradingCoreConfig.get_instance()`
 
 ```python
+# Trading Enable/Disable
+enable_futures_trading = BooleanField()
+
+# Strategy Selection
+options_strategy = CharField()       # STRANGLE | BROKEN_IRON_CONDOR | AUTO | NONE
+vix_high_threshold = DecimalField()  # Default 18.0
+vix_low_threshold = DecimalField()   # Default 14.0
+
 # Position Sizing Modes
-# TEST (1 Lot Each) | MANUAL (Fixed Lots) | AUTO (Margin-Based) | SIMULATED (Paper Trade)
+position_sizing_mode = CharField()   # TEST | MANUAL | AUTO | SIMULATED
+manual_options_lots = IntegerField() # 1-50, default 1
+manual_futures_lots = IntegerField() # 1-20, default 1
+margin_utilization_pct = DecimalField()  # 10-90%, default 50%
+simulated_options_lots = IntegerField()  # 1-500, default 100
+simulated_futures_lots = IntegerField()  # 1-100, default 30
 
 # Notification Levels
-# FULL_CONTROL (Confirm Everything) | SUPERVISED (Confirm Major) | AUTONOMOUS (Notifications Only)
+notification_level = CharField()     # FULL_CONTROL | SUPERVISED | AUTONOMOUS
+confirmation_timeout_minutes = IntegerField()  # 1-30, default 5
+
+# Risk Parameters
+max_loss_per_trade = DecimalField()
+options_profit_target = DecimalField()
+movement_threshold = DecimalField()  # 0.1-3.0%, default 0.5%
 
 # Helper Methods
-config = TradingCoreConfig.get_instance()
-config.get_lots_for_trade(margin_per_lot)  # Calculate lots based on mode
-config.requires_confirmation(action_type)  # Check if action needs approval
-config.is_simulated()                       # Check if paper trading
+config.is_autonomous()               # True only for AUTONOMOUS
+config.is_simulated()                # True for SIMULATED mode
+config.is_manual_mode()              # True for FULL_CONTROL or SUPERVISED
+config.requires_confirmation('EXIT') # True for FULL_CONTROL & SUPERVISED
+config.get_auto_strategy(current_vix) # Returns strategy based on VIX
+config.get_notification_level_display_short()  # 'FC' | 'SV' | 'AU'
+config.get_position_sizing_display_short()     # 'TEST' | 'MAN' | 'AUTO' | 'SIM'
+```
+
+### CeleryTaskState (in `models.py`)
+
+Enable/disable + custom schedule per Celery task.
+
+```python
+task_key = CharField()           # Unique task identifier
+display_name = CharField()       # Human-readable name
+category = CharField()           # data, strategies, transactions, monitoring, risk, reports
+is_enabled = BooleanField()      # Toggle task on/off
+custom_schedule = JSONField()    # Custom crontab/interval override
 ```
 
 ### Expiry Selector (`services/expiry_selector.py`)

@@ -69,34 +69,21 @@ pkill -f run_telegram_bot
 
 ## Telegram Bot Commands
 
-### System Status
+### Slash Commands (9 commands)
 
 | Command | Description |
 |---------|-------------|
-| `/start` | Welcome message |
-| `/status` | System overview |
-| `/accounts` | Account balances |
-| `/positions` | Active positions |
-| `/pnl` | Today's P&L |
+| `/start` | Interactive main menu with live header + 12-button grid |
+| `/test` | Bot connectivity test |
+| `/positions` | Broker picker → position management |
+| `/core` | Core trading settings |
+| `/trade` | Manual 10-step trade wizard |
+| `/orders` | Order book view |
+| `/margin` | Margin & limits view |
+| `/pnl` | P&L today |
+| `/analytics` | Performance analytics |
 
-### Trading Control
-
-| Command | Description |
-|---------|-------------|
-| `/pause` | Pause all trading |
-| `/resume` | Resume trading |
-| `/close <id>` | Close specific position |
-| `/closeall` | Emergency close all positions |
-
-### Risk Management
-
-| Command | Description |
-|---------|-------------|
-| `/risk` | View risk limits and utilization |
-| `/help` | List all available commands |
-| `/logs` | Recent system events |
-| `/pnl_week` | This week's P&L |
-| `/position <id>` | Specific position details |
+> Trading control, risk management, task management, and other operations are handled via inline menu buttons from `/start`, not slash commands.
 
 ---
 
@@ -187,10 +174,13 @@ The system wakes up and gathers everything it needs before the market opens.
 
 | Time | Task | What Happens |
 |------|------|--------------|
+| **6:45 AM** | `health-check-brokers` | Checks Kotak Neo and ICICI Breeze API connectivity, stores results in Redis. |
 | **7:00 AM** | `morning-data-sync` | Downloads overnight global market data (SGX Nifty, US indices, Asia), refreshes news, and updates index data. Gives the system a full picture of what happened while Indian markets were closed. |
-| **8:30 AM** | `screen-futures-opportunities` | **Pre-market futures scan.** Scans the top 50 F&O stocks by volume and runs the 12-factor scoring model on each. This is a *read-only* scan — no orders are placed. Results are cached for the active algorithm at 9:40 AM. |
 | **8:50 AM** | `update-pre-market-data` | Fetches pre-open session data — opening indications, pre-open prices, gap-up/gap-down signals. Updates Trendlyne data for delivery percentages and institutional flows. |
 | **8:55 AM** | `setup-trading-day` | The system's "morning checklist": verifies broker connectivity (Kotak Neo + ICICI Breeze), checks account margins, validates no stale positions from yesterday, determines if today is tradeable (no holidays, no major events), loads active strategy configs. |
+| **8:55 AM** | `review-overnight-positions` | Scans news for negative sentiment on carried positions. |
+| **9:00 AM** | `send-morning-briefing` | Consolidated morning Telegram message with overnight summary, pre-market data, and trading plan. |
+| **9:00–9:20 AM** | `monitor-opening-volatility` | Every 5 min. Measures VIX and Nifty gap, writes `market_stable_for_trading` flag. |
 
 ### Phase 2: Market Open & Strategy Execution (9:15 – 9:55 AM)
 
@@ -200,9 +190,10 @@ Market opens. The system validates the opening, then executes your algorithms.
 |------|------|--------------|
 | **9:15 AM** | `start-trading-day` | Validates the opening — checks if open is within expected range, no flash crash, broker sessions live. Activates live data feed and monitoring. |
 | **9:15 AM** | `update-live-market-data` | Starts updating live prices every 5 minutes throughout market hours (until 3:30 PM). Feeds data to position monitor and P&L calculations. |
+| **9:30 AM** | `screen-futures-opportunities` | **Pre-market futures scan.** Scans the top 50 F&O stocks by volume and runs the 13-factor scoring model on each. This is a *read-only* scan — no orders are placed. Results are cached for the active algorithm at 9:40 AM. |
 | **9:30 AM** | `evaluate-options-strategy` | **Options decision point.** Analyzes VIX, overnight cues, Nifty opening range, news sentiment. Decides: (a) trade today? (b) Strangle or Broken Iron Condor? (c) Strike distances? Sends evaluation to Telegram. |
 | **9:40 AM** | `start-options-trade` | **Options execution.** If evaluation passed and you approved via Telegram, places option sell orders (CE + PE, or CE + PE + PE hedge). Creates Position record with stop-loss/target levels. |
-| **9:40 AM** | `execute-futures-algorithm` | **Futures execution.** Uses pre-market screening results, re-validates with live prices, picks TOP 3 candidates above score 65, sends to Telegram with full analysis. On your approval, executes with batched ordering. |
+| **9:40 AM** | `execute-futures-algorithm` | **Futures execution.** Uses 13-component scoring (315pts → 100 scale) with params: `this_month_volume=1000`, `next_month_volume=800`, `min_score=65`, `top_contracts=50`, `batch_size=3`. Re-validates with live prices, picks TOP 3 candidates above score 65, sends to Telegram with full analysis. On your approval, executes with batched ordering. |
 
 ### Phase 3: Averaging & Active Monitoring (9:40 AM – 3:00 PM)
 
@@ -213,7 +204,8 @@ Your positions are now live. The system monitors everything and manages averagin
 | **9:40–9:55** | `batch-options-averaging` | Every 5 min, checks if options position needs averaging. If premium moved against us and conditions met, proposes averaging trade via Telegram. |
 | **10:00–10:30** | `batch-options-averaging-10am` | Extended averaging window, same logic as above. |
 | **Every 10 min** | `check-futures-averaging` | 9:30 AM to 3:00 PM. Checks if any futures position dropped 1% from entry. Evaluates averaging (max 3 attempts): 20% → 50% → 50% of remaining balance. |
-| **Every minute** | `monitor-and-manage-positions` | **System heartbeat.** Updates real-time P&L for all positions, checks stop-loss/target, monitors delta for options, triggers exits when conditions met. |
+| **Every 15 min** | `monitor-all-strangle-deltas` | 9:00 AM to 3:00 PM. Delta drift monitoring for all strangle positions. |
+| **Every minute** | `monitor-and-manage-positions` | **System heartbeat.** Runs every 1 minute (9:00 AM–3:59 PM). Updates real-time P&L for all positions, runs SR exit engine with structural pressure checks, updates position monitor dashboard, manages hold flags, checks stop-loss/target, monitors delta for options, triggers exits when conditions met. |
 | **Every minute** | `check-confirmation-timeouts` | Watches for pending Telegram confirmations that exceeded timeout. Triggers revalidation — market conditions may have changed. |
 | **Every minute** | `check-risk-limits-all-accounts` | Monitors all accounts against risk limits: daily loss, weekly loss, max drawdown. Breaches pause trading and send critical alerts. |
 | **Every minute** | `monitor-circuit-breakers` | Watches for exchange-level circuit breakers and trading halts. If Nifty hits a circuit breaker, flags all positions and prevents new entries. |
@@ -224,8 +216,10 @@ Market is closing. Positions are evaluated, data is finalized, reports are gener
 
 | Time | Task | What Happens |
 |------|------|--------------|
+| **3:15 PM** | `alert-open-positions-pre-close` | Summary of all open positions before `close-trading-day` runs. |
 | **3:25 PM** | `close-trading-day` | Evaluates all open positions for exit. Applies 50% target rule: positions at ≥50% of target are closed; others may hold overnight. Disables new entries. |
 | **3:35 PM** | `update-post-market-data` | Downloads final closing prices, volume, settlement values. Updates all position records with accurate closing P&L. |
+| **3:45 PM** | `reconcile-positions-eod` | Post-market broker sync and comparison. Reconciles internal position records against broker data. |
 | **4:00 PM** | `generate-daily-pnl-report` | Generates comprehensive P&L report: realized + unrealized, per-position breakdown, strategy-level performance. Sends summary to Telegram. |
 | **4:15 PM** | `sync-benchmark-data` | Downloads benchmark index data (Nifty 50, Bank Nifty) for performance comparison charts. |
 | **4:30 PM** | `daily-data-aggregation` | Rolls up all trading data into daily summaries: win rate, average P&L, category performance, strategy metrics. |
@@ -246,7 +240,7 @@ Market is closing. Positions are evaluated, data is finalized, reports are gener
 
 Tasks are organized into algorithm groups. When you toggle an algorithm, these tasks move together:
 
-**Futures Algorithm** — Directional futures trades with 12-factor scoring:
+**Futures Algorithm** — Directional futures trades with 13-factor scoring:
 - *Own tasks:* `execute-futures-algorithm` (9:40 AM), `check-futures-averaging` (every 10 min)
 - *Shared tasks:* `setup-trading-day`, `start-trading-day`, `close-trading-day`
 - *Monitoring:* `monitor-and-manage-positions`

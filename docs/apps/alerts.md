@@ -13,6 +13,7 @@ The alerts app handles all notifications via Telegram. It includes an interactiv
 3. **Trade Approval** - Two-step futures approval flow + options confirm/reject via Telegram
 4. **System Control** - Pause/resume trading, task management, broker login, all remotely
 5. **Manual Trading** - 10-step trade wizard for placing orders directly from Telegram
+6. **Unified Notification API** - Centralized `notify()` function with 12 event templates, aggregation, deduplication, and escalation
 
 ---
 
@@ -38,6 +39,14 @@ The alerts app handles all notifications via Telegram. It includes an interactiv
 | `services/alert_manager.py` | Alert orchestration |
 | `services/telegram_helpers.py` | Async database helpers |
 | `services/telegram_trade_notifier.py` | Trade notification formatting |
+| `services/notification_service.py` | Unified `notify()` API — ALL notifications go through this |
+| `services/notification_templates.py` | 12 event type templates with auto-defaults |
+| `services/notification_payload.py` | `NotificationPayload` dataclass with collapsible field |
+| `services/notification_formatter.py` | `TelegramMessageFormatter` — HTML + `<blockquote expandable>` |
+| `services/button_registry.py` | 6 button sets for inline keyboards |
+| `services/aggregation_buffer.py` | Redis-backed grouping of similar alerts within 30-60s window |
+| `services/escalation_tracker.py` | Auto-upgrades priority after 3/5/10 repeated occurrences |
+| `tasks.py` | `flush_notification_buffer` Celery task |
 | `admin.py` | Django admin interface |
 | `management/commands/run_telegram_bot.py` | Bot start command |
 
@@ -263,6 +272,118 @@ client.send_position_alert(position_data={...})
 # Daily summary
 client.send_daily_summary(summary_data={...})
 ```
+
+---
+
+## Unified Notification Framework (March 2026)
+
+ALL notifications now go through the centralized `notify()` function. This replaces 89+ individual `send_telegram_notification()` calls.
+
+### Public API
+
+```python
+from apps.alerts.services.notification_service import notify
+
+success, msg = notify(
+    event_type='SL_TRIGGERED',       # One of 12 template types
+    title='Stop-Loss Hit',
+    instrument='RELIANCE',
+    strategy='Futures',
+    metrics={'P&L': '-₹12,500', 'SL': '₹2,425'},
+    position={'entry': '₹2,450', 'qty': '2 lots'},
+    context=['Price breached support at ₹2,430'],
+    priority='CRITICAL',
+    keyboard=[...],                   # Optional inline buttons
+    collapsible=True,                 # Use expandable blockquote
+)
+```
+
+### 12 Event Templates
+
+| Event Type | Priority | Aggregatable | Collapsible | Buttons |
+|------------|----------|-------------|-------------|---------|
+| `SL_TRIGGERED` | CRITICAL | No | Yes | Close Now / Hold |
+| `TARGET_HIT` | HIGH | No | Yes | Close Now / Hold |
+| `NEAR_SL` | WARNING | No | Yes | — |
+| `EXIT_SUGGESTION` | HIGH | No | Yes | Close Now / Hold |
+| `CIRCUIT_BREAKER` | CRITICAL | No | Yes | View / Acknowledge |
+| `SYSTEM_STATUS` | INFO | Yes (60s) | No | — |
+| `JOB_COMPLETED` | INFO | Yes (30s) | No | — |
+| `CRITICAL_ERROR` | CRITICAL | No | Yes | Retry / View logs |
+| `TRADE_EXECUTED` | INFO | No | Yes | — |
+| `RISK_WARNING` | HIGH | No | Yes | View / Acknowledge |
+| `TASK_ERROR` | HIGH | Yes (30s) | Yes | Retry / View logs |
+| `BROKER_HEALTH` | WARNING | Yes (60s) | No | — |
+
+### Processing Pipeline
+
+```
+1. Template Lookup → apply defaults (status, priority, buttons, dedup_key)
+2. Min P&L Change Gate → skip if P&L hasn't moved enough (SL: 2%, EXIT: 1%)
+3. Aggregation → buffer if aggregatable, schedule flush task
+4. Escalation → auto-upgrade priority after 3/5/10 repeats
+5. Build NotificationPayload → all fields assembled
+6. Format → TelegramMessageFormatter (HTML + blockquote expandable)
+7. Send/Edit → via TelegramClient
+```
+
+### Message Format
+
+**Collapsible messages** (`collapsible=True`):
+```html
+<blockquote expandable>
+  🚨 STOP-LOSS HIT — CRITICAL
+  RELIANCE · 14:32 IST
+  Futures · monitor_positions
+
+  P&L: -₹12,500  SL: ₹2,425
+  [Position details...]
+  [Context...]
+  [Market data...]
+  [Actions...]
+</blockquote>
+
+⚙️ mode · sizing
+```
+
+**Flat messages** (`collapsible=False`): Uses `───` separator instead of blockquote.
+
+### Aggregation Buffer
+
+Groups similar alerts within 30-60s window (Redis-backed) to avoid spam.
+
+```python
+from apps.alerts.services.aggregation_buffer import AggregationBuffer
+
+buffer = AggregationBuffer()
+buffered = buffer.add(event_type, group_key, payload)  # Returns True if buffered
+merged = buffer.flush(event_type, group_key)            # Returns merged payload
+```
+
+Flush scheduled via `flush_notification_buffer` Celery task.
+
+### Escalation Tracker
+
+Auto-upgrades priority based on repeated occurrences of the same dedup_key:
+
+| Occurrences | Action |
+|-------------|--------|
+| 3rd repeat | Upgrade to CRITICAL |
+| 5th repeat | Super-critical |
+| 10th repeat | Highest escalation |
+
+### Button Registry
+
+6 pre-configured button sets mapped to event types:
+
+| Button Set | Buttons |
+|------------|---------|
+| `SL_TRIGGERED` | Close Now, Hold |
+| `EXIT_CONFIRMATION` | Close Now, Hold |
+| `CIRCUIT_BREAKER` | View details, Acknowledge |
+| `RISK_WARNING` | View positions, Acknowledge |
+| `CRITICAL_ERROR` | Retry task, View logs |
+| `TASK_ERROR` | Retry task, View logs |
 
 ---
 

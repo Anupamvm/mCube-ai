@@ -128,6 +128,12 @@ Telegram bot — full app control via 4-file mixin architecture (~7,573 LOC):
 - `telegram_bot_data.py` — DataMixin (37+ `@sync_to_async` methods)
 - `telegram_bot_trade.py` — TradeMixin (25 methods, 10-step manual trade wizard)
 - 9 slash commands, 12-button main menu, 21 callback routing prefixes
+- **Unified notification framework** (`notify()` API):
+  - `notification_service.py` — Single entry point for all notifications, replaces raw `send_telegram_notification()` calls
+  - `notification_templates.py` — 12 event types with auto-defaults (status, priority, buttons, dedup_key)
+  - `aggregation_buffer.py` — Redis-backed grouping of similar alerts within 30-60s window
+  - `escalation_tracker.py` — Auto-upgrades priority after 3/5/10 repeated occurrences
+  - `notification_formatter.py` — HTML formatter with Telegram `<blockquote expandable>` for collapsible details
 
 ### brokers
 Broker API integrations (Kotak Neo v2, ICICI Breeze), order placement, Order and Execution models.
@@ -247,7 +253,7 @@ Tasks run via **Celery** and **Django background_task**:
 
 | Category | Frequency |
 |----------|-----------|
-| Position Monitoring | Every 10-30 sec |
+| Position Monitoring | Every 1 min |
 | Risk Management | Every 30-60 sec |
 | Market Data | Every 5 min |
 | Strategy Evaluation | Scheduled times |
@@ -266,7 +272,7 @@ Tasks run via **Celery** and **Django background_task**:
        ↓
 4. Strategy Evaluation (13-factor scoring, 315pts → 100)
        ↓
-5. Trade Validation Gate (R:R >= 1.5, regime checks)
+5. Trade Validation Gate (R:R >= 1.5 preferred, reject < 1.0, regime checks)
        ↓
 6. LLM Validation (enriched context with regime + scoring)
        ↓

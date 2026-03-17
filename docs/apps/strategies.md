@@ -31,6 +31,13 @@ The strategies app contains the trading algorithms - the brain of mCube. This is
 | `services/consolidated_sr_calculator.py` | **Conservative S/R (Pivot + OI)** |
 | `services/oi_support_resistance.py` | OI-based S/R calculation |
 | `services/support_resistance_calculator.py` | Pivot-based S/R calculation |
+| `services/strangle_news_analyzer.py` | News-based asymmetric bias for strangle |
+| `services/adaptive_sl_target.py` | 3-tier SL/target engine (S/R → ATR×regime → volatility%) |
+| `services/market_regime.py` | Market regime detection (TRENDING/RANGING/VOLATILE/BREAKOUT/NORMAL) |
+| `services/contract_prefilter.py` | Lightweight DB-only contract pre-filter |
+| `services/trade_validation.py` | Post-score R:R and regime validation gate |
+| `services/llm_context_builder.py` | Enriched LLM context with regime + scoring summary |
+| `analyzers/enhanced_futures_analyzer.py` | 13-component parallel analysis (315pts → 100 scale) |
 | `shared/strike_calculator.py` | Strike adjustment for S/R proximity |
 | `filters/global_markets.py` | Global market stability filter |
 | `filters/event_calendar.py` | Economic events filter |
@@ -83,13 +90,16 @@ The heart of the strangle strategy is calculating optimal strikes.
 # Base Formula
 strike_distance = spot_price × delta% × days_to_expiry
 
-# Where delta% is adjusted for VIX:
-VIX < 10:        delta_multiplier = 0.9   (very tight)
-VIX 10-11.5:     delta_multiplier = 1.0   (normal)
-VIX 11.5-12.5:   delta_multiplier = 1.0   (optimal)
-VIX 12.5-14:     delta_multiplier = 1.5   (wider)
-VIX 14-18:       delta_multiplier = 1.8   (much wider)
-VIX > 18:        delta_multiplier = 2.0   (very wide)
+# Base Delta:
+#   ≤ 2 days to expiry: 0.75%
+#   > 2 days: 0.5%
+
+# VIX Adjustments (multi-factor):
+VIX < 10:        delta_multiplier = 0.9   (tighter, higher premium)
+VIX 10-12.5:     delta_multiplier = 1.0   (standard)
+VIX 12.5-14:     delta_multiplier = 1.5   (wider, safety +50%)
+VIX 14-18:       delta_multiplier = 1.8   (much wider +80%)
+VIX > 18:        delta_multiplier = 2.0   (extreme volatility)
 ```
 
 **Example Calculation**:
@@ -111,10 +121,12 @@ Final: SELL 24500 CE + SELL 23800 PE
 
 The algorithm also adjusts for:
 
-1. **Trend Adjustment**: If bullish trend, widen call by 15%
-2. **Volatility Adjustment**: Based on 5-day price movement
-3. **OI Analysis**: Based on put-call ratio
-4. **Psychological Levels**: Avoid strikes near round numbers (25000, 25500)
+1. **Trend Adjustment**: 1.1-1.3× based on bullish/bearish bias
+2. **Volatility Adjustment**: Based on 5-day historical volatility
+3. **OI Adjustment**: Open Interest buildup patterns
+4. **PCR Adjustment**: Put-Call Ratio
+5. **News-Based Asymmetric Bias**: Call vs put skew from news sentiment
+6. **Psychological Levels**: Avoid strikes near round numbers (25000, 25500)
 
 ### Position Sizing
 
@@ -197,40 +209,39 @@ insurance_strike = put_strike - (risk_budget / quantity)
 
 Directional futures trading with AI validation. Screen stocks using multiple factors, validate with LLM, then trade.
 
-### Screening Process (9 Factors)
+### Screening Process (13-Factor Composite, 315pts → 100 scale)
 
 ```
-1. Liquidity Filter     - Volume must be sufficient
-2. OI Analysis          - Long/short buildup detection
-3. Sector Analysis      - Sector alignment (3D, 7D, 21D)
-4. Technical Indicators - RSI, MACD, moving averages
-5. Trendlyne Scores     - Durability, valuation, momentum
-6. Support/Resistance   - Key price levels
-7. Volume Analysis      - Volume patterns
-8. Historical Analysis  - Recent price movements
-9. Composite Scoring    - Combined verdict
+1.  OI & F&O Analysis      (45 pts) - Long/short buildup, OI change patterns
+2.  Technical Momentum      (35 pts) - RSI, MACD, Bollinger Bands, DMA
+3.  Trend Confirmation      (30 pts) - DMA crossovers, 52W breakout detection
+4.  Volume Quality          (25 pts) - Volume vs average, delivery trend
+5.  Institutional Flow      (25 pts) - FII, MF, promoter changes
+6.  Fundamental Quality     (20 pts) - Piotroski F-Score, profit growth, ROE
+7.  Risk Adjustment         (30 pts) - Beta scaling, volatility regime
+8.  News Sentiment          (25 pts) - Recent news sentiment analysis
+9.  Analyst Consensus       (20 pts) - Analyst target price consensus
+10. Research Reports        (15 pts) - LLM-analyzed research sentiment
+11. Investor Calls          (10 pts) - Earnings call sentiment
+12. Momentum Acceleration   (20 pts) - Short-term momentum change
+13. MTF Confluence          (15 pts) - Multi-timeframe alignment
 ```
 
 ### Composite Scoring
 
-Each factor contributes to a score out of 100:
+13 components contribute a raw total of 315 points, normalized to a 0-100 scale:
 
 ```python
-OI Score (max 40):
-  - Strong long buildup: 40
-  - Moderate buildup: 25
-  - Neutral: 15
-  - Short buildup: 0
+# 13-Component System (315 pts raw → 100 scale)
+# See "13-Factor Composite" above for full component list and weights.
+#
+# Raw score = sum of all 13 component scores (max 315)
+# Normalized score = (raw_score / 315) × 100
 
-Sector Score (max 25):
-  - All timeframes aligned: 25
-  - Most aligned: 15
-  - Mixed: 5
-
-Technical Score (max 35):
-  - Strong buy signals: 35
-  - Moderate: 20
-  - Neutral: 10
+# Recommendation Tiers:
+Score >= 80:  STRONG BUY
+Score 65-79:  BUY
+Score < 65:   REJECT
 ```
 
 **Minimum Score**: 65/100 to qualify
@@ -279,7 +290,7 @@ If position goes against you:
 ```python
 # Averaging Triggers when:
 - Position loss >= 1% from entry
-- Previous averaging attempts < 3
+- Previous averaging attempts < 2
 
 # Averaging Action:
 1. Add equal quantity at current price
@@ -315,17 +326,21 @@ The Screen Futures Algorithm is an automated opportunity scanner that:
     ├─> Split into batches of 3, dispatch parallel analysis
     │       (Celery chord: 17 parallel tasks)
     │
-    ├─> Each batch runs 9-step analysis:
-    │     0. Symbol Resolution (NSE → Breeze code)
-    │     1. Real-Time Prices (Breeze API / DB fallback)
-    │     2. Basis & Cost of Carry
-    │     3. Open Interest Analysis
-    │     4. DMA Analysis (20/50/200)
-    │     5. Sector Strength
-    │     6. Volume & Liquidity
-    │     7. Technical Indicators (RSI, MACD, BB)
-    │     8. Support/Resistance Levels
-    │     9. Composite Scoring (12 components)
+    ├─> Each batch runs 13-component parallel analysis:
+    │     1. OI & F&O Analysis (45 pts)
+    │     2. Technical Momentum (35 pts)
+    │     3. Trend Confirmation (30 pts)
+    │     4. Volume Quality (25 pts)
+    │     5. Institutional Flow (25 pts)
+    │     6. Fundamental Quality (20 pts)
+    │     7. Risk Adjustment (30 pts)
+    │     8. News Sentiment (25 pts)
+    │     9. Analyst Consensus (20 pts)
+    │    10. Research Reports (15 pts)
+    │    11. Investor Calls (10 pts)
+    │    12. Momentum Acceleration (20 pts)
+    │    13. MTF Confluence (15 pts)
+    │     → Composite Scoring (315 pts → 100 scale)
     │
     ├─> aggregate_futures_results callback:
     │     - Filter: score >= 65
@@ -380,34 +395,36 @@ The Screen Futures Algorithm is an automated opportunity scanner that:
         - Uses batching for large orders
 ```
 
-### 12-Component Scoring System
+### 13-Component Scoring System
 
-| Component | Weight | Description |
-|-----------|--------|-------------|
-| OI Buildup | High | Long/short buildup patterns |
-| OI Change % | High | Open interest change vs previous |
-| DMA Position | Medium | Price vs 20/50/200 DMA |
-| DMA Crossover | Medium | Golden/death cross signals |
-| Volume Pattern | Medium | Volume vs average |
-| RSI | Low | Relative Strength Index |
-| MACD | Low | MACD histogram direction |
-| Bollinger Bands | Low | Position within bands |
-| Sector Strength | Medium | Sector relative strength |
-| Basis Premium | Low | Futures-spot premium |
-| Cost of Carry | Low | Annualized carry cost |
-| Support/Resistance | Medium | Proximity to key levels |
+| # | Component | Max Pts | Description |
+|---|-----------|---------|-------------|
+| 1 | OI & F&O Analysis | 45 | Long/short buildup, OI change patterns |
+| 2 | Technical Momentum | 35 | RSI, MACD, Bollinger Bands, DMA position |
+| 3 | Trend Confirmation | 30 | DMA crossovers, 52W breakout detection |
+| 4 | Volume Quality | 25 | Volume vs average, delivery trend |
+| 5 | Institutional Flow | 25 | FII, MF, promoter changes |
+| 6 | Fundamental Quality | 20 | Piotroski F-Score, profit growth, ROE |
+| 7 | Risk Adjustment | 30 | Beta scaling, volatility regime |
+| 8 | News Sentiment | 25 | Recent news sentiment analysis |
+| 9 | Analyst Consensus | 20 | Analyst target price consensus |
+| 10 | Research Reports | 15 | LLM-analyzed research sentiment |
+| 11 | Investor Calls | 10 | Earnings call sentiment |
+| 12 | Momentum Acceleration | 20 | Short-term momentum change |
+| 13 | MTF Confluence | 15 | Multi-timeframe alignment |
+| | **Total** | **315** | **Normalized to 0-100 scale** |
 
 ### 7 Hard Reject Filters
 
 Even with a high score, these conditions cause automatic rejection:
 
-1. **MWPL Breach**: Market-Wide Position Limit exceeded
-2. **Extreme Volatility**: Intraday swing > 5%
-3. **Low Piotroski Score**: F-Score < 3 (poor fundamentals)
-4. **Negative Sector**: Sector in strong downtrend
-5. **Poor Liquidity**: Volume < 1000 contracts
-6. **Corporate Action**: Recent bonus/split/dividend
-7. **Ban Period**: Stock in F&O ban
+1. **MWPL**: Market-Wide Position Limit < 80%
+2. **Volatility**: Intraday volatility < 60%
+3. **Piotroski Score**: F-Score >= 4 required (poor fundamentals rejected)
+4. **Promoter Pledge**: Promoter pledge < 30%
+5. **FII Change**: FII change > -2%
+6. **Blocking News**: No blocking news events
+7. **Analyst Upside**: Analyst upside >= 8% (for LONG trades)
 
 ### Configuration (TradingCoreConfig)
 
@@ -627,10 +644,13 @@ result = check_economic_events(days_ahead=5)
 
 | Task | Schedule | Purpose |
 |------|----------|---------|
-| `evaluate_kotak_strangle_entry` | Mon/Tue 10:00 AM | Strangle entry check |
-| `evaluate_kotak_strangle_exit` | Thu 3:15, Fri 3:25 | Exit evaluation |
-| `screen_and_execute_futures` | Every 30 min | Futures screening |
-| `monitor_delta_positions` | Every 5 min | Delta monitoring |
+| `evaluate_options_strategy` | 9:30 AM | Options strategy decision |
+| `start_options_trade` | 9:40 AM | Options entry execution |
+| `execute_futures_algorithm` | 9:40 AM | Futures screening + execution |
+| `screen_futures_opportunities` | 9:30 AM | Pre-market futures scan |
+| `monitor_all_strangle_deltas` | Every 15 min | Delta drift monitoring |
+| `batch_options_averaging` | 9:40-10:30 AM, every 5 min | Options averaging |
+| `check_futures_averaging` | Every 10 min | Futures averaging checks |
 
 ---
 

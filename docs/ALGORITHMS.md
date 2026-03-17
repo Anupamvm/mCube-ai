@@ -16,7 +16,7 @@ This guide provides a deep dive into the three trading algorithms implemented in
 
 ## 1. Weekly Nifty Short Strangle
 
-**Location**: `apps/strategies/services/kotak_strangle.py`
+**Location**: `apps/strategies/strategies/kotak_strangle.py`
 
 ### What is a Short Strangle?
 
@@ -46,17 +46,25 @@ Every Thursday (Weekly Expiry Day)
    |
    |  Get current NIFTY spot price (e.g., 24,500)
    |
-   |  Calculate VIX-adjusted distance:
-   |    base_distance = 200 points
-   |    vix_multiplier = current_vix / 15  (normalize to VIX 15)
-   |    adjusted_distance = base_distance * vix_multiplier
+   |  Calculate VIX-adjusted distance (multi-factor):
    |
-   |  Example with VIX = 18:
-   |    vix_multiplier = 18/15 = 1.2
-   |    adjusted_distance = 200 * 1.2 = 240 points
+   |    Base delta:
+   |      ≤ 2 days to expiry: 0.75%
+   |      > 2 days: 0.5%
    |
-   |  CE Strike = 24,500 + 240 = 24,750 (round to nearest 50)
-   |  PE Strike = 24,500 - 240 = 24,250 (round to nearest 50)
+   |    VIX multiplier:
+   |      VIX < 10:     0.9×
+   |      VIX 10-12.5:  1.0×
+   |      VIX 12.5-14:  1.5×
+   |      VIX 14-18:    1.8×
+   |      VIX > 18:     2.0×
+   |
+   |    Additional factors: trend, volatility, OI, PCR, news bias
+   |
+   |    adjusted_distance = spot × base_delta × vix_multiplier × other_factors
+   |
+   |  CE Strike = spot + adjusted_distance (round to nearest 50)
+   |  PE Strike = spot - adjusted_distance (round to nearest 50)
    |
    v
 3. VALIDATE WITH PREMIUM CHECK
@@ -179,7 +187,7 @@ STRANGLE_CONFIG = {
 
 ### Files to Study
 
-1. `apps/strategies/services/kotak_strangle.py` - Main algorithm
+1. `apps/strategies/strategies/kotak_strangle.py` - Main algorithm
 2. `apps/positions/services/delta_monitor.py` - Delta management
 3. `apps/positions/services/exit_manager.py` - Exit logic
 4. `apps/brokers/services/kotak_neo.py` - Order placement
@@ -188,7 +196,7 @@ STRANGLE_CONFIG = {
 
 ## 2. Broken Iron Condor
 
-**Location**: `apps/strategies/services/kotak_strangle.py` (same file, different mode)
+**Location**: `apps/strategies/strategies/kotak_broken_iron_condor.py`
 
 ### What is a Broken Iron Condor?
 
@@ -267,7 +275,7 @@ BROKEN_IC_CONFIG = {
 
 ## 3. LLM-Validated Futures
 
-**Location**: `apps/strategies/services/icici_futures.py`
+**Location**: `apps/strategies/strategies/icici_futures.py`
 
 ### What is This Strategy?
 
@@ -278,6 +286,8 @@ This strategy trades stock futures (not options) with AI validation:
 4. **Average down** if position goes against us (controlled risk)
 
 ### The 13-Factor Composite Score (315 points scaled to 100)
+
+**Analyzer**: `apps/strategies/analyzers/enhanced_futures_analyzer.py`
 
 ```
 Factor Analysis Algorithm:
@@ -708,7 +718,7 @@ FUTURES_CONFIG = {
 
 ### Files to Study
 
-1. `apps/strategies/services/icici_futures.py` - Main algorithm
+1. `apps/strategies/strategies/icici_futures.py` - Main algorithm
 2. `apps/strategies/analyzers/enhanced_futures_analyzer.py` - 13-factor analysis
 3. `apps/strategies/services/adaptive_sl_target.py` - 3-tier SL/target engine
 4. `apps/strategies/services/market_regime.py` - Market regime detection
@@ -934,13 +944,13 @@ Example in Strangle:
 3. Run `python manage.py shell` and query TLStockData to see real data
 
 **Week 3: Study Strangle Algorithm**
-1. Read `apps/strategies/services/kotak_strangle.py` line by line
+1. Read `apps/strategies/strategies/kotak_strangle.py` line by line
 2. Add print statements to trace execution
 3. Run in test mode (paper trading) to see the flow
 
 **Week 4: Study Futures Algorithm**
 1. Read `apps/strategies/analyzers/enhanced_futures_analyzer.py` - 13-factor analysis
-2. Read `apps/strategies/services/icici_futures.py` - Main algorithm
+2. Read `apps/strategies/strategies/icici_futures.py` - Main algorithm
 3. Read `apps/llm/services/trade_validator.py` - LLM validation
 
 **Week 5: Study Exit and Risk Management**
@@ -990,11 +1000,11 @@ tail -f logs/mcube.log | grep -E "(strangle|futures|position)"
 ### Common Modifications
 
 **Change strike calculation**:
-- File: `apps/strategies/services/kotak_strangle.py`
+- File: `apps/strategies/strategies/kotak_strangle.py`
 - Function: `calculate_strikes()`
 
 **Change entry filters**:
-- File: `apps/strategies/services/icici_futures.py`
+- File: `apps/strategies/strategies/icici_futures.py`
 - Function: `check_entry_conditions()`
 
 **Change composite score weights**:
