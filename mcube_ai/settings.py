@@ -125,8 +125,23 @@ DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.sqlite3',
         'NAME': BASE_DIR / 'db.sqlite3',
+        'OPTIONS': {
+            'timeout': 30,  # Wait up to 30s for DB lock (prevents "database is locked")
+        },
     }
 }
+
+
+# SQLite performance: enable WAL mode for concurrent read/write access.
+# Prevents "database is locked" when Celery workers and web server write simultaneously.
+def _sqlite_wal_mode(sender, connection, **kwargs):
+    if connection.vendor == 'sqlite':
+        cursor = connection.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL;")
+        cursor.execute("PRAGMA synchronous=NORMAL;")
+
+from django.db.backends.signals import connection_created
+connection_created.connect(_sqlite_wal_mode)
 
 
 # Password validation
