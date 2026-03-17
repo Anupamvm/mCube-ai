@@ -1695,19 +1695,51 @@ def get_lot_size(request):
 def _resolve_lot_size(symbol: str, db_lot_size: int) -> int:
     """Resolve lot size for a position.
 
-    Uses DB value if > 1 (Neo saves this), otherwise falls back to a
-    static map for common F&O symbols.
+    Priority:
+    1. DB value if > 1 (Neo saves this correctly)
+    2. Look up from any BrokerPosition with matching symbol that has lot_size > 1
+       (Neo positions for the same instrument will have correct lot_size)
+    3. Look up from Position model (system-managed positions have lot_size)
+    4. Static fallback map for common F&O symbols
     """
     if db_lot_size and db_lot_size > 1:
         return db_lot_size
 
-    # Static fallback for Breeze (which doesn't save lot_size)
+    from apps.brokers.models import BrokerPosition
+    from apps.positions.models import Position
+
+    sym = (symbol or '').upper()
+
+    # Try BrokerPosition: any recent record with matching symbol and lot_size > 1
+    # (Neo positions will have correct lot_size saved)
+    bp_lot = (
+        BrokerPosition.objects
+        .filter(symbol__iexact=sym, lot_size__gt=1)
+        .order_by('-fetched_at')
+        .values_list('lot_size', flat=True)
+        .first()
+    )
+    if bp_lot:
+        return bp_lot
+
+    # Try Position model (system-managed positions)
+    pos_lot = (
+        Position.objects
+        .filter(instrument__icontains=sym, lot_size__gt=1, status__in=['OPEN', 'ACTIVE'])
+        .values_list('lot_size', flat=True)
+        .first()
+    )
+    if pos_lot:
+        return pos_lot
+
+    # Static fallback for symbols that may not have Neo counterparts
+    # Uses substring matching to handle both HDFCBANK and HDFBAN variants
     _LOT_SIZES = [
         ('MIDCPNIFTY', 50),
         ('BANKNIFTY', 30),
         ('FINNIFTY', 40),
         ('NIFTY', 75),
-        ('HDFCBANK', 550),
+        ('HDFCBAN', 550),   # Matches both HDFCBANK (Neo) and HDFBAN (Breeze)
         ('ICICIBANK', 700),
         ('AXISBANK', 625),
         ('RELIANCE', 250),
@@ -1715,19 +1747,24 @@ def _resolve_lot_size(symbol: str, db_lot_size: int) -> int:
         ('INFY', 300),
         ('SBIN', 750),
         ('TATAMOTORS', 575),
+        ('TATAMOT', 575),   # Breeze truncation
         ('ITC', 1600),
         ('BAJFINANCE', 125),
+        ('BAJFIN', 125),    # Breeze truncation
         ('LT', 150),
         ('MARUTI', 100),
         ('BHARTIARTL', 950),
+        ('BHARTI', 950),    # Breeze truncation
         ('KOTAKBANK', 400),
         ('TATASTEEL', 1125),
+        ('TATASTE', 1125),  # Breeze truncation
         ('HINDUNILVR', 300),
+        ('HINDUNI', 300),   # Breeze truncation
         ('WIPRO', 1500),
         ('ADANIENT', 500),
         ('JIOFIN', 1500),
+        ('ICINEX', 1),      # Index ETF, lot=1
     ]
-    sym = (symbol or '').upper()
     for key, lot in _LOT_SIZES:
         if key in sym:
             return lot

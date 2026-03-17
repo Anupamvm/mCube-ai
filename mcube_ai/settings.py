@@ -25,7 +25,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 env = environ.Env(
     # Set default values and casting
     DEBUG=(bool, False),  # Default to False for production safety
-    ALLOWED_HOSTS=(list, ['localhost', '127.0.0.1']),
+    ALLOWED_HOSTS=(list, ['localhost', '127.0.0.1','http://27.107.134.179/','169.254.3.1']),
 )
 
 # Read .env file
