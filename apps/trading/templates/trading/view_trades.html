@@ -1446,6 +1446,7 @@ function displayPositions(broker, positions) {
                     <th>LTP</th>
                     <th>P&L</th>
                     <th>P&L %</th>
+                    <th>Expiry</th>
                 </tr>
             </thead>
             <tbody>
@@ -1470,6 +1471,9 @@ function displayPositions(broker, positions) {
                         </td>
                         <td class="${getPnLClass(pos.pnl_percentage)}">
                             ${parseFloat(pos.pnl_percentage) >= 0 ? '+' : ''}${parseFloat(pos.pnl_percentage).toFixed(2)}%
+                        </td>
+                        <td style="white-space: nowrap; font-size: 0.85rem;">
+                            ${pos.expiry_date ? new Date(pos.expiry_date).toLocaleDateString('en-IN', {day: '2-digit', month: 'short', year: 'numeric'}) : '<span style="color: var(--gray);">—</span>'}
                         </td>
                     </tr>
                 `).join('')}

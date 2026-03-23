@@ -1851,7 +1851,7 @@ def get_active_positions(request):
                         'realized_pnl': 0.0,
                         'total_pnl': round(unrealized_pnl, 2),
                         'pnl_percentage': round(pnl_pct, 2),
-                        'expiry_date': None,  # BrokerPosition doesn't have expiry field
+                        'expiry_date': pos.expiry_date.strftime('%Y-%m-%d') if pos.expiry_date else None,
                     })
 
             except BreezeAuthenticationError as e:
