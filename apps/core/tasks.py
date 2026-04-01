@@ -106,6 +106,22 @@ def health_check_brokers():
         results['breeze'] = 'NO_ACCOUNT'
         logger.info("health_check_brokers: No active ICICI account, skipping Breeze check")
 
+    # ── Redis connectivity check ─────────────────────────────────────────────
+    try:
+        cache.set('_health_check_ping', '1', timeout=10)
+        ping_back = cache.get('_health_check_ping')
+        if ping_back == '1':
+            results['redis'] = 'OK'
+            logger.info("health_check_brokers: Redis OK")
+        else:
+            results['redis'] = 'FAIL: read-back mismatch'
+            failed_brokers.append("Redis: write succeeded but read-back failed")
+            logger.error("health_check_brokers: Redis read-back mismatch")
+    except Exception as e:
+        results['redis'] = f'FAIL: {e}'
+        failed_brokers.append(f"Redis: {e}")
+        logger.critical(f"health_check_brokers: Redis FAIL — {e}")
+
     # ── Persist results ───────────────────────────────────────────────────────
     cache.set(BROKER_HEALTH_KEY, results, timeout=BROKER_HEALTH_TTL)
     logger.info(f"health_check_brokers: results stored → {results}")

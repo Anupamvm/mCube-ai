@@ -100,7 +100,7 @@ Every Thursday (Weekly Expiry Day)
    |  Update Position (status: ACTIVE)
    |
    v
-6. MONITOR POSITION (Every 30 seconds)
+6. MONITOR POSITION (Every 1 minute)
    |
    |  Calculate current delta:
    |    total_delta = CE_delta + PE_delta
@@ -140,7 +140,7 @@ Delta measures how much option price changes when underlying moves by 1 point.
 ```
 Delta Monitoring Algorithm:
 
-1. Every 30 seconds:
+1. Every 1 minute (during market hours):
    combined_delta = abs(CE_delta) + abs(PE_delta)
 
    Note: CE delta is negative (we sold), PE delta is positive (we sold)

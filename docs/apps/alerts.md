@@ -300,20 +300,20 @@ success, msg = notify(
 
 ### 12 Event Templates
 
-| Event Type | Priority | Aggregatable | Collapsible | Buttons |
-|------------|----------|-------------|-------------|---------|
-| `SL_TRIGGERED` | CRITICAL | No | Yes | Close Now / Hold |
-| `TARGET_HIT` | HIGH | No | Yes | Close Now / Hold |
-| `NEAR_SL` | WARNING | No | Yes | — |
-| `EXIT_SUGGESTION` | HIGH | No | Yes | Close Now / Hold |
-| `CIRCUIT_BREAKER` | CRITICAL | No | Yes | View / Acknowledge |
-| `SYSTEM_STATUS` | INFO | Yes (60s) | No | — |
-| `JOB_COMPLETED` | INFO | Yes (30s) | No | — |
-| `CRITICAL_ERROR` | CRITICAL | No | Yes | Retry / View logs |
-| `TRADE_EXECUTED` | INFO | No | Yes | — |
-| `RISK_WARNING` | HIGH | No | Yes | View / Acknowledge |
-| `TASK_ERROR` | HIGH | Yes (30s) | Yes | Retry / View logs |
-| `BROKER_HEALTH` | WARNING | Yes (60s) | No | — |
+| Event Type | Priority | Aggregatable | Collapsible | Buttons | P&L Gate |
+|------------|----------|-------------|-------------|---------|----------|
+| `SL_TRIGGERED` | CRITICAL | Yes (30s) | Yes | Close Now / Hold | 2% |
+| `TARGET_HIT` | HIGH | Yes (30s) | Yes | Close Now / Hold | — |
+| `NEAR_SL` | HIGH | Yes (30s) | Yes | — | — |
+| `EXIT_SUGGESTION` | HIGH | No | Yes | Close Now / Hold | 1% |
+| `CIRCUIT_BREAKER` | WARNING | Yes (60s) | Yes | View / Acknowledge | — |
+| `SYSTEM_STATUS` | INFO | No | No | — | — |
+| `JOB_COMPLETED` | INFO | No | No | — | — |
+| `CRITICAL_ERROR` | CRITICAL | No | Yes | Retry / View logs | — |
+| `TRADE_EXECUTED` | HIGH | No | Yes | — | — |
+| `RISK_WARNING` | HIGH | Yes (60s) | Yes | View / Acknowledge | — |
+| `TASK_ERROR` | HIGH | Yes (30s) | Yes | Retry / View logs | — |
+| `BROKER_HEALTH` | HIGH | No | Yes | — | — |
 
 ### Processing Pipeline
 

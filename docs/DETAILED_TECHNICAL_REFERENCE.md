@@ -54,6 +54,8 @@ mCube is an **AI-powered automated trading system** for Indian F&O (Futures & Op
 │  1️⃣  ONE POSITION PER ACCOUNT AT ANY TIME                               │
 │      └─ Checked in: Position.has_open_position(account)                 │
 │      └─ Location: apps/positions/models.py:362-368                      │
+│      └─ Redis lock prevents race conditions (position_create_lock_{id}) │
+│      └─ Circuit breaker gate: is_circuit_breaker_active() checked first │
 │                                                                          │
 │  2️⃣  50% MARGIN FOR FIRST TRADE                                         │
 │      └─ Reserved for averaging and emergencies                          │
@@ -117,7 +119,7 @@ mCube-ai/
 │   ├── urls.py                    # Root URL routing
 │   └── wsgi.py / asgi.py
 │
-├── apps/                          # 13 Django Applications (~150K LOC)
+├── apps/                          # 11 Installed Django Applications (+algo_test legacy)
 │   ├── core/                      # Foundation: credentials, scheduling, TradingContext, TradingCoreConfig
 │   ├── accounts/                  # Broker accounts & margin management
 │   ├── positions/                 # Position lifecycle management
@@ -201,7 +203,8 @@ mCube-ai/
 |------------|------|---------------|-------|
 | **High** | `strategies`, `brokers`, `llm` | 2000+ each | Core trading logic, complex integrations |
 | **Medium** | `positions`, `trading`, `data`, `analytics` | 800-2000 | Business logic, data management |
-| **Low** | `core`, `accounts`, `risk`, `alerts` | 300-800 | Support functions, configuration |
+| **Low** | `core`, `accounts`, `risk` | 300-800 | Support functions, configuration |
+| **Medium-High** | `alerts` | ~7,500 | 4-file mixin Telegram bot + unified notification framework |
 
 ---
 
@@ -630,6 +633,34 @@ def close_position(self, exit_price: Decimal, exit_reason: str):
 **Location:** `apps/positions/models.py:467-491`
 **Purpose:** Tracks position monitoring events (alerts, checks)
 
+**Key Fields:**
+| Field | Type | Description |
+|-------|------|-------------|
+| `position` | ForeignKey | Associated position |
+| `check_type` | CharField | PNL_UPDATE, EXIT_SUGGESTION, STRUCTURAL_PRESSURE, AUTO_EXIT, NEAR_SL |
+| `result` | CharField | OK, SUGGESTION_SENT, HELD_BY_USER, SKIPPED_DUPLICATE, EXECUTING, STAGE2_WARNING_SENT |
+| `message` | TextField | Description with IST timestamp |
+| `price_at_check` | DecimalField | Price at time of check |
+| `pnl_at_check` | DecimalField | P&L at time of check |
+| `action_taken` | CharField | SUGGESTION_SENT, HELD_BY_USER, DUPLICATE_SKIPPED, AUTO_EXIT |
+
+**Performance:** PNL_UPDATE entries are batched via `bulk_create()` to reduce SQLite write contention.
+
+#### `PositionMonitorDashboard`
+**Purpose:** Anti-spam dashboard — one Telegram message per trading day, edited in place
+
+**Key Fields:**
+| Field | Type | Description |
+|-------|------|-------------|
+| `trading_date` | DateField | One per trading day |
+| `message_id` | IntegerField | Telegram message ID (for editing) |
+| `snapshots` | JSONField | Last 3 snapshots [{price, pnl, pnl_pct, time}] |
+| `sr_tracking` | JSONField | SR cache, gap flag, near_sl_warned, volatility_event_flag |
+| `last_snapshot` | DateTimeField | Last update timestamp |
+
+#### `PortfolioPnlTracker`
+**Purpose:** Portfolio P&L snapshot history (used for daily reports)
+
 ---
 
 ### 6.3 Services
@@ -682,6 +713,65 @@ def calculate_exit_metrics(position: Position, exit_price: Decimal) -> Dict:
 1. Edit `apps/positions/services/exit_manager.py`
 2. Change `min_profit_threshold = Decimal('50.0')` for different threshold
 3. Modify time checks in `check_eod_exit()` for different exit times
+
+---
+
+#### `sr_exit_engine.py`
+**Location:** `apps/positions/services/sr_exit_engine.py`
+**Purpose:** Structural S/R-based stop-loss and target management
+
+**Public API:**
+```python
+def apply_sl_and_target(position, dashboard, now=None) -> Dict:
+    """
+    Returns:
+        {
+            'sl_triggered': bool,
+            'sl_reason': str,
+            'structural_pressure': dict or None,  # Stage 2 warning
+        }
+    """
+```
+
+**3-Stage Warning System:**
+1. **NEAR_SL** — Within 1% of stop-loss (once per day via `sr_tracking['near_sl_warned']`)
+2. **STRUCTURAL_PRESSURE** — Condition A met, Condition B pending (5 min lead time)
+3. **TRIGGER** — Both conditions met → exit fired
+
+**Score-Gated Triggers** (LevelConfidenceScorer 0-100):
+- ≥76 (institutional): Condition A alone triggers
+- 56-75 (strong): A or B + 15-min confirmation
+- <56 (moderate): Both A+B required
+- Strict mode (expiry day before 14:00 IST): Always requires both A+B
+
+**Enhancement Layer (6 files):**
+- `sr_mtf_enricher.py` — 4-timeframe swing HL stacking
+- `sr_level_strength.py` — LevelStrengthAnnotator + LevelConfidenceScorer
+- `order_block_detector.py` — Order block zones
+- `oi_wall_enricher.py` — Gamma walls, OI delta, strike pinning
+- `sr_strategy_adapter.py` — FuturesStrategyAdapter, StrangleRangeGuard
+- `sr_risk_interface.py` — AdaptiveSLPlacer, StructuralPressureMonitor
+
+---
+
+#### `position_manager.py`
+**Location:** `apps/positions/services/position_manager.py`
+**Purpose:** Position lifecycle (create, close, average) with ONE POSITION RULE
+
+**Key Functions:**
+```python
+def morning_check(account) -> Dict:
+    """Returns {action: 'MONITOR'/'EVALUATE_ENTRY', allow_new_entry: bool, position, message}"""
+
+def create_position(account, strategy_type, instrument, ...) -> Tuple[bool, Position, str]:
+    """Redis-locked, circuit-breaker-gated position creation"""
+
+def close_position(position, exit_price, exit_reason, place_broker_order=False) -> Tuple[bool, str]:
+    """Broker-first close when place_broker_order=True (prevents ghost positions)"""
+
+def average_position(position, new_quantity, new_price, new_margin) -> Tuple[bool, str]:
+    """Max 2 averaging attempts. Tightens SL to 0.5% from new average."""
+```
 
 ---
 
@@ -1174,15 +1264,21 @@ def mark_cancelled(self, reason: str = ""):
 ### 8.4 Integrations
 
 #### Kotak Neo API
-**Location:** `apps/brokers/integrations/kotak_neo.py`
+**Location:** `apps/brokers/integrations/kotak_neo.py` (facade), `tools/neo.py` (NeoAPI wrapper)
 
 **Key Functions:**
 ```python
 def authenticate() -> bool:
-    """Authenticate with Kotak Neo API."""
+    """Authenticate with Kotak Neo API (TOTP + MPIN)."""
 
-def place_order(symbol, transaction_type, quantity, order_type, price=None) -> Dict:
-    """Place order with Kotak Neo."""
+def place_order(symbol, action, quantity, order_type='MKT', price=0,
+                exchange='NFO', product='NRML', is_exit=False, max_retries=3) -> Optional[str]:
+    """Place order with automatic retry (March 2026).
+    - Retries 3x with exponential backoff (1s, 2s, 4s) for transient errors
+    - Auth errors: session cleared, re-login, retry
+    - is_exit=True: URGENT Telegram alert on exhausted retries
+    - Returns order_id or None
+    """
 
 def get_positions() -> List[Dict]:
     """Get all positions from Kotak Neo."""
@@ -1193,6 +1289,8 @@ def get_live_quote(symbol) -> Dict:
 def get_option_chain(symbol, expiry) -> List[Dict]:
     """Get option chain data."""
 ```
+
+**REST Client:** `kotak-neo-api/neo_api_client/rest.py` — all HTTP calls use `timeout=(5, 30)` (5s connect, 30s read) to prevent worker starvation.
 
 #### ICICI Breeze API
 **Location:** `apps/brokers/integrations/breeze.py`
@@ -1516,21 +1614,33 @@ Risk limits, circuit breakers, and auto-shutdown on breach.
 
 **Key Functions:**
 ```python
-def check_daily_loss(account) -> Dict:
-    """Check if daily loss limit breached."""
+def check_risk_limits(account) -> Dict:
+    """Comprehensive risk check: daily + weekly limits."""
 
-def check_weekly_loss(account) -> Dict:
-    """Check if weekly loss limit breached."""
+def check_daily_loss_limit(account) -> Dict:
+    """Check if daily loss limit breached. Returns {breached, warning, limit, current_loss}."""
 
-def check_position_size(account, proposed_margin) -> Dict:
-    """Check if proposed position exceeds limit."""
+def check_weekly_loss_limit(account) -> Dict:
+    """Check if weekly loss limit breached. Returns {breached, warning, limit, current_loss}."""
 
-def trigger_circuit_breaker(account, reason) -> bool:
-    """Trigger circuit breaker and close all positions."""
+def activate_circuit_breaker(account, trigger_type, trigger_value, threshold_value) -> Tuple[bool, CircuitBreaker]:
+    """Activate circuit breaker: Redis flag → DB record → close positions → deactivate account.
+    Manual mode: sends CRITICAL exit suggestion. Autonomous: broker-first close."""
 
-def send_risk_alert(account, message, severity):
-    """Send risk alert via Telegram."""
+def is_circuit_breaker_active(account_id: int) -> bool:
+    """Fast Redis check for active circuit breaker (used by create_position before entry)."""
+
+def enforce_risk_limits(account) -> Tuple[bool, str]:
+    """Main enforcement: check limits, activate circuit breaker if breached."""
+
+def get_risk_status(account) -> Dict:
+    """Dashboard-style risk overview: limits, breaches, warnings, active circuit breakers."""
 ```
+
+**Circuit Breaker Architecture (March 2026):**
+- **Redis flag**: `circuit_breaker_active_{account_id}` set immediately (24h TTL) — blocks new orders before DB record is created
+- **Hardened close-all**: Autonomous mode uses `close_position(place_broker_order=True)` with 3-retry + URGENT Telegram
+- **`is_circuit_breaker_active()`**: O(1) Redis check called by `create_position()` before one-position rule
 
 ---
 
@@ -1686,17 +1796,26 @@ def send_alert(message, priority='INFO'):
 | 09:15 | `start_trading_day` | Market open validation |
 | 09:30 | `evaluate_options_strategy` | Check strangle entry |
 | 09:40 | `start_options_trade` | Execute options trade |
-| 09:40-10:15 | `batch_options_averaging` | Averaging checks (every 5 min) |
-| 09:45 | `screen_futures_opportunities` | Futures screening |
-| Every 10 min | `check_futures_averaging` | Futures averaging |
-| Every 15 min | `monitor_all_strangle_deltas` | Strangle delta monitoring |
-| Every 10 sec | `monitor_all_positions` | Position monitoring |
-| 15:15 | `alert_open_positions_pre_close` | Pre-close open position alert |
-| 15:25 | `close_trading_day` | Market close routine |
+| 09:40-10:30 | `batch_options_averaging` | Options averaging (every 1 min) |
+| 09:40 | `execute_futures_algorithm` | Futures screening + scoring (batch_size=2) |
+| 09:30 | `screen_futures_opportunities` | Pre-market futures scan |
+| Every 10 min (9:40-14:30) | `check_futures_averaging` | Futures averaging |
+| Every 15 min | `monitor_all_strangle_deltas` | Strangle delta monitoring (threshold: 300) |
+| Every 1 min (9 AM-3:59 PM) | `monitor_and_manage_positions` | Position monitoring: sync, P&L, SR engine, exits |
+| Every 1 min | `check_risk_limits_all_accounts` | Risk limits + intraday drawdown + portfolio aggregate |
+| Every 1 min (9 AM-3:59 PM) | `monitor_circuit_breakers` | Circuit breaker status monitoring |
+| Dynamic | `evaluate_kotak_strangle_exit` | Strangle profit check and exit (via dynamic scheduler) |
+| 15:15 | `alert_open_positions_pre_close` | Pre-close open position summary |
+| 15:25 | `close_trading_day` | Close positions with profit conditions |
 | 15:35 | `update_post_market_data` | After-hours data |
-| 15:45 | `reconcile_positions_eod` | End-of-day position reconciliation |
-| 16:00 | `calculate_daily_pnl` | Daily P&L |
-| Every hour | `check_daily_loss` | Risk monitoring |
+| 15:45 | `reconcile_positions_eod` | EOD reconciliation: sync broker → compare DB |
+| 16:00 | `generate_daily_pnl_report` | Daily P&L breakdown |
+| 16:00 | `sync_benchmark_data` | Nifty/BankNifty benchmark sync |
+| 16:30 | `daily_data_aggregation` | Sync trades, update DailyPnL |
+| 17:00 | `update_equity_curves` | Equity curve snapshots |
+| 17:00 | `update_learning_patterns` | Pattern learning update |
+| 18:00 | `generate_daily_risk_report` | End-of-day risk report |
+| Friday 18:00 | `weekly_summary` | Weekly performance summary |
 
 ### 15.3 Task Queues
 

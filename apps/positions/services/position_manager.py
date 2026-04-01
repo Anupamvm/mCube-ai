@@ -14,11 +14,16 @@ import logging
 from decimal import Decimal
 from typing import Dict, Optional, Tuple
 
+from django.core.cache import cache
 from django.utils import timezone
 
 from apps.positions.models import Position
 from apps.accounts.models import BrokerAccount
 from apps.core.utils import get_current_ist_time
+
+# Redis lock to prevent race condition on position creation
+_POSITION_CREATE_LOCK = 'position_create_lock_{}'
+_POSITION_CREATE_LOCK_TTL = 30  # seconds
 
 logger = logging.getLogger(__name__)
 
@@ -133,21 +138,39 @@ def create_position(
         Tuple[bool, Position, str]: (success, position, message)
     """
 
-    # CRITICAL: Check ONE POSITION RULE
-    if Position.has_active_position(account):
-        existing = Position.get_active_position(account)
-        message = (
-            f"❌ Cannot create position. ONE POSITION RULE violated. "
-            f"Active position exists: {existing.instrument}"
-        )
-        logger.error(message)
+    # CRITICAL: Check circuit breaker — blocks ALL new orders
+    from apps.risk.services.risk_manager import is_circuit_breaker_active
+    if is_circuit_breaker_active(account.id):
+        message = f"❌ Cannot create position. Circuit breaker ACTIVE for {account.account_name}."
+        logger.critical(message)
         return False, None, message
 
-    # Calculate entry value
-    entry_value = quantity * lot_size * entry_price
+    # Acquire Redis lock to prevent race condition (two tasks creating simultaneously)
+    lock_key = _POSITION_CREATE_LOCK.format(account.id)
+    acquired = cache.add(lock_key, '1', timeout=_POSITION_CREATE_LOCK_TTL)
+    if not acquired:
+        message = (
+            f"❌ Position creation in progress for {account.account_name}. "
+            f"Concurrent request blocked (ONE POSITION RULE lock)."
+        )
+        logger.warning(message)
+        return False, None, message
 
-    # Create position
     try:
+        # CRITICAL: Check ONE POSITION RULE (inside lock)
+        if Position.has_active_position(account):
+            existing = Position.get_active_position(account)
+            message = (
+                f"❌ Cannot create position. ONE POSITION RULE violated. "
+                f"Active position exists: {existing.instrument}"
+            )
+            logger.error(message)
+            return False, None, message
+
+        # Calculate entry value
+        entry_value = quantity * lot_size * entry_price
+
+        # Create position
         position = Position.objects.create(
             account=account,
             strategy_type=strategy_type,
@@ -183,6 +206,9 @@ def create_position(
         message = f"❌ Failed to create position: {str(e)}"
         logger.error(message, exc_info=True)
         return False, None, message
+
+    finally:
+        cache.delete(lock_key)
 
 
 def update_position_price(
@@ -222,21 +248,39 @@ def update_position_price(
 def close_position(
     position: Position,
     exit_price: Decimal,
-    exit_reason: str = "MANUAL"
+    exit_reason: str = "MANUAL",
+    place_broker_order: bool = False,
 ) -> Tuple[bool, str]:
     """
-    Close an active position
+    Close an active position.
+
+    When place_broker_order=True (autonomous exit), places the broker exit
+    order FIRST, then updates DB on success. This prevents ghost positions
+    (DB says CLOSED but broker still has an open position).
 
     Args:
         position: Position instance
         exit_price: Exit price
         exit_reason: Reason for exit (TARGET, STOP_LOSS, EOD, MANUAL, etc.)
+        place_broker_order: If True, place exit order at broker before updating DB
 
     Returns:
         Tuple[bool, str]: (success, message)
     """
 
     try:
+        # Step 1: Place broker order first (if requested)
+        if place_broker_order:
+            broker_success, broker_msg = _place_broker_exit_order(position)
+            if not broker_success:
+                message = (
+                    f"❌ Broker exit order failed for {position.instrument}: {broker_msg}. "
+                    f"Position remains OPEN in DB. Manual intervention required."
+                )
+                logger.error(message)
+                return False, message
+
+        # Step 2: Update DB only after broker confirms (or if DB-only close)
         position.close_position(exit_price, exit_reason)
 
         message = (
@@ -254,6 +298,56 @@ def close_position(
         message = f"❌ Failed to close position: {str(e)}"
         logger.error(message, exc_info=True)
         return False, message
+
+
+def _place_broker_exit_order(position: Position) -> Tuple[bool, str]:
+    """
+    Place the broker-side exit order for a position.
+
+    Returns:
+        Tuple[bool, str]: (success, message)
+    """
+    try:
+        account = position.account
+        broker_type = getattr(account, 'broker_type', '').lower()
+
+        if 'kotak' in broker_type or 'neo' in broker_type:
+            from tools.neo import get_neo_api
+            neo = get_neo_api()
+
+            # Determine exit direction (reverse of position direction)
+            if position.direction == 'LONG':
+                action = 'S'  # Sell to close long
+            elif position.direction == 'SHORT':
+                action = 'B'  # Buy to close short
+            else:
+                # NEUTRAL (strangle) — needs multi-leg close, skip auto-close
+                return False, "NEUTRAL positions require multi-leg close via UI"
+
+            order_id = neo.place_order(
+                symbol=position.instrument,
+                action=action,
+                quantity=position.quantity,
+                order_type='MKT',
+                exchange='NFO',
+                product='NRML',
+                is_exit=True,  # Triggers URGENT alert on failure
+            )
+
+            if order_id:
+                logger.info(f"Broker exit order placed: {order_id} for {position.instrument}")
+                return True, f"Order ID: {order_id}"
+            else:
+                return False, "place_order returned None after retries"
+
+        else:
+            # Non-Neo broker — fall through to DB-only close
+            logger.warning(f"Broker type '{broker_type}' — skipping auto broker order")
+            return True, "Non-Neo broker, DB-only close"
+
+    except Exception as e:
+        logger.error(f"Broker exit order error: {e}", exc_info=True)
+        return False, str(e)
 
 
 def get_position_summary(position: Position) -> Dict[str, any]:

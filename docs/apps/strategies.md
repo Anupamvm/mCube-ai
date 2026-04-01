@@ -42,6 +42,12 @@ The strategies app contains the trading algorithms - the brain of mCube. This is
 | `filters/global_markets.py` | Global market stability filter |
 | `filters/event_calendar.py` | Economic events filter |
 | `tasks.py` | Scheduled strategy tasks |
+| `tasks_strangle.py` | Strangle-specific scheduled tasks (dynamic schedule) |
+
+**Task Safety (March 2026):**
+- `screen_futures_opportunities` and `execute_futures_algorithm` have **idempotency guards** (Redis key per day) to prevent duplicate runs from Beat double-fire or scheduler restarts
+- Manual triggers bypass the idempotency guard
+- All entry tasks check `is_circuit_breaker_active()` and `create_position()` uses a Redis lock to prevent race conditions
 
 ---
 
@@ -310,7 +316,7 @@ If position goes against you:
 
 The Screen Futures Algorithm is an automated opportunity scanner that:
 1. Screens high-volume futures contracts
-2. Analyzes using a 12-component scoring system
+2. Analyzes using a 13-component scoring system (315 pts → 100 scale)
 3. Presents TOP 3 candidates for user confirmation via Telegram
 4. Executes trades with intelligent batching on approval
 
@@ -326,7 +332,7 @@ The Screen Futures Algorithm is an automated opportunity scanner that:
     ├─> Split into batches of 3, dispatch parallel analysis
     │       (Celery chord: 17 parallel tasks)
     │
-    ├─> Each batch runs 13-component parallel analysis:
+    ├─> Each batch runs 13-component scoring (315 pts → 100 scale):
     │     1. OI & F&O Analysis (45 pts)
     │     2. Technical Momentum (35 pts)
     │     3. Trend Confirmation (30 pts)
@@ -449,7 +455,7 @@ Even with a high score, these conditions cause automatic rejection:
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `top_contracts` | 50 | Contracts to analyze |
-| `batch_size` | 3 | Contracts per parallel task |
+| `batch_size` | 3 | Contracts per parallel task (set in celery.py kwargs) |
 | `this_month_volume` | 1000 | Min volume (current month) |
 | `next_month_volume` | 800 | Min volume (next month) |
 | `min_score` | 65 | Minimum qualifying score |
@@ -642,15 +648,43 @@ result = check_economic_events(days_ahead=5)
 
 ## Celery Tasks
 
+### Main Strategy Tasks (`tasks.py`)
+
 | Task | Schedule | Purpose |
 |------|----------|---------|
-| `evaluate_options_strategy` | 9:30 AM | Options strategy decision |
+| `setup_trading_day` | 8:55 AM | Evaluate data, determine if day is tradable |
+| `start_trading_day` | 9:15 AM | Validate market opening, check news/changes |
+| `evaluate_options_strategy` | 9:30 AM | Options strategy decision (strangle vs iron condor) |
 | `start_options_trade` | 9:40 AM | Options entry execution |
-| `execute_futures_algorithm` | 9:40 AM | Futures screening + execution |
+| `execute_futures_algorithm` | 9:40 AM | Futures screening + execution (13-component, batched) |
 | `screen_futures_opportunities` | 9:30 AM | Pre-market futures scan |
-| `monitor_all_strangle_deltas` | Every 15 min | Delta drift monitoring |
-| `batch_options_averaging` | 9:40-10:30 AM, every 5 min | Options averaging |
-| `check_futures_averaging` | Every 10 min | Futures averaging checks |
+| `evaluate_kotak_strangle_entry` | Mon & Tue 10:00 AM | Kotak strangle entry evaluation |
+| `evaluate_kotak_strangle_exit` | Via dynamic scheduler | Kotak strangle exit (profit threshold check) |
+| `monitor_all_strangle_deltas` | Every 15 min | Delta drift monitoring (threshold: 300) |
+| `batch_options_averaging` | 9:40-10:30 AM, every 1 min | Options averaging in batches |
+| `check_futures_averaging` | Every 10 min (9:40-14:30) | Futures averaging checks |
+| `close_trading_day` | 3:25 PM | Close positions with profit conditions |
+
+### Strangle Dynamic Tasks (`tasks_strangle.py`)
+
+| Task | Purpose |
+|------|---------|
+| `premarket_data_fetch` | Pre-market data collection |
+| `market_opening_validation` | Market opening checks |
+| `trade_start_evaluation` | Entry evaluation |
+| `schedule_staggered_entries` | Staggered option entries |
+| `execute_single_entry` | Individual entry execution |
+| `trade_monitoring` | Active trade monitoring |
+| `trade_stop_evaluation` | Stop/exit evaluation |
+| `day_close_reconciliation` | End-of-day reconciliation |
+| `analyze_day` | Day performance analysis |
+
+### Futures Pipeline Tasks
+
+| Task | Purpose |
+|------|---------|
+| `analyze_futures_batch` | Parallel batch analysis (13-component scoring per batch) |
+| `aggregate_futures_results` | Callback: filter, sort, save top candidates to TradeSuggestion |
 
 ---
 

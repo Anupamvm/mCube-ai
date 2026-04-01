@@ -17,6 +17,7 @@ from datetime import date, timedelta
 from decimal import Decimal
 from typing import Dict, Tuple
 
+from django.core.cache import cache
 from django.utils import timezone
 
 from apps.accounts.models import BrokerAccount
@@ -24,6 +25,15 @@ from apps.risk.models import RiskLimit, CircuitBreaker
 from apps.positions.models import Position
 
 logger = logging.getLogger(__name__)
+
+# Redis key prefix for circuit breaker block flag (blocks ALL new orders)
+CIRCUIT_BREAKER_ACTIVE_KEY = 'circuit_breaker_active_{}'
+CIRCUIT_BREAKER_TTL = 86400  # 24 hours
+
+
+def is_circuit_breaker_active(account_id: int) -> bool:
+    """Check if circuit breaker is active for an account (fast Redis check)."""
+    return bool(cache.get(CIRCUIT_BREAKER_ACTIVE_KEY.format(account_id)))
 
 
 def check_risk_limits(account: BrokerAccount) -> Dict[str, any]:
@@ -235,6 +245,14 @@ def activate_circuit_breaker(
         f"Value: ₹{trigger_value:,.0f} > Threshold: ₹{threshold_value:,.0f}"
     )
 
+    # Set Redis flag FIRST — blocks all new order placement immediately
+    cache.set(
+        CIRCUIT_BREAKER_ACTIVE_KEY.format(account.id),
+        {'trigger': trigger_type, 'activated_at': timezone.now().isoformat()},
+        timeout=CIRCUIT_BREAKER_TTL,
+    )
+    logger.critical(f"Circuit breaker Redis flag set for account {account.id}")
+
     # Create circuit breaker record
     circuit_breaker = CircuitBreaker.objects.create(
         account=account,
@@ -281,18 +299,29 @@ def activate_circuit_breaker(
                     f"Circuit breaker: exit suggestion sent for {position.instrument} (manual mode)"
                 )
             else:
-                # Autonomous mode: close immediately
-                position.close_position(
+                # Autonomous mode: close immediately via hardened path
+                from apps.positions.services.position_manager import close_position as _close_pos
+                success, msg = _close_pos(
+                    position=position,
                     exit_price=position.current_price,
-                    exit_reason='CIRCUIT_BREAKER'
+                    exit_reason='CIRCUIT_BREAKER',
+                    place_broker_order=True,
                 )
-                positions_closed += 1
-                circuit_breaker.add_action(
-                    f"Closed position: {position.instrument} at ₹{position.current_price:,.2f}"
-                )
-                logger.warning(
-                    f"Position closed by circuit breaker: {position.instrument}"
-                )
+                if success:
+                    positions_closed += 1
+                    circuit_breaker.add_action(
+                        f"Closed position: {position.instrument} at ₹{position.current_price:,.2f}"
+                    )
+                    logger.warning(
+                        f"Position closed by circuit breaker: {position.instrument}"
+                    )
+                else:
+                    circuit_breaker.add_action(
+                        f"FAILED to close {position.instrument}: {msg}"
+                    )
+                    logger.critical(
+                        f"Circuit breaker FAILED to close {position.instrument}: {msg}"
+                    )
 
         except Exception as e:
             logger.error(

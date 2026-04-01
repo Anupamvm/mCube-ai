@@ -122,17 +122,31 @@ def monitor_and_manage_positions():
         # ── Sync latest positions + LTPs from all broker accounts ─────────────
         # This ensures: (a) any new positions are in DB, (b) current_price is
         # fresh for P&L calculations — runs before every monitor cycle.
+        sync_failed = False
         try:
             from apps.positions.services.position_sync import sync_positions_from_brokers
             sync_positions_from_brokers(include_history=False)
             # Reset strike counter on success — broker is healthy again
             cache.delete(_SYNC_FAIL_KEY_PREFIX)
         except Exception as sync_err:
+            sync_failed = True
             logger.warning(f"Pre-monitor broker sync failed (continuing with DB state): {sync_err}")
-            # 3-strike alert: count consecutive failures and notify on breach
+            # Count consecutive failures
             fail_count = cache.get(_SYNC_FAIL_KEY_PREFIX, 0) + 1
             cache.set(_SYNC_FAIL_KEY_PREFIX, fail_count, timeout=_SYNC_FAIL_TTL)
-            if fail_count >= _SYNC_FAIL_THRESHOLD:
+            # Alert on FIRST failure (warning), escalate to CRITICAL on 3rd
+            if fail_count == 1:
+                notify('SYSTEM_STATUS',
+                    title='Position Sync Failed',
+                    task='monitor_and_manage_positions',
+                    priority='WARNING',
+                    metrics={'P&L': 'using stale prices'},
+                    context=[
+                        'Broker sync failed — P&L and exit checks use last known prices',
+                        f'Error: {str(sync_err)[:150]}',
+                    ],
+                )
+            elif fail_count >= _SYNC_FAIL_THRESHOLD:
                 notify('CRITICAL_ERROR',
                     title='Position Sync Failing',
                     task='monitor_and_manage_positions',
@@ -185,6 +199,8 @@ def monitor_and_manage_positions():
 
         # Collect data for consolidated dashboard (all positions in one message)
         positions_data = []
+        # Batch MonitorLog entries to reduce SQLite write contention
+        pending_monitor_logs = []
 
         # Detect duplicate symbols per account (for avg-price disambiguation in display)
         from collections import Counter
@@ -215,8 +231,8 @@ def monitor_and_manage_positions():
                     else Decimal('0')
                 )
 
-                # ── 2. MonitorLog (timestamped) ───────────────────────────────
-                MonitorLog.objects.create(
+                # ── 2. MonitorLog (timestamped) — batched for efficiency ──────
+                pending_monitor_logs.append(MonitorLog(
                     position=position,
                     check_type='PNL_UPDATE',
                     result='OK',
@@ -227,7 +243,7 @@ def monitor_and_manage_positions():
                     ),
                     price_at_check=position.current_price,
                     pnl_at_check=pnl,
-                )
+                ))
 
                 # ── 3. Per-position dashboard + SR engine (SL/target update) ──
                 dashboard, _ = get_or_create_dashboard(position, today)
@@ -447,6 +463,7 @@ def monitor_and_manage_positions():
                             position=position,
                             exit_price=position.current_price,
                             exit_reason=reason,
+                            place_broker_order=True,
                         )
 
                         from apps.alerts.services.notification_payload import NotificationPayload
@@ -498,6 +515,18 @@ def monitor_and_manage_positions():
                     f"Error processing position #{position.id}: {e}", exc_info=True
                 )
                 errors.append(f"pos {position.id}: {e}")
+
+        # ── Flush batched MonitorLog entries in one DB write ─────────────────
+        if pending_monitor_logs:
+            try:
+                MonitorLog.objects.bulk_create(pending_monitor_logs)
+            except Exception as bulk_err:
+                logger.warning(f"bulk_create MonitorLog failed, falling back: {bulk_err}")
+                for log in pending_monitor_logs:
+                    try:
+                        log.save()
+                    except Exception:
+                        pass
 
         # ── Consolidated dashboard (ONE message for all positions) ────────────
         if positions_data:

@@ -37,6 +37,8 @@ import pandas as pd
 import re
 import logging
 import threading
+import time
+from requests.exceptions import ConnectionError, Timeout, ReadTimeout
 
 logger = logging.getLogger(__name__)
 
@@ -621,6 +623,9 @@ class NeoAPI(BrokerInterface if isinstance(BrokerInterface, type) else object):
     
     # ========== ORDERS ==========
     
+    # Transient errors that warrant a retry
+    _RETRYABLE_EXCEPTIONS = (ConnectionError, Timeout, ReadTimeout, OSError)
+
     def place_order(
         self,
         symbol: str,
@@ -630,11 +635,13 @@ class NeoAPI(BrokerInterface if isinstance(BrokerInterface, type) else object):
         price: float = 0,
         exchange: str = 'NFO',
         product: str = 'NRML',  # 'NRML', 'MIS', 'CNC'
-        instrument_token: str = ''
+        instrument_token: str = '',
+        is_exit: bool = False,
+        max_retries: int = 3,
     ) -> Optional[str]:
         """
-        Place an order
-        
+        Place an order with automatic retry for transient failures.
+
         Args:
             symbol: Trading symbol
             action: 'B' (BUY) or 'S' (SELL)
@@ -644,44 +651,124 @@ class NeoAPI(BrokerInterface if isinstance(BrokerInterface, type) else object):
             exchange: 'NSE' or 'NFO'
             product: 'NRML', 'MIS', 'CNC'
             instrument_token: Instrument token (required by Neo)
-        
+            is_exit: If True, sends URGENT alert on exhausted retries
+            max_retries: Number of retry attempts (default 3)
+
         Returns:
             str: Order ID if successful, None otherwise
         """
-        try:
-            if not self.session_active:
-                self.login()
-            
-            response = self.neo.place_order(
-                exchange_segment=exchange,
-                product=product,
-                price=str(price) if price > 0 else "0",
-                order_type=order_type,
-                quantity=str(quantity),
-                validity="DAY",
-                trading_symbol=symbol,
-                transaction_type=action,
-                amo="NO",
-                disclosed_quantity="0",
-                market_protection="0",
-                pf="N",
-                trigger_price="0",
-                tag=None
-            )
-            
-            if response and response.get('stat') == 'Ok':
-                order_id = response.get('nOrdNo')
-                logger.info(f"Order placed: {order_id}")
-                return order_id
-            else:
-                logger.error(f"Order failed: {response}")
-                return None
+        last_error = None
 
-        except Exception as e:
-            if self._is_auth_error(e):
-                self._handle_auth_error('place_order')
-            logger.error(f"Order placement error: {e}")
-            return None
+        for attempt in range(1, max_retries + 1):
+            try:
+                if not self.session_active:
+                    self.login()
+
+                response = self.neo.place_order(
+                    exchange_segment=exchange,
+                    product=product,
+                    price=str(price) if price > 0 else "0",
+                    order_type=order_type,
+                    quantity=str(quantity),
+                    validity="DAY",
+                    trading_symbol=symbol,
+                    transaction_type=action,
+                    amo="NO",
+                    disclosed_quantity="0",
+                    market_protection="0",
+                    pf="N",
+                    trigger_price="0",
+                    tag=None
+                )
+
+                if response and response.get('stat') == 'Ok':
+                    order_id = response.get('nOrdNo')
+                    if attempt > 1:
+                        logger.info(f"Order placed on attempt {attempt}: {order_id}")
+                    else:
+                        logger.info(f"Order placed: {order_id}")
+                    return order_id
+                else:
+                    # Deterministic failure (margin, invalid symbol, etc.) — don't retry
+                    logger.error(f"Order rejected by broker: {response}")
+                    last_error = f"Broker rejected: {response}"
+                    break
+
+            except Exception as e:
+                last_error = str(e)
+
+                if self._is_auth_error(e):
+                    # Auth error: clear session, re-login, and retry once
+                    self._handle_auth_error('place_order')
+                    logger.warning(f"Auth error on attempt {attempt}, re-authenticating: {e}")
+                    try:
+                        self.login()
+                    except Exception as login_err:
+                        logger.error(f"Re-login failed: {login_err}")
+                    # Continue to next attempt (will use fresh session)
+                    if attempt < max_retries:
+                        time.sleep(1)
+                    continue
+
+                if isinstance(e, self._RETRYABLE_EXCEPTIONS) or self._is_transient_error(e):
+                    backoff = 2 ** (attempt - 1)  # 1s, 2s, 4s
+                    logger.warning(
+                        f"Transient error on attempt {attempt}/{max_retries}, "
+                        f"retrying in {backoff}s: {e}"
+                    )
+                    if attempt < max_retries:
+                        time.sleep(backoff)
+                    continue
+
+                # Non-transient, non-auth error — don't retry
+                logger.error(f"Order placement error (non-retryable): {e}")
+                break
+
+        # All retries exhausted or broke out
+        logger.error(
+            f"Order FAILED after {attempt} attempt(s): {symbol} {action} qty={quantity} | {last_error}"
+        )
+
+        if is_exit:
+            self._send_urgent_order_failure_alert(
+                symbol=symbol, action=action, quantity=quantity,
+                order_type=order_type, price=price, exchange=exchange,
+                product=product, error=last_error,
+            )
+
+        return None
+
+    def _is_transient_error(self, exception: Exception) -> bool:
+        """Check if an error is likely transient (server-side, network)."""
+        error_str = self._format_exception(exception).lower()
+        transient_keywords = ['timeout', 'connection', 'temporary', '500', '502', '503', '504', 'rate limit']
+        return any(kw in error_str for kw in transient_keywords)
+
+    def _send_urgent_order_failure_alert(self, **order_details):
+        """Send URGENT Telegram alert when an exit order fails after all retries."""
+        try:
+            from apps.alerts.services.notification_service import notify
+            notify(
+                'CRITICAL_ERROR',
+                title='EXIT ORDER FAILED — Manual Action Required',
+                priority='CRITICAL',
+                metrics={
+                    'Symbol': order_details.get('symbol', '?'),
+                    'Action': 'BUY' if order_details.get('action') == 'B' else 'SELL',
+                    'Quantity': str(order_details.get('quantity', '?')),
+                    'Type': order_details.get('order_type', '?'),
+                },
+                context=[
+                    f"Exit order failed after all retries",
+                    f"Error: {order_details.get('error', 'Unknown')}",
+                    "⚠️ Position is still OPEN — close manually via broker portal",
+                ],
+            )
+        except Exception as alert_err:
+            logger.critical(
+                f"CRITICAL: Exit order failed AND alert failed: {alert_err} | "
+                f"Order: {order_details}"
+            )
 
     def get_orders(self) -> List[Dict]:
         """

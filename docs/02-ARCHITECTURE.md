@@ -14,7 +14,7 @@ This document explains how mCube is built and how all components work together.
     │  │    Frontend (Templates + Bootstrap 5 + HTMX)    │    │
     │  └─────────────────────────────────────────────────┘    │
     │  ┌─────────────────────────────────────────────────┐    │
-    │  │           Django Backend (13 Apps)               │    │
+    │  │           Django Backend (11 Apps)               │    │
     │  │    core | accounts | positions | strategies |    │    │
     │  │    risk | data | llm | analytics | alerts |      │    │
     │  │    brokers | trading | algo_test                  │    │
@@ -41,7 +41,7 @@ This document explains how mCube is built and how all components work together.
 | Framework | Django 4.2 | Web application |
 | Database | SQLite | Persistent storage |
 | Cache/Queue | Redis | Celery message broker |
-| Tasks | Celery 5.3 + background_task | Background automation |
+| Tasks | Celery 5.3 (Redis broker) | Background automation |
 | Frontend | Bootstrap 5 + HTMX | UI |
 | LLM | Ollama | Trade validation |
 | Alerts | Telegram Bot | Notifications |
@@ -57,7 +57,7 @@ mCube-ai/
 │   ├── urls.py
 │   └── celery.py
 │
-├── apps/               # Django applications (13 apps)
+├── apps/               # Django applications (11 installed apps)
 │   ├── core/          # Shared utilities, credentials, TradingCoreConfig, TradingContext
 │   ├── accounts/      # Broker accounts
 │   ├── positions/     # Position tracking
@@ -94,6 +94,10 @@ BrokerAccount model with capital allocation and risk limits.
 
 ### positions
 Position tracking with entry/exit, P&L calculation, MonitorLog for position checks.
+- `PositionMonitorDashboard` — Anti-spam single Telegram message per day, edited in place
+- S/R Exit Engine with 3-stage warnings (NEAR_SL → STRUCTURAL_PRESSURE → TRIGGER)
+- `position_manager.py` — ONE POSITION RULE with Redis lock + circuit breaker gate
+- `close_position(place_broker_order=True)` — Broker-first close for autonomous exits
 
 ### strategies
 Kotak strangle and ICICI futures strategy implementations.
@@ -108,6 +112,9 @@ Kotak strangle and ICICI futures strategy implementations.
 
 ### risk
 RiskLimit model, circuit breakers, real-time monitoring.
+- Redis circuit breaker flag — immediate O(1) check blocks all new orders
+- Intraday unrealized drawdown monitoring (10% warning, 15% critical)
+- Portfolio-level aggregate drawdown across all accounts
 
 ### data
 Trendlyne integration, market data, security master, news articles.
@@ -182,7 +189,8 @@ entry_price = DecimalField()
 current_price = DecimalField()
 stop_loss = DecimalField()
 target = DecimalField()
-status = CharField()              # ACTIVE, CLOSED, PENDING
+status = CharField()              # SUGGESTED, APPROVED, OPEN, CLOSED, REJECTED, EXPIRED
+                                  # (ACTIVE is an alias for OPEN)
 
 # Strangle-specific
 call_strike = DecimalField()
@@ -249,7 +257,7 @@ auto_login_date = DateField()     # Date of last attempt
 
 ## Background Tasks
 
-Tasks run via **Celery** and **Django background_task**:
+Tasks run via **Celery** with Redis as broker:
 
 | Category | Frequency |
 |----------|-----------|

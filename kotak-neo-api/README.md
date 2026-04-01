@@ -129,3 +129,7 @@ client.subscribe_to_orderfeed()
 | `margin_required` | `quick/user/check-margin` | session token |
 | `scrip_master` | `script-details/1.0/masterscrip/file-paths` | access_token |
 | `quotes` | `script-details/1.0/quotes/neosymbol/...` | access_token |
+
+## HTTP Timeouts
+
+All REST API calls use `timeout=(5, 30)` — 5-second connection timeout, 30-second read timeout. This prevents hung workers in Celery when the broker API is unresponsive. Configured via `RESTClientObject.DEFAULT_TIMEOUT` in `neo_api_client/rest.py`.

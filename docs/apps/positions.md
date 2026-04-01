@@ -70,14 +70,18 @@ premium_collected = DecimalField()       # Total premium collected
 current_delta = DecimalField()           # Net delta of position
 
 # Status & Timing
-status = CharField()                     # ACTIVE or CLOSED
+status = CharField()                     # SUGGESTED, APPROVED, OPEN, CLOSED
+                                         # (ACTIVE is an alias for OPEN)
 entry_time = DateTimeField()             # When position was opened
 exit_time = DateTimeField()              # When position was closed
+exit_reason = CharField()                # Why position was closed
 expiry_date = DateField()                # Contract expiry
+label = CharField()                      # Human-readable label (e.g., "NIFTY 25500 CE")
 
 # P&L Tracking
 realized_pnl = DecimalField()            # P&L from closed portion
 unrealized_pnl = DecimalField()          # P&L on open portion
+entry_value = DecimalField()             # Total entry value (qty × lot_size × entry_price)
 margin_used = DecimalField()             # Margin deployed
 
 # Averaging
@@ -131,6 +135,10 @@ This is enforced in:
 - `services/position_manager.py` - `morning_check()` function
 - `services/position_manager.py` - `create_position()` function
 
+**Concurrency Protection (March 2026):**
+- **Redis lock**: `cache.add('position_create_lock_{account_id}', ...)` prevents two Celery tasks from creating positions simultaneously (30s TTL, released in `finally` block)
+- **Circuit breaker gate**: `is_circuit_breaker_active(account_id)` checked before lock acquisition — blocks all entries when circuit breaker is active
+
 ---
 
 ## Position Lifecycle
@@ -143,9 +151,10 @@ This is enforced in:
 2. Position Entry (if allowed)
    └── create_position() → New ACTIVE position
 
-3. Monitoring (Every 10-30 seconds)
-   ├── update_position_pnl() → Refresh current price
-   ├── check_exit_conditions() → Check SL/Target
+3. Monitoring (Every 1 minute, 9:00 AM – 3:59 PM)
+   ├── sync_positions_from_brokers() → Refresh prices from broker
+   ├── apply_sl_and_target() → SR engine SL/target update
+   ├── check exit conditions → SL/Target/EOD/Expiry
    └── monitor_delta() → Check option deltas (strangle only)
 
 4. Exit Triggered
@@ -185,9 +194,10 @@ Called at market open. Determines what mode we're in.
 result = morning_check(account)
 # Returns:
 # {
-#     'action': 'MONITOR_ONLY' or 'EVALUATE_ENTRY',
-#     'reason': 'Active position exists' or 'No active position',
-#     'position': Position or None
+#     'action': 'MONITOR' or 'EVALUATE_ENTRY',
+#     'position': Position or None,
+#     'allow_new_entry': True/False,
+#     'message': 'Active position: NIFTY LONG. Monitor only...'
 # }
 ```
 
@@ -211,17 +221,34 @@ success, position, message = create_position(
 )
 ```
 
-#### close_position(position, exit_price, exit_reason)
+#### close_position(position, exit_price, exit_reason, place_broker_order=False)
 
 Closes a position and calculates realized P&L.
 
+When `place_broker_order=True` (used by autonomous auto-exit and circuit breaker), the broker exit order is placed **FIRST**. If the broker order fails, the DB is NOT updated — the position remains OPEN to prevent ghost positions.
+
 ```python
+# DB-only close (manual confirmation flow, user already closed at broker)
 success, message = close_position(
     position=position,
     exit_price=150,
     exit_reason="Stop-loss triggered"
 )
+
+# Broker-first close (autonomous mode / circuit breaker)
+success, message = close_position(
+    position=position,
+    exit_price=150,
+    exit_reason="CIRCUIT_BREAKER",
+    place_broker_order=True,  # Places broker order first, then updates DB
+)
 ```
+
+**Broker-first flow:**
+1. `_place_broker_exit_order()` determines exit direction (LONG→SELL, SHORT→BUY)
+2. Calls `neo.place_order(is_exit=True)` — triggers retry logic + URGENT alert on failure
+3. NEUTRAL positions return False (multi-leg close requires UI)
+4. Only if broker confirms → DB status updated to CLOSED
 
 ### Exit Manager (`services/exit_manager.py`)
 
@@ -247,6 +274,16 @@ result = check_exit_conditions(position)
 #     'exit_price': Decimal('150'),
 #     'priority': 1  # 1=highest
 # }
+```
+
+#### should_exit_position(position, current_time)
+
+Used by `monitor_and_manage_positions` task (after SR engine check):
+
+```python
+should_exit, reason, exit_price = should_exit_position(position, now)
+# Returns: (bool, str, Decimal)
+# reason: 'SL_HIT', 'TARGET_HIT', 'EOD_EXIT', 'EXIT_ON_EXPIRY', etc.
 ```
 
 **Exit Priority Order**:
@@ -289,6 +326,11 @@ result = apply_sl_and_target(position, dashboard, now=None)
 - <56 (moderate): Both A+B required
 - Strict mode (expiry day before 14:00 IST): Always requires both A+B
 
+**Noise Window & Catastrophic Gap Override (March 2026)**:
+- SL triggers blocked before 09:30 IST (09:45 on gap opens) to filter opening noise
+- **Catastrophic gap override**: If position P&L worse than -3% (`CATASTROPHIC_GAP_PCT`) during noise window, the window is bypassed and SL triggers immediately
+- This prevents large overnight gap losses from accumulating while the noise filter is active
+
 ### Averaging Manager (`services/averaging_manager.py`)
 
 Handles position averaging (futures only).
@@ -316,9 +358,9 @@ result = should_average_position(position, current_price=100)
 ```
 
 **Averaging Triggers**:
-- Position is ACTIVE
+- Position is OPEN (LONG or SHORT — not NEUTRAL)
 - Position is down >= 1% from entry
-- Averaging attempts < 3
+- Averaging attempts < 2 (maximum 2 attempts)
 - Sufficient margin available
 
 #### execute_averaging(position, current_price)
@@ -377,8 +419,9 @@ P&L = (entry_price - current_price) × quantity × lot_size
 
 ### For NEUTRAL (Strangle)
 ```
-P&L = premium_collected - current_exit_cost
+P&L = premium_collected
 ```
+Note: In the monitor task, NEUTRAL positions use `position.premium_collected` directly as the P&L value.
 
 ---
 
@@ -387,6 +430,27 @@ P&L = premium_collected - current_exit_cost
 | Task | Frequency | Purpose |
 |------|-----------|---------|
 | `monitor_and_manage_positions` | Every 1 min (9 AM-3:59 PM) | Full monitoring cycle: P&L, SR engine, dashboard, exit checks |
+| `alert_open_positions_pre_close` | 15:15 Mon-Fri | Consolidated summary of open positions before EOD close |
+| `reconcile_positions_eod` | 15:45 Mon-Fri | EOD reconciliation: sync broker → compare with DB → report mismatches |
+
+**Monitoring Task Safety Features (March 2026):**
+- **Batched MonitorLog writes**: PNL_UPDATE entries collected in a list and written via `bulk_create()` after the loop (reduces SQLite write contention). Conditional logs (EXIT_SUGGESTION, AUTO_EXIT, etc.) remain individual creates.
+- **First-failure sync alert**: Sends WARNING notification on first broker sync failure (not third). Escalates to CRITICAL after 3 consecutive failures (Redis counter with 10-min TTL).
+- **Autonomous auto-exit**: Now uses `close_position(place_broker_order=True)` — places broker exit order before updating DB.
+- **Position deduplication**: Multiple DB accounts per broker can map to the same real broker account. The monitor deduplicates by `(broker, instrument, quantity)` — keeps the most recently synced row.
+- **Hold flag auto-clear**: All hold flags cleared at 15:30 IST (end of trading day).
+- **Simulated mode skip**: If `TradingCoreConfig.is_simulated()` is True, monitoring returns early without processing.
+
+### alert_open_positions_pre_close
+
+Sends a consolidated summary of all open positions at 15:15 — 10 minutes before `close_trading_day`. Purely informational; no positions are modified.
+
+### reconcile_positions_eod
+
+End-of-day reconciliation (15:45). Syncs from broker, then compares DB vs broker state:
+- **Clean**: All positions closed, DB and broker agree
+- **Carry-forward**: Positions remain open (held overnight) — informational
+- **Mismatch**: DB says OPEN but broker reports nothing — requires manual review
 
 ---
 
@@ -456,13 +520,16 @@ last_snapshot = DateTimeField()     # Last update timestamp
 
 ## Key Business Rules
 
-1. **ONE POSITION PER ACCOUNT** - Checked before any entry
-2. **Exit Priority** - SL > Target > EOD > Expiry
-3. **Averaging Limit** - Maximum 2 averaging attempts
-4. **Delta Threshold** - Alert at |delta| > 300
-5. **50% Profit Rule** - EOD exit only if profit >= 50%
-6. **Hold Flag** - User can hold exit suggestion; re-alert only on reason change, >1% price move, or market close
-7. **Dashboard Anti-Spam** - One Telegram message per day, edited in place with last 3 snapshots
+1. **ONE POSITION PER ACCOUNT** - Checked before any entry (Redis-locked to prevent race conditions)
+2. **Circuit Breaker Gate** - No new positions when circuit breaker active (Redis flag check)
+3. **Exit Priority** - SL > Target > EOD > Expiry
+4. **Broker-First Close** - Autonomous exits place broker order before DB update (prevents ghost positions)
+5. **Catastrophic Gap Override** - SL triggers during noise window if P&L worse than -3%
+6. **Averaging Limit** - Maximum 2 averaging attempts
+7. **Delta Threshold** - Alert at |delta| > 300
+8. **50% Profit Rule** - EOD exit only if profit >= 50%
+9. **Hold Flag** - User can hold exit suggestion; re-alert suppressed while held; auto-cleared at 15:30 IST (day end)
+10. **Dashboard Anti-Spam** - One Telegram message per day, edited in place with last 3 snapshots
 
 ---
 

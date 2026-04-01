@@ -1394,6 +1394,14 @@ def screen_futures_opportunities_task():
     4. Save top 5 to FuturesSuggestion + TradeSuggestion (for web UI at /trading/triggers/#futures)
     5. Send Telegram notification
     """
+    # Idempotency guard: prevent Beat double-fire on same day
+    from django.core.cache import cache as _cache
+    from django.utils import timezone as _tz
+    _idem_key = f'strategy_run_screen_futures_{_tz.localdate()}'
+    if not _cache.add(_idem_key, '1', timeout=3600):
+        logger.info("screen_futures_opportunities: already ran today — skipping duplicate")
+        return {'success': True, 'skipped': True, 'reason': 'idempotency_guard'}
+
     logger.info("=" * 80)
     logger.info("CELERY TASK: Futures Opportunity Screening")
     logger.info("=" * 80)
@@ -2350,6 +2358,14 @@ def execute_futures_algorithm(self, this_month_volume=1000, next_month_volume=80
         task_category='strategy',
         task_id=self.request.id
     )
+
+    # Idempotency guard: prevent Beat double-fire on same day (manual trigger bypasses)
+    if not _manual_trigger:
+        from django.core.cache import cache as _cache
+        _idem_key = f'strategy_run_execute_futures_{date.today()}'
+        if not _cache.add(_idem_key, '1', timeout=3600):
+            task_logger.info('skipped', "Already ran today — idempotency guard")
+            return {'success': True, 'skipped': True, 'reason': 'idempotency_guard'}
 
     # Load task_params from CeleryTaskState if available
     try:

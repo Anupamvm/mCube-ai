@@ -69,19 +69,20 @@ pkill -f run_telegram_bot
 
 ## Telegram Bot Commands
 
-### Slash Commands (9 commands)
+### Slash Commands (10 commands)
 
 | Command | Description |
 |---------|-------------|
 | `/start` | Interactive main menu with live header + 12-button grid |
-| `/test` | Bot connectivity test |
-| `/positions` | Broker picker → position management |
-| `/core` | Core trading settings |
-| `/trade` | Manual 10-step trade wizard |
+| `/pnl` | P&L summary |
+| `/positions` | Open positions |
 | `/orders` | Order book view |
 | `/margin` | Margin & limits view |
-| `/pnl` | P&L today |
+| `/trade` | Manual trade wizard |
+| `/history` | Trade history |
 | `/analytics` | Performance analytics |
+| `/login` | Broker login |
+| `/core` | Core trading settings |
 
 > Trading control, risk management, task management, and other operations are handled via inline menu buttons from `/start`, not slash commands.
 
@@ -100,6 +101,12 @@ Django management commands for system administration and testing.
 | `python manage.py install_scheduler` | Install and start background task scheduler |
 | `python manage.py stop_scheduler` | Stop all scheduled background tasks |
 | `python manage.py setup_credentials` | Setup broker API credentials |
+
+### Broker Commands
+
+| Command | Description |
+|---------|-------------|
+| `python manage.py breeze_auto_login` | Automated ICICI Breeze login |
 
 ### Testing Commands
 
@@ -130,6 +137,12 @@ Django management commands for system administration and testing.
 |---------|-------------|
 | `python manage.py setup_trading_schedule` | Configure trading schedule |
 | `python manage.py update_schedule_configs` | Update schedule configurations |
+
+### Analytics Commands
+
+| Command | Description |
+|---------|-------------|
+| `python manage.py run_learning` | Run ML learning pipeline |
 
 ### User Commands
 
@@ -174,7 +187,7 @@ The system wakes up and gathers everything it needs before the market opens.
 
 | Time | Task | What Happens |
 |------|------|--------------|
-| **6:45 AM** | `health-check-brokers` | Checks Kotak Neo and ICICI Breeze API connectivity, stores results in Redis. |
+| **6:45 AM** | `health-check-brokers` | Checks Kotak Neo, ICICI Breeze, and **Redis** connectivity. Redis check uses write-readback test. Results stored in Redis (2h TTL). Any failure sends CRITICAL Telegram alert. |
 | **7:00 AM** | `morning-data-sync` | Downloads overnight global market data (SGX Nifty, US indices, Asia), refreshes news, and updates index data. Gives the system a full picture of what happened while Indian markets were closed. |
 | **8:50 AM** | `update-pre-market-data` | Fetches pre-open session data — opening indications, pre-open prices, gap-up/gap-down signals. Updates Trendlyne data for delivery percentages and institutional flows. |
 | **8:55 AM** | `setup-trading-day` | The system's "morning checklist": verifies broker connectivity (Kotak Neo + ICICI Breeze), checks account margins, validates no stale positions from yesterday, determines if today is tradeable (no holidays, no major events), loads active strategy configs. |
@@ -190,12 +203,12 @@ Market opens. The system validates the opening, then executes your algorithms.
 |------|------|--------------|
 | **9:15 AM** | `start-trading-day` | Validates the opening — checks if open is within expected range, no flash crash, broker sessions live. Activates live data feed and monitoring. |
 | **9:15 AM** | `update-live-market-data` | Starts updating live prices every 5 minutes throughout market hours (until 3:30 PM). Feeds data to position monitor and P&L calculations. |
-| **9:30 AM** | `screen-futures-opportunities` | **Pre-market futures scan.** Scans the top 50 F&O stocks by volume and runs the 13-factor scoring model on each. This is a *read-only* scan — no orders are placed. Results are cached for the active algorithm at 9:40 AM. |
+| **9:30 AM** | `screen-futures-opportunities` | **Pre-market futures scan.** Scans the top 50 F&O stocks by volume and runs the 13-factor scoring model on each. This is a *read-only* scan — no orders are placed. Results are cached for the active algorithm at 9:40 AM. **Idempotency guard**: Redis key prevents Beat double-fire on same day. |
 | **9:30 AM** | `evaluate-options-strategy` | **Options decision point.** Analyzes VIX, overnight cues, Nifty opening range, news sentiment. Decides: (a) trade today? (b) Strangle or Broken Iron Condor? (c) Strike distances? Sends evaluation to Telegram. |
 | **9:40 AM** | `start-options-trade` | **Options execution.** If evaluation passed and you approved via Telegram, places option sell orders (CE + PE, or CE + PE + PE hedge). Creates Position record with stop-loss/target levels. |
-| **9:40 AM** | `execute-futures-algorithm` | **Futures execution.** Uses 13-component scoring (315pts → 100 scale) with params: `this_month_volume=1000`, `next_month_volume=800`, `min_score=65`, `top_contracts=50`, `batch_size=3`. Re-validates with live prices, picks TOP 3 candidates above score 65, sends to Telegram with full analysis. On your approval, executes with batched ordering. |
+| **9:40 AM** | `execute-futures-algorithm` | **Futures execution.** Uses 13-component scoring (315pts → 100 scale) with params: `this_month_volume=1000`, `next_month_volume=800`, `min_score=65`, `top_contracts=50`, `batch_size=2`. Re-validates with live prices, picks TOP candidates above score 65, sends to Telegram with full analysis. On your approval, executes with batched ordering. **Idempotency guard**: Redis key prevents Beat double-fire (manual triggers bypass). |
 
-### Phase 3: Averaging & Active Monitoring (9:40 AM – 3:00 PM)
+### Phase 3: Averaging & Active Monitoring (9:40 AM – 3:59 PM)
 
 Your positions are now live. The system monitors everything and manages averaging.
 
@@ -203,14 +216,14 @@ Your positions are now live. The system monitors everything and manages averagin
 |------|------|--------------|
 | **9:40–9:55** | `batch-options-averaging` | Every 5 min, checks if options position needs averaging. If premium moved against us and conditions met, proposes averaging trade via Telegram. |
 | **10:00–10:30** | `batch-options-averaging-10am` | Extended averaging window, same logic as above. |
-| **Every 10 min** | `check-futures-averaging` | 9:30 AM to 3:00 PM. Checks if any futures position dropped 1% from entry. Evaluates averaging (max 3 attempts): 20% → 50% → 50% of remaining balance. |
-| **Every 15 min** | `monitor-all-strangle-deltas` | 9:00 AM to 3:00 PM. Delta drift monitoring for all strangle positions. |
-| **Every minute** | `monitor-and-manage-positions` | **System heartbeat.** Runs every 1 minute (9:00 AM–3:59 PM). Updates real-time P&L for all positions, runs SR exit engine with structural pressure checks, updates position monitor dashboard, manages hold flags, checks stop-loss/target, monitors delta for options, triggers exits when conditions met. |
+| **Every 10 min** | `check-futures-averaging` | 9:00 AM to 3:59 PM. Checks if any futures position dropped 1% from entry. Evaluates averaging (max 3 attempts): 20% → 50% → 50% of remaining balance. |
+| **Every 15 min** | `monitor-all-strangle-deltas` | 9:00 AM to 3:59 PM. Delta drift monitoring for all strangle positions. |
+| **Every minute** | `monitor-and-manage-positions` | **System heartbeat.** Runs every 1 minute (9:00 AM–3:59 PM). Updates real-time P&L for all positions (batched `bulk_create` for MonitorLog), runs SR exit engine with structural pressure checks + catastrophic gap override, updates position monitor dashboard, manages hold flags, checks stop-loss/target, monitors delta for options. Autonomous exits use broker-first close. First broker sync failure sends WARNING alert immediately. |
 | **Every minute** | `check-confirmation-timeouts` | Watches for pending Telegram confirmations that exceeded timeout. Triggers revalidation — market conditions may have changed. |
-| **Every minute** | `check-risk-limits-all-accounts` | Monitors all accounts against risk limits: daily loss, weekly loss, max drawdown. Breaches pause trading and send critical alerts. |
-| **Every minute** | `monitor-circuit-breakers` | Watches for exchange-level circuit breakers and trading halts. If Nifty hits a circuit breaker, flags all positions and prevents new entries. |
+| **Every minute** | `check-risk-limits-all-accounts` | Monitors all accounts against risk limits: daily loss, weekly loss, max drawdown. Includes intraday unrealized drawdown check (10% warning / 15% critical thresholds) and portfolio-level aggregate drawdown across all accounts. Breaches pause trading and send critical alerts. |
+| **Every minute** | `monitor-circuit-breakers` | Monitors active circuit breakers: checks cooldown expiry, sends periodic reminders for long-running breakers (>24h), uses Redis-based dedup for notifications. |
 
-### Phase 4: Day Close & Reporting (3:25 – 5:00 PM)
+### Phase 4: Day Close & Reporting (3:15 – 5:00 PM)
 
 Market is closing. Positions are evaluated, data is finalized, reports are generated.
 
@@ -241,12 +254,12 @@ Market is closing. Positions are evaluated, data is finalized, reports are gener
 Tasks are organized into algorithm groups. When you toggle an algorithm, these tasks move together:
 
 **Futures Algorithm** — Directional futures trades with 13-factor scoring:
-- *Own tasks:* `execute-futures-algorithm` (9:40 AM), `check-futures-averaging` (every 10 min)
+- *Own tasks:* `screen-futures-opportunities` (9:30 AM), `execute-futures-algorithm` (9:40 AM), `check-futures-averaging` (every 10 min)
 - *Shared tasks:* `setup-trading-day`, `start-trading-day`, `close-trading-day`
 - *Monitoring:* `monitor-and-manage-positions`
 
 **Options Algorithm** — Weekly Nifty Strangle / Broken Iron Condor:
-- *Own tasks:* `evaluate-options-strategy` (9:30 AM), `start-options-trade` (9:40 AM), `batch-options-averaging` (9:40–9:55), `batch-options-averaging-10am` (10:00–10:30)
+- *Own tasks:* `evaluate-options-strategy` (9:30 AM), `start-options-trade` (9:40 AM), `batch-options-averaging` (9:40–9:55), `batch-options-averaging-10am` (10:00–10:30), `evaluate-kotak-strangle-exit` (callable, not auto-scheduled), `monitor-all-strangle-deltas` (every 15 min)
 - *Shared tasks:* `setup-trading-day`, `start-trading-day`, `close-trading-day`
 - *Monitoring:* `monitor-and-manage-positions`
 
@@ -368,7 +381,7 @@ python manage.py shell
 
 # Check positions
 from apps.positions.models import Position
-Position.objects.filter(status='ACTIVE').count()
+Position.objects.filter(status='OPEN').count()  # OPEN is the active status
 
 # Check accounts
 from apps.accounts.models import BrokerAccount
@@ -394,7 +407,7 @@ for acc in BrokerAccount.objects.filter(is_active=True):
 2. **Check system health** at `/system/test/` — verify all 40+ checks pass
 3. **Review overnight news** — morning data sync at 7:00 AM gathers global cues
 4. **Check broker connectivity** via Telegram `/status` — Kotak Neo + ICICI Breeze should be green
-5. **Verify pre-market scan** — futures screening runs at 8:30 AM, check Telegram for scan results
+5. **Verify pre-market scan** — futures screening runs at 9:30 AM, check Telegram for scan results
 
 ### Market Hours (9:15 AM - 3:30 PM)
 

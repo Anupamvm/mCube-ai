@@ -21,7 +21,8 @@ The trading app provides the user interface and workflow for trade suggestions, 
 
 | File | Purpose |
 |------|---------|
-| `models.py` | TradeSuggestion, AutoTradeConfig, PositionSize |
+| `models.py` | TradeSuggestion, AutoTradeConfig, TradeSuggestionLog, OrderExecutionControl, PositionSize, TakenTrade |
+| `tasks.py` | check_confirmation_timeouts (every 1 min during market hours) |
 | `views.py` | Web views (legacy, 3065 lines) |
 | `api_views.py` | API endpoints (legacy, 136KB) |
 | `views/` | Refactored view modules |
@@ -42,11 +43,12 @@ Stores algorithm-generated trade ideas with complete reasoning.
 ```python
 # Core Fields
 user = ForeignKey(User)
-strategy = CharField()              # 'kotak_strangle', 'icici_futures'
+source = CharField()                # 'auto' or 'manual'
+strategy = CharField()              # 'kotak_strangle', 'kotak_broken_iron_condor', 'icici_futures'
 suggestion_type = CharField()       # OPTIONS or FUTURES
 instrument = CharField()            # NIFTY, RELIANCE, etc.
 direction = CharField()             # LONG, SHORT, NEUTRAL
-status = CharField()                # SUGGESTED, TAKEN, REJECTED, etc.
+status = CharField()                # SUGGESTED, PENDING_CONFIRMATION, TAKEN, REJECTED, etc.
 
 # Market Data at Suggestion
 spot_price = DecimalField()
@@ -79,20 +81,24 @@ position_details = JSONField()      # Recommended parameters
 is_auto_trade = BooleanField()      # Auto-approved?
 executed_position = OneToOneField(Position)  # Linked position
 
-# Enhanced Fields (March 2026)
-composite_score = IntegerField()    # 0-100 composite score
-regime = CharField()                # Market regime at time of suggestion
+# Telegram Confirmation Flow Fields
+telegram_message_id = CharField()        # Telegram message ID for confirmation
+user_modified_lots = IntegerField()      # User-modified lot count (if different)
 confirmation_requested_at = DateTimeField()  # When confirmation was sent
-confirmation_timeout_minutes = IntegerField()  # Timeout period
-revalidation_sent = BooleanField()  # One revalidation per suggestion
-escalated = BooleanField()          # Escalation alert sent
+confirmation_timeout_minutes = IntegerField()  # Timeout period (default 5)
+revalidation_sent = BooleanField()       # One revalidation per suggestion
+escalated = BooleanField()               # Escalation alert sent
+
+# Computed Properties (from position_details/algorithm_reasoning JSON)
+composite_score                          # 0-100 composite score (property)
+regime                                   # Market regime at time of suggestion (property)
 ```
 
 ### Status Flow
 
 ```
-SUGGESTED → TAKEN → ACTIVE → CLOSED → SUCCESSFUL/LOSS/BREAKEVEN
-         ↘ REJECTED
+SUGGESTED → PENDING_CONFIRMATION → TAKEN → ACTIVE → CLOSED → SUCCESSFUL/LOSS/BREAKEVEN
+         ↘ REJECTED                  ↗
          ↘ EXPIRED
          ↘ CANCELLED
 ```
@@ -126,6 +132,47 @@ cancel_reason = TextField()
 batches_completed = IntegerField()
 total_batches = IntegerField()
 last_heartbeat = DateTimeField()    # Execution alive check
+```
+
+### TradeSuggestionLog
+
+Audit trail for all trade suggestion activities.
+
+```python
+# Fields
+suggestion = ForeignKey(TradeSuggestion)
+action = CharField()                # CREATED, APPROVED, AUTO_APPROVED, REJECTED, EXECUTED, EXPIRED, CANCELLED
+user = ForeignKey(User, nullable)
+notes = TextField()
+created_at = DateTimeField()
+```
+
+### TakenTrade
+
+Dedicated model for user-accepted trades with full lifecycle tracking. Links suggestions to actual positions.
+
+```python
+# Core References
+user = ForeignKey(User)
+suggestion = OneToOneField(TradeSuggestion, nullable)
+position = OneToOneField(Position, nullable)
+account = ForeignKey(BrokerAccount)
+
+# Trade Details
+strategy = CharField()              # kotak_strangle, kotak_broken_iron_condor, icici_futures
+trade_type = CharField()            # OPTIONS, FUTURES
+instrument = CharField()
+direction = CharField()             # LONG, SHORT, NEUTRAL
+
+# Status: PENDING_EXECUTION → EXECUTED → ACTIVE → CLOSED | CANCELLED | FAILED
+# Outcome: PROFIT | LOSS | BREAKEVEN | PENDING
+status = CharField()
+outcome = CharField()
+
+# P&L: entry_price, exit_price, quantity, lot_size, realized_pnl, charges, net_pnl, return_on_margin
+# Timestamps: taken_at, executed_at, closed_at
+
+# Key methods: mark_executed(), mark_active(), mark_closed(), sync_from_position(), sync_suggestion_status()
 ```
 
 ---
@@ -415,11 +462,12 @@ service.request_futures_confirmation(suggestions, breeze)
 # Step 2: Detail view with full analysis
 ```
 
-**Confirmation Timeout Flow** (via `check_confirmation_timeouts` task):
-1. Find pending suggestions past timeout
-2. Call `revalidate_after_timeout()` — market may have changed
-3. Set `revalidation_sent=True` (once per suggestion)
-4. After 15 min escalation: send CRITICAL alert, set `escalated=True`
+**Confirmation Timeout Flow** (via `check_confirmation_timeouts` task, every 1 min, 9:15-15:30):
+1. Find suggestions with `status='PENDING_CONFIRMATION'` and `revalidation_sent=False`
+2. Check if `confirmation_requested_at + timeout_minutes` exceeded
+3. Call `revalidate_after_timeout()` — market conditions may have changed
+4. Set `revalidation_sent=True` (once per suggestion)
+5. After 15 min (`_ESCALATION_MINUTES`): send CRITICAL_ERROR notification, set `escalated=True`
 
 ---
 

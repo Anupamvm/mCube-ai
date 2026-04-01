@@ -218,15 +218,17 @@ results = api.search_scrip(symbol='NIFTY', exchange='NSE')
 # instrument_tokens format: [{"exchange_segment": "nse_fo", "instrument_token": "2885"}]
 quote = api.get_quote('NIFTY')
 
-# Place order
+# Place order (with automatic retry — March 2026)
 order_id = api.place_order(
     symbol='NIFTY25NOV20000CE',
     action='B',           # 'B' for BUY, 'S' for SELL
     quantity=1,
-    order_type='MARKET',  # 'MARKET' or 'LIMIT'
+    order_type='MKT',     # 'MKT' or 'L' (LIMIT)
     price=0,
     exchange='NFO',
-    product='NRML'
+    product='NRML',
+    is_exit=False,        # Set True for exit orders (URGENT alert on failure)
+    max_retries=3,        # Retries with exponential backoff (1s, 2s, 4s)
 )
 
 # Logout
@@ -236,6 +238,14 @@ api.logout()
 > **Note:** Neo v2 auto-login is limited to **one attempt per day** per broker to prevent
 > account blocking. Session is restored from saved `base_url` + `data_center` when possible.
 > If `base_url` is missing, a fresh login is forced.
+
+**Order Retry & Safety (March 2026):**
+- `place_order()` retries up to 3 times with exponential backoff (1s, 2s, 4s)
+- **Auth errors**: Session cleared, re-login attempted, order retried
+- **Transient errors** (timeout, 500, connection): Retried with backoff
+- **Deterministic errors** (insufficient margin, invalid symbol): No retry
+- **`is_exit=True`**: If all retries exhausted, sends URGENT Telegram alert with exact order details for manual execution
+- **HTTP timeouts**: All REST calls use `timeout=(5, 30)` — 5s connect, 30s read (prevents worker starvation)
 
 ---
 
@@ -288,7 +298,7 @@ order_id = api.place_order(
     symbol='RELIANCE-EQ',
     action='B',
     quantity=1,
-    order_type='MARKET'
+    order_type='MKT'
 )
 ```
 
@@ -302,10 +312,10 @@ quote = breeze.get_quotes(
     exchange_code='NSE'
 )
 
-# Kotak Neo
+# Kotak Neo (instrument_token is a numeric ID, not symbol name)
 api = NeoAPI()
 api.login()
-quote = api.get_quote('RELIANCE')
+quote = api.get_quote(instrument_token='2885', exchange='NSE')
 ltp = quote['ltp']
 ```
 
@@ -329,8 +339,11 @@ chain = breeze.get_option_chain_quotes(
 class CredentialStore(models.Model):
     SERVICE_CHOICES = [
         ('breeze', 'ICICI Breeze'),
-        ('kotakneo', 'Kotak Neo'),
         ('trendlyne', 'Trendlyne'),
+        ('kotakneo', 'Kotak Neo'),
+        ('telegram', 'Telegram Bot'),
+        ('gnewsio', 'GNews.io'),
+        ('other', 'Other'),
     ]
 
     name = models.CharField(max_length=100)
@@ -346,9 +359,9 @@ class CredentialStore(models.Model):
     password = models.CharField()
 
     # Kotak Neo specific
-    neo_password = models.CharField()        # MPIN
-    pan = models.CharField()
-    sid = models.CharField()                 # Session ID
+    neo_password = models.CharField()        # MPIN (6-digit)
+    pan = models.CharField()                 # Legacy v1 — no longer used
+    sid = models.CharField()                 # Legacy v1 — no longer used
 
     # Kotak Neo v2 fields
     ucc = models.CharField()                 # Unique Client Code
@@ -363,6 +376,9 @@ class CredentialStore(models.Model):
     # Auto-login tracking (one attempt per day per broker)
     auto_login_status = models.CharField()   # none|in_progress|success|failed
     auto_login_date = models.DateField()     # Date of last auto-login attempt
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    last_session_update = models.DateTimeField()
 ```
 
 ### Field Mapping
@@ -392,7 +408,11 @@ try:
     if not api.check_margin_sufficient(50000):
         raise ValueError("Insufficient margin")
 
-    order_id = api.place_order('RELIANCE-EQ', 'B', 1, 'MARKET')
+    # Entry order — retries on transient errors
+    order_id = api.place_order('RELIANCE-EQ', 'B', 1, 'MKT')
+
+    # Exit order — sends URGENT alert if all retries fail
+    exit_id = api.place_order('RELIANCE-EQ', 'S', 1, 'MKT', is_exit=True)
 
 except Exception as e:
     print(f"Trading error: {e}")
@@ -464,7 +484,9 @@ api.login()  # Tries session restore first, then fresh login
 | "Session expired" | Re-run credential setup or clear session_token |
 | "Invalid symbol" | Use exact instrument name (e.g., NIFTY25NOV20000CE) |
 | "Insufficient margin" | Check positions and available balance |
-| Connection timeout | Check internet, retry with backoff |
+| Connection timeout | REST calls use `timeout=(5, 30)` — 5s connect, 30s read (set in `RESTClientObject.DEFAULT_TIMEOUT`). Check internet connectivity. |
+| Exit order failed | If `is_exit=True`, system retries 3 times then sends URGENT Telegram. Check broker portal for manual close. |
+| Auth error during order | Session auto-cleared, re-login attempted on next retry. If persistent, re-run credential setup. |
 
 ---
 
@@ -548,7 +570,6 @@ The broker integrations have been refactored into a modular structure for better
 | `quotes.py` | Quote and LTP retrieval |
 | `orders.py` | Order placement and management |
 | `batch_orders.py` | Batch order execution (strangle, iron condor) |
-| `data_fetcher.py` | Data fetching utilities |
 | `symbol_mapper.py` | Symbol mapping and instrument lookup |
 
 ### Usage
@@ -577,6 +598,7 @@ from apps.brokers.integrations.neo.batch_orders import execute_strangle_orders
 | `apps/brokers/integrations/kotak_neo.py` | Kotak Neo integration (facade) |
 | `apps/brokers/integrations/neo/` | Modular Neo implementation |
 | `apps/brokers/services/order_sync.py` | Order synchronization service |
+| `apps/brokers/utils/auth_manager.py` | Auto-login tracking & Neo session save/restore |
 | `tools/neo.py` | NeoAPI implementation |
 | `apps/core/management/commands/setup_credentials.py` | CLI commands |
 

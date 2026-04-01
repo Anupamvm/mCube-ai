@@ -142,6 +142,7 @@ NOISE_WINDOW_START_MIN = 30   # block SL before 09:30 IST
 GAP_NOISE_EXTENSION_MINS = 15  # extend to 09:45 on gap open
 GAP_THRESHOLD = 0.010     # 1.0% gap qualifies as a gap day
 VIX_SPIKE_THRESHOLD = 0.20  # 20% intraday VIX spike → immediate NEUTRAL SL
+CATASTROPHIC_GAP_PCT = 0.03  # 3% — bypass noise window if P&L worse than this
 
 SR_SOURCE_WEIGHTS = {
     'pivot': 0.20,
@@ -1018,13 +1019,37 @@ class SLTriggerChecker:
 
         return False, 'NEUTRAL_CONDITIONS_NOT_MET'
 
+    def _is_catastrophic_gap(self) -> bool:
+        """Check if position P&L exceeds catastrophic threshold during noise window."""
+        try:
+            entry = float(self._pos.entry_price)
+            current = float(self._pos.current_price)
+            if entry <= 0:
+                return False
+            if self._pos.direction == 'LONG':
+                pnl_pct = (current - entry) / entry
+            elif self._pos.direction == 'SHORT':
+                pnl_pct = (entry - current) / entry
+            else:
+                return False  # NEUTRAL has different P&L semantics
+            return pnl_pct < -CATASTROPHIC_GAP_PCT
+        except Exception:
+            return False
+
     def should_trigger_sl(self) -> tuple:
         """
         Main entry point. Returns (triggered: bool, reason: str).
         Dispatches to direction-specific check.
         """
         if self.is_open_noise_window():
-            return False, 'OPEN_NOISE_WINDOW'
+            # Catastrophic gap override: if P&L worse than -3%, bypass noise window
+            if self._is_catastrophic_gap():
+                logger.warning(
+                    f"CATASTROPHIC GAP detected for {self._pos.instrument} during noise window — "
+                    f"bypassing noise window to trigger SL"
+                )
+            else:
+                return False, 'OPEN_NOISE_WINDOW'
 
         direction = self._pos.direction
         if direction == 'LONG':

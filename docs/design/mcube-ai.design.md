@@ -1027,11 +1027,10 @@ ALLOWED_HOSTS=localhost,127.0.0.1
 # Redis
 REDIS_URL=redis://localhost:6379/0
 
-# Kotak Neo API
+# Kotak Neo API (v2 — TOTP + MPIN auth, no consumer_secret needed)
 KOTAK_CONSUMER_KEY=
-KOTAK_CONSUMER_SECRET=
+KOTAK_UCC=
 KOTAK_MOBILE=
-KOTAK_PASSWORD=
 
 # ICICI Breeze API
 ICICI_API_KEY=
@@ -1358,14 +1357,14 @@ PAPER_TRADING=True
   - [ ] `sync_option_chain()` - Every 5 minutes
 - [ ] Create `apps/positions/tasks.py`:
   - [ ] `monitor_all_positions()` - Every 5 seconds
-  - [ ] `update_position_pnl()` - Every 10 seconds
+  - [ ] `monitor_and_manage_positions()` - Every 1 minute (9 AM-3:59 PM)
 - [ ] Create `apps/strategies/tasks.py`:
   - [ ] `evaluate_kotak_entry()` - Mon/Tue 10:00 AM
   - [ ] `evaluate_kotak_exit()` - Thu/Fri 3:15 PM
-  - [ ] `screen_icici_opportunities()` - Every 30 minutes
+  - [ ] `screen_futures_opportunities()` - 9:30 AM daily
 - [ ] Create `apps/risk/tasks.py`:
   - [ ] `check_risk_limits()` - Every 1 minute
-  - [ ] `monitor_circuit_breakers()` - Every 30 seconds
+  - [ ] `monitor_circuit_breakers()` - Every 1 minute (9 AM-3:59 PM)
 - [ ] Create `apps/analytics/tasks.py`:
   - [ ] `generate_daily_report()` - 4:00 PM daily
   - [ ] `update_learning_patterns()` - EOD

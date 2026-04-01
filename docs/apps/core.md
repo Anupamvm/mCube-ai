@@ -20,17 +20,19 @@ The core app is the foundation of mCube. It provides shared utilities, credentia
 
 | File | Purpose |
 |------|---------|
-| `models.py` | Database models for credentials, settings, logs |
+| `models.py` | CredentialStore, TradingCoreConfig, NseFlag, BkLog, TaskExecutionLog, CeleryTaskState, DayReport, TodaysPosition, SystemSettings, TaskPreset |
+| `tasks.py` | Core Celery tasks: health_check_brokers, monitor_opening_volatility, review_overnight_positions, send_morning_briefing |
 | `constants.py` | All trading parameters and configuration values |
+| `task_config.py` | TASK_DEFAULT_CONFIG — display names, categories, defaults for all tasks |
 | `views.py` | HTTP endpoints for dashboard and testing |
 | `urls.py` | URL routing |
 | `admin.py` | Django admin interface |
-| `background_tasks.py` | Scheduled task definitions |
-| `trading_state.py` | Pause/resume trading state |
-| `notifications.py` | Telegram/SMS notification sending |
-| `middleware.py` | Error handling middleware |
-| `utils/` | Utility functions (dates, formatting, validation) |
-| `services/` | Business logic services |
+| `utils/decorators.py` | task_enabled_guard, handle_exceptions, require_broker_auth, validate_input, etc. |
+| `utils/task_logger.py` | TaskLogger — step-by-step BkLog writer for Celery tasks |
+| `utils/date_utils.py` | Expiry dates, trading day checks, IST helpers |
+| `utils/` | Other utilities (formatting, validation, error handling) |
+| `services/trading_context.py` | TradingContext — unified context for tasks and views |
+| `services/expiry_selector.py` | Expiry date selection with business rules |
 
 ---
 
@@ -79,15 +81,22 @@ api_key = cred.api_key
 
 ### TradingSchedule
 
-Configures daily trading times.
+Configures daily trading times per date.
 
 ```python
 # Fields
-market_open = TimeField()       # Default: 09:15
-entry_window_start = TimeField()  # Default: 09:30
-entry_window_end = TimeField()    # Default: 11:30
-exit_check_time = TimeField()     # Default: 15:15
-market_close = TimeField()        # Default: 15:30
+date = DateField(unique=True)           # Trading date
+open_time = TimeField()                 # Default: 09:15:10 — market open / setup task
+take_trade_time = TimeField()           # Default: 09:30 — start taking trades
+last_trade_time = TimeField()           # Default: 10:15 — last time for new entries
+close_pos_time = TimeField()            # Default: 15:25:30 — start closing positions
+mkt_close_time = TimeField()            # Default: 15:32 — market close time
+close_day_time = TimeField()            # Default: 15:45 — end-of-day analysis
+enabled = BooleanField()                # Enable trading for this day
+note = CharField()                      # Notes about this trading day
+
+# Method
+schedule.as_datetimes(tz=IST)           # Convert all times to timezone-aware datetimes
 ```
 
 ### NseFlag
@@ -96,34 +105,98 @@ Key-value store for runtime flags and state.
 
 ```python
 # Fields
-name = CharField()              # Flag name (e.g., 'isDayTradable')
-value = CharField()             # Flag value
+flag = CharField(unique=True)   # Flag name (e.g., 'isDayTradable')
+value = CharField()             # Flag value (stored as string)
 description = TextField()       # What this flag means
+updated_at = DateTimeField()    # Auto-updated on save
+
+# Helper methods (static)
+NseFlag.get(name, default='')           # Get flag value as string
+NseFlag.set(name, value, description)   # Set or create flag
+NseFlag.get_bool(name, default=False)   # Get as boolean
+NseFlag.get_float(name, default=0.0)    # Get as float
+NseFlag.get_int(name, default=0)        # Get as integer
 ```
 
 **Common Flags**:
 - `isDayTradable` - Whether trading is allowed today
-- `currentVIX` - Current India VIX value
-- `openPositions` - Count of open positions
+- `nseVix` - VIX value and status
+- `openPositions` - Current open position count
+- `dailyDelta` - Daily volatility target
+- `position_hold_<id>` - Hold flag for exit suggestion dedup (JSON: reason, price, held_at)
 
-### BkLog
+### TaskExecutionLog
 
-Background task logging with detailed metrics.
+One row per Celery task run — lightweight audit trail. Written automatically by `task_enabled_guard` for every guarded task.
 
 ```python
 # Fields
-task_name = CharField()         # Name of the task
-task_category = CharField()     # Category (position, risk, strategy)
-status = CharField()            # STARTED, SUCCESS, FAILURE
+task_key = CharField(db_index=True)       # Beat schedule key, e.g. 'monitor-and-manage-positions'
+started_at = DateTimeField(auto_now_add)  # When task started
+completed_at = DateTimeField(nullable)    # When task finished
+status = CharField()                      # SUCCESS | FAILURE | SKIPPED
+duration_ms = IntegerField(nullable)      # Wall-clock duration in milliseconds
+result_summary = JSONField()              # Condensed return value from the task function
+error_message = TextField()               # Exception message on FAILURE; empty otherwise
+```
+
+### BkLog
+
+Step-by-step background task logging with detailed metrics. Used by `TaskLogger` for granular execution tracking.
+
+```python
+# Fields
+timestamp = DateTimeField()     # Auto-set on creation
+level = CharField()             # debug, info, warning, error, critical
+action = CharField()            # Action/function name
 message = TextField()           # Log message
-execution_time_ms = IntegerField()  # How long it took
-error_message = TextField()     # Error details if failed
-context_data = JSONField()      # Additional context
+background_task = CharField()   # Background task name
+task_category = CharField()     # data, strategy, transaction, position, risk, analytics, other
+task_id = CharField()           # Celery task ID for correlation
+execution_time_ms = IntegerField()  # Execution time in milliseconds
+context_data = JSONField()      # Additional context (symbols, counts, metrics)
+error_details = TextField()     # Full error traceback if error occurred
+success = BooleanField()        # Whether the task completed successfully
+```
+
+### DayReport
+
+Daily trading report — end-of-day summary per trading day.
+
+```python
+# Fields
+date = DateField(unique=True)
+day_of_week = CharField()
+num_legs = IntegerField()       # Number of option legs traded
+pnl = DecimalField()            # Profit and Loss for the day
+is_closed = BooleanField()      # Whether all positions were closed
+expiry_date = DateField()       # F&O expiry date traded
+notes = TextField()
+```
+
+### TodaysPosition
+
+Individual F&O position details for the day, copied from broker position data.
+
+```python
+# Fields
+date = DateField()
+symbol = CharField()
+instrument_name = CharField()
+instrument_token = BigIntegerField()
+exchange = CharField()          # NFO
+segment = CharField()           # FNO
+expiry_date = CharField()
+option_type = CharField()       # CE/PE/FUT
+strike_price = IntegerField()
+# Buy/Sell quantities, amounts, averages
+# Net position, realized P&L
+# Margin details (span, exposure, premium)
 ```
 
 ### SystemSettings
 
-Central configuration for all task timings (editable via admin).
+Central configuration for all task timings (editable via admin). Singleton pattern.
 
 ```python
 # Fields (sample)
@@ -281,6 +354,27 @@ def batch_averaging(self):
 # run_task_now() passes _bypass_guard=True kwarg
 ```
 
+**Full lifecycle managed by the decorator:**
+1. **Enable check**: Queries `CeleryTaskState.is_task_enabled()`. Disabled = returns `{'status': 'skipped'}`
+2. **Telegram start notification**: Sends "Running..." message (skips silent/high-frequency tasks)
+3. **Timing**: Measures wall-clock execution time
+4. **Completion notification**: Edits the start message with result + BkLog steps (expandable blockquote)
+5. **TaskExecutionLog write**: One row per execution (SUCCESS/FAILURE/SKIPPED)
+6. **Celery Retry handling**: `celery.exceptions.Retry` is re-raised silently, not logged as FAILURE
+
+**Silent tasks** (no Telegram notifications): `monitor-and-manage-positions`, `check-risk-limits-all-accounts`, `monitor-circuit-breakers`, `check-confirmation-timeouts`
+
+### Other Decorators (`utils/decorators.py`)
+
+| Decorator | Purpose |
+|-----------|---------|
+| `handle_exceptions` | Standardized JSON error responses for views |
+| `require_broker_auth(broker_type)` | Ensure broker session before view execution |
+| `validate_input(schema)` | Request input validation against a schema |
+| `log_execution_time` | Performance logging for views |
+| `require_post_method` | Restrict view to POST only |
+| `cache_result(timeout)` | Cache view results for specified timeout |
+
 ### Task Config (`task_config.py`)
 
 `TASK_DEFAULT_CONFIG` defines display names, categories, and defaults for all tasks.
@@ -302,25 +396,38 @@ def batch_averaging(self):
 Unified context service for Celery tasks & web views. Ensures both use the SAME APIs.
 
 ```python
-from apps.core.services.trading_context import get_trading_context
+from apps.core.services.trading_context import TradingContext, get_trading_context
 
+# Direct instantiation or convenience function:
+ctx = TradingContext(task_name='my_task', task_logger=logger)
+# or
 ctx = get_trading_context(task_name='my_task')
 
-# Check trading eligibility
-if not ctx.is_trading_allowed():
+# Check trading eligibility (checks weekends, holidays, TradingDaySetup)
+if not ctx.is_trading_allowed(check_futures=True):
     return ctx.skip_result()
 
 # Access config
-config = ctx.config  # TradingCoreConfig singleton
-lots = config.get_lots_for_trade(margin_per_lot=50000)
-needs_confirm = config.requires_confirmation('futures_entry')
-is_paper = config.is_simulated()
+config = ctx.config  # TradingCoreConfig singleton (lazy-loaded)
+lots = ctx.get_lots_for_trade('FUTURES', available_margin=5000000, margin_per_lot=50000)
+needs_confirm = ctx.requires_confirmation('EXIT')
+is_paper = ctx.is_simulated()
 
 # Account retrieval
 kotak_account = ctx.get_kotak_account()
+icici_account = ctx.get_icici_account()
+
+# Position queries
+active = ctx.get_active_positions(account=kotak_account)
+has_pos = ctx.has_active_position(kotak_account)
+
+# Result builders
+ctx.skip_result()    # {'success': True, 'skipped': True, 'reason': ...}
+ctx.error_result(e)  # {'success': False, 'error': ...}
+ctx.success_result(positions=5)  # {'success': True, 'positions': 5}
 ```
 
-### TradingCoreConfig (in `models.py`) — Singleton
+### TradingCoreConfig (in `models.py` ~line 1148) — Singleton
 
 Centralized trading control. Access: `TradingCoreConfig.get_instance()`
 
@@ -350,26 +457,39 @@ max_loss_per_trade = DecimalField()
 options_profit_target = DecimalField()
 movement_threshold = DecimalField()  # 0.1-3.0%, default 0.5%
 
+# Carry Forward Rules
+options_carry_forward_threshold = DecimalField()  # Default 5000
+
 # Helper Methods
 config.is_autonomous()               # True only for AUTONOMOUS
 config.is_simulated()                # True for SIMULATED mode
-config.is_manual_mode()              # True for FULL_CONTROL or SUPERVISED
+config.is_test_mode()                # True for TEST mode (1 lot)
+config.is_auto_sizing()              # True for AUTO margin-based sizing
+config.is_full_control()             # True for FULL_CONTROL
+config.is_supervised()               # True for SUPERVISED
+config.is_options_enabled()          # True if options_strategy != NONE
+config.is_futures_enabled()          # True if enable_futures_trading
 config.requires_confirmation('EXIT') # True for FULL_CONTROL & SUPERVISED
-config.get_auto_strategy(current_vix) # Returns strategy based on VIX
-config.get_notification_level_display_short()  # 'FC' | 'SV' | 'AU'
-config.get_position_sizing_display_short()     # 'TEST' | 'MAN' | 'AUTO' | 'SIM'
+config.get_auto_strategy(current_vix) # Returns strategy based on VIX thresholds
+config.get_lots_for_trade('OPTIONS', available_margin, margin_per_lot) # Sizing-mode-aware
+config.get_notification_level_display_short()  # e.g. '🔒 Full Control'
+config.get_position_sizing_display_short()     # e.g. '🧪 Test (1 lot)'
 ```
 
 ### CeleryTaskState (in `models.py`)
 
-Enable/disable + custom schedule per Celery task.
+Enable/disable + custom schedule per Celery task. Tasks not in this table are considered DISABLED by default.
 
 ```python
-task_key = CharField()           # Unique task identifier
-display_name = CharField()       # Human-readable name
-category = CharField()           # data, strategies, transactions, monitoring, risk, reports
-is_enabled = BooleanField()      # Toggle task on/off
-custom_schedule = JSONField()    # Custom crontab/interval override
+task_key = CharField(unique=True)    # Task key from beat_schedule
+task_path = CharField()              # Full task path (e.g. 'apps.data.tasks.fetch_trendlyne_data')
+display_name = CharField()           # Human-readable name
+description = TextField()            # Task description
+is_enabled = BooleanField()          # Toggle task on/off (default: False)
+last_toggled_at = DateTimeField()    # When last enabled/disabled
+last_toggled_by = CharField()        # Who toggled it
+schedule_type = CharField()          # crontab | interval | recurring
+# + schedule configuration fields (crontab fields, interval_seconds, window times)
 ```
 
 ### Expiry Selector (`services/expiry_selector.py`)
@@ -390,33 +510,41 @@ expiry, details = select_expiry_for_options('NIFTY')
 
 ---
 
-## Background Tasks
+## Core Celery Tasks (`tasks.py`)
 
-### Task Schedule
+Infrastructure, market-open observation, and pre-market review tasks. None of these tasks place orders or modify positions — they are purely observational and informational.
 
-| Task | Frequency | Purpose |
-|------|-----------|---------|
-| `setup_day_task` | 9:15 AM | Pre-market setup |
-| `start_day_task` | 9:30 AM | Trade entry evaluation |
-| `monitor_task` | Every 10 sec | Position monitoring |
-| `closing_day_task` | 3:25 PM | Position closure |
-| `analyse_day_task` | 3:45 PM | End-of-day analysis |
+### Task Schedule (Mon-Fri)
 
-### Trading State
+| Task | Time | Purpose |
+|------|------|---------|
+| `health_check_brokers` | 06:45 AM | Broker API + Redis connectivity check |
+| `review_overnight_positions` | 08:55 AM | News impact on carried positions |
+| `send_morning_briefing` | 09:00 AM | Single consolidated briefing message |
+| `monitor_opening_volatility` | 09:00-09:20 (every 5 min) | VIX + gap flags for strategy gate |
+
+### Redis Key Registry
+
+Tasks write to Redis so downstream trading tasks can gate on results:
 
 ```python
-from apps.core.trading_state import (
-    is_trading_paused,            # Check if trading is paused
-    pause_trading,                # Pause all trading
-    resume_trading,               # Resume trading
-)
-
-# Example
-if is_trading_paused():
-    return "Trading is paused, skipping..."
-
-pause_trading(reason="Manual pause via Telegram")
+BROKER_HEALTH_KEY = 'broker_health'           # TTL: 2h (06:45 → past 08:55)
+MARKET_STABLE_KEY = 'market_stable_for_trading'  # TTL: 1h (09:00-10:00)
+MARKET_VIX_KEY = 'market_open_vix'            # TTL: 1h
+MARKET_GAP_KEY = 'market_open_gap_pct'        # TTL: 1h
 ```
+
+**Thresholds**: VIX >= 20.0 or |gap%| >= 1.5% marks market as unstable.
+
+### Task Details
+
+- **`health_check_brokers`**: Tests Kotak Neo (get_margin), ICICI Breeze (client init), and Redis (write/read-back). Stores results in Redis. Sends CRITICAL alert on any failure.
+
+- **`monitor_opening_volatility`**: Measures VIX + Nifty gap vs previous close. Writes `market_stable_for_trading` flag. Fail-open: missing flag = proceed normally.
+
+- **`review_overnight_positions`**: Checks NewsArticle for negative sentiment on held instruments (24h window). Sends WARNING listing at-risk positions.
+
+- **`send_morning_briefing`**: Consolidates broker health, VIX, gap, day setup status, open positions into one structured Telegram message using `NotificationPayload`.
 
 ---
 
@@ -425,20 +553,26 @@ pause_trading(reason="Manual pause via Telegram")
 Access at `/admin/core/` to manage:
 
 - **Credential Stores** - API keys and passwords
+- **Trading Core Config** - Strategy, sizing, notification level (singleton)
 - **Trading Schedules** - Daily timing configuration
 - **NSE Flags** - Runtime state flags
-- **BK Logs** - Background task logs (read-only)
+- **Celery Task States** - Enable/disable tasks, custom schedules
+- **Task Execution Logs** - Per-run audit trail (read-only)
+- **BK Logs** - Step-by-step task logs (read-only)
+- **Day Reports** - Daily trading summaries
 - **System Settings** - Task timing configuration
+- **Task Presets** - Saved enabled/disabled state presets
 
 ---
 
 ## How to Study This App
 
-1. **Start with `models.py`** - Understand the data structures
-2. **Read `constants.py`** - Learn all configuration parameters
-3. **Explore `utils/`** - See available helper functions
-4. **Check `background_tasks.py`** - Understand the task schedule
-5. **Review `trading_state.py`** - Learn pause/resume logic
+1. **Start with `models.py`** - Understand TradingCoreConfig, CeleryTaskState, NseFlag, BkLog, TaskExecutionLog
+2. **Read `tasks.py`** - Core Celery tasks (health check, morning briefing, volatility monitor)
+3. **Check `utils/decorators.py`** - task_enabled_guard lifecycle and other decorators
+4. **Explore `services/trading_context.py`** - Unified context for tasks and views
+5. **Read `constants.py`** - Trading parameters and configuration values
+6. **Explore `utils/`** - Date helpers, formatting, validation, task logger
 
 ---
 
@@ -458,9 +592,10 @@ Access at `/admin/core/` to manage:
 
 ### Add a New Background Task
 
-1. Define in `background_tasks.py`
-2. Use `TaskLogger` for logging
+1. Define in `tasks.py` using `@shared_task` and `@task_enabled_guard`
+2. Use `TaskLogger` for step-by-step logging
 3. Add to Celery beat schedule in `mcube_ai/celery.py`
+4. Add task key to `task_config.py` TASK_DEFAULT_CONFIG
 
 ### Add a New Utility Function
 

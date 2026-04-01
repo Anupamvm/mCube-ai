@@ -48,7 +48,7 @@ For any new position, use only 50% of available margin. The remaining 50% is res
     │  │    Frontend (Templates + Bootstrap 5 + HTMX)    │    │
     │  └─────────────────────────────────────────────────┘    │
     │  ┌─────────────────────────────────────────────────┐    │
-    │  │           Django Backend (13 Apps)               │    │
+    │  │           Django Backend (11 Apps)               │    │
     │  │    core | accounts | positions | strategies |    │    │
     │  │    risk | data | llm | analytics | alerts |      │    │
     │  │    brokers | trading | algo_test                 │    │
@@ -75,7 +75,7 @@ For any new position, use only 50% of available margin. The remaining 50% is res
 | Framework | Django 4.2 | Web application |
 | Database | SQLite | Persistent storage |
 | Cache/Queue | Redis | Celery message broker |
-| Tasks | Celery 5.3 + background_task | Background automation |
+| Tasks | Celery 5.3 (Redis broker) | Background automation |
 | Frontend | Bootstrap 5 + HTMX | UI |
 | LLM | Ollama (DeepSeek) | Trade validation |
 | Vector DB | ChromaDB | RAG system |
@@ -92,7 +92,7 @@ mCube-ai/
 │   ├── urls.py
 │   └── celery.py
 │
-├── apps/               # Django applications (13 apps)
+├── apps/               # Django applications (11 installed + algo_test legacy)
 │   ├── core/          # Shared utilities, credentials, scheduling
 │   ├── accounts/      # Broker accounts, margin management
 │   ├── positions/     # Position tracking, P&L, exit logic
@@ -117,22 +117,23 @@ mCube-ai/
 
 ---
 
-## The 13 Django Apps
+## Django Apps (11 Installed)
 
 | App | Purpose | Key Responsibilities |
 |-----|---------|---------------------|
-| **core** | Foundation | Credentials, constants, utilities, background tasks |
+| **core** | Foundation | Credentials, TradingCoreConfig, scheduling, task guard, TradingContext |
 | **accounts** | Account Management | BrokerAccount model, margin calculations |
-| **positions** | Position Lifecycle | Entry, monitoring, exit, averaging, P&L |
-| **strategies** | Trading Logic | Strangle, Iron Condor, Futures algorithms |
-| **risk** | Risk Management | Limits, circuit breakers, auto-shutdown |
+| **positions** | Position Lifecycle | Entry, monitoring, exit, averaging, P&L, S/R exit engine, monitor dashboard |
+| **strategies** | Trading Logic | Strangle, Iron Condor, Futures (13-factor scoring), adaptive SL/target |
+| **risk** | Risk Management | Limits, circuit breakers, intraday drawdown, portfolio aggregate |
 | **data** | Market Data | Trendlyne, analyzers, validators, signals |
 | **llm** | AI Integration | Trade validation, news processing, RAG |
 | **analytics** | Performance | P&L reports, pattern discovery, learning |
-| **alerts** | Notifications | Unified notification framework + Telegram bot with 9 commands |
-| **brokers** | Broker APIs | Kotak Neo, ICICI Breeze integrations |
-| **trading** | Trading UI | Suggestions, approval, execution |
-| **algo_test** | Algorithm Testing | Strategy backtesting and validation |
+| **alerts** | Notifications | Unified `notify()` API + Telegram bot (4-file mixin, ~7.5K LOC) |
+| **brokers** | Broker APIs | Kotak Neo v2, ICICI Breeze integrations |
+| **trading** | Trading UI | Suggestions, confirmation service, approval, execution |
+
+Note: `algo_test` exists in the codebase but is not in `INSTALLED_APPS`.
 
 For detailed documentation of each app, see the [apps/](apps/) directory.
 

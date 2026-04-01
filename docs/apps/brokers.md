@@ -21,7 +21,7 @@ The brokers app handles all communication with broker APIs (Kotak Neo and ICICI 
 
 | File | Purpose |
 |------|---------|
-| `models.py` | Order, Execution, HistoricalPrice models |
+| `models.py` | BrokerLimit, BrokerPosition, Order, Execution, BrokerTradeHistory, HistoricalPrice, OptionChainQuote, CSVImportLog, BrokerContractPnL, PositionAvgOverride |
 | `interfaces.py` | Abstract broker interface |
 | `base.py` | Base classes for broker abstraction |
 | `integrations/breeze.py` | ICICI Breeze integration (~1,962 lines) |
@@ -50,6 +50,45 @@ The brokers app handles all communication with broker APIs (Kotak Neo and ICICI 
 
 ## Key Models
 
+### BrokerLimit
+
+Broker account limits and margin data, fetched from broker APIs.
+
+```python
+# Fields
+broker = CharField()               # KOTAK or ICICI
+fetched_at = DateTimeField()
+
+# ICICI Breeze: bank_account, total_bank_balance, allocated_equity, allocated_fno, block_by_trade_fno, unallocated_balance
+# Kotak Neo: category, net_balance, collateral_value, margin_used_percent, margin_warning_pct, exposure_margin_pct, span_margin_pct, board_lot_limit
+# Common: margin_available, margin_used
+```
+
+### BrokerPosition
+
+Current positions fetched from broker API.
+
+```python
+# Fields
+broker = CharField()               # KOTAK or ICICI
+fetched_at = DateTimeField()
+symbol = CharField()               # Trading symbol
+trading_symbol = CharField()       # Full trading symbol (e.g., NIFTY26JANFUT)
+expiry_date = DateField(nullable)
+lot_size = IntegerField()          # Lot size from broker API
+exchange_segment = CharField()     # Exchange segment (e.g., nse_fo)
+product = CharField()              # Product type (MIS, NRML, CNC)
+buy_qty = IntegerField()
+sell_qty = IntegerField()
+net_quantity = IntegerField()
+buy_amount = DecimalField()
+sell_amount = DecimalField()
+ltp = DecimalField()               # Last traded price
+average_price = DecimalField()
+realized_pnl = DecimalField()
+unrealized_pnl = DecimalField()
+```
+
 ### Order
 
 Tracks all orders placed through the system.
@@ -60,18 +99,19 @@ account = ForeignKey(BrokerAccount)
 position = ForeignKey(Position, nullable)
 order_type = CharField()           # MARKET, LIMIT, SL, SLM
 direction = CharField()            # LONG, SHORT
-instrument = CharField()           # Trading symbol
+instrument = CharField()           # Instrument symbol
+exchange = CharField()             # NSE, BSE, NFO
 quantity = IntegerField()
 price = DecimalField()             # For LIMIT orders
 trigger_price = DecimalField()     # For SL orders
 status = CharField()               # PENDING, PLACED, FILLED, CANCELLED, REJECTED
 broker_order_id = CharField()      # ID from broker
+message = TextField()              # Status message from broker
 filled_quantity = IntegerField()
 average_price = DecimalField()
 placed_at = DateTimeField()
 filled_at = DateTimeField()
 cancelled_at = DateTimeField()
-purpose = CharField()              # ENTRY, EXIT, AVERAGING
 ```
 
 ### Execution
@@ -81,10 +121,30 @@ Individual fills for an order (partial fills).
 ```python
 # Fields
 order = ForeignKey(Order)
-execution_id = CharField()
+execution_id = CharField(unique=True)
 quantity = IntegerField()
 price = DecimalField()
 exchange_timestamp = DateTimeField()
+exchange = CharField()             # Exchange where executed
+transaction_type = CharField()     # BUY or SELL
+```
+
+### BrokerTradeHistory
+
+Historical trade records synced from broker APIs with deduplication. Used for reconciliation and reporting.
+
+```python
+# Fields
+broker = CharField()               # KOTAK or ICICI
+account = ForeignKey(BrokerAccount)
+trade_id = CharField()             # Trade ID from broker
+order_id = CharField()             # Order ID from broker
+symbol = CharField()               # Base symbol (e.g., NIFTY)
+trading_symbol = CharField()       # Full trading symbol
+segment = CharField()              # NFO, NSE, BSE, BFO
+trade_type = CharField()           # BUY or SELL
+product_type = CharField()         # NRML, MIS, CNC
+# + quantity, price, trade_value, exchange_timestamp, expiry_date, strike_price, option_type
 ```
 
 ### HistoricalPrice
@@ -93,13 +153,18 @@ OHLCV data for backtesting and analysis.
 
 ```python
 # Fields
-stock_code = CharField()
 datetime = DateTimeField()
+stock_code = CharField()           # Stock/index code
+exchange_code = CharField()        # NSE, NFO, BSE
+product_type = CharField()         # cash, futures, options
+interval = CharField()             # 1minute, 5minute, 30minute, 1day
 open = DecimalField()
 high = DecimalField()
 low = DecimalField()
 close = DecimalField()
 volume = BigIntegerField()
+open_interest = BigIntegerField()  # For derivatives
+# Optional: expiry_date, right (call/put), strike_price
 ```
 
 ---
