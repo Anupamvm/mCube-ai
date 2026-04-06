@@ -151,7 +151,7 @@ class IronCondorPositionSizer:
 
             # Net margin per lot (reduced due to insurance)
             margin_per_lot = base_margin_per_lot - insurance_credit
-            margin_per_lot = max(margin_per_lot, Decimal('50000'))  # Floor at 50K per lot
+            margin_per_lot = max(margin_per_lot, Decimal('150000'))  # Conservative floor at 1.5L per lot
 
             logger.info("")
             logger.info("STEP 1: MARGIN CALCULATION")

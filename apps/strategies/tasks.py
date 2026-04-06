@@ -2133,7 +2133,7 @@ def aggregate_futures_results(self, batch_results, min_score=65, orchestrator_ta
             try:
                 suggestion = TradeSuggestion.objects.filter(
                     instrument=candidate['symbol'],
-                    suggestion_date=today,
+                    created_at__date=today,
                     suggestion_type='FUTURES'
                 ).order_by('-created_at').first()
 

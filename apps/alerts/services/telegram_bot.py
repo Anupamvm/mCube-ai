@@ -2377,7 +2377,7 @@ class TelegramBotHandler(MenuMixin, DataMixin, TradeMixin):
 
             # Calculate max lots based on available margin
             available_margin = get_available_margin()
-            margin_per_lot = suggestion.margin_per_lot or 100000  # Default if not set
+            margin_per_lot = suggestion.margin_per_lot or 150000  # Conservative fallback
 
             max_lots = int(available_margin / margin_per_lot) if margin_per_lot > 0 else 5
 

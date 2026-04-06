@@ -540,7 +540,8 @@ def schedule_staggered_entries():
         time(10, 0),
     ]
 
-    now = timezone.now().time()
+    from apps.core.utils.date_utils import get_current_ist_time
+    now = get_current_ist_time().time()
 
     # Schedule only future times
     for entry_time in entry_times:

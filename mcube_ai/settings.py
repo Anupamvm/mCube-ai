@@ -126,7 +126,7 @@ DATABASES = {
         'ENGINE': 'django.db.backends.sqlite3',
         'NAME': BASE_DIR / 'db.sqlite3',
         'OPTIONS': {
-            'timeout': 30,  # Wait up to 30s for DB lock (prevents "database is locked")
+            'timeout': 60,  # Wait up to 60s for DB lock (prevents "database is locked")
         },
     }
 }
@@ -139,6 +139,7 @@ def _sqlite_wal_mode(sender, connection, **kwargs):
         cursor = connection.cursor()
         cursor.execute("PRAGMA journal_mode=WAL;")
         cursor.execute("PRAGMA synchronous=NORMAL;")
+        cursor.execute("PRAGMA busy_timeout=60000;")  # 60s retry on lock at SQLite level
 
 from django.db.backends.signals import connection_created
 connection_created.connect(_sqlite_wal_mode)

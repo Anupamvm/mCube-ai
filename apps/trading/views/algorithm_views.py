@@ -1446,13 +1446,16 @@ def trigger_broken_iron_condor(request):
                 margin_utilization = (Decimal(str(margin_required)) / margin_available) * 100
             execution_log.append({'step': 2, 'action': 'Position Sizing', 'status': 'success', 'message': f'{lots} lots recommended'})
         except Exception as e:
-            logger.warning(f"Position sizing failed, using default: {e}")
-            lots, quantity = 1, 50
-            margin_required = 80000
-            margin_per_lot = 80000
+            logger.warning(f"Position sizing failed, using config defaults: {e}")
+            from apps.core.models import TradingCoreConfig
+            _config = TradingCoreConfig.get_instance()
+            lots = _config.get_lots_for_trade('OPTIONS')
+            quantity = lots * 50  # NIFTY lot size
+            margin_per_lot = 150000  # Conservative fallback
+            margin_required = margin_per_lot * lots
             max_lots_possible = 10
             position_sizing = None
-            execution_log.append({'step': 2, 'action': 'Position Sizing', 'status': 'warning', 'message': f'Using default: {e}'})
+            execution_log.append({'step': 2, 'action': 'Position Sizing', 'status': 'warning', 'message': f'Using config defaults ({_config.position_sizing_mode}): {e}'})
 
         # Calculate adjusted values based on actual lots
         adjusted_max_profit = float(net_premium) * quantity

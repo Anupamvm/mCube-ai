@@ -101,15 +101,18 @@ class KotakBrokenIronCondorStrategy(BaseStrategy):
         total_premium = call_premium + put_premium
 
         # Calculate insurance strike (UNIQUE TO THIS STRATEGY)
-        # Assuming 1 lot = 50 qty for initial calculation
-        quantity = 50
+        from apps.core.models import TradingCoreConfig
+        core_config = TradingCoreConfig.get_instance()
+        lots = core_config.get_lots_for_trade('OPTIONS')
+        lot_size = 50  # NIFTY lot size
+        quantity = lots * lot_size
         max_profit = total_premium * quantity
 
         insurance = calculate_insurance_strike(
             put_strike=strikes['put_strike'],
             max_profit=max_profit,
             risk_multiplier=self.risk_multiplier,
-            lot_size=50,
+            lot_size=lot_size,
             quantity=quantity
         )
 
@@ -655,10 +658,14 @@ def execute_kotak_broken_iron_condor_entry(
         reasoning = result.suggestion.algorithm_reasoning
 
         if 'insurance' in reasoning:
+            from apps.core.models import TradingCoreConfig
+            _config = TradingCoreConfig.get_instance()
+            _lots = _config.get_lots_for_trade('OPTIONS')
+            _quantity = _lots * 50  # NIFTY lot size
             output['insurance_options'] = get_insurance_strike_options(
                 put_strike=position_details.get('put_strike', 0),
-                max_profit=Decimal(str(reasoning['calculations'].get('total_strangle_premium', '0'))) * 50,
-                quantity=50,
+                max_profit=Decimal(str(reasoning['calculations'].get('total_strangle_premium', '0'))) * _quantity,
+                quantity=_quantity,
                 spot_price=Decimal(str(reasoning['calculations'].get('spot_price', '24000')))
             )
 

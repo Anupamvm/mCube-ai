@@ -112,21 +112,21 @@ def calculate_position_sizing(request):
                 margin_per_lot = total_margin
                 margin_source = 'Breeze API'
             else:
-                # Fallback: Estimate 12% of position value
-                margin_per_lot = futures_price * lot_size * 0.12
+                # Conservative fallback: 1.5L per lot
+                margin_per_lot = 150000
                 span_margin = margin_per_lot * 0.7
                 exposure_margin = margin_per_lot * 0.3
                 total_margin = margin_per_lot
-                margin_source = 'Estimated (12%)'
-                logger.warning(f"Margin API failed, using estimate: ₹{margin_per_lot:,.0f}")
+                margin_source = 'Conservative Fallback (₹1.5L)'
+                logger.warning(f"Margin API failed, using conservative fallback: ₹{margin_per_lot:,.0f}")
 
         except Exception as e:
             logger.error(f"Error fetching margin: {e}")
-            margin_per_lot = futures_price * lot_size * 0.12
+            margin_per_lot = 150000
             span_margin = margin_per_lot * 0.7
             exposure_margin = margin_per_lot * 0.3
             total_margin = margin_per_lot
-            margin_source = 'Estimated (Error)'
+            margin_source = 'Conservative Fallback (Error)'
 
         # STEP 2: Fetch available F&O margin
         try:

@@ -156,7 +156,8 @@ class EntryWorkflow:
         """
         self.strategy.log_step(2, "Entry Timing Validation")
 
-        current_time = timezone.now().time()
+        from apps.core.utils.date_utils import get_current_ist_time
+        current_time = get_current_ist_time().time()
         start = self.config.entry_start_time
         end = self.config.entry_end_time
 
@@ -300,32 +301,39 @@ class EntryWorkflow:
             Dict with success, usable_margin, lots, quantity, margin_used
         """
         from apps.accounts.services.margin_manager import calculate_usable_margin
+        from apps.core.models import TradingCoreConfig
 
         self.strategy.log_step(7, f"Position Sizing ({int(self.config.margin_usage_pct * 100)}% margin usage rule)")
 
         try:
             usable_margin = calculate_usable_margin(self.account)
+            core_config = TradingCoreConfig.get_instance()
 
             # Nifty lot size = 50 for options
             lot_size = 50 if self.config.strategy_type == 'OPTIONS' else 1
+            trade_type = 'OPTIONS' if self.config.strategy_type == 'OPTIONS' else 'FUTURES'
 
-            # TODO: Fetch actual margin per lot from broker
-            margin_per_lot = Decimal('80000')
+            # Fetch margin per lot from broker, conservative fallback of 1.5L
+            try:
+                from apps.trading.services.margin_service import get_margin_per_lot
+                margin_per_lot = Decimal(str(get_margin_per_lot(trade_type, self.config.strategy_type)))
+            except Exception:
+                margin_per_lot = Decimal('150000')
 
-            max_lots = int(usable_margin / margin_per_lot)
+            # Use centralized config for lot calculation
+            lots = core_config.get_lots_for_trade(trade_type, usable_margin, margin_per_lot)
 
-            if max_lots < 1:
+            if lots < 1:
                 msg = f"Insufficient margin (usable: Rs.{usable_margin:,.0f}, required: Rs.{margin_per_lot:,.0f})"
                 self.logger.warning(f"[BLOCKED] {msg}")
                 return {'success': False, 'message': msg}
 
-            # Use 1 lot for conservative approach
-            lots = 1
             quantity = lots * lot_size
             margin_used = margin_per_lot * lots
 
+            self.logger.info(f"Sizing Mode: {core_config.get_position_sizing_display_short()}")
             self.logger.info(f"Usable Margin ({int(self.config.margin_usage_pct * 100)}%): Rs.{usable_margin:,.0f}")
-            self.logger.info(f"Lots: {lots}, Quantity: {quantity}")
+            self.logger.info(f"Margin/Lot: Rs.{margin_per_lot:,.0f}, Lots: {lots}, Quantity: {quantity}")
             self.logger.info(f"Margin Used: Rs.{margin_used:,.0f}")
             self.logger.info(f"[OK] Position sizing complete")
             self.logger.info("")
