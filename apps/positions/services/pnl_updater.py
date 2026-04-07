@@ -41,7 +41,7 @@ def update_all_position_pnl():
                     position.updated_at = timezone.now()
 
                     # Calculate unrealized P&L
-                    unrealized_pnl = position.calculate_unrealized_pnl()
+                    unrealized_pnl = position.calculate_pnl()
                     position.unrealized_pnl = unrealized_pnl
 
                     position.save()

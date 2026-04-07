@@ -32,7 +32,7 @@
                         <div style="padding: 20px; border-bottom: 1px solid #e2e8f0;">
                             <h3>{{ position.instrument }} ({{ position.direction }})</h3>
                             <p>Entry: {{ position.entry_price }} | Current: {{ position.current_price }}</p>
-                            <p>P&L: {{ position.calculate_unrealized_pnl|floatformat:0 }} ({{ position|pnl_percentage|floatformat:2 }}%)</p>
+                            <p>P&L: {{ position.calculate_pnl|floatformat:0 }} ({{ position|pnl_percentage|floatformat:2 }}%)</p>
                         </div>
                     {% endfor %}
                 </div>

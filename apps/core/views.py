@@ -44,7 +44,7 @@ def home_page(request):
 
             # Get total P&L for today
             total_pnl = sum([
-                pos.calculate_unrealized_pnl() or Decimal('0')
+                pos.calculate_pnl() or Decimal('0')
                 for pos in Position.objects.filter(status='ACTIVE')
             ])
 
@@ -1825,7 +1825,7 @@ def test_positions():
         latest = Position.objects.order_by('-entry_time').first()
 
         if latest:
-            pnl = latest.calculate_unrealized_pnl()
+            pnl = latest.calculate_pnl()
             tests.append({
                 'name': 'P&L Calculation',
                 'status': 'pass',
