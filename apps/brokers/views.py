@@ -367,7 +367,7 @@ def breeze_update_credentials(request):
 
                 # Run the auto-login process (skip validation since we know token is expired)
                 success, message = auto_login_breeze(
-                    headless=False, timeout=300, skip_validation=True,
+                    headless=True, timeout=300, skip_validation=True,
                     task_name="credential update login"
                 )
 
@@ -420,7 +420,7 @@ def breeze_auto_login(request):
 
         # Run the auto-login process
         success, message = auto_login_breeze(
-            headless=False, timeout=300,
+            headless=True, timeout=300,
             task_name="web UI login"
         )
 

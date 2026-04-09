@@ -902,7 +902,13 @@
 <div class="section-card" id="symbolsSection">
     <div class="section-header">
         <h3 class="section-title" data-bs-toggle="tooltip" title="Per-symbol trading statistics showing P&L, trade count, and win rate. Identify which instruments you trade best and which to avoid.">Symbol Performance <span class="info-tooltip">?</span></h3>
-        <div class="section-fy-filter">
+        <div class="section-fy-filter" style="display:flex; gap:0.75rem; align-items:center;">
+            <label>Broker:</label>
+            <select id="symbolsBrokerFilter" onchange="loadSectionData('symbols')">
+                <option value="ALL" {% if broker_filter == 'ALL' %}selected{% endif %}>All Brokers</option>
+                <option value="KOTAK" {% if broker_filter == 'KOTAK' %}selected{% endif %}>Kotak Neo</option>
+                <option value="ICICI" {% if broker_filter == 'ICICI' %}selected{% endif %}>ICICI Breeze</option>
+            </select>
             <label>Year:</label>
             <select id="symbolsFyFilter" onchange="loadSectionData('symbols')">
                 <option value="ALL">All Years</option>
@@ -916,9 +922,12 @@
         <div class="section-loading"><span>Loading...</span></div>
         <div class="section-content" id="symbolsContent">
             <div class="symbol-tabs">
-                <button class="symbol-tab active" onclick="showSymbolTab('best')">Top Performers</button>
-                <button class="symbol-tab" onclick="showSymbolTab('worst')">Top Losers</button>
-                <button class="symbol-tab" onclick="showSymbolTab('most')">Most Traded</button>
+                <button class="symbol-tab active" data-tab="best" onclick="showSymbolTab('best', this)">Top Performers</button>
+                <button class="symbol-tab" data-tab="worst" onclick="showSymbolTab('worst', this)">Top Losers (Net)</button>
+                <button class="symbol-tab" data-tab="loss" onclick="showSymbolTab('loss', this)" title="Symbols ranked by sum of losing trades only — ignores offsetting wins. Surfaces instruments where you've taken the largest absolute losses regardless of net P&L.">Biggest Loss Exposure</button>
+                <button class="symbol-tab" data-tab="bigwin" onclick="showSymbolTab('bigwin', this)" title="Individual contracts ranked by largest single-trade profit.">Biggest Single Trade Profit</button>
+                <button class="symbol-tab" data-tab="bigloss" onclick="showSymbolTab('bigloss', this)" title="Individual contracts ranked by largest single-trade loss.">Biggest Single Trade Loss</button>
+                <button class="symbol-tab" data-tab="most" onclick="showSymbolTab('most', this)">Most Traded</button>
             </div>
 
             {% with symbols=patterns_data.symbols %}
@@ -979,6 +988,96 @@
                 </table>
                 {% else %}
                 <p style="text-align: center; color: var(--gray); padding: 2rem;">No data available</p>
+                {% endif %}
+            </div>
+
+            <!-- Biggest Loss Exposure -->
+            <div id="loss-content" class="symbol-content">
+                {% if symbols.loss_exposure %}
+                <table class="performance-table">
+                    <thead>
+                        <tr>
+                            <th>Symbol</th>
+                            <th>Trades</th>
+                            <th>Win Rate</th>
+                            <th>Gross Loss</th>
+                            <th>Net P&L</th>
+                        </tr>
+                    </thead>
+                    <tbody id="symbols-loss-tbody">
+                        {% for s in symbols.loss_exposure %}
+                        <tr>
+                            <td><strong>{{ s.symbol }}</strong></td>
+                            <td>{{ s.trades }}</td>
+                            <td>{{ s.win_rate }}%</td>
+                            <td class="pnl-negative">₹{{ s.gross_loss|floatformat:0 }}</td>
+                            <td class="{% if s.total_pnl >= 0 %}pnl-positive{% else %}pnl-negative{% endif %}">₹{{ s.total_pnl|floatformat:0 }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+                {% else %}
+                <p style="text-align: center; color: var(--gray); padding: 2rem;">No losing trades in this period</p>
+                {% endif %}
+            </div>
+
+            <!-- Biggest Single Trade Profit -->
+            <div id="bigwin-content" class="symbol-content">
+                {% if symbols.biggest_wins %}
+                <table class="performance-table">
+                    <thead>
+                        <tr>
+                            <th>Symbol</th>
+                            <th>Contract</th>
+                            <th>Segment</th>
+                            <th>Broker</th>
+                            <th>Net P&L</th>
+                        </tr>
+                    </thead>
+                    <tbody id="symbols-bigwin-tbody">
+                        {% for t in symbols.biggest_wins %}
+                        <tr>
+                            <td><strong>{{ t.symbol }}</strong></td>
+                            <td>{{ t.contract }}</td>
+                            <td>{{ t.segment }}</td>
+                            <td>{{ t.broker }}</td>
+                            <td class="pnl-positive">₹{{ t.net_pnl|floatformat:0 }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+                {% else %}
+                <p style="text-align: center; color: var(--gray); padding: 2rem;">No winning trades in this period</p>
+                {% endif %}
+            </div>
+
+            <!-- Biggest Single Trade Loss -->
+            <div id="bigloss-content" class="symbol-content">
+                {% if symbols.biggest_losses %}
+                <table class="performance-table">
+                    <thead>
+                        <tr>
+                            <th>Symbol</th>
+                            <th>Contract</th>
+                            <th>Segment</th>
+                            <th>Broker</th>
+                            <th>Net P&L</th>
+                        </tr>
+                    </thead>
+                    <tbody id="symbols-bigloss-tbody">
+                        {% for t in symbols.biggest_losses %}
+                        <tr>
+                            <td><strong>{{ t.symbol }}</strong></td>
+                            <td>{{ t.contract }}</td>
+                            <td>{{ t.segment }}</td>
+                            <td>{{ t.broker }}</td>
+                            <td class="pnl-negative">₹{{ t.net_pnl|floatformat:0 }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+                {% else %}
+                <p style="text-align: center; color: var(--gray); padding: 2rem;">No losing trades in this period</p>
                 {% endif %}
             </div>
 
@@ -1675,9 +1774,49 @@ function updateSymbolsUI(data) {
         `).join('');
     };
 
+    const renderLossTable = (items, tbodyId) => {
+        const tbody = document.getElementById(tbodyId);
+        if (!tbody) return;
+        if (!items || items.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; color: var(--gray); padding: 2rem;">No losing trades in this period</td></tr>';
+            return;
+        }
+        tbody.innerHTML = items.map(s => `
+            <tr>
+                <td><strong>${s.symbol}</strong></td>
+                <td>${s.trades}</td>
+                <td>${s.win_rate}%</td>
+                <td class="pnl-negative">${formatCurrency(s.gross_loss)}</td>
+                <td class="${s.total_pnl >= 0 ? 'pnl-positive' : 'pnl-negative'}">${formatCurrency(s.total_pnl)}</td>
+            </tr>
+        `).join('');
+    };
+
+    const renderTradeTable = (items, tbodyId, sign) => {
+        const tbody = document.getElementById(tbodyId);
+        if (!tbody) return;
+        if (!items || items.length === 0) {
+            tbody.innerHTML = `<tr><td colspan="5" style="text-align: center; color: var(--gray); padding: 2rem;">No ${sign > 0 ? 'winning' : 'losing'} trades in this period</td></tr>`;
+            return;
+        }
+        const cls = sign > 0 ? 'pnl-positive' : 'pnl-negative';
+        tbody.innerHTML = items.map(t => `
+            <tr>
+                <td><strong>${t.symbol}</strong></td>
+                <td>${t.contract}</td>
+                <td>${t.segment}</td>
+                <td>${t.broker}</td>
+                <td class="${cls}">${formatCurrency(t.net_pnl)}</td>
+            </tr>
+        `).join('');
+    };
+
     renderTable(data.best, 'symbols-best-tbody');
     renderTable(data.worst, 'symbols-worst-tbody');
     renderTable(data.most_traded, 'symbols-most-tbody');
+    renderLossTable(data.loss_exposure, 'symbols-loss-tbody');
+    renderTradeTable(data.biggest_wins, 'symbols-bigwin-tbody', 1);
+    renderTradeTable(data.biggest_losses, 'symbols-bigloss-tbody', -1);
 }
 
 // Update P&L Summary UI
@@ -1775,14 +1914,20 @@ function updateConsistencyUI(data) {
 }
 
 // Symbol Tabs
-function showSymbolTab(tab) {
-    // Remove active from all tabs and contents
-    document.querySelectorAll('.symbol-tab').forEach(t => t.classList.remove('active'));
-    document.querySelectorAll('.symbol-content').forEach(c => c.classList.remove('active'));
+function showSymbolTab(tab, btn) {
+    // Scope to the symbols section so we don't collide with other tab classes
+    const section = document.getElementById('symbolsSection');
+    if (!section) return;
 
-    // Add active to selected
-    event.target.classList.add('active');
-    document.getElementById(tab + '-content').classList.add('active');
+    section.querySelectorAll('.symbol-tab').forEach(t => t.classList.remove('active'));
+    section.querySelectorAll('.symbol-content').forEach(c => c.classList.remove('active'));
+
+    // Prefer explicit btn arg; fall back to data-tab lookup if called without it
+    const activeBtn = btn || section.querySelector(`.symbol-tab[data-tab="${tab}"]`);
+    if (activeBtn) activeBtn.classList.add('active');
+
+    const content = document.getElementById(tab + '-content');
+    if (content) content.classList.add('active');
 }
 
 // Tax Calculation Functions

@@ -265,35 +265,64 @@ class TradingPatternsAnalyzer:
             trades=Count('id'),
             total_pnl=Sum('net_pnl'),
             winners=Count('id', filter=Q(net_pnl__gt=0)),
+            losers=Count('id', filter=Q(net_pnl__lt=0)),
             avg_pnl=Avg('net_pnl'),
-        ).filter(trades__gte=2)  # At least 2 trades
+            gross_loss=Sum('net_pnl', filter=Q(net_pnl__lt=0)),
+            gross_profit=Sum('net_pnl', filter=Q(net_pnl__gt=0)),
+        ).filter(trades__gte=1)  # Include all traded symbols
+
+        def _hydrate(item):
+            item['total_pnl'] = float(item['total_pnl'] or 0)
+            item['avg_pnl'] = float(item['avg_pnl'] or 0)
+            item['gross_loss'] = float(item['gross_loss'] or 0)  # negative or 0
+            item['gross_profit'] = float(item['gross_profit'] or 0)
+            item['win_rate'] = round((item['winners'] / item['trades'] * 100), 1) if item['trades'] > 0 else 0
+            return item
 
         # Best performers (by total P&L)
-        best = list(symbol_stats.order_by('-total_pnl')[:limit])
-        for item in best:
-            item['total_pnl'] = float(item['total_pnl'] or 0)
-            item['avg_pnl'] = float(item['avg_pnl'] or 0)
-            item['win_rate'] = round((item['winners'] / item['trades'] * 100), 1) if item['trades'] > 0 else 0
+        best = [_hydrate(x) for x in symbol_stats.order_by('-total_pnl')[:limit]]
 
-        # Worst performers (Top Losers - sorted by total P&L ascending)
-        worst = list(symbol_stats.order_by('total_pnl')[:limit])
-        for item in worst:
-            item['total_pnl'] = float(item['total_pnl'] or 0)
-            item['avg_pnl'] = float(item['avg_pnl'] or 0)
-            item['win_rate'] = round((item['winners'] / item['trades'] * 100), 1) if item['trades'] > 0 else 0
+        # Worst performers (Top Losers - sorted by net P&L ascending)
+        worst = [_hydrate(x) for x in symbol_stats.order_by('total_pnl')[:limit]]
 
         # Most traded
-        most_traded = list(symbol_stats.order_by('-trades')[:limit])
-        for item in most_traded:
-            item['total_pnl'] = float(item['total_pnl'] or 0)
-            item['avg_pnl'] = float(item['avg_pnl'] or 0)
-            item['win_rate'] = round((item['winners'] / item['trades'] * 100), 1) if item['trades'] > 0 else 0
+        most_traded = [_hydrate(x) for x in symbol_stats.order_by('-trades')[:limit]]
+
+        # Biggest Loss Exposure - sum of losing trades only (gross loss),
+        # ignores offsetting wins. Excludes symbols with no losing trades.
+        loss_exposure = [
+            _hydrate(x) for x in symbol_stats.filter(losers__gte=1).order_by('gross_loss')[:limit]
+        ]
+
+        # Biggest single-trade wins/losses (individual contracts, not aggregated)
+        trade_fields = ('symbol', 'trading_symbol', 'segment', 'expiry_date',
+                        'strike_price', 'option_type', 'net_pnl', 'broker')
+
+        def _hydrate_trade(row):
+            return {
+                'symbol': row['symbol'],
+                'contract': row.get('trading_symbol') or row['symbol'],
+                'segment': row['segment'],
+                'expiry': row['expiry_date'].isoformat() if row['expiry_date'] else '',
+                'strike': float(row['strike_price']) if row['strike_price'] is not None else None,
+                'option_type': row.get('option_type') or '',
+                'net_pnl': float(row['net_pnl'] or 0),
+                'broker': row['broker'],
+            }
+
+        biggest_wins = [_hydrate_trade(r) for r in
+                        qs.filter(net_pnl__gt=0).order_by('-net_pnl').values(*trade_fields)[:limit]]
+        biggest_losses = [_hydrate_trade(r) for r in
+                          qs.filter(net_pnl__lt=0).order_by('net_pnl').values(*trade_fields)[:limit]]
 
         return {
             'summary': summary,
             'best': best,
             'worst': worst,
             'most_traded': most_traded,
+            'loss_exposure': loss_exposure,
+            'biggest_wins': biggest_wins,
+            'biggest_losses': biggest_losses,
         }
 
     def get_segment_analysis(self) -> List[Dict[str, Any]]:
