@@ -27,6 +27,18 @@ from apps.core.constants import (
 )
 
 
+class LivePositionManager(models.Manager):
+    """Default manager — returns only live (non-paper) positions.
+
+    All existing ``Position.objects.filter(...)`` calls auto-exclude paper
+    positions without any code changes.  Use ``Position.all_objects`` when you
+    explicitly need to include paper positions (e.g. paper trading dashboard).
+    """
+
+    def get_queryset(self):
+        return super().get_queryset().filter(is_paper=False)
+
+
 class Position(TimeStampedModel):
     """
     Unified Position model for trades and suggestions.
@@ -335,7 +347,25 @@ class Position(TimeStampedModel):
 
     notes = models.TextField(blank=True)
 
+    # ==========================================================================
+    # PAPER TRADING
+    # ==========================================================================
+
+    is_paper = models.BooleanField(
+        default=False,
+        db_index=True,
+        help_text="Paper (simulated) trade — not a real broker position"
+    )
+
+    # ==========================================================================
+    # MANAGERS
+    # ==========================================================================
+
+    objects = LivePositionManager()   # App code default — auto-excludes paper
+    all_objects = models.Manager()    # Includes paper — for admin & paper dashboard
+
     class Meta:
+        default_manager_name = 'all_objects'  # Admin, migrations, related lookups
         db_table = 'positions'
         verbose_name = 'Position'
         verbose_name_plural = 'Positions'
@@ -345,6 +375,7 @@ class Position(TimeStampedModel):
             models.Index(fields=['account', 'status']),
             models.Index(fields=['instrument', 'status']),
             models.Index(fields=['status', 'expiry_date']),
+            models.Index(fields=['is_paper', 'status']),
         ]
 
     def __str__(self):
@@ -443,6 +474,13 @@ class Position(TimeStampedModel):
         self.realized_pnl = self.calculate_pnl(exit_price)
         self.unrealized_pnl = Decimal('0.00')
         self.save()
+
+        # Seed hindsight analysis checkpoints (fire-and-forget)
+        try:
+            from apps.analytics.tasks import create_hindsight_checkpoints_task
+            create_hindsight_checkpoints_task.delay(self.id)
+        except Exception:
+            pass  # Non-critical — don't block the close path
 
     def calculate_pnl(self, price=None) -> Decimal:
         """Calculate P&L at given price.

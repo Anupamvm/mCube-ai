@@ -2132,3 +2132,154 @@ def api_sync_nifty_data(request):
             'error': str(e)
         }, status=500)
 
+
+# =============================================================================
+# HINDSIGHT TRACKER VIEWS
+# =============================================================================
+
+@login_required
+def hindsight_tracker(request):
+    """Render the Hindsight Tracker page shell. Data loaded via API calls."""
+    return render(request, 'analytics/hindsight_tracker.html')
+
+
+@login_required
+@require_http_methods(["GET"])
+def api_hindsight_summary(request):
+    """
+    Aggregate stats for the Hindsight Tracker dashboard.
+
+    Query params: date_from, date_to, instrument, exit_reason, direction
+    """
+    from apps.analytics.services.hindsight_tracker import get_hindsight_summary
+
+    try:
+        date_from = request.GET.get('date_from')
+        date_to = request.GET.get('date_to')
+        if date_from:
+            date_from = datetime.strptime(date_from, '%Y-%m-%d').date()
+        if date_to:
+            date_to = datetime.strptime(date_to, '%Y-%m-%d').date()
+
+        summary = get_hindsight_summary(
+            date_from=date_from,
+            date_to=date_to,
+            instrument=request.GET.get('instrument'),
+            exit_reason=request.GET.get('exit_reason'),
+            direction=request.GET.get('direction'),
+        )
+        return JsonResponse({'success': True, **summary})
+    except Exception as e:
+        logger.error(f"Hindsight summary error: {e}", exc_info=True)
+        return JsonResponse({'success': False, 'error': str(e)}, status=500)
+
+
+@login_required
+@require_http_methods(["GET"])
+def api_hindsight_positions(request):
+    """
+    Paginated list of positions with checkpoint data.
+
+    Query params: date_from, date_to, instrument, exit_reason, direction, page, page_size
+    """
+    from apps.analytics.services.hindsight_tracker import get_hindsight_positions
+
+    try:
+        date_from = request.GET.get('date_from')
+        date_to = request.GET.get('date_to')
+        if date_from:
+            date_from = datetime.strptime(date_from, '%Y-%m-%d').date()
+        if date_to:
+            date_to = datetime.strptime(date_to, '%Y-%m-%d').date()
+
+        data = get_hindsight_positions(
+            date_from=date_from,
+            date_to=date_to,
+            instrument=request.GET.get('instrument'),
+            exit_reason=request.GET.get('exit_reason'),
+            direction=request.GET.get('direction'),
+            page=int(request.GET.get('page', 1)),
+            page_size=int(request.GET.get('page_size', 20)),
+        )
+        return JsonResponse({'success': True, **data})
+    except Exception as e:
+        logger.error(f"Hindsight positions error: {e}", exc_info=True)
+        return JsonResponse({'success': False, 'error': str(e)}, status=500)
+
+
+@login_required
+@require_http_methods(["GET"])
+def api_hindsight_detail(request, position_id):
+    """Full checkpoint detail for a single position."""
+    from apps.analytics.services.hindsight_tracker import get_hindsight_detail
+
+    try:
+        data = get_hindsight_detail(position_id)
+        if not data:
+            return JsonResponse(
+                {'success': False, 'error': 'No hindsight data for this position'},
+                status=404,
+            )
+        return JsonResponse({'success': True, **data})
+    except Exception as e:
+        logger.error(f"Hindsight detail error: {e}", exc_info=True)
+        return JsonResponse({'success': False, 'error': str(e)}, status=500)
+
+
+# ==========================================================================
+# PAPER TRADING DASHBOARD
+# ==========================================================================
+
+@login_required
+def paper_trading_dashboard(request):
+    """Paper trading dashboard — shows simulated trade performance."""
+    from apps.core.models import TradingCoreConfig
+    from apps.brokers.models import PaperOrder
+    from django.db.models import Sum, Count, Q
+
+    config = TradingCoreConfig.get_instance()
+
+    # Paper positions
+    open_positions = Position.all_objects.filter(is_paper=True, status='OPEN')
+    closed_positions = Position.all_objects.filter(is_paper=True, status='CLOSED')
+
+    # P&L calculations
+    total_realized = closed_positions.aggregate(total=Sum('realized_pnl'))['total'] or 0
+    total_unrealized = open_positions.aggregate(total=Sum('unrealized_pnl'))['total'] or 0
+
+    # Win/loss stats
+    winning = closed_positions.filter(realized_pnl__gt=0).count()
+    losing = closed_positions.filter(realized_pnl__lt=0).count()
+    total_closed = closed_positions.count()
+    win_rate = (winning / total_closed * 100) if total_closed > 0 else 0
+
+    # Strategy breakdown
+    strategy_pnl = closed_positions.values('strategy_type').annotate(
+        total_pnl=Sum('realized_pnl'),
+        trade_count=Count('id'),
+    ).order_by('-total_pnl')
+
+    # Recent paper orders
+    recent_orders = PaperOrder.objects.order_by('-created_at')[:50]
+
+    # Capital utilization
+    capital_used = open_positions.aggregate(total=Sum('margin_used'))['total'] or 0
+
+    context = {
+        'config': config,
+        'open_positions': open_positions,
+        'closed_positions': closed_positions.order_by('-exit_time')[:50],
+        'total_realized': total_realized,
+        'total_unrealized': total_unrealized,
+        'total_pnl': total_realized + total_unrealized,
+        'winning_trades': winning,
+        'losing_trades': losing,
+        'total_trades': total_closed,
+        'win_rate': win_rate,
+        'strategy_pnl': strategy_pnl,
+        'recent_orders': recent_orders,
+        'capital_used': capital_used,
+        'capital_available': float(config.paper_initial_capital) - float(capital_used),
+    }
+
+    return render(request, 'analytics/paper_trading_dashboard.html', context)

@@ -20,6 +20,7 @@ urlpatterns = [
     # DASHBOARD
     # ==========================================================================
     path('dashboard/', views.dashboard, name='dashboard'),
+    path('paper-trading/', views.paper_trading_dashboard, name='paper_trading_dashboard'),
 
     # ==========================================================================
     # LEARNING CONTROL
@@ -139,4 +140,12 @@ urlpatterns = [
     path('api/suggestions/symbols/', views.api_suggestions_symbols, name='api_suggestions_symbols'),
     path('api/suggestions/behavioral/', views.api_suggestions_behavioral, name='api_suggestions_behavioral'),
     path('api/suggestions/time-patterns/', views.api_suggestions_time_patterns, name='api_suggestions_time_patterns'),
+
+    # ==========================================================================
+    # HINDSIGHT TRACKER — What-If Analysis
+    # ==========================================================================
+    path('hindsight/', views.hindsight_tracker, name='hindsight_tracker'),
+    path('api/hindsight/summary/', views.api_hindsight_summary, name='api_hindsight_summary'),
+    path('api/hindsight/positions/', views.api_hindsight_positions, name='api_hindsight_positions'),
+    path('api/hindsight/detail/<int:position_id>/', views.api_hindsight_detail, name='api_hindsight_detail'),
 ]

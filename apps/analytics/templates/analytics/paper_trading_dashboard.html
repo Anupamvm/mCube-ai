@@ -1,0 +1,205 @@
+{% extends "analytics/base.html" %}
+
+{% block title %}Paper Trading Dashboard{% endblock %}
+
+{% block content %}
+<div class="container-fluid" style="max-width: 1400px; margin: 0 auto; padding: 20px;">
+
+    <!-- Header -->
+    <div style="background: rgba(255,255,255,0.95); padding: 20px; border-radius: 12px; margin-bottom: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.08);">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+            <div>
+                <h2 style="margin: 0; font-size: 22px;">Paper Trading Dashboard</h2>
+                <p style="color: #718096; margin: 4px 0 0;">Simulated trade performance and analytics</p>
+            </div>
+            <span style="padding: 6px 16px; border-radius: 20px; font-size: 13px; font-weight: 600;
+                {% if config.enable_paper_trading %}background: #c6f6d5; color: #276749;{% else %}background: #fed7d7; color: #9b2c2c;{% endif %}">
+                {% if config.enable_paper_trading %}ACTIVE{% else %}INACTIVE{% endif %}
+            </span>
+        </div>
+    </div>
+
+    <!-- Summary Cards -->
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 20px;">
+        <div style="background: white; padding: 16px; border-radius: 10px; box-shadow: 0 1px 4px rgba(0,0,0,0.06);">
+            <div style="font-size: 12px; color: #718096; text-transform: uppercase;">Total P&L</div>
+            <div style="font-size: 24px; font-weight: 700; color: {% if total_pnl >= 0 %}#38a169{% else %}#e53e3e{% endif %};">
+                ₹{{ total_pnl|floatformat:0 }}
+            </div>
+            <div style="font-size: 11px; color: #a0aec0;">Realized: ₹{{ total_realized|floatformat:0 }} | Unrealized: ₹{{ total_unrealized|floatformat:0 }}</div>
+        </div>
+        <div style="background: white; padding: 16px; border-radius: 10px; box-shadow: 0 1px 4px rgba(0,0,0,0.06);">
+            <div style="font-size: 12px; color: #718096; text-transform: uppercase;">Win Rate</div>
+            <div style="font-size: 24px; font-weight: 700;">{{ win_rate|floatformat:1 }}%</div>
+            <div style="font-size: 11px; color: #a0aec0;">{{ winning_trades }}W / {{ losing_trades }}L / {{ total_trades }} total</div>
+        </div>
+        <div style="background: white; padding: 16px; border-radius: 10px; box-shadow: 0 1px 4px rgba(0,0,0,0.06);">
+            <div style="font-size: 12px; color: #718096; text-transform: uppercase;">Active Positions</div>
+            <div style="font-size: 24px; font-weight: 700;">{{ open_positions.count }}</div>
+            <div style="font-size: 11px; color: #a0aec0;">Capital used: ₹{{ capital_used|floatformat:0 }}</div>
+        </div>
+        <div style="background: white; padding: 16px; border-radius: 10px; box-shadow: 0 1px 4px rgba(0,0,0,0.06);">
+            <div style="font-size: 12px; color: #718096; text-transform: uppercase;">Capital Available</div>
+            <div style="font-size: 24px; font-weight: 700;">₹{{ capital_available|floatformat:0 }}</div>
+            <div style="font-size: 11px; color: #a0aec0;">of ₹{{ config.paper_initial_capital|floatformat:0 }}</div>
+        </div>
+    </div>
+
+    <!-- Active Positions -->
+    {% if open_positions %}
+    <div style="background: white; padding: 20px; border-radius: 10px; margin-bottom: 20px; box-shadow: 0 1px 4px rgba(0,0,0,0.06);">
+        <h3 style="font-size: 16px; margin: 0 0 12px;">Active Paper Positions</h3>
+        <div style="overflow-x: auto;">
+            <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+                <thead>
+                    <tr style="border-bottom: 2px solid #e2e8f0;">
+                        <th style="padding: 8px; text-align: left;">Instrument</th>
+                        <th style="padding: 8px;">Direction</th>
+                        <th style="padding: 8px;">Qty</th>
+                        <th style="padding: 8px;">Entry</th>
+                        <th style="padding: 8px;">Current</th>
+                        <th style="padding: 8px;">P&L</th>
+                        <th style="padding: 8px;">Strategy</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for pos in open_positions %}
+                    <tr style="border-bottom: 1px solid #f0f0f0;">
+                        <td style="padding: 8px; font-weight: 600;">{{ pos.label }}</td>
+                        <td style="padding: 8px; text-align: center;">
+                            <span style="padding: 2px 8px; border-radius: 4px; font-size: 11px;
+                                {% if pos.direction == 'LONG' %}background: #c6f6d5; color: #276749;
+                                {% elif pos.direction == 'SHORT' %}background: #fed7d7; color: #9b2c2c;
+                                {% else %}background: #e2e8f0; color: #4a5568;{% endif %}">
+                                {{ pos.direction }}
+                            </span>
+                        </td>
+                        <td style="padding: 8px; text-align: center;">{{ pos.lots }}</td>
+                        <td style="padding: 8px; text-align: right;">₹{{ pos.entry_price|floatformat:2 }}</td>
+                        <td style="padding: 8px; text-align: right;">₹{{ pos.current_price|floatformat:2 }}</td>
+                        <td style="padding: 8px; text-align: right; font-weight: 600; color: {% if pos.unrealized_pnl >= 0 %}#38a169{% else %}#e53e3e{% endif %};">
+                            ₹{{ pos.unrealized_pnl|floatformat:0 }}
+                        </td>
+                        <td style="padding: 8px; font-size: 11px; color: #718096;">{{ pos.strategy_type }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Strategy Breakdown -->
+    {% if strategy_pnl %}
+    <div style="background: white; padding: 20px; border-radius: 10px; margin-bottom: 20px; box-shadow: 0 1px 4px rgba(0,0,0,0.06);">
+        <h3 style="font-size: 16px; margin: 0 0 12px;">Strategy Breakdown</h3>
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px;">
+            {% for strat in strategy_pnl %}
+            <div style="padding: 12px; border-radius: 8px; background: #f7fafc; border-left: 3px solid {% if strat.total_pnl >= 0 %}#38a169{% else %}#e53e3e{% endif %};">
+                <div style="font-size: 12px; font-weight: 600;">{{ strat.strategy_type|default:"Unknown" }}</div>
+                <div style="font-size: 18px; font-weight: 700; color: {% if strat.total_pnl >= 0 %}#38a169{% else %}#e53e3e{% endif %};">
+                    ₹{{ strat.total_pnl|floatformat:0 }}
+                </div>
+                <div style="font-size: 11px; color: #a0aec0;">{{ strat.trade_count }} trade{{ strat.trade_count|pluralize }}</div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Closed Trades History -->
+    {% if closed_positions %}
+    <div style="background: white; padding: 20px; border-radius: 10px; margin-bottom: 20px; box-shadow: 0 1px 4px rgba(0,0,0,0.06);">
+        <h3 style="font-size: 16px; margin: 0 0 12px;">Recent Closed Trades</h3>
+        <div style="overflow-x: auto;">
+            <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+                <thead>
+                    <tr style="border-bottom: 2px solid #e2e8f0;">
+                        <th style="padding: 8px; text-align: left;">Instrument</th>
+                        <th style="padding: 8px;">Direction</th>
+                        <th style="padding: 8px;">Entry</th>
+                        <th style="padding: 8px;">Exit</th>
+                        <th style="padding: 8px;">P&L</th>
+                        <th style="padding: 8px;">Reason</th>
+                        <th style="padding: 8px;">Strategy</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for pos in closed_positions %}
+                    <tr style="border-bottom: 1px solid #f0f0f0;">
+                        <td style="padding: 8px; font-weight: 600;">{{ pos.label }}</td>
+                        <td style="padding: 8px; text-align: center;">{{ pos.direction }}</td>
+                        <td style="padding: 8px; text-align: right;">₹{{ pos.entry_price|floatformat:2 }}</td>
+                        <td style="padding: 8px; text-align: right;">₹{{ pos.exit_price|floatformat:2 }}</td>
+                        <td style="padding: 8px; text-align: right; font-weight: 600; color: {% if pos.realized_pnl >= 0 %}#38a169{% else %}#e53e3e{% endif %};">
+                            ₹{{ pos.realized_pnl|floatformat:0 }}
+                        </td>
+                        <td style="padding: 8px; font-size: 11px;">{{ pos.exit_reason }}</td>
+                        <td style="padding: 8px; font-size: 11px; color: #718096;">{{ pos.strategy_type }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Paper Orders Log -->
+    {% if recent_orders %}
+    <div style="background: white; padding: 20px; border-radius: 10px; box-shadow: 0 1px 4px rgba(0,0,0,0.06);">
+        <h3 style="font-size: 16px; margin: 0 0 12px;">Paper Order Log</h3>
+        <div style="overflow-x: auto;">
+            <table style="width: 100%; border-collapse: collapse; font-size: 12px;">
+                <thead>
+                    <tr style="border-bottom: 2px solid #e2e8f0;">
+                        <th style="padding: 6px; text-align: left;">Order ID</th>
+                        <th style="padding: 6px;">Symbol</th>
+                        <th style="padding: 6px;">Action</th>
+                        <th style="padding: 6px;">Qty</th>
+                        <th style="padding: 6px;">LTP</th>
+                        <th style="padding: 6px;">Fill</th>
+                        <th style="padding: 6px;">Slippage</th>
+                        <th style="padding: 6px;">Status</th>
+                        <th style="padding: 6px;">Time</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for order in recent_orders %}
+                    <tr style="border-bottom: 1px solid #f0f0f0;">
+                        <td style="padding: 6px; font-family: monospace; font-size: 11px;">{{ order.order_id|truncatechars:16 }}</td>
+                        <td style="padding: 6px;">{{ order.symbol|truncatechars:20 }}</td>
+                        <td style="padding: 6px; text-align: center;">
+                            <span style="color: {% if order.action == 'B' %}#38a169{% else %}#e53e3e{% endif %}; font-weight: 600;">
+                                {% if order.action == 'B' %}BUY{% else %}SELL{% endif %}
+                            </span>
+                        </td>
+                        <td style="padding: 6px; text-align: center;">{{ order.quantity }}</td>
+                        <td style="padding: 6px; text-align: right;">₹{{ order.ltp_at_fill|floatformat:2 }}</td>
+                        <td style="padding: 6px; text-align: right;">₹{{ order.fill_price|floatformat:2 }}</td>
+                        <td style="padding: 6px; text-align: right;">₹{{ order.slippage_applied|floatformat:2 }}</td>
+                        <td style="padding: 6px; text-align: center;">
+                            <span style="padding: 2px 6px; border-radius: 4px; font-size: 10px;
+                                {% if order.status == 'FILLED' %}background: #c6f6d5; color: #276749;
+                                {% elif order.status == 'REJECTED' %}background: #fed7d7; color: #9b2c2c;
+                                {% else %}background: #fefcbf; color: #744210;{% endif %}">
+                                {{ order.status }}
+                            </span>
+                        </td>
+                        <td style="padding: 6px; font-size: 11px; color: #718096;">{{ order.created_at|date:"d M H:i" }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endif %}
+
+    {% if not open_positions and not closed_positions and not recent_orders %}
+    <div style="background: white; padding: 40px; border-radius: 10px; text-align: center; color: #718096;">
+        <div style="font-size: 48px; margin-bottom: 12px;">📝</div>
+        <h3 style="margin: 0 0 8px;">No Paper Trades Yet</h3>
+        <p style="margin: 0;">Enable paper trading in Core Config to start simulating trades.</p>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

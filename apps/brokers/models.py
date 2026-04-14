@@ -1773,6 +1773,58 @@ class BrokerContractPnL(TimeStampedModel):
         super().save(*args, **kwargs)
 
 
+class PaperOrder(TimeStampedModel):
+    """Audit trail for simulated paper trade orders."""
+
+    order_id = models.CharField(
+        max_length=50, unique=True, db_index=True,
+        help_text="UUID-based paper order identifier"
+    )
+    account = models.ForeignKey(
+        'accounts.BrokerAccount', on_delete=models.CASCADE,
+        related_name='paper_orders'
+    )
+    position = models.ForeignKey(
+        'positions.Position', null=True, blank=True,
+        on_delete=models.SET_NULL, related_name='paper_orders'
+    )
+    symbol = models.CharField(max_length=100)
+    action = models.CharField(max_length=5, help_text="B (Buy) or S (Sell)")
+    quantity = models.IntegerField()
+    order_type = models.CharField(max_length=10, help_text="MKT, LIMIT, SL")
+    requested_price = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+        help_text="Limit / SL price requested (0 for market)"
+    )
+    fill_price = models.DecimalField(
+        max_digits=15, decimal_places=2,
+        help_text="Simulated fill price after slippage"
+    )
+    slippage_applied = models.DecimalField(
+        max_digits=15, decimal_places=4, default=0,
+        help_text="Slippage amount (in price terms)"
+    )
+    ltp_at_fill = models.DecimalField(
+        max_digits=15, decimal_places=2,
+        help_text="Market LTP at time of simulated fill"
+    )
+    status = models.CharField(
+        max_length=20, default='FILLED',
+        help_text="FILLED, REJECTED, CANCELLED"
+    )
+    rejection_reason = models.CharField(max_length=200, blank=True)
+    metadata = models.JSONField(null=True, blank=True)
+
+    class Meta:
+        db_table = 'paper_orders'
+        ordering = ['-created_at']
+        verbose_name = 'Paper Order'
+        verbose_name_plural = 'Paper Orders'
+
+    def __str__(self):
+        return f"Paper {self.action} {self.quantity} {self.symbol} @ {self.fill_price} [{self.status}]"
+
+
 class PositionAvgOverride(models.Model):
     """
     Manual average price override for positions where the DB chain

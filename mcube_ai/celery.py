@@ -285,6 +285,31 @@ def get_static_schedule():
         'schedule': crontab(hour=17, minute=0, day_of_week='1-5'),  # 5:00 PM Mon-Fri
         'options': {'queue': 'reports'},
     },
+
+    # =========================================================================
+    # HINDSIGHT TRACKER — What-If Analysis
+    # =========================================================================
+
+    # Morning: fetch opening prices for today's pending checkpoints
+    'seed-hindsight-opening-prices': {
+        'task': 'apps.analytics.tasks.seed_hindsight_opening_prices',
+        'schedule': crontab(hour=9, minute=20, day_of_week='1-5'),  # 9:20 AM Mon-Fri
+        'options': {'queue': 'reports'},
+    },
+
+    # EOD: fill OHLC data for all due checkpoints
+    'update-hindsight-checkpoints': {
+        'task': 'apps.analytics.tasks.update_hindsight_checkpoints',
+        'schedule': crontab(hour=15, minute=50, day_of_week='1-5'),  # 3:50 PM Mon-Fri
+        'options': {'queue': 'reports'},
+    },
+
+    # Early morning digest: summarize yesterday's hindsight updates on Telegram
+    'send-hindsight-morning-digest': {
+        'task': 'apps.analytics.tasks.send_hindsight_morning_digest',
+        'schedule': crontab(hour=8, minute=30, day_of_week='1-5'),  # 8:30 AM Mon-Fri
+        'options': {'queue': 'monitoring'},
+    },
 }
 
 

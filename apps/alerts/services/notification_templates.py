@@ -161,3 +161,11 @@ TemplateRegistry.register('BROKER_HEALTH', NotificationTemplate(
     dedup_key_format='broker_health_{instrument}',
     service_group='system',
 ))
+
+TemplateRegistry.register('HINDSIGHT_DIGEST', NotificationTemplate(
+    default_status='INFO',
+    default_priority='INFO',
+    title_format='Hindsight Tracker Update',
+    collapsible=True,
+    service_group='reports',
+))

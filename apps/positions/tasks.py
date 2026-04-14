@@ -555,11 +555,29 @@ def monitor_and_manage_positions():
                     NseFlag.set(hold_key, '', 'Auto-cleared at day end')
                     logger.info(f"Hold flag cleared for pos #{position.id} (day end)")
 
+        # ── Paper position monitoring (separate, non-blocking) ────────────
+        paper_exits = 0
+        try:
+            if config.is_paper_trading_enabled():
+                paper_positions = Position.all_objects.filter(
+                    is_paper=True, status='OPEN',
+                ).select_related('account')
+
+                for pp in paper_positions:
+                    try:
+                        _monitor_paper_position(pp, config, now, today)
+                        paper_exits += 1
+                    except Exception as ppe:
+                        logger.error(f"[PAPER] Monitor error for {pp.instrument}: {ppe}")
+        except Exception as pe:
+            logger.error(f"[PAPER] Paper monitoring error (non-fatal): {pe}", exc_info=True)
+
         return {
             'success': True,
             'positions_updated': updated_count,
             'exits_executed': exits_executed,
             'suggestions_sent': suggestions_sent,
+            'paper_monitored': paper_exits,
             'errors': errors if errors else None,
         }
 
@@ -570,6 +588,67 @@ def monitor_and_manage_positions():
         # Always release the distributed lock so the next cycle can run,
         # even if this cycle raised an unhandled exception.
         cache.delete(_MONITOR_LOCK_KEY)
+
+
+def _monitor_paper_position(position, config, now, today):
+    """
+    Monitor a single paper position: update P&L and check exit conditions.
+
+    Paper positions always auto-execute exits (no Telegram confirmation needed).
+    """
+    from apps.positions.services.exit_manager import check_exit_conditions
+    from apps.positions.services.position_manager import close_position
+
+    # Fetch current LTP for paper position
+    try:
+        from apps.brokers.integrations.paper_broker import PaperBroker
+        broker = PaperBroker(position.account)
+        quote = broker.get_quote(position.instrument)
+        if quote and quote.ltp > 0:
+            position.current_price = Decimal(str(quote.ltp))
+    except Exception:
+        pass  # Use existing current_price if quote fails
+
+    # Calculate P&L
+    if position.direction == 'LONG':
+        pnl = (position.current_price - position.entry_price) * position.quantity
+    elif position.direction == 'SHORT':
+        pnl = (position.entry_price - position.current_price) * position.quantity
+    else:
+        pnl = position.premium_collected if position.premium_collected else Decimal('0')
+
+    position.unrealized_pnl = pnl
+    position.save(update_fields=['unrealized_pnl', 'current_price'])
+
+    # Check exit conditions
+    exit_result = check_exit_conditions(position)
+
+    if exit_result.get('should_exit'):
+        exit_reason = exit_result.get('exit_reason', 'PAPER_EXIT')
+        exit_price = exit_result.get('exit_price', position.current_price)
+
+        success, msg = close_position(
+            position,
+            exit_price=exit_price,
+            exit_reason=exit_reason,
+            place_broker_order=True,  # Routes through PaperBroker
+        )
+
+        if success:
+            logger.info(
+                f"[PAPER] Position closed: {position.instrument} | "
+                f"Reason: {exit_reason} | P&L: ₹{pnl:,.0f}"
+            )
+            notify('EXIT_EXECUTED',
+                title=f'[PAPER] Position Closed',
+                instrument=position.instrument,
+                metrics={
+                    'Reason': exit_reason,
+                    'P&L': f'₹{pnl:,.0f}',
+                    'Exit': f'₹{exit_price:,.2f}',
+                },
+                collapsible=False,
+            )
 
 
 @shared_task(name='apps.positions.tasks.alert_open_positions_pre_close')

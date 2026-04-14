@@ -157,9 +157,24 @@ def create_position(
         return False, None, message
 
     try:
+        is_paper = account.is_paper_trading
+
         # CRITICAL: Check ONE POSITION RULE (inside lock)
-        if Position.has_active_position(account):
-            existing = Position.get_active_position(account)
+        # For paper accounts, check paper positions via all_objects
+        if is_paper:
+            has_active = Position.all_objects.filter(
+                account=account, is_paper=True, status__in=['OPEN', 'ACTIVE'],
+            ).exists()
+        else:
+            has_active = Position.has_active_position(account)
+
+        if has_active:
+            if is_paper:
+                existing = Position.all_objects.filter(
+                    account=account, is_paper=True, status__in=['OPEN', 'ACTIVE'],
+                ).first()
+            else:
+                existing = Position.get_active_position(account)
             message = (
                 f"❌ Cannot create position. ONE POSITION RULE violated. "
                 f"Active position exists: {existing.instrument}"
@@ -170,8 +185,18 @@ def create_position(
         # Calculate entry value
         entry_value = quantity * lot_size * entry_price
 
+        # Paper trading: tag position accordingly
+        if is_paper:
+            from apps.core.constants import POSITION_SOURCE_PAPER, POSITION_STATUS_OPEN
+            kwargs['is_paper'] = True
+            kwargs.setdefault('source', POSITION_SOURCE_PAPER)
+
+        # Use 'OPEN' status for paper positions so exit checks (is_stop_loss_hit,
+        # is_target_hit) work correctly — they check status == POSITION_STATUS_OPEN.
+        position_status = 'OPEN' if is_paper else 'ACTIVE'
+
         # Create position
-        position = Position.objects.create(
+        position = Position.all_objects.create(
             account=account,
             strategy_type=strategy_type,
             instrument=instrument,
@@ -185,7 +210,7 @@ def create_position(
             expiry_date=expiry_date,
             margin_used=margin_used,
             entry_value=entry_value,
-            status='ACTIVE',
+            status=position_status,
             **kwargs  # Additional fields like call_strike, put_strike, etc.
         )
 
@@ -309,6 +334,31 @@ def _place_broker_exit_order(position: Position) -> Tuple[bool, str]:
     """
     try:
         account = position.account
+
+        # Paper trading — route through PaperBroker (no real API call)
+        if account and account.is_paper_trading:
+            from apps.brokers.utils.broker_resolver import get_broker_for_account
+            broker = get_broker_for_account(account)
+
+            if position.direction == 'LONG':
+                action = 'S'
+            elif position.direction == 'SHORT':
+                action = 'B'
+            else:
+                return False, "NEUTRAL positions require multi-leg close via UI"
+
+            order_id = broker.place_order(
+                symbol=position.instrument,
+                action=action,
+                quantity=position.quantity,
+                order_type='MKT',
+                is_exit=True,
+            )
+            if order_id:
+                logger.info(f"[PAPER] Exit order simulated: {order_id} for {position.instrument}")
+                return True, f"Paper Order ID: {order_id}"
+            return False, "Paper exit order simulation failed"
+
         broker_type = getattr(account, 'broker_type', '').lower()
 
         if 'kotak' in broker_type or 'neo' in broker_type:

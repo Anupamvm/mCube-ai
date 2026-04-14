@@ -136,4 +136,38 @@
             </div>
         </div>
     </div>
+
+    <!-- Paper Trading Section -->
+    <div style="margin-top: 12px; border-top: 1px solid #e2e8f0; padding-top: 12px;">
+        <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+            <span style="font-size: 16px;">📝</span>
+            <strong style="font-size: 14px;">Paper Trading</strong>
+            <span style="font-size: 11px; padding: 2px 8px; border-radius: 10px; background: {% if trading_config.enable_paper_trading %}#c6f6d5{% else %}#fed7d7{% endif %}; color: {% if trading_config.enable_paper_trading %}#276749{% else %}#9b2c2c{% endif %};">
+                {% if trading_config.enable_paper_trading %}ON{% else %}OFF{% endif %}
+            </span>
+        </div>
+        <form method="post" action="{% url 'core:update_core_config' %}" style="display: flex; flex-wrap: wrap; gap: 8px; align-items: center;">
+            {% csrf_token %}
+            <input type="hidden" name="redirect" value="celery">
+            <label style="font-size: 12px; display: flex; align-items: center; gap: 4px; cursor: pointer;">
+                <input type="checkbox" name="enable_paper_trading" {% if trading_config.enable_paper_trading %}checked{% endif %} onchange="this.form.submit()">
+                Enable
+            </label>
+            <label style="font-size: 12px; display: flex; align-items: center; gap: 4px; cursor: pointer;">
+                <input type="checkbox" name="paper_trade_futures" {% if trading_config.paper_trade_futures %}checked{% endif %} onchange="this.form.submit()">
+                Futures
+            </label>
+            <label style="font-size: 12px; display: flex; align-items: center; gap: 4px; cursor: pointer;">
+                <input type="checkbox" name="paper_trade_options" {% if trading_config.paper_trade_options %}checked{% endif %} onchange="this.form.submit()">
+                Options
+            </label>
+        </form>
+        {% if trading_config.enable_paper_trading %}
+        <div style="font-size: 11px; color: #718096; margin-top: 4px;">
+            Capital: ₹{{ trading_config.paper_initial_capital|floatformat:0 }} |
+            Lots: {{ trading_config.paper_options_lots }}opt / {{ trading_config.paper_futures_lots }}fut |
+            Slip: {{ trading_config.paper_slippage_pct }}%
+        </div>
+        {% endif %}
+    </div>
 </div>

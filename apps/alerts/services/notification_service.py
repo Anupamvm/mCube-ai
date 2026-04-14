@@ -48,6 +48,7 @@ def notify(
     update_message_id: Optional[int] = None,
     collapsible: Optional[bool] = None,
     pnl_pct: Optional[float] = None,
+    paper: bool = False,
     _skip_aggregation: bool = False,
     _items: Optional[list] = None,        # Preserved from aggregation merge, unused here
 ) -> Tuple[bool, str]:
@@ -81,6 +82,10 @@ def notify(
         )
     if collapsible is None:
         collapsible = template.collapsible
+
+    # Paper trading tag — prefix title with [PAPER]
+    if paper and title and not title.startswith('[PAPER]'):
+        title = f'[PAPER] {title}'
 
     # 2. Min P&L change gate ──────────────────────────────────────────────
     if template.min_pnl_change_pct > 0 and pnl_pct is not None and position_id:

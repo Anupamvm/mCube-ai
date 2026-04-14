@@ -5,7 +5,7 @@ Admin configuration for brokers app
 from django.contrib import admin
 from apps.brokers.models import (
     BrokerLimit, BrokerPosition, OptionChainQuote, HistoricalPrice,
-    Order, Execution
+    Order, Execution, PaperOrder
 )
 
 
@@ -209,3 +209,12 @@ class ExecutionAdmin(admin.ModelAdmin):
     ]
 
     date_hierarchy = 'exchange_timestamp'
+
+
+@admin.register(PaperOrder)
+class PaperOrderAdmin(admin.ModelAdmin):
+    list_display = ['order_id', 'symbol', 'action', 'quantity', 'fill_price', 'ltp_at_fill', 'slippage_applied', 'status', 'created_at']
+    list_filter = ['status', 'action', 'created_at']
+    search_fields = ['order_id', 'symbol']
+    readonly_fields = ['created_at', 'updated_at']
+    date_hierarchy = 'created_at'

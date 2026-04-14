@@ -1108,6 +1108,28 @@ def start_options_trade(self):
             )
 
         task_logger.success("Options trade completed", context=result)
+
+        # ====================================================================
+        # STEP 6: Paper Trading (runs in parallel if enabled)
+        # ====================================================================
+        try:
+            if config.is_paper_trading_enabled() and config.paper_trade_options:
+                paper_account = BrokerAccount.objects.filter(
+                    broker='PAPER', is_active=True, is_paper_trading=True,
+                ).first()
+                if paper_account:
+                    paper_lots = config.paper_options_lots
+                    paper_confirmation = get_confirmation_service()
+                    paper_result = paper_confirmation.execute_options_trade(
+                        suggestion, lots=paper_lots, paper_account=paper_account,
+                    )
+                    if paper_result.get('success'):
+                        task_logger.info('paper_executed', f"[PAPER] Options trade: {paper_lots} lots")
+                    else:
+                        task_logger.warning('paper_failed', f"[PAPER] Options trade failed: {paper_result.get('error')}")
+        except Exception as pe:
+            logger.error(f"[PAPER] Options paper trade error (non-fatal): {pe}", exc_info=True)
+
         return result
 
     except Exception as e:
@@ -2241,6 +2263,42 @@ def aggregate_futures_results(self, batch_results, min_score=65, orchestrator_ta
         'timed_out_batches': timed_out_batches,
         'partial_contracts': partial_contracts
     })
+
+    # ===== Paper trading: auto-execute top candidate if enabled =====
+    try:
+        if (config.is_paper_trading_enabled() and config.paper_trade_futures
+                and qualified_candidates):
+            paper_account = BrokerAccount.objects.filter(
+                broker='PAPER', is_active=True, is_paper_trading=True,
+            ).first()
+            if paper_account:
+                top_candidate = qualified_candidates[0]
+                # Find corresponding TradeSuggestion
+                paper_suggestion = TradeSuggestion.objects.filter(
+                    instrument=top_candidate['symbol'],
+                    created_at__date=today,
+                    suggestion_type='FUTURES',
+                ).order_by('-created_at').first()
+                if paper_suggestion:
+                    from apps.trading.services.trade_confirmation import get_confirmation_service
+                    paper_svc = get_confirmation_service()
+                    paper_result = paper_svc.execute_futures_trade(
+                        paper_suggestion,
+                        custom_lots=config.paper_futures_lots,
+                        use_batching=False,
+                        paper_account=paper_account,
+                    )
+                    if paper_result.get('success'):
+                        task_logger.info('paper_executed',
+                            f"[PAPER] Futures trade: {top_candidate['symbol']} "
+                            f"{top_candidate['direction']} {config.paper_futures_lots} lots"
+                        )
+                    else:
+                        task_logger.warning('paper_failed',
+                            f"[PAPER] Futures trade failed: {paper_result.get('error')}"
+                        )
+    except Exception as pe:
+        logger.error(f"[PAPER] Futures paper trade error (non-fatal): {pe}", exc_info=True)
 
     return {
         'success': True,

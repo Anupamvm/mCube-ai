@@ -1,0 +1,882 @@
+{% extends "analytics/base.html" %}
+
+{% block page_title %}Hindsight Tracker{% endblock %}
+{% block page_description %}What if you had held longer?{% endblock %}
+
+{% block extra_css %}
+{{ block.super }}
+<style>
+    /* Filter Bar */
+    .filter-bar {
+        background: rgba(255, 255, 255, 0.95);
+        backdrop-filter: blur(10px);
+        padding: 1.25rem 1.5rem;
+        border-radius: var(--radius-lg);
+        margin-bottom: 1.5rem;
+        box-shadow: var(--shadow-sm);
+        display: flex;
+        gap: 1rem;
+        flex-wrap: wrap;
+        align-items: end;
+    }
+
+    .filter-group {
+        display: flex;
+        flex-direction: column;
+        gap: 0.25rem;
+    }
+
+    .filter-group label {
+        font-size: 0.75rem;
+        font-weight: 600;
+        color: var(--gray);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+
+    .filter-group input,
+    .filter-group select {
+        padding: 0.5rem 0.75rem;
+        border: 1px solid #e2e8f0;
+        border-radius: var(--radius-md);
+        font-size: 0.875rem;
+        min-width: 140px;
+    }
+
+    .filter-btn {
+        padding: 0.5rem 1.25rem;
+        background: var(--primary);
+        color: white;
+        border: none;
+        border-radius: var(--radius-md);
+        cursor: pointer;
+        font-weight: 600;
+        font-size: 0.875rem;
+    }
+
+    .filter-btn:hover {
+        opacity: 0.9;
+    }
+
+    /* Summary Cards */
+    .summary-cards {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        gap: 1.25rem;
+        margin-bottom: 1.5rem;
+    }
+
+    .summary-card {
+        background: white;
+        padding: 1.5rem;
+        border-radius: var(--radius-lg);
+        box-shadow: var(--shadow-sm);
+        text-align: center;
+        position: relative;
+        overflow: hidden;
+    }
+
+    .summary-card::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 4px;
+    }
+
+    .summary-card.neutral::before { background: #6366f1; }
+    .summary-card.danger::before { background: #ef4444; }
+    .summary-card.success::before { background: #22c55e; }
+    .summary-card.info::before { background: #3b82f6; }
+
+    .summary-card .card-value {
+        font-size: 2rem;
+        font-weight: 700;
+        color: var(--darker);
+    }
+
+    .summary-card .card-label {
+        font-size: 0.8rem;
+        color: var(--gray);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        margin-top: 0.25rem;
+    }
+
+    .summary-card .card-sub {
+        font-size: 0.75rem;
+        color: var(--gray);
+        margin-top: 0.5rem;
+    }
+
+    /* Breakdown Section */
+    .breakdown-section {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 1.5rem;
+        margin-bottom: 1.5rem;
+    }
+
+    @media (max-width: 768px) {
+        .breakdown-section { grid-template-columns: 1fr; }
+    }
+
+    .breakdown-card {
+        background: white;
+        padding: 1.5rem;
+        border-radius: var(--radius-lg);
+        box-shadow: var(--shadow-sm);
+    }
+
+    .breakdown-card h3 {
+        margin: 0 0 1rem;
+        font-size: 1rem;
+        color: var(--darker);
+    }
+
+    .breakdown-bar {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        margin-bottom: 0.75rem;
+    }
+
+    .breakdown-label {
+        min-width: 90px;
+        font-size: 0.8rem;
+        font-weight: 600;
+        color: var(--gray);
+    }
+
+    .breakdown-track {
+        flex: 1;
+        height: 24px;
+        background: #f1f5f9;
+        border-radius: var(--radius-md);
+        overflow: hidden;
+        position: relative;
+    }
+
+    .breakdown-fill {
+        height: 100%;
+        border-radius: var(--radius-md);
+        display: flex;
+        align-items: center;
+        padding: 0 0.5rem;
+        font-size: 0.7rem;
+        font-weight: 600;
+        color: white;
+        min-width: fit-content;
+        transition: width 0.5s ease;
+    }
+
+    .breakdown-fill.positive { background: #ef4444; }
+    .breakdown-fill.negative { background: #22c55e; }
+    .breakdown-fill.zero { background: #94a3b8; }
+
+    .breakdown-count {
+        font-size: 0.75rem;
+        color: var(--gray);
+        min-width: 30px;
+        text-align: right;
+    }
+
+    /* Position Table */
+    .positions-table-wrapper {
+        background: white;
+        border-radius: var(--radius-lg);
+        box-shadow: var(--shadow-sm);
+        overflow-x: auto;
+        margin-bottom: 1.5rem;
+    }
+
+    .positions-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.85rem;
+    }
+
+    .positions-table th {
+        background: #f8fafc;
+        padding: 0.75rem;
+        text-align: center;
+        font-weight: 600;
+        color: var(--gray);
+        font-size: 0.75rem;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        border-bottom: 2px solid #e2e8f0;
+        white-space: nowrap;
+    }
+
+    .positions-table th.left { text-align: left; }
+
+    .positions-table td {
+        padding: 0.65rem 0.75rem;
+        border-bottom: 1px solid #f1f5f9;
+        text-align: center;
+        white-space: nowrap;
+    }
+
+    .positions-table tr:hover {
+        background: #f8fafc;
+        cursor: pointer;
+    }
+
+    .positions-table td.left { text-align: left; }
+
+    /* Checkpoint cells */
+    .cp-cell {
+        padding: 0.4rem 0.5rem;
+        border-radius: var(--radius-sm);
+        font-weight: 600;
+        font-size: 0.8rem;
+    }
+
+    .cp-cell.positive { background: #fef2f2; color: #dc2626; }
+    .cp-cell.negative { background: #f0fdf4; color: #16a34a; }
+    .cp-cell.pending { background: #f1f5f9; color: #94a3b8; }
+    .cp-cell.expired { background: #fefce8; color: #a16207; }
+
+    /* Direction Badge */
+    .dir-badge {
+        display: inline-block;
+        padding: 0.15rem 0.5rem;
+        border-radius: var(--radius-full);
+        font-size: 0.7rem;
+        font-weight: 700;
+        text-transform: uppercase;
+    }
+    .dir-badge.long { background: #dcfce7; color: #166534; }
+    .dir-badge.short { background: #fee2e2; color: #991b1b; }
+    .dir-badge.neutral { background: #f1f5f9; color: #475569; }
+
+    /* Exit Reason Badge */
+    .exit-badge {
+        display: inline-block;
+        padding: 0.15rem 0.5rem;
+        border-radius: var(--radius-full);
+        font-size: 0.7rem;
+        font-weight: 600;
+    }
+    .exit-badge.target { background: #dcfce7; color: #166534; }
+    .exit-badge.stoploss { background: #fee2e2; color: #991b1b; }
+    .exit-badge.manual { background: #e0e7ff; color: #3730a3; }
+    .exit-badge.eod { background: #fef3c7; color: #92400e; }
+    .exit-badge.expiry { background: #fce7f3; color: #9d174d; }
+
+    /* Expandable Detail Row */
+    .detail-row {
+        display: none;
+    }
+
+    .detail-row.expanded {
+        display: table-row;
+    }
+
+    .detail-content {
+        padding: 1rem 1.5rem;
+        background: #f8fafc;
+    }
+
+    .detail-grid {
+        display: grid;
+        grid-template-columns: repeat(6, 1fr);
+        gap: 1rem;
+    }
+
+    @media (max-width: 768px) {
+        .detail-grid { grid-template-columns: repeat(2, 1fr); }
+    }
+
+    .detail-checkpoint {
+        background: white;
+        padding: 0.75rem;
+        border-radius: var(--radius-md);
+        text-align: center;
+        border: 1px solid #e2e8f0;
+    }
+
+    .detail-checkpoint h4 {
+        margin: 0 0 0.5rem;
+        font-size: 0.8rem;
+        color: var(--gray);
+    }
+
+    .detail-ohlc {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 0.25rem;
+        font-size: 0.75rem;
+    }
+
+    .detail-ohlc span {
+        color: var(--gray);
+    }
+
+    .detail-pnl {
+        margin-top: 0.5rem;
+        font-size: 0.85rem;
+        font-weight: 700;
+    }
+
+    /* Insight Cards */
+    .insight-section {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 1.5rem;
+        margin-bottom: 1.5rem;
+    }
+
+    @media (max-width: 768px) {
+        .insight-section { grid-template-columns: 1fr; }
+    }
+
+    .insight-card {
+        background: white;
+        padding: 1.5rem;
+        border-radius: var(--radius-lg);
+        box-shadow: var(--shadow-sm);
+    }
+
+    .insight-card h3 {
+        margin: 0 0 1rem;
+        font-size: 1rem;
+    }
+
+    .insight-item {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 0.5rem 0;
+        border-bottom: 1px solid #f1f5f9;
+    }
+
+    .insight-item:last-child { border-bottom: none; }
+
+    .insight-name {
+        font-size: 0.85rem;
+        font-weight: 500;
+    }
+
+    .insight-delta {
+        font-weight: 700;
+        font-size: 0.85rem;
+    }
+
+    .insight-delta.positive { color: #dc2626; }
+    .insight-delta.negative { color: #16a34a; }
+
+    /* Pagination */
+    .pagination-bar {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 1rem;
+    }
+
+    .pagination-bar button {
+        padding: 0.4rem 0.8rem;
+        border: 1px solid #e2e8f0;
+        background: white;
+        border-radius: var(--radius-md);
+        cursor: pointer;
+        font-size: 0.85rem;
+    }
+
+    .pagination-bar button:disabled {
+        opacity: 0.5;
+        cursor: default;
+    }
+
+    .pagination-bar button.active {
+        background: var(--primary);
+        color: white;
+        border-color: var(--primary);
+    }
+
+    .pagination-info {
+        font-size: 0.8rem;
+        color: var(--gray);
+    }
+
+    /* Loading */
+    .loading-spinner {
+        text-align: center;
+        padding: 2rem;
+        color: var(--gray);
+    }
+
+    .empty-state {
+        text-align: center;
+        padding: 3rem;
+        color: var(--gray);
+    }
+
+    .empty-state h3 {
+        margin-bottom: 0.5rem;
+        color: var(--darker);
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="analytics-header">
+    <h1>Hindsight Tracker</h1>
+    <p>What if you had held longer? Track hypothetical outcomes after every trade exit.</p>
+</div>
+
+<!-- Filter Bar -->
+<div class="filter-bar">
+    <div class="filter-group">
+        <label>From</label>
+        <input type="date" id="filterDateFrom">
+    </div>
+    <div class="filter-group">
+        <label>To</label>
+        <input type="date" id="filterDateTo">
+    </div>
+    <div class="filter-group">
+        <label>Instrument</label>
+        <input type="text" id="filterInstrument" placeholder="Search...">
+    </div>
+    <div class="filter-group">
+        <label>Exit Reason</label>
+        <select id="filterExitReason">
+            <option value="">All</option>
+            <option value="TARGET">Target Hit</option>
+            <option value="STOP_LOSS">Stop Loss</option>
+            <option value="MANUAL">Manual</option>
+            <option value="EOD_THURSDAY">EOD</option>
+            <option value="EXPIRY_DAY">Expiry</option>
+        </select>
+    </div>
+    <div class="filter-group">
+        <label>Direction</label>
+        <select id="filterDirection">
+            <option value="">All</option>
+            <option value="LONG">Long</option>
+            <option value="SHORT">Short</option>
+            <option value="NEUTRAL">Neutral</option>
+        </select>
+    </div>
+    <button class="filter-btn" onclick="applyFilters()">Apply</button>
+</div>
+
+<!-- Summary Cards -->
+<div class="summary-cards" id="summaryCards">
+    <div class="loading-spinner">Loading summary...</div>
+</div>
+
+<!-- Breakdown -->
+<div class="breakdown-section" id="breakdownSection">
+    <div class="loading-spinner">Loading breakdowns...</div>
+</div>
+
+<!-- Positions Table -->
+<div class="positions-table-wrapper">
+    <table class="positions-table" id="positionsTable">
+        <thead>
+            <tr>
+                <th class="left">Instrument</th>
+                <th>Dir</th>
+                <th>Entry</th>
+                <th>Exit</th>
+                <th>Reason</th>
+                <th>Actual P&L</th>
+                <th>EOD</th>
+                <th>+1d</th>
+                <th>+3d</th>
+                <th>+5d</th>
+                <th>+7d</th>
+                <th>+15d</th>
+            </tr>
+        </thead>
+        <tbody id="positionsBody">
+            <tr><td colspan="12" class="loading-spinner">Loading positions...</td></tr>
+        </tbody>
+    </table>
+    <div class="pagination-bar" id="paginationBar"></div>
+</div>
+
+<!-- Insight Cards -->
+<div class="insight-section" id="insightSection">
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    let currentPage = 1;
+    const OFFSETS = [0, 1, 3, 5, 7, 15];
+
+    function getFilters() {
+        return {
+            date_from: document.getElementById('filterDateFrom').value,
+            date_to: document.getElementById('filterDateTo').value,
+            instrument: document.getElementById('filterInstrument').value,
+            exit_reason: document.getElementById('filterExitReason').value,
+            direction: document.getElementById('filterDirection').value,
+        };
+    }
+
+    function buildQuery(filters, extra) {
+        const params = new URLSearchParams();
+        for (const [k, v] of Object.entries({...filters, ...extra})) {
+            if (v) params.set(k, v);
+        }
+        return params.toString();
+    }
+
+    function applyFilters() {
+        currentPage = 1;
+        loadAll();
+    }
+
+    function loadAll() {
+        loadSummary();
+        loadPositions();
+    }
+
+    // ── Summary Cards ──────────────────────────────────────────────────
+
+    async function loadSummary() {
+        const filters = getFilters();
+        const q = buildQuery(filters);
+        try {
+            const resp = await fetch(`/analytics/api/hindsight/summary/?${q}`);
+            const data = await resp.json();
+            if (!data.success) throw new Error(data.error);
+            renderSummary(data);
+            renderBreakdowns(data);
+        } catch (e) {
+            document.getElementById('summaryCards').innerHTML =
+                `<div class="empty-state"><p>Failed to load summary: ${e.message}</p></div>`;
+        }
+    }
+
+    function renderSummary(data) {
+        const html = `
+            <div class="summary-card neutral">
+                <div class="card-value">${data.complete + data.pending}</div>
+                <div class="card-label">Positions Tracked</div>
+                <div class="card-sub">${data.pending} pending, ${data.expired} expired</div>
+            </div>
+            <div class="summary-card danger">
+                <div class="card-value">${data.left_money_pct}%</div>
+                <div class="card-label">Left Money on Table</div>
+                <div class="card-sub">Exited too early</div>
+            </div>
+            <div class="summary-card success">
+                <div class="card-value">${data.right_to_exit_pct}%</div>
+                <div class="card-label">Right to Exit</div>
+                <div class="card-sub">Good exit decisions</div>
+            </div>
+            <div class="summary-card info">
+                <div class="card-value">${formatCurrency(data.avg_opportunity_7d)}</div>
+                <div class="card-label">Avg Opportunity at +7d</div>
+                <div class="card-sub">+ve = missed, -ve = saved</div>
+            </div>
+        `;
+        document.getElementById('summaryCards').innerHTML = html;
+    }
+
+    function renderBreakdowns(data) {
+        const reasons = data.reason_breakdown || [];
+        const directions = data.direction_breakdown || [];
+
+        // Find max for scaling
+        const allDeltas = [...reasons, ...directions].map(r => Math.abs(r.avg_delta || 0));
+        const maxDelta = Math.max(...allDeltas, 1);
+
+        let reasonHtml = reasons.map(r => {
+            const delta = r.avg_delta || 0;
+            const width = Math.min(Math.abs(delta) / maxDelta * 100, 100);
+            const cls = delta > 0 ? 'positive' : delta < 0 ? 'negative' : 'zero';
+            return `
+                <div class="breakdown-bar">
+                    <span class="breakdown-label">${formatExitReason(r.exit_reason)}</span>
+                    <div class="breakdown-track">
+                        <div class="breakdown-fill ${cls}" style="width: ${Math.max(width, 5)}%">
+                            ${formatCurrency(delta)}
+                        </div>
+                    </div>
+                    <span class="breakdown-count">${r.count}</span>
+                </div>
+            `;
+        }).join('');
+
+        let dirHtml = directions.map(r => {
+            const delta = r.avg_delta || 0;
+            const width = Math.min(Math.abs(delta) / maxDelta * 100, 100);
+            const cls = delta > 0 ? 'positive' : delta < 0 ? 'negative' : 'zero';
+            return `
+                <div class="breakdown-bar">
+                    <span class="breakdown-label">${r.direction}</span>
+                    <div class="breakdown-track">
+                        <div class="breakdown-fill ${cls}" style="width: ${Math.max(width, 5)}%">
+                            ${formatCurrency(delta)}
+                        </div>
+                    </div>
+                    <span class="breakdown-count">${r.count}</span>
+                </div>
+            `;
+        }).join('');
+
+        document.getElementById('breakdownSection').innerHTML = `
+            <div class="breakdown-card">
+                <h3>Avg Opportunity by Exit Reason</h3>
+                ${reasonHtml || '<p style="color:var(--gray);font-size:0.85rem">No data yet</p>'}
+            </div>
+            <div class="breakdown-card">
+                <h3>Avg Opportunity by Direction</h3>
+                ${dirHtml || '<p style="color:var(--gray);font-size:0.85rem">No data yet</p>'}
+            </div>
+        `;
+    }
+
+    // ── Positions Table ────────────────────────────────────────────────
+
+    async function loadPositions() {
+        const filters = getFilters();
+        const q = buildQuery(filters, { page: currentPage, page_size: 20 });
+        try {
+            const resp = await fetch(`/analytics/api/hindsight/positions/?${q}`);
+            const data = await resp.json();
+            if (!data.success) throw new Error(data.error);
+            renderPositions(data.positions);
+            renderPagination(data.pagination);
+            renderInsights(data.positions);
+        } catch (e) {
+            document.getElementById('positionsBody').innerHTML =
+                `<tr><td colspan="12" class="empty-state">${e.message}</td></tr>`;
+        }
+    }
+
+    function renderPositions(positions) {
+        if (!positions.length) {
+            document.getElementById('positionsBody').innerHTML =
+                `<tr><td colspan="12" class="empty-state">
+                    <h3>No Hindsight Data Yet</h3>
+                    <p>Checkpoints will appear here after positions are closed.</p>
+                </td></tr>`;
+            return;
+        }
+
+        let html = '';
+        for (const pos of positions) {
+            const dirCls = pos.direction.toLowerCase();
+            const exitCls = getExitClass(pos.exit_reason);
+
+            html += `<tr onclick="toggleDetail(${pos.position_id})">
+                <td class="left"><strong>${pos.display_name || pos.instrument}</strong></td>
+                <td><span class="dir-badge ${dirCls}">${pos.direction}</span></td>
+                <td>${formatPrice(pos.entry_price)}</td>
+                <td>${formatPrice(pos.exit_price)}</td>
+                <td><span class="exit-badge ${exitCls}">${formatExitReason(pos.exit_reason)}</span></td>
+                <td style="font-weight:600;color:${pos.actual_pnl >= 0 ? '#16a34a' : '#dc2626'}">
+                    ${formatCurrency(pos.actual_pnl)}
+                </td>`;
+
+            for (const offset of OFFSETS) {
+                const cp = pos.checkpoints[offset];
+                if (!cp) {
+                    html += `<td><span class="cp-cell pending">--</span></td>`;
+                } else if (cp.status === 'COMPLETE') {
+                    const delta = cp.opportunity_delta || 0;
+                    const cls = delta > 0 ? 'positive' : 'negative';
+                    html += `<td><span class="cp-cell ${cls}">${formatCurrency(delta)}</span></td>`;
+                } else if (cp.status === 'EXPIRED') {
+                    html += `<td><span class="cp-cell expired">EXP</span></td>`;
+                } else {
+                    html += `<td><span class="cp-cell pending">${cp.status === 'PARTIAL' ? 'P' : '--'}</span></td>`;
+                }
+            }
+
+            html += `</tr>`;
+
+            // Detail row
+            html += `<tr class="detail-row" id="detail-${pos.position_id}">
+                <td colspan="12"><div class="detail-content" id="detail-content-${pos.position_id}">
+                    <div class="loading-spinner">Loading details...</div>
+                </div></td>
+            </tr>`;
+        }
+
+        document.getElementById('positionsBody').innerHTML = html;
+    }
+
+    async function toggleDetail(positionId) {
+        const row = document.getElementById(`detail-${positionId}`);
+        if (row.classList.contains('expanded')) {
+            row.classList.remove('expanded');
+            return;
+        }
+
+        row.classList.add('expanded');
+        const content = document.getElementById(`detail-content-${positionId}`);
+
+        try {
+            const resp = await fetch(`/analytics/api/hindsight/detail/${positionId}/`);
+            const data = await resp.json();
+            if (!data.success) throw new Error(data.error);
+
+            let html = '<div class="detail-grid">';
+            for (const cp of data.checkpoints) {
+                const statusCls = cp.status === 'COMPLETE'
+                    ? (cp.opportunity_delta > 0 ? 'positive' : 'negative')
+                    : cp.status === 'EXPIRED' ? 'expired' : 'pending';
+
+                html += `
+                    <div class="detail-checkpoint">
+                        <h4>${cp.offset_label}</h4>
+                        <div style="font-size:0.7rem;color:var(--gray);margin-bottom:0.5rem">${cp.scheduled_date}</div>
+                        ${cp.status === 'COMPLETE' ? `
+                            <div class="detail-ohlc">
+                                <span>O: ${formatPrice(cp.open_price)}</span>
+                                <span>H: ${formatPrice(cp.high_price)}</span>
+                                <span>L: ${formatPrice(cp.low_price)}</span>
+                                <span>C: ${formatPrice(cp.close_price)}</span>
+                            </div>
+                            <div class="detail-pnl" style="color:${cp.hypothetical_pnl >= 0 ? '#16a34a' : '#dc2626'}">
+                                ${formatCurrency(cp.hypothetical_pnl)} (${cp.hypothetical_pnl_pct >= 0 ? '+' : ''}${(cp.hypothetical_pnl_pct || 0).toFixed(2)}%)
+                            </div>
+                            <div style="font-size:0.75rem;margin-top:0.25rem;color:var(--gray)">
+                                Best: ${formatCurrency(cp.best_case_pnl)} / Worst: ${formatCurrency(cp.worst_case_pnl)}
+                            </div>
+                            <div style="font-size:0.8rem;margin-top:0.5rem;font-weight:700;color:${(cp.opportunity_delta || 0) > 0 ? '#dc2626' : '#16a34a'}">
+                                Delta: ${formatCurrency(cp.opportunity_delta)}
+                            </div>
+                        ` : `
+                            <div style="padding:1rem;color:var(--gray);font-size:0.8rem">
+                                ${cp.status === 'EXPIRED' ? 'Instrument expired' : cp.status === 'SKIPPED' ? 'No data' : 'Pending...'}
+                            </div>
+                        `}
+                    </div>
+                `;
+            }
+            html += '</div>';
+            content.innerHTML = html;
+        } catch (e) {
+            content.innerHTML = `<p style="color:#dc2626">${e.message}</p>`;
+        }
+    }
+
+    // ── Insights ───────────────────────────────────────────────────────
+
+    function renderInsights(positions) {
+        // Collect all complete checkpoints at +7d for insights
+        const allDeltas = [];
+        for (const pos of positions) {
+            const cp7 = pos.checkpoints[7];
+            if (cp7 && cp7.status === 'COMPLETE' && cp7.opportunity_delta !== null) {
+                allDeltas.push({
+                    name: pos.display_name || pos.instrument,
+                    exit_reason: pos.exit_reason,
+                    delta: cp7.opportunity_delta,
+                });
+            }
+        }
+
+        if (!allDeltas.length) {
+            document.getElementById('insightSection').innerHTML = '';
+            return;
+        }
+
+        // Sort for missed opportunities (positive delta) and best exits (negative delta)
+        const missed = [...allDeltas].filter(d => d.delta > 0).sort((a, b) => b.delta - a.delta).slice(0, 5);
+        const bestExits = [...allDeltas].filter(d => d.delta <= 0).sort((a, b) => a.delta - b.delta).slice(0, 5);
+
+        let missedHtml = missed.map(d => `
+            <div class="insight-item">
+                <span class="insight-name">${d.name} <span class="exit-badge ${getExitClass(d.exit_reason)}">${formatExitReason(d.exit_reason)}</span></span>
+                <span class="insight-delta positive">${formatCurrency(d.delta)} missed</span>
+            </div>
+        `).join('') || '<p style="color:var(--gray);font-size:0.85rem">None on this page</p>';
+
+        let bestHtml = bestExits.map(d => `
+            <div class="insight-item">
+                <span class="insight-name">${d.name} <span class="exit-badge ${getExitClass(d.exit_reason)}">${formatExitReason(d.exit_reason)}</span></span>
+                <span class="insight-delta negative">${formatCurrency(Math.abs(d.delta))} saved</span>
+            </div>
+        `).join('') || '<p style="color:var(--gray);font-size:0.85rem">None on this page</p>';
+
+        document.getElementById('insightSection').innerHTML = `
+            <div class="insight-card">
+                <h3>Biggest Missed Opportunities (+7d)</h3>
+                ${missedHtml}
+            </div>
+            <div class="insight-card">
+                <h3>Best Exit Decisions (+7d)</h3>
+                ${bestHtml}
+            </div>
+        `;
+    }
+
+    // ── Pagination ─────────────────────────────────────────────────────
+
+    function renderPagination(pag) {
+        if (pag.total_pages <= 1) {
+            document.getElementById('paginationBar').innerHTML = '';
+            return;
+        }
+
+        let html = `
+            <button ${pag.page <= 1 ? 'disabled' : ''} onclick="goToPage(${pag.page - 1})">Prev</button>
+            <span class="pagination-info">Page ${pag.page} of ${pag.total_pages} (${pag.total} positions)</span>
+            <button ${pag.page >= pag.total_pages ? 'disabled' : ''} onclick="goToPage(${pag.page + 1})">Next</button>
+        `;
+        document.getElementById('paginationBar').innerHTML = html;
+    }
+
+    function goToPage(page) {
+        currentPage = page;
+        loadPositions();
+    }
+
+    // ── Helpers ─────────────────────────────────────────────────────────
+
+    function formatCurrency(val) {
+        if (val == null) return '--';
+        const num = Number(val);
+        const sign = num >= 0 ? '+' : '';
+        return sign + num.toLocaleString('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 });
+    }
+
+    function formatPrice(val) {
+        if (val == null) return '--';
+        return Number(val).toLocaleString('en-IN', { maximumFractionDigits: 2 });
+    }
+
+    function formatExitReason(reason) {
+        const map = {
+            'TARGET': 'Target',
+            'STOP_LOSS': 'SL Hit',
+            'MANUAL': 'Manual',
+            'EOD_THURSDAY': 'EOD',
+            'EOD': 'EOD',
+            'EXPIRY_DAY': 'Expiry',
+            'EXPIRY': 'Expiry',
+        };
+        return map[reason] || reason || '--';
+    }
+
+    function getExitClass(reason) {
+        const map = {
+            'TARGET': 'target',
+            'STOP_LOSS': 'stoploss',
+            'MANUAL': 'manual',
+            'EOD_THURSDAY': 'eod',
+            'EOD': 'eod',
+            'EXPIRY_DAY': 'expiry',
+            'EXPIRY': 'expiry',
+        };
+        return map[reason] || 'manual';
+    }
+
+    // ── Init ───────────────────────────────────────────────────────────
+
+    document.addEventListener('DOMContentLoaded', loadAll);
+</script>
+{% endblock %}

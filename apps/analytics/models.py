@@ -18,6 +18,7 @@ Models:
 - BenchmarkData: Nifty/BankNifty daily data
 - PortfolioBeta: Alpha/Beta calculations
 - MLFeatureStore: Pre-computed ML features
+- HindsightCheckpoint: What-if analysis tracking after position exit
 """
 
 from decimal import Decimal
@@ -1906,3 +1907,131 @@ class MLFeatureStore(TimeStampedModel):
     def __str__(self):
         status = "Complete" if self.is_complete else "Partial"
         return f"Features for Decision #{self.decision_log_id} - {status}"
+
+
+# =============================================================================
+# HINDSIGHT TRACKER — What-If Analysis
+# =============================================================================
+
+class HindsightCheckpoint(TimeStampedModel):
+    """
+    Tracks what happened to an instrument after a position was closed.
+
+    One record per (position, checkpoint_offset) pair.
+    6 checkpoints per closed position: Exit Day EOD, +1d, +3d, +5d, +7d, +15d.
+
+    Answers the question: "What if I had held this trade longer?"
+    """
+
+    OFFSET_CHOICES = [
+        (0, 'Exit Day EOD'),
+        (1, '+1 Day'),
+        (3, '+3 Days'),
+        (5, '+5 Days'),
+        (7, '+7 Days'),
+        (15, '+15 Days'),
+    ]
+
+    STATUS_CHOICES = [
+        ('PENDING', 'Pending'),
+        ('PARTIAL', 'Partial'),       # Have open price, waiting for close
+        ('COMPLETE', 'Complete'),
+        ('EXPIRED', 'Expired'),       # Instrument expired before checkpoint date
+        ('SKIPPED', 'Skipped'),       # No market data available (holiday etc.)
+    ]
+
+    # --- Link to the closed position ---
+    position = models.ForeignKey(
+        'positions.Position',
+        on_delete=models.CASCADE,
+        related_name='hindsight_checkpoints',
+    )
+
+    # --- Checkpoint identification ---
+    offset_days = models.IntegerField(
+        help_text="Trading days after exit: 0=EOD, 1, 3, 5, 7, 15"
+    )
+    offset_label = models.CharField(
+        max_length=20,
+        help_text="Human label: 'Exit Day EOD', '+1 Day', etc."
+    )
+    scheduled_date = models.DateField(
+        db_index=True,
+        help_text="Calendar date this checkpoint targets"
+    )
+    status = models.CharField(
+        max_length=10,
+        choices=STATUS_CHOICES,
+        default='PENDING',
+        db_index=True,
+    )
+
+    # --- Denormalized position context (avoids JOINs in summary queries) ---
+    instrument = models.CharField(max_length=100)
+    display_name = models.CharField(max_length=100, blank=True, default='')
+    direction = models.CharField(max_length=10)
+    entry_price = models.DecimalField(max_digits=15, decimal_places=2)
+    exit_price = models.DecimalField(max_digits=15, decimal_places=2)
+    exit_reason = models.CharField(
+        max_length=100, blank=True, default='',
+        help_text="Why the trade was closed: TARGET, STOP_LOSS, MANUAL, EOD_THURSDAY, EXPIRY_DAY, etc."
+    )
+    quantity = models.IntegerField(default=0)
+    lot_size = models.IntegerField(default=1)
+
+    # --- OHLC data for the checkpoint day ---
+    open_price = models.DecimalField(max_digits=15, decimal_places=2, null=True, blank=True)
+    high_price = models.DecimalField(max_digits=15, decimal_places=2, null=True, blank=True)
+    low_price = models.DecimalField(max_digits=15, decimal_places=2, null=True, blank=True)
+    close_price = models.DecimalField(max_digits=15, decimal_places=2, null=True, blank=True)
+
+    # --- Hypothetical P&L if position was held to this checkpoint's close ---
+    hypothetical_pnl = models.DecimalField(
+        max_digits=15, decimal_places=2, null=True, blank=True,
+        help_text="P&L if held until checkpoint close (calculated from entry_price)"
+    )
+    hypothetical_pnl_pct = models.DecimalField(
+        max_digits=10, decimal_places=4, null=True, blank=True,
+        help_text="Hypothetical P&L as % of entry value"
+    )
+
+    # --- Best/worst during the checkpoint day ---
+    best_case_pnl = models.DecimalField(
+        max_digits=15, decimal_places=2, null=True, blank=True,
+        help_text="P&L at day high (LONG) or day low (SHORT)"
+    )
+    worst_case_pnl = models.DecimalField(
+        max_digits=15, decimal_places=2, null=True, blank=True,
+        help_text="P&L at day low (LONG) or day high (SHORT)"
+    )
+
+    # --- Comparison to actual outcome ---
+    actual_realized_pnl = models.DecimalField(
+        max_digits=15, decimal_places=2, null=True, blank=True,
+        help_text="Actual realized P&L from the closed position"
+    )
+    opportunity_delta = models.DecimalField(
+        max_digits=15, decimal_places=2, null=True, blank=True,
+        help_text="+ve = left money on table, -ve = right to exit when we did"
+    )
+
+    class Meta:
+        db_table = 'hindsight_checkpoint'
+        unique_together = ['position', 'offset_days']
+        ordering = ['position', 'offset_days']
+        indexes = [
+            models.Index(fields=['status', 'scheduled_date']),
+            models.Index(fields=['instrument', '-scheduled_date']),
+            models.Index(fields=['exit_reason', 'status']),
+        ]
+
+    def __str__(self):
+        return (
+            f"{self.display_name or self.instrument} | "
+            f"{self.offset_label} ({self.scheduled_date}) | {self.status}"
+        )
+
+    @classmethod
+    def get_offset_config(cls):
+        """Returns the list of (offset_days, label) tuples."""
+        return cls.OFFSET_CHOICES

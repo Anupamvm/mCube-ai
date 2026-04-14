@@ -7,7 +7,7 @@ Public API (functions called from outside this module):
 
 Architecture (internal):
     IntraDayTracker          — thin JSONField wrapper (session state)
-    MultiFactorSRCalculator  — 8-source weighted S/R (15-min cached)
+    MultiFactorSRCalculator  — 9-source weighted S/R (15-min cached, incl. OI)
     GapDownFilter            — extends noise window on gap opens
     SLTriggerChecker         — two-condition rule enforcer (direction-aware)
     TargetCalculator         — ATR-scaled target (direction-aware)
@@ -145,23 +145,24 @@ VIX_SPIKE_THRESHOLD = 0.20  # 20% intraday VIX spike → immediate NEUTRAL SL
 CATASTROPHIC_GAP_PCT = 0.03  # 3% — bypass noise window if P&L worse than this
 
 SR_SOURCE_WEIGHTS = {
-    'pivot': 0.20,
-    'prev_day_hl': 0.15,
-    'swing_hl': 0.15,
-    'vwap': 0.15,
-    'moving_averages': 0.15,
-    'hvn': 0.10,
+    'pivot': 0.18,
+    'prev_day_hl': 0.13,
+    'swing_hl': 0.13,
+    'vwap': 0.13,
+    'moving_averages': 0.13,
+    'hvn': 0.08,
     'atr_zones': 0.05,
     'psychological': 0.05,
+    'oi': 0.12,
 }
 
-# Source weights when OI data is unavailable (redistribute OI weight to swing+hvn)
+# Source weights when OI data is unavailable (redistribute OI weight to swing+hvn+pivot)
 SR_SOURCE_WEIGHTS_NO_OI = {
-    'pivot': 0.20,
+    'pivot': 0.22,
     'prev_day_hl': 0.15,
-    'swing_hl': 0.20,
-    'vwap': 0.15,
-    'moving_averages': 0.15,
+    'swing_hl': 0.17,
+    'vwap': 0.13,
+    'moving_averages': 0.13,
     'hvn': 0.10,
     'atr_zones': 0.05,
     'psychological': 0.05,
@@ -230,6 +231,7 @@ class MultiFactorSRCalculator:
                 'resistances': [{'price': float, 'score': float, 'source': str}, ...],
                 'atr':  float,
                 'vwap': float,
+                'oi_available': bool,
             }
         """
         from apps.positions.services.sr_exit_engine_utils import cluster_levels
@@ -238,6 +240,7 @@ class MultiFactorSRCalculator:
         raw_resistances = []
         atr_value = 0.0
         vwap_value = 0.0
+        oi_available = False
 
         sources = [
             ('_get_pivot_sr',          'pivot',           None),
@@ -248,10 +251,27 @@ class MultiFactorSRCalculator:
             ('_get_hvn_levels',        'hvn',             None),
             ('_get_atr_zones',         'atr_zones',       True),   # True = returns (atr, s, r)
             ('_get_psychological_levels', 'psychological', None),
+            ('_get_oi_sr',             'oi',              None),
         ]
 
+        # Try OI first to decide which weight table to use
         for method_name, source_key, has_extra in sources:
-            weight = SR_SOURCE_WEIGHTS[source_key]
+            if source_key != 'oi':
+                continue
+            try:
+                s_list, r_list = getattr(self, method_name)()
+                if s_list or r_list:
+                    oi_available = True
+            except Exception as e:
+                logger.debug(f"SR source 'oi' unavailable: {e}")
+            break
+
+        weights = SR_SOURCE_WEIGHTS if oi_available else SR_SOURCE_WEIGHTS_NO_OI
+
+        for method_name, source_key, has_extra in sources:
+            if source_key == 'oi' and not oi_available:
+                continue  # skip OI if unavailable — weights already redistributed
+            weight = weights.get(source_key, 0)
             try:
                 result = getattr(self, method_name)()
                 if has_extra:
@@ -272,6 +292,7 @@ class MultiFactorSRCalculator:
             'resistances': cluster_levels(raw_resistances),
             'atr': atr_value,
             'vwap': vwap_value,
+            'oi_available': oi_available,
         }
 
     def compute_enhanced(self) -> dict:
@@ -357,9 +378,15 @@ class MultiFactorSRCalculator:
         except Exception as e:
             logger.debug(f"SR enhanced: OI wall error: {e}")
 
-        # Step 5: Merge order blocks + OI walls into base levels, re-cluster
-        merged_supports = base['supports'] + ob_supports + oi_walls.get('supports', [])
-        merged_resistances = base['resistances'] + ob_resistances + oi_walls.get('resistances', [])
+        # Step 5: Merge order blocks into base levels, re-cluster
+        # OI wall S/R levels are only merged when OI was NOT available as a base
+        # source (to avoid double-counting); gamma wall metadata (pinning, max
+        # pain) is always kept for strength annotation regardless.
+        merged_supports = base['supports'] + ob_supports
+        merged_resistances = base['resistances'] + ob_resistances
+        if not base.get('oi_available'):
+            merged_supports += oi_walls.get('supports', [])
+            merged_resistances += oi_walls.get('resistances', [])
         merged_supports = _cluster_levels(merged_supports)
         merged_resistances = _cluster_levels(merged_resistances)
 
@@ -589,6 +616,29 @@ class MultiFactorSRCalculator:
             [float(l) for l in levels if float(l) < price],
             [float(l) for l in levels if float(l) >= price],
         )
+
+    def _get_oi_sr(self):
+        """OI-based S/R: highest PUT OI = support, highest CALL OI = resistance."""
+        from apps.strategies.services.oi_support_resistance import OISupportResistanceCalculator
+        oi_symbol = self._get_oi_symbol()
+        price = self._get_current_price()
+        calculator = OISupportResistanceCalculator(oi_symbol)
+        result = calculator.calculate_oi_based_sr(current_price=price)
+        if not result.get('available'):
+            return [], []
+        s_data = result.get('support', {})
+        r_data = result.get('resistance', {})
+        supports = [
+            float(s_data[k]['strike'])
+            for k in ('s1', 's2', 's3')
+            if s_data.get(k) and s_data[k].get('strike')
+        ]
+        resistances = [
+            float(r_data[k]['strike'])
+            for k in ('r1', 'r2', 'r3')
+            if r_data.get(k) and r_data[k].get('strike')
+        ]
+        return supports, resistances
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1087,6 +1137,7 @@ class TargetCalculator:
     def calculate(self) -> float | None:
         direction = self._pos.direction
         price = float(self._pos.current_price or 0)
+        entry = float(self._pos.entry_price or 0)
         offset = self._atr_offset()
 
         if direction == 'LONG':
@@ -1094,14 +1145,21 @@ class TargetCalculator:
             if not resistance:
                 return None
             target = resistance * (1 - offset)
-            return target if target > price else None
+            # Target must be above both current price AND entry price
+            # to avoid "Target Hit" notifications while position is in a loss
+            if target <= price or (entry and target <= entry):
+                return None
+            return target
 
         elif direction == 'SHORT':
             support = self._sl_checker.nearest_support_below()
             if not support:
                 return None
             target = support * (1 + offset)
-            return target if target < price else None
+            # Target must be below both current price AND entry price
+            if target >= price or (entry and target >= entry):
+                return None
+            return target
 
         else:  # NEUTRAL — premium decay; target set at entry
             return None

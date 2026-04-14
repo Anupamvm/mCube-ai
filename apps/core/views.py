@@ -1980,7 +1980,7 @@ def test_accounts(request=None):
     # Test 4: Capital calculation
     try:
         from apps.accounts.models import BrokerAccount
-        account = BrokerAccount.objects.filter(is_active=True).first()
+        account = BrokerAccount.objects.filter(is_active=True, is_paper_trading=False).first()
 
         if account:
             available = account.get_available_capital()
@@ -4152,6 +4152,32 @@ def update_core_config(request):
         if 'notification_level' in request.POST:
             config.notification_level = request.POST.get('notification_level')
             updated_fields.append('notification_level')
+
+        # Paper trading configuration
+        if 'enable_paper_trading' in request.POST:
+            config.enable_paper_trading = request.POST.get('enable_paper_trading') == 'on'
+            updated_fields.append('enable_paper_trading')
+        if 'paper_trade_futures' in request.POST:
+            config.paper_trade_futures = request.POST.get('paper_trade_futures') == 'on'
+            updated_fields.append('paper_trade_futures')
+        if 'paper_trade_options' in request.POST:
+            config.paper_trade_options = request.POST.get('paper_trade_options') == 'on'
+            updated_fields.append('paper_trade_options')
+        if 'paper_initial_capital' in request.POST:
+            config.paper_initial_capital = Decimal(request.POST.get('paper_initial_capital', '10000000'))
+            updated_fields.append('paper_initial_capital')
+        if 'paper_slippage_pct' in request.POST:
+            config.paper_slippage_pct = Decimal(request.POST.get('paper_slippage_pct', '0.0005'))
+            updated_fields.append('paper_slippage_pct')
+        if 'paper_brokerage_pct' in request.POST:
+            config.paper_brokerage_pct = Decimal(request.POST.get('paper_brokerage_pct', '0.0003'))
+            updated_fields.append('paper_brokerage_pct')
+        if 'paper_options_lots' in request.POST:
+            config.paper_options_lots = int(request.POST.get('paper_options_lots', 100))
+            updated_fields.append('paper_options_lots')
+        if 'paper_futures_lots' in request.POST:
+            config.paper_futures_lots = int(request.POST.get('paper_futures_lots', 30))
+            updated_fields.append('paper_futures_lots')
 
         # Legacy lots fields (backward compatibility)
         if 'options_lots' in request.POST:

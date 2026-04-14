@@ -231,13 +231,14 @@
     }
 
     .pnl-chart-body {
-        padding: 0.5rem 1rem 0.75rem;
-        height: 180px;
+        position: relative;
+        padding: 0.75rem 1rem 1rem;
+        height: 260px;
         transition: height 0.3s ease;
     }
 
     .pnl-chart-body.expanded {
-        height: 320px;
+        height: 460px;
     }
 
     .pnl-chart-empty {
@@ -2572,26 +2573,61 @@ function initPnlChart() {
     const ctx = document.getElementById('pnlChart');
     if (!ctx) return;
 
+    const fmtCompactInr = (v) => {
+        const sign = v >= 0 ? '+' : '−';
+        const abs = Math.abs(v);
+        if (abs >= 10000000) return sign + '₹' + (abs / 10000000).toFixed(2) + 'Cr';
+        if (abs >= 100000) return sign + '₹' + (abs / 100000).toFixed(2) + 'L';
+        if (abs >= 1000) return sign + '₹' + (abs / 1000).toFixed(1) + 'K';
+        return sign + '₹' + Math.round(abs);
+    };
+
+    // Plugin: paint a soft band for the last value zone + emphasized zero line
+    const zeroLinePlugin = {
+        id: 'zeroLineEmphasis',
+        afterDraw(chart) {
+            const { ctx, chartArea, scales } = chart;
+            if (!scales.y || !chartArea) return;
+            const yZero = scales.y.getPixelForValue(0);
+            if (yZero < chartArea.top || yZero > chartArea.bottom) return;
+            ctx.save();
+            ctx.beginPath();
+            ctx.moveTo(chartArea.left, yZero);
+            ctx.lineTo(chartArea.right, yZero);
+            ctx.lineWidth = 1;
+            ctx.setLineDash([4, 4]);
+            ctx.strokeStyle = '#94a3b8';
+            ctx.stroke();
+            ctx.restore();
+        }
+    };
+
     pnlChart = new Chart(ctx, {
         type: 'line',
         data: { labels: [], datasets: [{ data: [] }] },
+        plugins: [zeroLinePlugin],
         options: {
             responsive: true,
             maintainAspectRatio: false,
             interaction: { mode: 'index', intersect: false },
+            layout: { padding: { top: 12, right: 12, bottom: 4, left: 4 } },
             plugins: {
                 legend: { display: false },
                 tooltip: {
-                    backgroundColor: '#1f2937',
-                    titleFont: { size: 11 },
-                    bodyFont: { size: 12, weight: '600' },
-                    padding: 10,
+                    backgroundColor: 'rgba(17, 24, 39, 0.95)',
+                    titleColor: '#e5e7eb',
+                    titleFont: { size: 11, weight: '500' },
+                    bodyColor: '#fff',
+                    bodyFont: { size: 13, weight: '700' },
+                    padding: 12,
                     cornerRadius: 8,
+                    displayColors: false,
+                    borderColor: 'rgba(148, 163, 184, 0.3)',
+                    borderWidth: 1,
                     callbacks: {
                         label: function(ctx) {
                             const v = ctx.parsed.y;
-                            const sign = v >= 0 ? '+' : '-';
-                            return `P&L: ${sign}₹${formatIndianNumber(Math.abs(v).toFixed(0))}`;
+                            return 'P&L  ' + fmtCompactInr(v);
                         }
                     }
                 }
@@ -2599,26 +2635,34 @@ function initPnlChart() {
             scales: {
                 x: {
                     grid: { display: false },
-                    ticks: { font: { size: 10 }, color: '#9ca3af', maxTicksLimit: 10 }
-                },
-                y: {
-                    grid: { color: '#f3f4f6' },
+                    border: { color: '#e5e7eb' },
                     ticks: {
                         font: { size: 10 },
-                        color: '#9ca3af',
-                        callback: function(v) {
-                            const sign = v >= 0 ? '+' : '-';
-                            const abs = Math.abs(v);
-                            if (abs >= 100000) return sign + '₹' + (abs / 100000).toFixed(1) + 'L';
-                            if (abs >= 1000) return sign + '₹' + (abs / 1000).toFixed(1) + 'K';
-                            return sign + '₹' + abs;
-                        }
+                        color: '#94a3b8',
+                        maxRotation: 0,
+                        autoSkip: true,
+                        maxTicksLimit: 8,
+                        padding: 6,
+                    }
+                },
+                y: {
+                    grid: {
+                        color: '#f1f5f9',
+                        drawTicks: false,
+                    },
+                    border: { display: false },
+                    ticks: {
+                        font: { size: 10 },
+                        color: '#94a3b8',
+                        padding: 8,
+                        maxTicksLimit: 6,
+                        callback: fmtCompactInr,
                     }
                 }
             },
             elements: {
-                point: { radius: 0, hoverRadius: 4 },
-                line: { tension: 0.35, borderWidth: 2 }
+                point: { radius: 0, hoverRadius: 5, hoverBorderWidth: 2 },
+                line: { tension: 0.35, borderWidth: 2.5, borderJoinStyle: 'round', capBezierPoints: true }
             }
         }
     });
@@ -2770,22 +2814,94 @@ async function renderHistoricalChart() {
     updateChartDataset(labels, data);
 }
 
+function buildPnlGradient(chart, isPositive) {
+    const { ctx, chartArea, scales } = chart;
+    if (!chartArea) return isPositive ? 'rgba(16,185,129,0.10)' : 'rgba(239,68,68,0.10)';
+    const g = ctx.createLinearGradient(0, chartArea.top, 0, chartArea.bottom);
+    let zeroStop = isPositive ? 1 : 0;
+    if (scales.y) {
+        const yZero = scales.y.getPixelForValue(0);
+        const t = (yZero - chartArea.top) / (chartArea.bottom - chartArea.top);
+        if (t >= 0 && t <= 1) zeroStop = t;
+    }
+    if (isPositive) {
+        g.addColorStop(0, 'rgba(16,185,129,0.32)');
+        g.addColorStop(Math.min(0.99, zeroStop), 'rgba(16,185,129,0.02)');
+    } else {
+        g.addColorStop(Math.max(0.01, zeroStop), 'rgba(239,68,68,0.02)');
+        g.addColorStop(1, 'rgba(239,68,68,0.32)');
+    }
+    return g;
+}
+
+// Symmetric y-range: 0 sits in the middle, both sides share the same scale
+// so a +1.5L profit and a -1.5L loss look equally tall.
+function computeYRange(data) {
+    if (!data || data.length === 0) return { min: -100, max: 100 };
+    let lo = Infinity, hi = -Infinity;
+    for (const v of data) {
+        if (v == null || isNaN(v)) continue;
+        if (v < lo) lo = v;
+        if (v > hi) hi = v;
+    }
+    if (!isFinite(lo) || !isFinite(hi)) return { min: -100, max: 100 };
+    const mag = Math.max(Math.abs(lo), Math.abs(hi), 100);
+    const padded = mag * 1.15;  // 15% headroom on both sides
+    return { min: -padded, max: padded };
+}
+
+// "Nice" round number for axis bounds (1, 2, 2.5, 5 × 10ⁿ)
+function niceCeil(v) {
+    if (v === 0) return 0;
+    const sign = Math.sign(v);
+    const abs = Math.abs(v);
+    const pow = Math.pow(10, Math.floor(Math.log10(abs)));
+    const n = abs / pow;
+    let nice;
+    if (n <= 1) nice = 1;
+    else if (n <= 2) nice = 2;
+    else if (n <= 2.5) nice = 2.5;
+    else if (n <= 5) nice = 5;
+    else nice = 10;
+    return sign * nice * pow;
+}
+function niceFloor(v) { return -niceCeil(-v); }
+
+function applyDynamicYScale(data) {
+    if (!pnlChart) return;
+    const { min, max } = computeYRange(data);
+    pnlChart.options.scales.y.suggestedMin = niceFloor(min);
+    pnlChart.options.scales.y.suggestedMax = niceCeil(max);
+}
+
 function updateChartDataset(labels, data) {
     if (!pnlChart) return;
 
-    // Determine color based on last value
     const lastVal = data.length > 0 ? data[data.length - 1] : 0;
     const isPositive = lastVal >= 0;
-    const lineColor = isPositive ? '#10b981' : '#ef4444';
-    const fillColor = isPositive ? 'rgba(16, 185, 129, 0.08)' : 'rgba(239, 68, 68, 0.08)';
+    applyDynamicYScale(data);
+    const POS = '#10b981', NEG = '#ef4444';
+    const lineColor = isPositive ? POS : NEG;
 
     pnlChart.data.labels = labels;
     pnlChart.data.datasets = [{
         data: data,
         borderColor: lineColor,
-        backgroundColor: fillColor,
-        fill: true,
+        backgroundColor: (ctx) => buildPnlGradient(ctx.chart, isPositive),
+        fill: { target: { value: 0 } },
         pointBackgroundColor: lineColor,
+        pointBorderColor: '#fff',
+        pointRadius: (ctx) => (ctx.dataIndex === data.length - 1 ? 4 : 0),
+        pointHoverRadius: 5,
+        segment: {
+            borderColor: (seg) => {
+                const y0 = seg.p0.parsed.y, y1 = seg.p1.parsed.y;
+                if (y0 < 0 && y1 < 0) return NEG;
+                if (y0 >= 0 && y1 >= 0) return POS;
+                // crossing zero — pick by endpoint
+                return y1 >= 0 ? POS : NEG;
+            }
+        }
     }];
     pnlChart.update('none');
 }
@@ -2817,13 +2933,8 @@ function pushLiveChartPoint(totalPnl) {
     pnlChart.data.labels.push(label);
     ds.data.push(Math.round(val));
 
-    // Update color based on latest value
-    const isPositive = val >= 0;
-    ds.borderColor = isPositive ? '#10b981' : '#ef4444';
-    ds.backgroundColor = isPositive ? 'rgba(16, 185, 129, 0.08)' : 'rgba(239, 68, 68, 0.08)';
-    ds.pointBackgroundColor = isPositive ? '#10b981' : '#ef4444';
-
-    pnlChart.update('none');
+    // Re-bind dataset so gradient/segment/last-point logic recompute against new data
+    updateChartDataset(pnlChart.data.labels.slice(), ds.data.slice());
 }
 
 // ── Edit Average Price Modal ──

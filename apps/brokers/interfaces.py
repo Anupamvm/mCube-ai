@@ -267,6 +267,12 @@ def register_brokers():
     except ImportError:
         pass
 
+    try:
+        from apps.brokers.integrations.paper_broker import PaperBroker
+        BrokerFactory.register('paper', PaperBroker)
+    except ImportError:
+        pass
+
 
 # Auto-register on import
 register_brokers()

@@ -71,8 +71,8 @@ def sync_positions_from_brokers(clear_existing=False, include_history=True):
             ).delete()[0]
             logger.info(f"Cleared {deleted_count} existing broker positions")
 
-        # Get all active broker accounts
-        accounts = BrokerAccount.objects.filter(is_active=True)
+        # Get all active broker accounts (exclude paper trading accounts)
+        accounts = BrokerAccount.objects.filter(is_active=True).exclude(is_paper_trading=True)
 
         for account in accounts:
             try:

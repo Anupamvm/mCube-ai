@@ -801,7 +801,7 @@ class TradeConfirmationService:
     # TRADE EXECUTION METHODS (Called from Telegram bot callbacks)
     # =========================================================================
 
-    def execute_options_trade(self, suggestion, lots: int = None) -> Dict:
+    def execute_options_trade(self, suggestion, lots: int = None, paper_account=None) -> Dict:
         """
         Execute options trade after confirmation.
 
@@ -823,10 +823,19 @@ class TradeConfirmationService:
             # Get lot count
             final_lots = lots or suggestion.user_modified_lots or suggestion.recommended_lots or 1
 
-            # Get the active Kotak account
-            account = BrokerAccount.objects.filter(broker='KOTAK', is_active=True).first()
+            # Use paper account if provided, else get live Kotak account
+            if paper_account and paper_account.is_paper_trading:
+                account = paper_account
+            else:
+                account = BrokerAccount.objects.filter(broker='KOTAK', is_active=True).first()
             if not account:
                 return {'success': False, 'error': 'No active Kotak account found'}
+
+            # Paper trading — simulate options entry via PaperBroker
+            if account.is_paper_trading:
+                return self._execute_paper_options_trade(
+                    suggestion, account, strategy, final_lots,
+                )
 
             # Execute based on strategy type
             if strategy == 'STRANGLE' or strategy == 'SHORT_STRANGLE':
@@ -884,7 +893,8 @@ class TradeConfirmationService:
         suggestion,
         custom_lots: int = None,
         use_batching: bool = True,
-        progress_callback: callable = None
+        progress_callback: callable = None,
+        paper_account=None
     ) -> Dict:
         """
         Execute futures trade after confirmation with optional batching.
@@ -921,14 +931,8 @@ class TradeConfirmationService:
             }
         """
         try:
-            from apps.brokers.integrations.breeze import (
-                place_futures_order_with_security_master,
-                place_futures_order_in_batches
-            )
-            from apps.brokers.services.breeze_session import get_breeze_client
             from apps.accounts.models import BrokerAccount
             from apps.positions.models import Position
-            from apps.trading.models import OrderExecutionControl
             from apps.core.models import TradingCoreConfig
 
             config = TradingCoreConfig.get_instance()
@@ -974,6 +978,21 @@ class TradeConfirmationService:
                 suggestion.status = 'SIMULATED'
                 suggestion.save()
                 return {'success': True, 'simulated': True, 'lots': final_lots}
+
+            # Paper trading mode — simulate via PaperBroker
+            if paper_account and paper_account.is_paper_trading:
+                return self._execute_paper_futures_trade(
+                    suggestion, paper_account, symbol, direction,
+                    final_lots, entry_price, stop_loss, target, expiry_date,
+                )
+
+            # Import Breeze modules (after paper check — paper doesn't need these)
+            from apps.brokers.integrations.breeze import (
+                place_futures_order_with_security_master,
+                place_futures_order_in_batches
+            )
+            from apps.brokers.services.breeze_session import get_breeze_client
+            from apps.trading.models import OrderExecutionControl
 
             # Get Breeze client
             breeze = get_breeze_client()
@@ -1148,6 +1167,168 @@ class TradeConfirmationService:
         except Exception as e:
             logger.error(f"Error executing futures trade: {e}")
             return {'success': False, 'error': str(e)}
+
+    def _execute_paper_options_trade(self, suggestion, account, strategy, lots) -> Dict:
+        """Execute a paper (simulated) options trade via PaperBroker."""
+        from apps.brokers.utils.broker_resolver import get_broker_for_account
+        from apps.positions.services.position_manager import create_position
+        from decimal import Decimal
+
+        broker = get_broker_for_account(account)
+
+        # Simulate selling call and put legs
+        call_symbol = f"NIFTY-{suggestion.call_strike}-CE" if suggestion.call_strike else suggestion.instrument
+        put_symbol = f"NIFTY-{suggestion.put_strike}-PE" if suggestion.put_strike else suggestion.instrument
+
+        lot_size = 75  # NIFTY default
+        total_qty = lots * lot_size
+
+        call_order_id = broker.place_order(
+            symbol=call_symbol, action='S', quantity=total_qty, order_type='MKT',
+        )
+        put_order_id = broker.place_order(
+            symbol=put_symbol, action='S', quantity=total_qty, order_type='MKT',
+        )
+
+        if not call_order_id and not put_order_id:
+            suggestion.status = 'FAILED'
+            suggestion.user_notes = 'Paper options order simulation failed'
+            suggestion.save()
+            return {'success': False, 'error': 'Paper options order simulation failed'}
+
+        # Get fill prices from PaperOrder
+        from apps.brokers.models import PaperOrder
+        call_fill = PaperOrder.objects.filter(order_id=call_order_id).first() if call_order_id else None
+        put_fill = PaperOrder.objects.filter(order_id=put_order_id).first() if put_order_id else None
+
+        call_premium = float(call_fill.fill_price) if call_fill else float(suggestion.call_premium or 0)
+        put_premium = float(put_fill.fill_price) if put_fill else float(suggestion.put_premium or 0)
+        total_premium = call_premium + put_premium
+
+        # Create position
+        success, position, msg = create_position(
+            account=account,
+            strategy_type=strategy,
+            instrument=suggestion.instrument or 'NIFTY',
+            direction='NEUTRAL',
+            quantity=total_qty,
+            lot_size=lot_size,
+            entry_price=Decimal(str(total_premium)),
+            stop_loss=Decimal('0'),
+            target=Decimal('0'),
+            expiry_date=suggestion.expiry_date,
+            margin_used=Decimal(str(suggestion.margin_required or 0)),
+            call_strike=suggestion.call_strike,
+            put_strike=suggestion.put_strike,
+            call_premium=Decimal(str(call_premium)),
+            put_premium=Decimal(str(put_premium)),
+            premium_collected=Decimal(str(total_premium * total_qty)),
+        )
+
+        if success and position:
+            suggestion.status = 'EXECUTED'
+            suggestion.executed_at = timezone.now()
+            suggestion.executed_lots = lots
+            suggestion.save()
+
+            logger.info(f"[PAPER] Options trade executed: {strategy} {lots} lots, premium={total_premium}")
+            notify('TRADE_EXECUTED', title=f'[PAPER] Options {strategy} Executed',
+                   instrument=suggestion.instrument or 'NIFTY',
+                   metrics={'Lots': str(lots), 'Premium': f'₹{total_premium:,.2f}'},
+                   collapsible=False)
+
+            return {
+                'success': True,
+                'strategy': strategy,
+                'lots': lots,
+                'order_ids': [call_order_id, put_order_id],
+                'position_id': position.id,
+                'paper': True,
+            }
+        return {'success': False, 'error': msg}
+
+    def _execute_paper_futures_trade(
+        self, suggestion, account, symbol, direction,
+        lots, entry_price, stop_loss, target, expiry_date,
+    ) -> Dict:
+        """Execute a paper (simulated) futures trade via PaperBroker."""
+        from apps.brokers.utils.broker_resolver import get_broker_for_account
+        from apps.positions.services.position_manager import create_position
+        from decimal import Decimal
+
+        broker = get_broker_for_account(account)
+        action = 'B' if direction == 'LONG' else 'S'
+
+        # Get lot size from suggestion
+        lot_size = (suggestion.position_details.get('lot_size', 1)
+                    if suggestion.position_details else 1)
+        total_qty = lots * lot_size
+
+        order_id = broker.place_order(
+            symbol=symbol, action=action, quantity=total_qty, order_type='MKT',
+        )
+
+        if not order_id:
+            logger.warning(f"[PAPER] Futures paper order failed for {symbol}")
+            suggestion.status = 'FAILED'
+            suggestion.user_notes = 'Paper order simulation failed (margin or LTP issue)'
+            suggestion.save()
+            return {'success': False, 'error': 'Paper order simulation failed'}
+
+        # Get fill price from PaperOrder
+        from apps.brokers.models import PaperOrder
+        paper_order = PaperOrder.objects.filter(order_id=order_id).first()
+        fill_price = float(paper_order.fill_price) if paper_order else entry_price
+
+        # Parse expiry_date to YYYY-MM-DD format (may arrive as DD-MMM-YYYY)
+        parsed_expiry = expiry_date
+        if expiry_date and isinstance(expiry_date, str) and '-' in expiry_date:
+            try:
+                parsed_expiry = datetime.strptime(expiry_date, '%d-%b-%Y').date()
+            except (ValueError, TypeError):
+                try:
+                    parsed_expiry = datetime.strptime(expiry_date, '%Y-%m-%d').date()
+                except (ValueError, TypeError):
+                    parsed_expiry = suggestion.expiry_date
+
+        # Create position via position_manager (handles is_paper tagging)
+        success, position, msg = create_position(
+            account=account,
+            strategy_type='LLM_VALIDATED_FUTURES',
+            instrument=symbol,
+            direction=direction,
+            quantity=total_qty,
+            lot_size=lot_size,
+            entry_price=Decimal(str(fill_price)),
+            stop_loss=Decimal(str(stop_loss)) if stop_loss else Decimal('0'),
+            target=Decimal(str(target)) if target else Decimal('0'),
+            expiry_date=parsed_expiry,
+            margin_used=Decimal(str(fill_price * total_qty)),
+        )
+
+        if success and position:
+            suggestion.status = 'EXECUTED'
+            suggestion.executed_at = timezone.now()
+            suggestion.executed_lots = lots
+            suggestion.save()
+
+            logger.info(f"[PAPER] Futures trade executed: {symbol} {direction} {lots} lots @ {fill_price}")
+            notify('TRADE_EXECUTED', title='[PAPER] Futures Trade Executed', instrument=symbol,
+                   metrics={'Lots': str(lots), 'Price': f'₹{fill_price:,.2f}'},
+                   collapsible=False)
+
+            return {
+                'success': True,
+                'symbol': symbol,
+                'direction': direction,
+                'lots': lots,
+                'average_price': fill_price,
+                'order_id': order_id,
+                'position_id': position.id,
+                'paper': True,
+            }
+        else:
+            return {'success': False, 'error': msg}
 
     def close_position(self, position) -> Dict:
         """

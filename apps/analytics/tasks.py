@@ -712,3 +712,91 @@ def update_equity_curves():
     except Exception as e:
         logger.error(f"Error updating equity curves: {e}", exc_info=True)
         return {'success': False, 'error': str(e)}
+
+
+# =============================================================================
+# HINDSIGHT TRACKER TASKS
+# =============================================================================
+
+@shared_task(name='apps.analytics.tasks.create_hindsight_checkpoints_task')
+def create_hindsight_checkpoints_task(position_id: int):
+    """
+    Fire-and-forget: create 6 hindsight checkpoints for a just-closed position.
+
+    Called automatically when a position is closed via position_manager.close_position().
+    """
+    try:
+        from apps.analytics.services.hindsight_tracker import create_checkpoints_for_position
+
+        position = Position.objects.get(id=position_id)
+        created = create_checkpoints_for_position(position)
+        return {'success': True, 'position_id': position_id, 'checkpoints_created': len(created)}
+    except Position.DoesNotExist:
+        logger.error(f"Hindsight: Position #{position_id} not found")
+        return {'success': False, 'error': 'position_not_found'}
+    except Exception as e:
+        logger.error(f"Hindsight: Failed to create checkpoints for position #{position_id}: {e}", exc_info=True)
+        return {'success': False, 'error': str(e)}
+
+
+@shared_task(name='apps.analytics.tasks.seed_hindsight_opening_prices')
+@task_enabled_guard('seed-hindsight-opening-prices')
+def seed_hindsight_opening_prices():
+    """
+    Morning task (9:20 AM): fetch opening prices for today's pending checkpoints.
+
+    Transitions PENDING → PARTIAL for checkpoints scheduled for today.
+    """
+    try:
+        from apps.analytics.services.hindsight_tracker import seed_opening_prices
+
+        result = seed_opening_prices()
+        logger.info(f"Hindsight morning seed complete: {result}")
+        return {'success': True, **result}
+    except Exception as e:
+        logger.error(f"Hindsight morning seed failed: {e}", exc_info=True)
+        return {'success': False, 'error': str(e)}
+
+
+@shared_task(name='apps.analytics.tasks.update_hindsight_checkpoints')
+@task_enabled_guard('update-hindsight-checkpoints')
+def update_hindsight_checkpoints():
+    """
+    EOD task (3:50 PM): fill OHLC data for all checkpoints whose scheduled_date has arrived.
+
+    Transitions PENDING/PARTIAL → COMPLETE with full P&L calculations.
+    """
+    try:
+        from apps.analytics.services.hindsight_tracker import update_pending_checkpoints
+
+        result = update_pending_checkpoints()
+        logger.info(f"Hindsight EOD update complete: {result}")
+        return {'success': True, **result}
+    except Exception as e:
+        logger.error(f"Hindsight EOD update failed: {e}", exc_info=True)
+        return {'success': False, 'error': str(e)}
+
+
+@shared_task(name='apps.analytics.tasks.send_hindsight_morning_digest')
+@task_enabled_guard('send-hindsight-morning-digest')
+def send_hindsight_morning_digest():
+    """
+    Early morning task (8:30 AM): send Telegram digest of yesterday's hindsight updates.
+
+    Summarizes recently completed checkpoints with top missed opportunities
+    and best exit decisions.
+    """
+    try:
+        from apps.analytics.services.hindsight_tracker import generate_hindsight_digest
+
+        digest = generate_hindsight_digest()
+        if not digest:
+            logger.info("Hindsight digest: nothing to report")
+            return {'success': True, 'sent': False, 'reason': 'no_updates'}
+
+        success, detail = notify('HINDSIGHT_DIGEST', **digest)
+        logger.info(f"Hindsight digest sent: success={success}, detail={detail}")
+        return {'success': success, 'sent': True, 'detail': detail}
+    except Exception as e:
+        logger.error(f"Hindsight digest failed: {e}", exc_info=True)
+        return {'success': False, 'error': str(e)}

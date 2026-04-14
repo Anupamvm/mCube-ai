@@ -1254,7 +1254,7 @@ class DataMixin:
             # Reset any previous failed/in_progress state so a manual trigger is never blocked.
             reset_auto_login_status('breeze')
 
-            success, message = auto_login_breeze(task_name="Telegram manual login")
+            success, message = auto_login_breeze(headless=True, task_name="Telegram manual login")
             if success:
                 return {'success': True, 'message': message}
             return {'success': False, 'error': message}

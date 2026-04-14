@@ -5,6 +5,8 @@ This module contains abstract base models that are inherited by other apps.
 Also contains trading configuration and runtime state models.
 """
 
+from decimal import Decimal
+
 from django.db import models
 from django.core.validators import MinValueValidator, MaxValueValidator
 import datetime as dt
@@ -1339,6 +1341,51 @@ class TradingCoreConfig(TimeStampedModel):
         help_text="VIX below this = prefer Strangle (more premium)"
     )
 
+    # =========================================================================
+    # PAPER TRADING
+    # =========================================================================
+
+    enable_paper_trading = models.BooleanField(
+        default=False,
+        help_text="Enable paper trading mode (simulates trades without real orders)"
+    )
+    paper_trade_futures = models.BooleanField(
+        default=True,
+        help_text="Include futures in paper trading"
+    )
+    paper_trade_options = models.BooleanField(
+        default=True,
+        help_text="Include options in paper trading"
+    )
+    paper_initial_capital = models.DecimalField(
+        max_digits=15,
+        decimal_places=2,
+        default=Decimal('10000000'),  # 1 Cr
+        help_text="Starting capital for paper trading (INR)"
+    )
+    paper_slippage_pct = models.DecimalField(
+        max_digits=5,
+        decimal_places=4,
+        default=Decimal('0.0005'),  # 0.05%
+        help_text="Simulated adverse slippage percentage"
+    )
+    paper_brokerage_pct = models.DecimalField(
+        max_digits=5,
+        decimal_places=4,
+        default=Decimal('0.0003'),  # 0.03%
+        help_text="Simulated brokerage percentage"
+    )
+    paper_options_lots = models.IntegerField(
+        default=100,
+        validators=[MinValueValidator(1), MaxValueValidator(500)],
+        help_text="Lots for paper options trades"
+    )
+    paper_futures_lots = models.IntegerField(
+        default=30,
+        validators=[MinValueValidator(1), MaxValueValidator(100)],
+        help_text="Lots for paper futures trades"
+    )
+
     class Meta:
         db_table = 'trading_core_config'
         verbose_name = 'Trading Core Configuration'
@@ -1446,6 +1493,10 @@ class TradingCoreConfig(TimeStampedModel):
     def is_simulated(self) -> bool:
         """Check if in simulated mode (paper trading - no real orders)."""
         return self.position_sizing_mode == 'SIMULATED'
+
+    def is_paper_trading_enabled(self) -> bool:
+        """Check if paper trading mode is enabled."""
+        return self.enable_paper_trading
 
     def is_auto_sizing(self) -> bool:
         """Check if using automatic margin-based sizing."""

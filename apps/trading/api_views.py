@@ -3476,6 +3476,43 @@ def save_pnl_snapshot(request):
 
     today = timezone.localdate()
     tracker, _ = PortfolioPnlTracker.objects.get_or_create(date=today)
+
+    # ── Outlier guard ────────────────────────────────────────────────────
+    # Reject obviously bogus broker ticks (e.g. one-off Neo quote returning a
+    # 100×+ inflated unrealized P&L). Two checks, both must hold to reject:
+    #   1. The new total P&L jumps more than 10× the rolling magnitude of the
+    #      previous snapshots AND the absolute change exceeds ₹5,00,000.
+    #   2. OR any single position's P&L exceeds ₹50,00,000 (₹50L) — well above
+    #      anything realistic for this account.
+    def _is_outlier(new_pnl, new_positions, prior_snapshots):
+        # Per-position absolute cap
+        if new_positions:
+            for p in new_positions:
+                try:
+                    if abs(float(p.get('pnl', 0))) > 5_000_000:
+                        return True, f"position {p.get('sym')} pnl={p.get('pnl')} exceeds ₹50L cap"
+                except (TypeError, ValueError):
+                    continue
+        # Total-P&L spike vs recent history
+        recent = [float(s.get('pnl', 0)) for s in (prior_snapshots or [])[-10:]]
+        if len(recent) >= 3:
+            recent_mag = max(abs(v) for v in recent) or 1.0
+            last_pnl = recent[-1]
+            jump = abs(new_pnl - last_pnl)
+            if jump > 500_000 and jump > recent_mag * 10:
+                return True, f"total pnl jumped {jump:.0f} from {last_pnl:.0f} (recent_mag={recent_mag:.0f})"
+        return False, None
+
+    is_outlier, reason = _is_outlier(pnl, snapshot.get('positions'), tracker.snapshots)
+    if is_outlier:
+        logger.warning(f"[PNL SNAPSHOT] Rejected outlier snapshot: {reason} | ts={ts} pnl={pnl}")
+        return JsonResponse({
+            'success': False,
+            'error': 'outlier_rejected',
+            'reason': reason,
+            'count': len(tracker.snapshots),
+        })
+
     tracker.snapshots.append(snapshot)
     tracker.save(update_fields=['snapshots'])
 

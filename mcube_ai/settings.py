@@ -25,7 +25,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 env = environ.Env(
     # Set default values and casting
     DEBUG=(bool, False),  # Default to False for production safety
-    ALLOWED_HOSTS=(list, ['localhost', '127.0.0.1','27.107.134.179','169.254.3.1','192.168.1.32']),
+    # ALLOWED_HOSTS is hardcoded below — not read from env
 )
 
 # Read .env file
@@ -51,9 +51,14 @@ SECRET_KEY = env('SECRET_KEY', default='django-insecure-1kl+i4u(*w@#_l5&spm2t$jf
 # Set DEBUG=False in production .env file
 DEBUG = env('DEBUG')
 
-# Allowed hosts - configure in .env file
-# Example in .env: ALLOWED_HOSTS=example.com,www.example.com,api.example.com
-ALLOWED_HOSTS = env('ALLOWED_HOSTS')
+# Allowed hosts - defined here as the single source of truth
+ALLOWED_HOSTS = [
+    'localhost',
+    '127.0.0.1',
+    '27.107.134.179',
+    '169.254.3.1',
+    '192.168.1.32',
+]
 
 
 # Application definition

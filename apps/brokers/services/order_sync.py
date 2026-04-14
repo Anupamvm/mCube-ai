@@ -27,8 +27,8 @@ def sync_orders_from_broker():
         synced_count = 0
         today = datetime.now().date()
 
-        # Get all active broker accounts
-        accounts = BrokerAccount.objects.filter(is_active=True)
+        # Get all active broker accounts (exclude paper trading accounts)
+        accounts = BrokerAccount.objects.filter(is_active=True).exclude(is_paper_trading=True)
 
         for account in accounts:
             try:
