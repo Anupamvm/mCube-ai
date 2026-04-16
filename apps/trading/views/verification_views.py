@@ -1020,15 +1020,68 @@ def verify_future_trade(request):
                                 has_upside_data = price_target_data.get('upside_pct') is not None
 
                                 if has_price_data or has_analyst_data or has_upside_data:
+                                    # Trust live broker spot over scraped LTP. If scraped current
+                                    # diverges >20% from spot, the scraper latched onto a non-LTP
+                                    # rupee value (market cap, 52W high, etc.). When that happens
+                                    # and the scraped target was internally derived from the bogus
+                                    # current (i.e. target ≈ current × (1+upside/100)), target is
+                                    # bogus too — reconstruct from spot × (1+upside) instead.
+                                    scraped_current = price_target_data.get('current_price')
+                                    scraped_target = price_target_data.get('avg_target_price')
+                                    scraped_upside = price_target_data.get('upside_pct')
+                                    final_current = scraped_current
+                                    final_target = scraped_target
+                                    final_upside = scraped_upside
+
+                                    spot_f = float(spot_price) if spot_price else None
+                                    if spot_f and scraped_current:
+                                        divergence = abs(scraped_current - spot_f) / spot_f
+                                        if divergence > 0.20:
+                                            # Detect whether scraped target was derived from the
+                                            # bogus current (internally consistent scrape).
+                                            target_derived_from_current = False
+                                            if scraped_target and scraped_upside is not None and scraped_current:
+                                                implied_upside = (scraped_target - scraped_current) / scraped_current * 100
+                                                if abs(implied_upside - scraped_upside) < 2.0:
+                                                    target_derived_from_current = True
+
+                                            final_current = spot_f
+                                            if target_derived_from_current and scraped_upside is not None:
+                                                # Scraped upside ("upside is X%") is still the
+                                                # trustworthy signal — rebuild target from it.
+                                                final_target = round(spot_f * (1 + scraped_upside / 100), 2)
+                                                final_upside = scraped_upside
+                                                logger.warning(
+                                                    f"[Verify Trade] {stock_symbol}: scraped current ₹{scraped_current} "
+                                                    f"diverges {divergence*100:.1f}% from spot ₹{spot_f}; scraped target "
+                                                    f"was derived from bogus current — rebuilding target from spot × "
+                                                    f"(1+{scraped_upside}%) = ₹{final_target}"
+                                                )
+                                            elif scraped_target:
+                                                # Target appears independent — keep it, recompute upside.
+                                                final_upside = round((scraped_target - spot_f) / spot_f * 100, 2)
+                                                logger.warning(
+                                                    f"[Verify Trade] {stock_symbol}: scraped current ₹{scraped_current} "
+                                                    f"diverges {divergence*100:.1f}% from spot ₹{spot_f}; keeping scraped "
+                                                    f"target ₹{scraped_target}, recomputing upside to {final_upside}%"
+                                                )
+                                            else:
+                                                logger.warning(
+                                                    f"[Verify Trade] {stock_symbol}: scraped current ₹{scraped_current} "
+                                                    f"diverges {divergence*100:.1f}% from spot ₹{spot_f}; no target to rebuild"
+                                                )
+                                    elif not scraped_current and spot_f:
+                                        final_current = spot_f
+
                                     AnalystPriceTarget.objects.update_or_create(
                                         nse_code=stock_symbol,
                                         defaults={
                                             'symbol': stock_symbol,
                                             'trendlyne_id': extracted_id,
                                             'stock_name': tl_stock.stock_name if tl_stock else '',
-                                            'current_price': price_target_data.get('current_price'),
-                                            'avg_target_price': price_target_data.get('avg_target_price'),
-                                            'upside_pct': price_target_data.get('upside_pct'),
+                                            'current_price': final_current,
+                                            'avg_target_price': final_target,
+                                            'upside_pct': final_upside,
                                             'analyst_count': price_target_data.get('analyst_count', 0),
                                             'strong_buy_count': price_target_data.get('strong_buy_count', 0),
                                             'buy_count': price_target_data.get('buy_count', 0),
@@ -1039,7 +1092,7 @@ def verify_future_trade(request):
                                             'scrape_success': True,
                                         }
                                     )
-                                    logger.info(f"[Verify Trade] Saved price target for {stock_symbol}: Target=₹{price_target_data.get('avg_target_price')}, Upside={price_target_data.get('upside_pct')}%")
+                                    logger.info(f"[Verify Trade] Saved price target for {stock_symbol}: Current=₹{final_current}, Target=₹{final_target}, Upside={final_upside}%")
                                 else:
                                     # No useful data found from scraping
                                     logger.warning(f"[Verify Trade] Trendlyne scraping returned no useful analyst data for {stock_symbol}")

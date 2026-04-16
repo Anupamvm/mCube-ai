@@ -805,6 +805,61 @@ class TrendlyneProvider(BaseWebScraper):
         except (ValueError, TypeError):
             return None
 
+    def _extract_current_price(self, equity_soup, already_known_target=None):
+        """Extract current LTP from Trendlyne equity page.
+
+        Tries labeled selectors/patterns first (DOM id/class hints, then LTP/CMP
+        labels near the number). Falls back to a bare ₹<num> scan only as a last
+        resort with a tighter sanity range, because the page contains many
+        rupee-prefixed values (market cap, 52W high, etc.) that are not the LTP.
+        """
+        # 1. DOM: Trendlyne's equity page has containers like
+        #    <div id="stockpricewrapper"> ... <span class="stockprice">₹842.55</span>
+        #    Be tolerant to class/id renames by checking a few candidates.
+        candidate_selectors = [
+            {'name': 'span', 'class_': re.compile(r'stock[-_]?price|ltp|current[-_]?price', re.I)},
+            {'name': 'div', 'class_': re.compile(r'stock[-_]?price|ltp[-_]?wrapper|current[-_]?price', re.I)},
+            {'name': ['span', 'div'], 'id': re.compile(r'stock[-_]?price|ltp', re.I)},
+        ]
+        for sel in candidate_selectors:
+            for node in equity_soup.find_all(**sel):
+                price = self._parse_price(node.get_text(strip=True))
+                if price and 10 < price < 200000:
+                    if already_known_target and abs(price - already_known_target) < 1:
+                        continue
+                    self.logger.info(f"Found current price via DOM selector {sel}: {price}")
+                    return price
+
+        # 2. Labeled regex near number ("LTP ₹842.55", "CMP: 842.55")
+        page_text = equity_soup.get_text(separator=' ')
+        labeled_patterns = [
+            (r'(?:LTP|Last\s*Traded\s*Price)[:\s]*₹?\s*([\d,]+\.?\d*)', 'LTP label'),
+            (r'CMP[:\s]*₹?\s*([\d,]+\.?\d*)', 'CMP label'),
+            (r'Current\s*Price[:\s]*₹?\s*([\d,]+\.?\d*)', 'Current Price label'),
+        ]
+        for pattern, desc in labeled_patterns:
+            for match in re.findall(pattern, page_text, re.I):
+                price = self._parse_price(match)
+                if price and 10 < price < 200000:
+                    if already_known_target and abs(price - already_known_target) < 1:
+                        continue
+                    self.logger.info(f"Found current price via {desc}: {price}")
+                    return price
+
+        # 3. Last resort: any ₹<number>, but with a conservative cap to filter out
+        #    market cap and other large aggregates. A handful of NSE tickers trade
+        #    above ₹30k (MRF, PAGEIND); for those the scraped current_price should
+        #    still be validated by the caller against a live quote.
+        for match in re.findall(r'₹\s*([\d,]+\.?\d*)', page_text):
+            price = self._parse_price(match)
+            if price and 10 < price < 100000:
+                if already_known_target and abs(price - already_known_target) < 1:
+                    continue
+                self.logger.warning(f"Falling back to first ₹-prefixed number as current price: {price}")
+                return price
+
+        return None
+
     def _parse_recommendation(self, rec_str: str) -> str:
         """
         Parse recommendation string to standardized type
@@ -1086,28 +1141,10 @@ class TrendlyneProvider(BaseWebScraper):
                             self.logger.info(f"Found analyst count from fallback container: {equity_analyst_count}")
 
             # === METHOD 4: Find current price (LTP) ===
-            # Look for price in various places
-            ltp_patterns = [
-                (r'₹\s*([\d,]+\.?\d*)', 'rupee symbol'),
-                (r'CMP[:\s]*₹?\s*([\d,]+\.?\d*)', 'CMP label'),
-                (r'LTP[:\s]*₹?\s*([\d,]+\.?\d*)', 'LTP label'),
-            ]
-
-            page_text = equity_soup.get_text()
-            for pattern, desc in ltp_patterns:
-                matches = re.findall(pattern, page_text)
-                for match in matches:
-                    price = self._parse_price(match)
-                    # Current price should be reasonable (> 10 and < 100000)
-                    if price and 10 < price < 100000:
-                        # Skip if this looks like the target price we already found
-                        if equity_target_price and abs(price - equity_target_price) < 1:
-                            continue
-                        equity_current_price = price
-                        self.logger.info(f"Found current price via {desc}: {equity_current_price}")
-                        break
-                if equity_current_price:
-                    break
+            # Try labeled selectors first — a bare `₹\d+` match picks up the first
+            # rupee-prefixed number on the page (market cap, 52W high, etc.) and was
+            # producing wildly inflated current_price values (e.g. SBIN ₹42,859).
+            equity_current_price = self._extract_current_price(equity_soup, equity_target_price)
 
             # === METHOD 5: Calculate target price from current price and upside ===
             # If we have upside and current price but no target, calculate it
@@ -1115,15 +1152,21 @@ class TrendlyneProvider(BaseWebScraper):
                 equity_target_price = round(equity_current_price * (1 + equity_upside / 100), 2)
                 self.logger.info(f"Calculated target price from current price and upside: {equity_target_price}")
 
-            # === Validate target price ===
-            # If target price seems unrealistic, recalculate from current price + upside
+            # === Cross-check: if current vs target vs upside are inconsistent,
+            # trust the SCRAPED target (it's the analyst consensus we came here for)
+            # and back-solve whichever field is least trustworthy. ===
             if equity_target_price and equity_current_price and equity_upside:
                 expected_target = equity_current_price * (1 + equity_upside / 100)
-                # If the scraped target differs by more than 20% from expected, use calculated value
                 if abs(equity_target_price - expected_target) / expected_target > 0.20:
-                    self.logger.warning(f"Scraped target price {equity_target_price} differs significantly from expected {expected_target:.2f}")
-                    self.logger.info(f"Using calculated target price: {expected_target:.2f}")
-                    equity_target_price = round(expected_target, 2)
+                    self.logger.warning(
+                        f"Inconsistent scrape: current={equity_current_price}, "
+                        f"target={equity_target_price}, upside={equity_upside}% "
+                        f"(expected target {expected_target:.2f}). Keeping scraped target; "
+                        f"current_price may be wrong and should be cross-checked against live quote."
+                    )
+                    # Recompute upside to match the scraped target+current pair
+                    # (caller decides whether to override current from a live feed).
+                    equity_upside = round((equity_target_price - equity_current_price) / equity_current_price * 100, 2)
 
             # ===== SECOND: Navigate to research reports page for reports table =====
             if trendlyne_id:

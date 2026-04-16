@@ -2625,6 +2625,108 @@ def collect_historical_data_for_token(
         }
 
 
+# Nifty-relative tolerance bands for the 5/15/30-day price-drop checks.
+# excess_pp = stock_change_pct - nifty_change_pct (positive = stock beat Nifty).
+# Higher tolerance for shorter windows, tighter for longer windows.
+_NIFTY_REL_HARD_REJECT_PP = {5: -4.0, 15: -3.0, 30: -2.0}   # excess ≤ this → hard reject regardless of absolute
+_NIFTY_REL_OVERRIDE_MARGIN_PP = {5: 1.0, 15: 0.5, 30: 0.0}  # excess ≥ this → waive absolute fail (FAIL→WARNING)
+
+
+def _evaluate_price_drop_vs_nifty(
+    check: Dict,
+    window_days: int,
+    stock_change_pct: float,
+    abs_threshold_pct: float,
+    nifty_change_pct: Optional[float],
+    result: Dict,
+) -> None:
+    """Apply absolute + Nifty-relative policy to a price-drop check.
+
+    Decision flow:
+      1. Hard reject: stock underperformed Nifty by more than the hard-reject
+         band → FAIL (blocks trade) even if absolute threshold is intact.
+      2. Absolute fail + strong outperformance → WARNING (allows trade).
+      3. Absolute fail + insufficient outperformance → FAIL.
+      4. Absolute pass → PASS.
+
+    Mutates `check` (status/value/message/details) and `result`
+    (trade_allowed, recommendations).
+    """
+    abs_fail = stock_change_pct < abs_threshold_pct
+    abs_msg = (
+        f'Stock dropped {abs(stock_change_pct):.2f}% in last {window_days} days '
+        f'(threshold: {abs(abs_threshold_pct):.0f}%)'
+    )
+    pass_msg = f'{window_days}-day change: {stock_change_pct:+.2f}% (within acceptable range)'
+
+    if nifty_change_pct is None:
+        # Legacy absolute-only behavior when Nifty data is unavailable
+        check['value'] = f"{stock_change_pct:+.2f}%"
+        if abs_fail:
+            check['status'] = 'FAIL'
+            check['message'] = f'{abs_msg} — Nifty data unavailable, relative gate skipped'
+            result['trade_allowed'] = False
+            result['recommendations'].append(
+                f'⚠️ Avoid trade: {abs(stock_change_pct):.2f}% loss in {window_days} days'
+            )
+        else:
+            check['status'] = 'PASS'
+            check['message'] = pass_msg
+        return
+
+    excess_pp = stock_change_pct - nifty_change_pct
+    hard_limit = _NIFTY_REL_HARD_REJECT_PP.get(window_days, -2.0)
+    override_margin = _NIFTY_REL_OVERRIDE_MARGIN_PP.get(window_days, 0.0)
+
+    check['value'] = f"{stock_change_pct:+.2f}% vs Nifty {nifty_change_pct:+.2f}%"
+    check['details'].update({
+        'nifty_change_pct': round(nifty_change_pct, 2),
+        'stock_vs_nifty_pp': round(excess_pp, 2),
+        'nifty_hard_reject_pp': hard_limit,
+        'nifty_override_margin_pp': override_margin,
+    })
+
+    rel_phrase = (
+        f'Nifty {nifty_change_pct:+.2f}%, stock vs Nifty {excess_pp:+.2f}pp '
+        f'(override ≥ {override_margin:+.1f}pp, hard-reject ≤ {hard_limit:.1f}pp)'
+    )
+
+    if excess_pp <= hard_limit:
+        check['status'] = 'FAIL'
+        check['message'] = (
+            f'Hard reject: stock underperformed Nifty by {abs(excess_pp):.2f}pp '
+            f'in {window_days}d. {rel_phrase}'
+        )
+        result['trade_allowed'] = False
+        result['recommendations'].append(
+            f'🚫 Avoid trade: stock underperformed Nifty by {abs(excess_pp):.2f}pp '
+            f'in {window_days}d (hard-reject)'
+        )
+        return
+
+    if abs_fail:
+        if excess_pp >= override_margin:
+            check['status'] = 'WARNING'
+            check['message'] = (
+                f'{abs_msg}, but stock outperformed Nifty by {excess_pp:+.2f}pp — highlight only. {rel_phrase}'
+            )
+            result['recommendations'].append(
+                f'ℹ️ {abs(stock_change_pct):.2f}% loss in {window_days}d but beat Nifty by '
+                f'{excess_pp:+.2f}pp — approved with caution'
+            )
+        else:
+            check['status'] = 'FAIL'
+            check['message'] = f'{abs_msg} and did not sufficiently beat Nifty. {rel_phrase}'
+            result['trade_allowed'] = False
+            result['recommendations'].append(
+                f'⚠️ Avoid trade: {abs(stock_change_pct):.2f}% loss in {window_days}d '
+                f'with no Nifty outperformance'
+            )
+    else:
+        check['status'] = 'PASS'
+        check['message'] = f'{pass_msg}. {rel_phrase}'
+
+
 def verify_historical_data(
     stock_symbol: str,
     expiry_date: str
@@ -2633,14 +2735,20 @@ def verify_historical_data(
     Verify historical data and perform risk assessment before suggesting a futures trade.
 
     Risk Checks (any failure blocks the trade):
-    1. 5-Day Loss Check: Stock lost more than 3% in last 5 days
-    2. 15-Day Loss Check: Stock lost more than 5% in last 15 days
-    3. 30-Day Loss Check: Stock lost more than 10% in last 30 days
+    1. 5-Day Loss Check: Stock lost more than 3% in last 5 days (Nifty-relative gate applied)
+    2. 15-Day Loss Check: Stock lost more than 5% in last 15 days (Nifty-relative gate applied)
+    3. 30-Day Loss Check: Stock lost more than 10% in last 30 days (Nifty-relative gate applied)
     4. Single Day Drop Check: Stock lost more than 2% on any single day in last 5 days
     5. Volatility Check: High volatility regime detection
     6. Volume Decline Check: Declining volume trend
     7. Support Breach Check: Price broke below key support levels
     8. Trend Reversal Check: Recent trend reversal signals
+
+    Nifty-relative gate: for checks 1–3, the absolute drop threshold is
+    reconciled against Nifty's drop over the same window. A stock that breaches
+    the absolute threshold but outperforms Nifty is downgraded FAIL→WARNING;
+    a stock that significantly underperforms Nifty is hard-rejected even when
+    the absolute threshold is intact. Tolerance bands widen for shorter windows.
 
     Args:
         stock_symbol: Stock symbol (e.g., 'HDFCBANK')
@@ -2786,14 +2894,45 @@ def verify_historical_data(
             'to': dates[0].strftime('%Y-%m-%d') if dates else None
         }
 
+        # ===== Fetch Nifty closes for relative comparison on 5/15/30-day checks =====
+        nifty_closes: list = []
+        try:
+            nifty_hist = HistoricalPrice.objects.filter(
+                stock_code='NIFTY',
+                exchange_code='NSE',
+                product_type='cash',
+                interval='1day'
+            ).order_by('-datetime')[:35]
+            nifty_closes = [float(d.close) for d in nifty_hist]
+            if len(nifty_closes) < 31:
+                logger.info(
+                    f"Only {len(nifty_closes)} Nifty daily records; longer-window relative gates will fall back to absolute-only"
+                )
+        except Exception as e:
+            logger.warning(f"Could not fetch Nifty historical data for relative comparison: {e}")
+            nifty_closes = []
+
+        def _nifty_change_over(window: int) -> Optional[float]:
+            if len(nifty_closes) > window:
+                past = nifty_closes[window]
+                if past:
+                    return ((nifty_closes[0] - past) / past) * 100
+            return None
+
+        result['analysis']['nifty_data_points'] = len(nifty_closes)
+
         # ============================================================================
-        # RISK CHECK 1: 5-Day Loss Check (> 3% loss)
+        # RISK CHECK 1: 5-Day Loss Check (> 3% absolute, Nifty-relative gate)
         # ============================================================================
         check_1 = {
             'id': 'five_day_loss',
             'name': '5-Day Price Drop',
-            'description': 'Stock should not have lost more than 3% in last 5 trading days',
-            'threshold': '-3%',
+            'description': (
+                'Stock should not have lost more than 3% in last 5 trading days. '
+                'Waived to WARNING if stock outperformed Nifty by ≥ +1.0pp; '
+                'hard-rejected if stock underperformed Nifty by ≥ 4.0pp.'
+            ),
+            'threshold': '-3% (abs) · Nifty-rel override +1.0pp · hard-reject -4.0pp',
             'status': 'PASS',
             'severity': 'HIGH',
             'value': None,
@@ -2801,34 +2940,31 @@ def verify_historical_data(
         }
 
         if len(closes) >= 5:
-            price_5_days_ago = closes[4]  # Index 4 = 5th day back
+            price_5_days_ago = closes[4]
             change_5d = ((current_price - price_5_days_ago) / price_5_days_ago) * 100
-            check_1['value'] = f"{change_5d:+.2f}%"
             check_1['details'] = {
                 'current_price': current_price,
                 'price_5_days_ago': price_5_days_ago,
                 'change_pct': round(change_5d, 2)
             }
-
-            if change_5d < -3:
-                check_1['status'] = 'FAIL'
-                check_1['message'] = f'Stock dropped {abs(change_5d):.2f}% in last 5 days (threshold: 3%)'
-                result['trade_allowed'] = False
-                result['recommendations'].append(f'⚠️ Avoid trade: {abs(change_5d):.2f}% loss in 5 days indicates weakness')
-            else:
-                check_1['status'] = 'PASS'
-                check_1['message'] = f'5-day change: {change_5d:+.2f}% (within acceptable range)'
+            _evaluate_price_drop_vs_nifty(
+                check_1, 5, change_5d, -3.0, _nifty_change_over(5), result
+            )
 
         result['risk_checks'].append(check_1)
 
         # ============================================================================
-        # RISK CHECK 2: 15-Day Loss Check (> 5% loss)
+        # RISK CHECK 2: 15-Day Loss Check (> 5% absolute, Nifty-relative gate)
         # ============================================================================
         check_2 = {
             'id': 'fifteen_day_loss',
             'name': '15-Day Price Drop',
-            'description': 'Stock should not have lost more than 5% in last 15 trading days',
-            'threshold': '-5%',
+            'description': (
+                'Stock should not have lost more than 5% in last 15 trading days. '
+                'Waived to WARNING if stock outperformed Nifty by ≥ +0.5pp; '
+                'hard-rejected if stock underperformed Nifty by ≥ 3.0pp.'
+            ),
+            'threshold': '-5% (abs) · Nifty-rel override +0.5pp · hard-reject -3.0pp',
             'status': 'PASS',
             'severity': 'HIGH',
             'value': None,
@@ -2838,21 +2974,14 @@ def verify_historical_data(
         if len(closes) >= 15:
             price_15_days_ago = closes[14]
             change_15d = ((current_price - price_15_days_ago) / price_15_days_ago) * 100
-            check_2['value'] = f"{change_15d:+.2f}%"
             check_2['details'] = {
                 'current_price': current_price,
                 'price_15_days_ago': price_15_days_ago,
                 'change_pct': round(change_15d, 2)
             }
-
-            if change_15d < -5:
-                check_2['status'] = 'FAIL'
-                check_2['message'] = f'Stock dropped {abs(change_15d):.2f}% in last 15 days (threshold: 5%)'
-                result['trade_allowed'] = False
-                result['recommendations'].append(f'⚠️ Avoid trade: {abs(change_15d):.2f}% loss in 15 days shows sustained weakness')
-            else:
-                check_2['status'] = 'PASS'
-                check_2['message'] = f'15-day change: {change_15d:+.2f}% (within acceptable range)'
+            _evaluate_price_drop_vs_nifty(
+                check_2, 15, change_15d, -5.0, _nifty_change_over(15), result
+            )
         else:
             check_2['status'] = 'SKIP'
             check_2['message'] = 'Insufficient data for 15-day check'
@@ -2860,13 +2989,17 @@ def verify_historical_data(
         result['risk_checks'].append(check_2)
 
         # ============================================================================
-        # RISK CHECK 3: 30-Day Loss Check (> 10% loss)
+        # RISK CHECK 3: 30-Day Loss Check (> 10% absolute, Nifty-relative gate)
         # ============================================================================
         check_3 = {
             'id': 'thirty_day_loss',
             'name': '30-Day Price Drop',
-            'description': 'Stock should not have lost more than 10% in last 30 trading days',
-            'threshold': '-10%',
+            'description': (
+                'Stock should not have lost more than 10% in last 30 trading days. '
+                'Waived to WARNING if stock outperformed Nifty by ≥ 0.0pp (any outperformance); '
+                'hard-rejected if stock underperformed Nifty by ≥ 2.0pp.'
+            ),
+            'threshold': '-10% (abs) · Nifty-rel override +0.0pp · hard-reject -2.0pp',
             'status': 'PASS',
             'severity': 'HIGH',
             'value': None,
@@ -2876,21 +3009,14 @@ def verify_historical_data(
         if len(closes) >= 30:
             price_30_days_ago = closes[29]
             change_30d = ((current_price - price_30_days_ago) / price_30_days_ago) * 100
-            check_3['value'] = f"{change_30d:+.2f}%"
             check_3['details'] = {
                 'current_price': current_price,
                 'price_30_days_ago': price_30_days_ago,
                 'change_pct': round(change_30d, 2)
             }
-
-            if change_30d < -10:
-                check_3['status'] = 'FAIL'
-                check_3['message'] = f'Stock dropped {abs(change_30d):.2f}% in last 30 days (threshold: 10%)'
-                result['trade_allowed'] = False
-                result['recommendations'].append(f'⚠️ Avoid trade: {abs(change_30d):.2f}% loss in 30 days indicates major correction')
-            else:
-                check_3['status'] = 'PASS'
-                check_3['message'] = f'30-day change: {change_30d:+.2f}% (within acceptable range)'
+            _evaluate_price_drop_vs_nifty(
+                check_3, 30, change_30d, -10.0, _nifty_change_over(30), result
+            )
         else:
             check_3['status'] = 'SKIP'
             check_3['message'] = 'Insufficient data for 30-day check'
