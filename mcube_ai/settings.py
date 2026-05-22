@@ -141,10 +141,15 @@ DATABASES = {
 # Prevents "database is locked" when Celery workers and web server write simultaneously.
 def _sqlite_wal_mode(sender, connection, **kwargs):
     if connection.vendor == 'sqlite':
-        cursor = connection.cursor()
-        cursor.execute("PRAGMA journal_mode=WAL;")
-        cursor.execute("PRAGMA synchronous=NORMAL;")
-        cursor.execute("PRAGMA busy_timeout=60000;")  # 60s retry on lock at SQLite level
+        try:
+            cursor = connection.cursor()
+            cursor.execute("PRAGMA journal_mode=WAL;")
+            cursor.execute("PRAGMA synchronous=NORMAL;")
+            cursor.execute("PRAGMA busy_timeout=60000;")  # 60s retry on lock at SQLite level
+        except Exception:
+            # Database may be malformed (e.g. stale -shm/-wal files checked out via git).
+            # Skip WAL setup silently — the install script will repair the DB before migrate.
+            pass
 
 from django.db.backends.signals import connection_created
 connection_created.connect(_sqlite_wal_mode)

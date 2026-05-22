@@ -349,6 +349,47 @@ echo "  - templates/          (for Django templates)"
 echo "  - data/SecurityMaster (for ICICI SecurityMaster files)"
 
 # ============================================================================
+# STEP 7.5: Check and repair SQLite database if malformed
+# ============================================================================
+echo ""
+echo "Step 7.5/10: Checking database integrity..."
+echo "--------------------------------------------"
+DB_FILE="$SCRIPT_DIR/db.sqlite3"
+
+# Always remove stale WAL sidecar files — they are NOT tracked by git but can
+# be left behind after a crash or an unclean shutdown and will corrupt the DB.
+rm -f "${DB_FILE}-shm" "${DB_FILE}-wal"
+
+if [ -f "$DB_FILE" ]; then
+    if command -v sqlite3 &> /dev/null; then
+        INTEGRITY=$(sqlite3 "$DB_FILE" "PRAGMA integrity_check;" 2>/dev/null | head -1)
+        if [ "$INTEGRITY" != "ok" ]; then
+            echo "  ⚠ Database is malformed (integrity_check: $INTEGRITY). Attempting recovery..."
+            DUMP_FILE=$(mktemp /tmp/mcube_db_dump_XXXXXX.sql)
+            if sqlite3 "$DB_FILE" ".dump" > "$DUMP_FILE" 2>/dev/null && [ -s "$DUMP_FILE" ]; then
+                mv "$DB_FILE" "${DB_FILE}.bak"
+                if sqlite3 "$DB_FILE" < "$DUMP_FILE" 2>/dev/null; then
+                    echo "  ✓ Database recovered from dump (backup: db.sqlite3.bak)"
+                else
+                    echo "  ⚠ Dump import failed. Starting with a fresh database (backup: db.sqlite3.bak)."
+                    rm -f "$DB_FILE"
+                fi
+            else
+                echo "  ⚠ Cannot dump database. Starting with a fresh database (backup: db.sqlite3.bak)."
+                mv "$DB_FILE" "${DB_FILE}.bak"
+            fi
+            rm -f "$DUMP_FILE"
+        else
+            echo "✓ Database integrity OK"
+        fi
+    else
+        echo "  (sqlite3 CLI not found — skipping integrity check)"
+    fi
+else
+    echo "✓ No existing database — will be created by migrate"
+fi
+
+# ============================================================================
 # STEP 8: Run Django makemigrations
 # ============================================================================
 echo ""
