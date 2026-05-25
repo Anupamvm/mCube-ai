@@ -72,16 +72,26 @@ class TelegramBotHandler(MenuMixin, DataMixin, TradeMixin):
             return getattr(settings, 'TELEGRAM_BOT_TOKEN', os.getenv('TELEGRAM_BOT_TOKEN'))
 
     def _get_authorized_chats(self):
-        """Get list of authorized chat IDs"""
+        """Get list of authorized chat IDs (supports multiple, comma-separated)"""
+        # Priority 1: CredentialStore — supports comma-separated IDs in the username field
         try:
             from apps.core.models import CredentialStore
             creds = CredentialStore.objects.get(service='telegram', name='default')
-            chat_id = creds.username
-            if chat_id:
-                return [str(chat_id)]
+            if creds.username:
+                ids = [cid.strip() for cid in creds.username.split(',') if cid.strip()]
+                if ids:
+                    return ids
         except Exception:
             pass
 
+        # Priority 2: TELEGRAM_CHAT_IDS (comma-separated list)
+        chat_ids_str = getattr(settings, 'TELEGRAM_CHAT_IDS', os.getenv('TELEGRAM_CHAT_IDS', ''))
+        if chat_ids_str:
+            ids = [cid.strip() for cid in chat_ids_str.split(',') if cid.strip()]
+            if ids:
+                return ids
+
+        # Priority 3: legacy single TELEGRAM_CHAT_ID (backward compat)
         chat_id = getattr(settings, 'TELEGRAM_CHAT_ID', os.getenv('TELEGRAM_CHAT_ID'))
         if chat_id:
             return [str(chat_id)]
@@ -95,18 +105,136 @@ class TelegramBotHandler(MenuMixin, DataMixin, TradeMixin):
         chat_id = str(update.effective_chat.id)
         return chat_id in self.authorized_chat_ids
 
+    async def _check_auth(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+        """
+        Return True if authorized.
+        For unauthorized commands/messages: trigger the access-request approval flow.
+        For unauthorized button presses: show a silent alert only.
+        """
+        if self.is_authorized(update):
+            return True
+        if update.message:
+            await self._handle_access_request(update, context)
+        elif update.callback_query:
+            await update.callback_query.answer("Unauthorized", show_alert=True)
+        return False
+
+    async def _handle_access_request(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """
+        When an unknown user messages the bot, send an Approve/Reject alert to the
+        primary owner. Deduplicates requests using Django cache (1-hour TTL).
+        """
+        from django.core.cache import cache
+
+        chat_id = str(update.effective_chat.id)
+        user = update.effective_user
+        first_name = html.escape(user.first_name or "Unknown")
+        username = f"@{user.username}" if user.username else "no username"
+
+        pending_key = f'tg_access_req_{chat_id}'
+        if cache.get(pending_key):
+            await update.message.reply_text("⏳ Your access request is already pending. Please wait for admin approval.")
+            return
+
+        # Mark as pending (1 hour)
+        cache.set(pending_key, f'{first_name}|{username}', timeout=3600)
+
+        await update.message.reply_text(
+            "🔐 Access request sent to the admin. You'll be notified once a decision is made."
+        )
+
+        if not self.authorized_chat_ids:
+            logger.warning("No primary chat ID configured — cannot forward access request")
+            return
+
+        primary_chat_id = self.authorized_chat_ids[0]
+        keyboard = [[
+            InlineKeyboardButton("✅ Approve", callback_data=f"tg_approve_{chat_id}"),
+            InlineKeyboardButton("❌ Reject",  callback_data=f"tg_reject_{chat_id}"),
+        ]]
+        await context.bot.send_message(
+            chat_id=primary_chat_id,
+            text=(
+                f"🔐 <b>New Bot Access Request</b>\n\n"
+                f"<b>Name:</b> {first_name}\n"
+                f"<b>Username:</b> {username}\n"
+                f"<b>Chat ID:</b> <code>{chat_id}</code>\n\n"
+                f"Approve to grant full bot access, or reject to deny."
+            ),
+            parse_mode='HTML',
+            reply_markup=InlineKeyboardMarkup(keyboard),
+        )
+
+    async def _handle_tg_approve(self, query, data: str, context: ContextTypes.DEFAULT_TYPE):
+        """Approve an access request — persists chat_id to DB and notifies both parties."""
+        new_chat_id = data.removeprefix("tg_approve_")
+
+        await sync_to_async(self._db_add_authorized_chat)(new_chat_id)
+        self.authorized_chat_ids = await sync_to_async(self._get_authorized_chats)()
+
+        from django.core.cache import cache
+        cache.delete(f'tg_access_req_{new_chat_id}')
+
+        await query.edit_message_text(
+            f"✅ Access granted to chat ID <code>{new_chat_id}</code>.",
+            parse_mode='HTML',
+        )
+        try:
+            await context.bot.send_message(
+                chat_id=new_chat_id,
+                text="🎉 Your access has been approved! Send /start to begin.",
+            )
+        except Exception:
+            pass  # User may have blocked the bot
+
+    async def _handle_tg_reject(self, query, data: str, context: ContextTypes.DEFAULT_TYPE):
+        """Reject an access request — clears the pending cache and notifies both parties."""
+        new_chat_id = data.removeprefix("tg_reject_")
+
+        from django.core.cache import cache
+        cache.delete(f'tg_access_req_{new_chat_id}')
+
+        await query.edit_message_text(
+            f"❌ Access denied for chat ID <code>{new_chat_id}</code>.",
+            parse_mode='HTML',
+        )
+        try:
+            await context.bot.send_message(
+                chat_id=new_chat_id,
+                text="❌ Your access request was rejected by the admin.",
+            )
+        except Exception:
+            pass
+
+    def _db_add_authorized_chat(self, new_chat_id: str):
+        """
+        Append new_chat_id to CredentialStore.username (comma-separated).
+        Creates the CredentialStore record if it doesn't exist yet (env-var-only setups).
+        """
+        from apps.core.models import CredentialStore
+        try:
+            creds = CredentialStore.objects.get(service='telegram', name='default')
+        except CredentialStore.DoesNotExist:
+            creds = CredentialStore(service='telegram', name='default')
+            # Seed with the current in-memory list so existing access isn't lost
+            creds.username = ','.join(self.authorized_chat_ids)
+        existing = [cid.strip() for cid in (creds.username or '').split(',') if cid.strip()]
+        if new_chat_id not in existing:
+            existing.append(new_chat_id)
+            creds.username = ','.join(existing)
+            creds.save()
+        logger.info(f"Telegram access granted and persisted for chat_id={new_chat_id}")
+
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /start command - show interactive main menu"""
-        if not self.is_authorized(update):
-            await update.message.reply_text("Unauthorized access")
+        if not await self._check_auth(update, context):
             return
 
         await self._show_main_menu(update.message, is_command=True)
 
     async def test_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /test command - simple connectivity test"""
-        if not self.is_authorized(update):
-            await update.message.reply_text("Unauthorized access")
+        if not await self._check_auth(update, context):
             return
 
         await update.message.reply_text(
@@ -116,8 +244,7 @@ class TelegramBotHandler(MenuMixin, DataMixin, TradeMixin):
 
     async def positions_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /positions command - show broker selection menu"""
-        if not self.is_authorized(update):
-            await update.message.reply_text("Unauthorized access")
+        if not await self._check_auth(update, context):
             return
 
         keyboard = [
@@ -135,8 +262,7 @@ class TelegramBotHandler(MenuMixin, DataMixin, TradeMixin):
 
     async def core_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /core command - show and manage core trading settings"""
-        if not self.is_authorized(update):
-            await update.message.reply_text("Unauthorized access")
+        if not await self._check_auth(update, context):
             return
 
         # Get current config
@@ -203,15 +329,13 @@ class TelegramBotHandler(MenuMixin, DataMixin, TradeMixin):
 
     async def trade_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /trade command - start trade wizard"""
-        if not self.is_authorized(update):
-            await update.message.reply_text("Unauthorized access")
+        if not await self._check_auth(update, context):
             return
         await self._show_trade_broker_selection(update.message, is_command=True)
 
     async def orders_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /orders command - show order book"""
-        if not self.is_authorized(update):
-            await update.message.reply_text("Unauthorized access")
+        if not await self._check_auth(update, context):
             return
         breeze_data = await self._get_breeze_orders()
         kotak_data = await self._get_kotak_orders()
@@ -236,8 +360,7 @@ class TelegramBotHandler(MenuMixin, DataMixin, TradeMixin):
 
     async def margin_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /margin command - show margin/limits"""
-        if not self.is_authorized(update):
-            await update.message.reply_text("Unauthorized access")
+        if not await self._check_auth(update, context):
             return
         breeze = await self._get_breeze_margin()
         kotak = await self._get_kotak_margin()
@@ -258,8 +381,7 @@ class TelegramBotHandler(MenuMixin, DataMixin, TradeMixin):
 
     async def pnl_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /pnl command - show today's P&L"""
-        if not self.is_authorized(update):
-            await update.message.reply_text("Unauthorized access")
+        if not await self._check_auth(update, context):
             return
         data = await self._get_daily_pnl_data()
         def fmt(v):
@@ -279,8 +401,7 @@ class TelegramBotHandler(MenuMixin, DataMixin, TradeMixin):
 
     async def analytics_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /analytics command - show performance summary"""
-        if not self.is_authorized(update):
-            await update.message.reply_text("Unauthorized access")
+        if not await self._check_auth(update, context):
             return
         data = await self._get_performance_summary('FY')
         def fmt_pnl(v):
@@ -303,8 +424,7 @@ class TelegramBotHandler(MenuMixin, DataMixin, TradeMixin):
 
     async def history_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /history command - show trade history inline menu."""
-        if not self.is_authorized(update):
-            await update.message.reply_text("Unauthorized access")
+        if not await self._check_auth(update, context):
             return
         data = await self._get_trade_history(10)
         message = "<b>\U0001f4c4 Trade History (Last 10)</b>\n\n"
@@ -330,8 +450,7 @@ class TelegramBotHandler(MenuMixin, DataMixin, TradeMixin):
 
     async def login_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /login command - show broker login menu."""
-        if not self.is_authorized(update):
-            await update.message.reply_text("Unauthorized access")
+        if not await self._check_auth(update, context):
             return
         keyboard = [[
             InlineKeyboardButton("\U0001f511 Login ICICI", callback_data="login_breeze"),
@@ -358,7 +477,7 @@ class TelegramBotHandler(MenuMixin, DataMixin, TradeMixin):
         data = query.data
 
         try:
-            await self._route_callback(query, data)
+            await self._route_callback(query, data, context)
         except Exception as e:
             logger.error(f"Callback error for '{data}': {e}", exc_info=True)
             try:
@@ -366,8 +485,19 @@ class TelegramBotHandler(MenuMixin, DataMixin, TradeMixin):
             except Exception:
                 pass
 
-    async def _route_callback(self, query, data: str):
+    async def _route_callback(self, query, data: str, context: ContextTypes.DEFAULT_TYPE = None):
         """Route callback data to the appropriate handler."""
+
+        # =====================================================================
+        # ACCESS APPROVAL FLOW
+        # =====================================================================
+        if data.startswith("tg_approve_"):
+            await self._handle_tg_approve(query, data, context)
+            return
+
+        if data.startswith("tg_reject_"):
+            await self._handle_tg_reject(query, data, context)
+            return
 
         # =====================================================================
         # MAIN MENU NAVIGATION (new)
@@ -914,7 +1044,7 @@ class TelegramBotHandler(MenuMixin, DataMixin, TradeMixin):
         Handle plain text messages - check for trade wizard input first,
         then check for pending Breeze OTP request.
         """
-        if not self.is_authorized(update):
+        if not await self._check_auth(update, context):
             return
 
         text = (update.message.text or '').strip()

@@ -42,16 +42,26 @@ class TelegramClient:
         """Initialize Telegram client with credentials from environment or Django settings"""
         # Try environment variables first, then fall back to Django settings
         self.bot_token = os.getenv('TELEGRAM_BOT_TOKEN')
-        self.default_chat_id = os.getenv('TELEGRAM_CHAT_ID')
+        self.default_chat_ids = self._parse_chat_ids(
+            os.getenv('TELEGRAM_CHAT_IDS', ''),
+            os.getenv('TELEGRAM_CHAT_ID', ''),
+        )
 
         # Fall back to Django settings if environment variables are not set
         if not self.bot_token:
             try:
                 from django.conf import settings
                 self.bot_token = getattr(settings, 'TELEGRAM_BOT_TOKEN', None)
-                self.default_chat_id = self.default_chat_id or getattr(settings, 'TELEGRAM_CHAT_ID', None)
+                if not self.default_chat_ids:
+                    self.default_chat_ids = self._parse_chat_ids(
+                        getattr(settings, 'TELEGRAM_CHAT_IDS', ''),
+                        getattr(settings, 'TELEGRAM_CHAT_ID', ''),
+                    )
             except Exception:
                 pass
+
+        # Keep legacy single-ID attribute for backward compatibility
+        self.default_chat_id = self.default_chat_ids[0] if self.default_chat_ids else None
 
         if not self.bot_token:
             logger.warning("TELEGRAM_BOT_TOKEN not set. Telegram notifications disabled.")
@@ -59,6 +69,17 @@ class TelegramClient:
         else:
             self.enabled = True
             self.base_url = f"https://api.telegram.org/bot{self.bot_token}"
+
+    @staticmethod
+    def _parse_chat_ids(chat_ids_str: str, fallback_single: str) -> list:
+        """Parse comma-separated chat IDs, falling back to a single ID if needed."""
+        if chat_ids_str:
+            ids = [cid.strip() for cid in chat_ids_str.split(',') if cid.strip()]
+            if ids:
+                return ids
+        if fallback_single and fallback_single.strip():
+            return [fallback_single.strip()]
+        return []
 
     def is_enabled(self) -> bool:
         """Check if Telegram client is properly configured"""
@@ -73,13 +94,18 @@ class TelegramClient:
         reply_markup: dict = None,
     ) -> Tuple[bool, str]:
         """
-        Send a text message to Telegram
+        Send a text message to Telegram.
+
+        When `chat_id` is provided, sends to that chat only (e.g. trade confirmation
+        replies). When omitted, broadcasts to all configured default chat IDs so
+        every authorized user receives the notification.
 
         Args:
             message: Message text to send
-            chat_id: Chat ID to send to (uses default if not provided)
+            chat_id: Chat ID to send to (broadcasts to all defaults if not provided)
             parse_mode: Message formatting (HTML, Markdown, or None)
             disable_notification: Send silently without notification
+            reply_markup: Optional inline keyboard dict
 
         Returns:
             Tuple[bool, str]: (success, response/error message)
@@ -88,12 +114,36 @@ class TelegramClient:
             logger.warning("Telegram client not enabled. Skipping message send.")
             return False, "Telegram client not configured"
 
-        target_chat_id = chat_id or self.default_chat_id
+        if chat_id:
+            # Explicit target — send to that one chat only
+            targets = [str(chat_id)]
+        else:
+            targets = self.default_chat_ids
 
-        if not target_chat_id:
+        if not targets:
             logger.error("No chat_id provided and no default chat_id configured")
             return False, "No chat_id configured"
 
+        success = False
+        last_result = "No targets"
+        for target in targets:
+            ok, result = self._send_to_single(
+                target, message, parse_mode, disable_notification, reply_markup
+            )
+            if ok:
+                success = True
+            last_result = result
+        return success, last_result
+
+    def _send_to_single(
+        self,
+        target_chat_id: str,
+        message: str,
+        parse_mode: str = 'HTML',
+        disable_notification: bool = False,
+        reply_markup: dict = None,
+    ) -> Tuple[bool, str]:
+        """Send a message to a single chat ID via the Telegram Bot API."""
         url = f"{self.base_url}/sendMessage"
 
         payload = {

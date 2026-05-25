@@ -250,6 +250,7 @@ CELERY_WORKER_MAX_TASKS_PER_CHILD = 1000  # Restart worker after 1000 tasks (pre
 # Telegram Bot API settings (loaded from .env)
 TELEGRAM_BOT_TOKEN = env('TELEGRAM_BOT_TOKEN', default='')
 TELEGRAM_CHAT_ID = env('TELEGRAM_CHAT_ID', default='')
+TELEGRAM_CHAT_IDS = env('TELEGRAM_CHAT_IDS', default='')   # comma-separated list of authorized chat IDs
 
 
 # =============================================================================
