@@ -449,10 +449,11 @@ def get_contracts(request):
 
         today = datetime.now().date()
 
-        # Calculate date ranges
+        # Calculate date ranges — use 65 days to ensure the far-month expiry (last Thursday of
+        # the month after next) always falls within the window regardless of month length.
         this_month_end = today + timedelta(days=30)
         next_month_start = today + timedelta(days=30)
-        next_month_end = today + timedelta(days=60)
+        next_month_end = today + timedelta(days=65)
 
         # Get futures contracts that meet volume criteria
         futures_contracts = ContractData.objects.filter(
@@ -945,6 +946,35 @@ def verify_future_trade(request):
                     analyst_verification['fetch_status'] = 'using_cache'
                     analyst_verification['debug_info'].append(f"Using cached data from {existing_price_target.fetch_timestamp}")
                     analyst_verification['debug_info'].append(f"Target: {existing_price_target.avg_target_price}, Analysts: {existing_price_target.analyst_count}")
+
+                    # Sanity-check cached upside against the live spot price.
+                    # The scraper sometimes latches onto a non-LTP value for current_price
+                    # (e.g. ₹180,000 instead of ₹1,800 for Divis Labs), producing a bogus
+                    # stored upside like -99%.  When the cached current_price diverges >20%
+                    # from the live spot, recompute upside from avg_target_price + spot and
+                    # persist the correction so the aggregator (below) reads the right value.
+                    if (spot_price and existing_price_target.avg_target_price and
+                            existing_price_target.current_price):
+                        stored_current = float(existing_price_target.current_price)
+                        target_price_f = float(existing_price_target.avg_target_price)
+                        spot_f = float(spot_price)
+                        if spot_f > 0:
+                            cached_divergence = abs(stored_current - spot_f) / spot_f
+                            if cached_divergence > 0.20:
+                                corrected_upside = round((target_price_f - spot_f) / spot_f * 100, 2)
+                                old_upside = float(existing_price_target.upside_pct) if existing_price_target.upside_pct else None
+                                existing_price_target.current_price = spot_f
+                                existing_price_target.upside_pct = corrected_upside
+                                existing_price_target.save(update_fields=['current_price', 'upside_pct'])
+                                logger.warning(
+                                    f"[Verify Trade] {stock_symbol}: cached current ₹{stored_current:.0f} "
+                                    f"diverges {cached_divergence*100:.0f}% from spot ₹{spot_f:.0f}; "
+                                    f"corrected upside {old_upside}% → {corrected_upside}%"
+                                )
+                                analyst_verification['debug_info'].append(
+                                    f"Corrected stale current ₹{stored_current:.0f} → spot ₹{spot_f:.0f}, "
+                                    f"upside: {old_upside}% → {corrected_upside}%"
+                                )
                 else:
                     # Cached record exists but has no useful data - treat as no data
                     logger.warning(f"[Verify Trade] Cached data for {stock_symbol} has no useful values, will re-fetch")

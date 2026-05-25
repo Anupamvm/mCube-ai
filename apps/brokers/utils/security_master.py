@@ -130,7 +130,9 @@ def fetch_instrument_from_breeze(
         return instrument
 
     except Exception as e:
-        logger.error(f"Error fetching from Breeze API: {e}", exc_info=True)
+        # Breeze often returns an empty body for far-month or low-volume contracts,
+        # which causes a JSONDecodeError internally. Log as warning, not error.
+        logger.warning(f"Breeze API unavailable for {symbol} {expiry_date}: {type(e).__name__}")
         return None
 
 
@@ -294,12 +296,39 @@ def get_futures_instrument(
 
             return instrument
 
-    # Both SecurityMaster and Breeze failed
+    # Last resort: ContractData from our own DB — at minimum gives correct lot_size
     if not instrument:
-        logger.error(f"❌ Failed to get instrument from both SecurityMaster and Breeze API for {symbol} {expiry_date}")
-        logger.error("Please either:")
-        logger.error("  1. Download SecurityMaster: https://directlink.icicidirect.com/NewSecurityMaster/SecurityMaster.zip")
-        logger.error("  2. Ensure Breeze API is authenticated and accessible")
+        try:
+            from apps.data.models import ContractData
+            from datetime import datetime as _dt
+            expiry_iso = _dt.strptime(expiry_date, '%d-%b-%Y').strftime('%Y-%m-%d')
+            contract = ContractData.objects.filter(
+                symbol=symbol, option_type='FUTURE', expiry=expiry_iso
+            ).first()
+            if contract and contract.lot_size:
+                instrument = {
+                    'token': '',
+                    'short_name': symbol,
+                    'lot_size': int(contract.lot_size),
+                    'exchange_code': symbol,
+                    'company_name': symbol,
+                    'expiry_date': expiry_date,
+                    'tick_size': 0,
+                    'base_price': float(contract.price or 0),
+                    'source': 'contract_data',
+                }
+                logger.info(
+                    f"✅ ContractData fallback: {symbol} futures - LotSize={instrument['lot_size']}"
+                )
+                if use_cache:
+                    cache.set(cache_key, instrument, CACHE_TIMEOUT)
+                return instrument
+        except Exception as e:
+            logger.debug(f"ContractData fallback failed: {e}")
+
+        logger.error(
+            f"❌ Failed to get instrument from SecurityMaster, Breeze API, and ContractData for {symbol} {expiry_date}"
+        )
 
     return instrument
 

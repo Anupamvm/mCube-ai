@@ -2,7 +2,7 @@
 Analyst Report Aggregator Service
 
 Aggregates analyst data and implements trade blocking rules:
-- Rule 1: Block LONG trade if average target price upside < 8%
+- Rule 1: Block LONG trade if average target price upside < 5%
 - Rule 2: Block if >= 10% of reports (min 2) recommend "Sell"
 
 This service is used in the trade verification flow to check
@@ -22,12 +22,12 @@ class AnalystReportAggregator:
     Aggregates analyst reports and price targets for trade verification.
 
     Implements blocking rules:
-    1. Block LONG if avg target upside < 8%
+    1. Block LONG if avg target upside < 5%
     2. Block if >= 10% of reports (min 2) recommend Sell
     """
 
     # Trade blocking thresholds
-    MIN_UPSIDE_PCT = 8.0  # Minimum upside to allow LONG trade
+    MIN_UPSIDE_PCT = 5.0  # Minimum upside to allow LONG trade (analyst targets are 12-month; F&O trades are 1-3 months)
     SELL_RECOMMENDATION_PCT = 10.0  # Max percentage of sell recommendations allowed
     MIN_SELL_COUNT_TO_BLOCK = 2  # Minimum sell reports to trigger block
 

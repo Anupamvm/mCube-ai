@@ -160,6 +160,30 @@ class TrendlyneDataFetcher:
                     self.log(f"Saved {fno_records} F&O contract records", "success")
                 else:
                     self.log(f"F&O download failed: {fno_result.get('error')}", "warning")
+                    # Fallback: use any F&O file created today already in the download dir.
+                    # Prefer files whose name contains "contract" or "fno"; skip stock/snapshot files.
+                    import os
+                    from datetime import date as _date
+                    today = _date.today()
+                    fallback_files = []
+                    for f in os.listdir(self.download_dir):
+                        if not (f.endswith('.xlsx') or f.endswith('.csv')):
+                            continue
+                        fpath = os.path.join(self.download_dir, f)
+                        mtime = datetime.fromtimestamp(os.path.getmtime(fpath)).date()
+                        if mtime != today:
+                            continue
+                        fl = f.lower()
+                        if any(kw in fl for kw in ('contract', 'fno')):
+                            fallback_files.insert(0, f)
+                        elif not any(kw in fl for kw in ('stock', 'snapshot', 'ind-')):
+                            fallback_files.append(f)
+                    if fallback_files:
+                        fallback_path = os.path.join(self.download_dir, fallback_files[0])
+                        self.log(f"Falling back to today's existing file: {fallback_files[0]}", "info")
+                        fno_records = self._parse_and_save_fno_data(fallback_path)
+                        results_summary["fno_contracts"] = fno_records
+                        self.log(f"Saved {fno_records} F&O contract records from fallback file", "success")
 
             except Exception as e:
                 self.log(f"F&O fetch error: {str(e)}", "warning")
@@ -351,6 +375,15 @@ class TrendlyneDataFetcher:
 
         self.log(f"Found {len(df)} contracts in file", "info")
         self.log(f"Columns in file: {list(df.columns)[:10]}...", "info")
+
+        # Guard: must look like F&O data (has EXPIRY and SYMBOL columns), not stock data
+        required_fno_cols = {'EXPIRY', 'SYMBOL', 'OPTION TYPE'}
+        missing = required_fno_cols - set(df.columns)
+        if missing:
+            raise ValueError(
+                f"File does not appear to be F&O data — missing columns: {missing}. "
+                f"Got: {list(df.columns)[:10]}"
+            )
 
         # Column mapping from Excel headers to model fields
         column_mapping = {

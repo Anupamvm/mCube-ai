@@ -207,65 +207,100 @@ class TrendlyneProvider(BaseWebScraper):
 
     def fetch_fno_data(self, download_dir: str = None) -> Dict:
         """
-        Download F&O contracts data from Trendlyne
+        Download F&O contracts data from Trendlyne.
 
-        Args:
-            download_dir: Override default download directory
-
-        Returns:
-            dict: Download status and file info
+        Navigating to the contracts-excel-download URL triggers an automatic file download
+        named "contracts_YYYY_MM_DD.xlsx". No button click is needed.
         """
         if download_dir is None:
             download_dir = self.download_dir
 
         try:
+            # Snapshot existing files so we can reliably detect newly downloaded ones
+            files_before = set(
+                f for f in os.listdir(download_dir)
+                if f.endswith(".xlsx") or f.endswith(".csv")
+            )
+
             self.driver.get(f"{self.BASE_URL}/futures-options/contracts-excel-download/")
-            self.logger.info("Navigated to F&O data downloader...")
-            time.sleep(3)
+            self.logger.info("Navigated to F&O contracts download page — waiting for auto-download...")
 
-            # Wait for download button and click
-            download_button = self.wait_for_element(
-                By.XPATH,
-                "//a[contains(text(), 'Download')]",
-                timeout=15,
-                condition=EC.element_to_be_clickable
-            )
-            download_button.click()
-            self.logger.info("F&O download initiated...")
-            time.sleep(10)
+            # Poll up to 45 seconds for a new "contracts_*.xlsx" file to appear.
+            # Trendlyne serves the file automatically when the URL is visited.
+            fno_file = None
+            for _ in range(22):  # 22 × 2 s = 44 s max
+                time.sleep(2)
+                current = set(
+                    f for f in os.listdir(download_dir)
+                    if f.endswith(".xlsx") or f.endswith(".csv")
+                )
+                new_files = current - files_before
+                # Only accept files that look like F&O data (Trendlyne names them "contracts_*")
+                fno_new = [
+                    f for f in new_files
+                    if 'contract' in f.lower() and not f.endswith('.crdownload')
+                ]
+                if fno_new:
+                    fno_file = fno_new[0]
+                    self.logger.info(f"F&O file downloaded: {fno_file}")
+                    break
 
-            # Find downloaded file (could be .xlsx or .csv)
-            files = [f for f in os.listdir(download_dir) if f.endswith(".xlsx") or f.endswith(".csv")]
-            if not files:
-                raise DataProviderException("No Excel/CSV file found after download")
+            if fno_file is None:
+                # Broader check: any new non-stock, non-snapshot xlsx
+                current = set(
+                    f for f in os.listdir(download_dir)
+                    if f.endswith(".xlsx") or f.endswith(".csv")
+                )
+                new_files = current - files_before
+                fno_new = [
+                    f for f in new_files
+                    if not any(kw in f.lower() for kw in ('stock', 'snapshot', 'ind-'))
+                    and not f.endswith('.crdownload')
+                ]
+                if fno_new:
+                    fno_file = sorted(
+                        fno_new,
+                        key=lambda x: os.path.getmtime(os.path.join(download_dir, x))
+                    )[0]
+                    self.logger.info(f"Using new non-stock file: {fno_file}")
 
-            files.sort(key=lambda x: os.path.getctime(os.path.join(download_dir, x)), reverse=True)
-            latest_file = files[0]
+            if fno_file is None:
+                # Last resort: today's cached contracts file (named "contracts_*")
+                from datetime import date as _date
+                today = _date.today()
+                cached = []
+                for f in os.listdir(download_dir):
+                    if not (f.endswith('.xlsx') or f.endswith('.csv')):
+                        continue
+                    fl = f.lower()
+                    if not any(kw in fl for kw in ('contract', 'fno')):
+                        continue
+                    fpath = os.path.join(download_dir, f)
+                    if datetime.fromtimestamp(os.path.getmtime(fpath)).date() == today:
+                        cached.append(f)
+                if cached:
+                    cached.sort(key=lambda x: os.path.getmtime(os.path.join(download_dir, x)), reverse=True)
+                    fno_file = cached[0]
+                    self.logger.info(f"Using today's cached F&O file: {fno_file}")
 
-            # Determine file extension
-            file_ext = ".xlsx" if latest_file.endswith(".xlsx") else ".csv"
+            if fno_file is None:
+                self.save_debug_screenshot("fno_download_failed")
+                raise DataProviderException("No F&O contracts file found after download attempt")
 
-            # Rename to standard format
+            # Rename to our standard name (overwriting stale copy if present)
+            file_ext = ".xlsx" if fno_file.endswith(".xlsx") else ".csv"
             new_filename = f"fno_data_{datetime.now().strftime('%Y-%m-%d')}{file_ext}"
-            os.rename(
-                os.path.join(download_dir, latest_file),
-                os.path.join(download_dir, new_filename)
-            )
+            src = os.path.join(download_dir, fno_file)
+            dst = os.path.join(download_dir, new_filename)
+            if src != dst:
+                os.rename(src, dst)
 
             self.logger.info(f"✅ F&O data saved: {new_filename}")
-
-            return {
-                'success': True,
-                'filename': new_filename,
-                'path': os.path.join(download_dir, new_filename)
-            }
+            return {'success': True, 'filename': new_filename, 'path': dst}
 
         except Exception as e:
             self.logger.error(f"F&O download failed: {e}")
-            return {
-                'success': False,
-                'error': str(e)
-            }
+            return {'success': False, 'error': str(e)}
 
     def fetch_market_snapshot(self, download_dir: str = None) -> Dict:
         """
@@ -1118,8 +1153,8 @@ class TrendlyneProvider(BaseWebScraper):
                 for span in target_spans:
                     target_text = span.get_text(strip=True)
                     price = self._parse_price(target_text)
-                    # Validate: target price should be > 50 for most stocks
-                    if price and price > 50:
+                    # Validate: > 100 to exclude Trendlyne scores (0-100 range) being misread as prices
+                    if price and price > 100:
                         equity_target_price = price
                         self.logger.info(f"Found target price from fs1p8rem real-score span: {equity_target_price}")
                         break
@@ -1153,20 +1188,37 @@ class TrendlyneProvider(BaseWebScraper):
                 self.logger.info(f"Calculated target price from current price and upside: {equity_target_price}")
 
             # === Cross-check: if current vs target vs upside are inconsistent,
-            # trust the SCRAPED target (it's the analyst consensus we came here for)
-            # and back-solve whichever field is least trustworthy. ===
+            # just log and leave equity_upside unchanged. ===
+            # The text-based upside ("1Yr Price target upside is X%") is scraped
+            # directly from the Trendlyne page and is MORE trustworthy than
+            # equity_current_price, which is known to latch onto non-LTP values
+            # (market cap, 52-week high, etc.) for certain high-priced stocks.
+            # Previously this block recomputed equity_upside from the bogus
+            # current_price, producing values like -99% for stocks like Divis Labs.
+            # Instead we leave equity_upside as-is; the verification view corrects
+            # current_price using the live spot quote when divergence is detected.
             if equity_target_price and equity_current_price and equity_upside:
                 expected_target = equity_current_price * (1 + equity_upside / 100)
-                if abs(equity_target_price - expected_target) / expected_target > 0.20:
-                    self.logger.warning(
-                        f"Inconsistent scrape: current={equity_current_price}, "
-                        f"target={equity_target_price}, upside={equity_upside}% "
-                        f"(expected target {expected_target:.2f}). Keeping scraped target; "
-                        f"current_price may be wrong and should be cross-checked against live quote."
-                    )
-                    # Recompute upside to match the scraped target+current pair
-                    # (caller decides whether to override current from a live feed).
-                    equity_upside = round((equity_target_price - equity_current_price) / equity_current_price * 100, 2)
+                divergence = abs(equity_target_price - expected_target) / expected_target
+                if divergence > 0.20:
+                    # If divergence is extreme AND target is suspiciously small (< 10% of spot),
+                    # it was almost certainly a Trendlyne score (0-100) misread as a price.
+                    # Reset it so Method 5 can compute target from upside × current_price.
+                    if divergence > 0.50 and equity_target_price < equity_current_price * 0.10:
+                        self.logger.warning(
+                            f"Bogus target price detected for {symbol}: {equity_target_price} "
+                            f"(likely a score, not a price — expected ~{expected_target:.2f} "
+                            f"from {equity_upside}% upside). Resetting to compute from upside."
+                        )
+                        equity_target_price = None
+                    else:
+                        self.logger.warning(
+                            f"Inconsistent scrape: current={equity_current_price}, "
+                            f"target={equity_target_price}, upside={equity_upside}% "
+                            f"(expected target {expected_target:.2f}). "
+                            f"Keeping scraped text-based upside; current_price is likely wrong "
+                            f"and will be corrected by the caller using the live spot price."
+                        )
 
             # ===== SECOND: Navigate to research reports page for reports table =====
             if trendlyne_id:
@@ -1259,23 +1311,37 @@ class TrendlyneProvider(BaseWebScraper):
                         # Cell 4: LTP, Cell 5: Target, Cell 6: Price at reco, Cell 7: Upside%, Cell 8: Type
 
                         # Get LTP (Cell 4)
+                        row_ltp = None
                         if len(cells) > 4:
                             ltp_text = cells[4].get_text(strip=True)
                             ltp = self._parse_price(ltp_text)
                             if ltp and 10 < ltp < 100000:
                                 result['current_price'] = ltp
+                                row_ltp = ltp
                                 self.logger.info(f"Found LTP from consensus row cell 4: {ltp}")
 
                         # Get Target (Cell 5)
+                        # > 100 guard: Trendlyne scores (0-100) must not be stored as prices.
+                        # Also require target >= LTP * 0.1 when LTP is known.
+                        row_target_accepted = False
                         if len(cells) > 5:
                             target_text = cells[5].get_text(strip=True)
                             target = self._parse_price(target_text)
-                            if target and 10 < target < 100000:
+                            min_price = max(101, row_ltp * 0.10 if row_ltp else 101)
+                            if target and target > min_price:
                                 result['avg_target_price'] = target
+                                row_target_accepted = True
                                 self.logger.info(f"Found target from consensus row cell 5: {target}")
+                            elif target:
+                                self.logger.warning(
+                                    f"Rejected consensus row target {target} (LTP={row_ltp}): "
+                                    f"looks like a score, not a price. Upside cell also skipped."
+                                )
 
-                        # Get Upside (Cell 7)
-                        if len(cells) > 7:
+                        # Get Upside (Cell 7) — only trust it when the target was valid.
+                        # If the target was rejected, the upside in cell 7 was computed from
+                        # that bogus target and will be wildly wrong (e.g. -94% for INFY).
+                        if row_target_accepted and len(cells) > 7:
                             upside_text = cells[7].get_text(strip=True)
                             upside_match = re.search(r'([\d.]+)', upside_text)
                             if upside_match:

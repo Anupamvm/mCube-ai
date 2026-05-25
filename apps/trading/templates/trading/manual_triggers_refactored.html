@@ -7676,6 +7676,9 @@ const UnifiedState = {
     searchQuery: '',
     lastManualRunTimestamp: null,  // ISO string of when last manual run completed
     lastManualRunSymbols: null,    // Set of symbols from that run
+    activeDirection: 'all',   // 'all', 'long', 'short'
+    activeScoreMin: 0,         // 0, 60, 70, 80
+    activeExpiry: 'all',       // 'all', or 'YYYY-MM' prefix
 };
 
 // Recommendation History Module - Shows historical calls for a symbol
@@ -8022,6 +8025,21 @@ function getFilteredOpportunities() {
         list = list.filter(o => o.symbol.toUpperCase().includes(q));
     }
 
+    // Apply direction filter
+    if (UnifiedState.activeDirection !== 'all') {
+        list = list.filter(o => (o.direction || '').toUpperCase() === UnifiedState.activeDirection.toUpperCase());
+    }
+
+    // Apply minimum score filter
+    if (UnifiedState.activeScoreMin > 0) {
+        list = list.filter(o => (o.composite_score || 0) >= UnifiedState.activeScoreMin);
+    }
+
+    // Apply expiry month filter ('YYYY-MM' prefix match)
+    if (UnifiedState.activeExpiry !== 'all') {
+        list = list.filter(o => (o.expiry_date || '').startsWith(UnifiedState.activeExpiry));
+    }
+
     // Apply sort
     const sortFns = {
         conviction: (a, b) => (b.conviction_score || 0) - (a.conviction_score || 0),
@@ -8140,6 +8158,61 @@ function displayUnifiedOpportunities() {
         </div>
     `;
 
+    // ── Quick-filter bar (Direction / Score / Expiry) ──────────────────────────
+    {
+        const longCount  = opportunities.filter(o => (o.direction || '').toUpperCase() === 'LONG').length;
+        const shortCount = opportunities.filter(o => (o.direction || '').toUpperCase() === 'SHORT').length;
+
+        // Collect unique expiry months sorted chronologically
+        const seenMonths = new Set();
+        const expiryMonths = [];
+        [...opportunities]
+            .sort((a, b) => (a.expiry_date || '').localeCompare(b.expiry_date || ''))
+            .forEach(o => {
+                const monthKey = (o.expiry_date || '').substring(0, 7); // 'YYYY-MM'
+                if (monthKey && !seenMonths.has(monthKey)) {
+                    seenMonths.add(monthKey);
+                    const d = new Date(o.expiry_date + 'T00:00:00');
+                    expiryMonths.push({
+                        key: monthKey,
+                        label: d.toLocaleDateString('en-IN', { month: 'short', year: '2-digit' })
+                    });
+                }
+            });
+
+        const hasExtra = UnifiedState.activeDirection !== 'all'
+                      || UnifiedState.activeScoreMin > 0
+                      || UnifiedState.activeExpiry !== 'all';
+
+        const pill = (active, color) => {
+            const bg = active ? (color || '#6366f1') : '#f1f5f9';
+            const fg = active ? '#fff' : '#475569';
+            return `background:${bg};color:${fg};border:none;padding:3px 11px;border-radius:20px;cursor:pointer;font-weight:600;font-size:0.72rem;transition:all .15s;white-space:nowrap;`;
+        };
+        const sep = `<span style="width:1px;height:20px;background:#e2e8f0;display:inline-block;margin:0 4px;vertical-align:middle;"></span>`;
+
+        html += `
+        <div style="display:flex;align-items:center;flex-wrap:wrap;gap:6px;padding:8px 12px;background:#f8fafc;border-radius:10px;margin-bottom:12px;border:1px solid #e2e8f0;">
+            <span style="font-size:0.68rem;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.05em;white-space:nowrap;">Direction</span>
+            <button onclick="setUnifiedDirection('all')"   style="${pill(UnifiedState.activeDirection==='all')}">All</button>
+            <button onclick="setUnifiedDirection('long')"  style="${pill(UnifiedState.activeDirection==='long',  '#10b981')}">↑ Long${longCount  ? ` (${longCount})`  : ''}</button>
+            <button onclick="setUnifiedDirection('short')" style="${pill(UnifiedState.activeDirection==='short', '#ef4444')}">↓ Short${shortCount ? ` (${shortCount})` : ''}</button>
+            ${sep}
+            <span style="font-size:0.68rem;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.05em;white-space:nowrap;">Min Score</span>
+            ${[0,60,70,80].map(s => {
+                const lbl = s === 0 ? 'Any' : `${s}+`;
+                return `<button onclick="setUnifiedScoreMin(${s})" style="${pill(UnifiedState.activeScoreMin===s)}">${lbl}</button>`;
+            }).join('')}
+            ${expiryMonths.length > 1 ? `
+            ${sep}
+            <span style="font-size:0.68rem;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.05em;white-space:nowrap;">Expiry</span>
+            <button onclick="setUnifiedExpiry('all')" style="${pill(UnifiedState.activeExpiry==='all')}">All</button>
+            ${expiryMonths.map(m => `<button onclick="setUnifiedExpiry('${m.key}')" style="${pill(UnifiedState.activeExpiry===m.key)}">${m.label}</button>`).join('')}
+            ` : ''}
+            ${hasExtra ? `${sep}<button onclick="resetExtraFilters()" style="background:#fef2f2;color:#dc2626;border:1px solid #fecaca;padding:3px 10px;border-radius:20px;cursor:pointer;font-size:0.72rem;font-weight:600;">✕ Reset</button>` : ''}
+        </div>`;
+    }
+
     // Build cards (with latest-run highlighting)
     const filtered = getFilteredOpportunities();
     const latestSymbols = UnifiedState.lastManualRunSymbols;
@@ -8178,6 +8251,32 @@ function setUnifiedSort(criteria) {
 // Search handler
 function setUnifiedSearch(query) {
     UnifiedState.searchQuery = query;
+    displayUnifiedOpportunities();
+}
+
+// Direction filter handler
+function setUnifiedDirection(dir) {
+    UnifiedState.activeDirection = dir;
+    displayUnifiedOpportunities();
+}
+
+// Minimum score filter handler
+function setUnifiedScoreMin(min) {
+    UnifiedState.activeScoreMin = min;
+    displayUnifiedOpportunities();
+}
+
+// Expiry month filter handler ('YYYY-MM' key or 'all')
+function setUnifiedExpiry(expiry) {
+    UnifiedState.activeExpiry = expiry;
+    displayUnifiedOpportunities();
+}
+
+// Reset all quick filters (direction, score, expiry) back to defaults
+function resetExtraFilters() {
+    UnifiedState.activeDirection = 'all';
+    UnifiedState.activeScoreMin = 0;
+    UnifiedState.activeExpiry = 'all';
     displayUnifiedOpportunities();
 }
 
