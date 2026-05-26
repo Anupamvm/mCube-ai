@@ -396,6 +396,7 @@ def place_futures_order(request):
             stop_loss = float(data.get('stop_loss', 0))
             target = float(data.get('target', 0))
             enable_averaging = data.get('enable_averaging', False)
+            batch_delay_seconds = int(data.get('batch_delay_seconds', 120))
         else:
             symbol = request.POST.get('stock_symbol', request.POST.get('symbol', '')).upper()
             expiry_param = request.POST.get('expiry')  # Get expiry from request
@@ -405,6 +406,7 @@ def place_futures_order(request):
             stop_loss = float(request.POST.get('stop_loss', 0))
             target = float(request.POST.get('target', 0))
             enable_averaging = request.POST.get('enable_averaging', 'false').lower() == 'true'
+            batch_delay_seconds = int(request.POST.get('batch_delay_seconds', 120))
 
         logger.info(f"🔍 Extracted params: symbol={symbol}, expiry_param={expiry_param}, direction={direction}, lots={lots}")
 
@@ -542,9 +544,9 @@ def place_futures_order(request):
                 'error': 'No active ICICI broker account found'
             })
 
-        # Calculate batches (10 lots per order, 20 second delay between orders)
+        # Calculate batches (10 lots per order, user-configurable delay)
         BATCH_SIZE = 10  # lots per order
-        DELAY_SECONDS = 20  # seconds between orders
+        DELAY_SECONDS = batch_delay_seconds
 
         batches = []
         remaining_lots = lots
@@ -613,9 +615,9 @@ def place_futures_order(request):
                         'exchange_code': 'NFO',
                         'product': 'futures',
                         'action': action,
-                        'order_type': 'market',
+                        'order_type': 'limit',
                         'quantity': str(batch_quantity),
-                        'price': '0',
+                        'price': str(round(entry_price_float, 2)),
                         'validity': 'day',
                         'stoploss': '0',
                         'disclosed_quantity': '0',
@@ -927,6 +929,16 @@ def get_suggestion_details(request, suggestion_id):
         # Get position details from JSON field
         position_details = suggestion.position_details or {}
 
+        # Look up contract volume for smart batch-delay default
+        from apps.data.models import ContractData
+        contract_qs = ContractData.objects.filter(
+            symbol=suggestion.instrument,
+            option_type='FUTURE'
+        )
+        if suggestion.expiry_date:
+            contract_qs = contract_qs.filter(expiry=suggestion.expiry_date.strftime('%Y-%m-%d'))
+        contract_vol = contract_qs.values_list('traded_contracts', flat=True).first() or 0
+
         # Return all data needed for trade execution
         return JsonResponse({
             'success': True,
@@ -960,6 +972,8 @@ def get_suggestion_details(request, suggestion_id):
                 'lot_size': position_details.get('lot_size', 0),
                 'entry_value': position_details.get('entry_value', 0),
                 'futures_price': position_details.get('margin_data', {}).get('futures_price', suggestion.spot_price),
+                # Volume (traded contracts/day) for smart batch-delay default
+                'traded_contracts': int(contract_vol),
                 # Full position details for reference
                 'position_details': position_details
             }
@@ -2177,9 +2191,9 @@ def close_position(request):
                     'exchange_code': 'NFO',
                     'product': 'futures',
                     'action': action,
-                    'order_type': 'market',
+                    'order_type': 'limit',
                     'quantity': str(batch_quantity),
-                    'price': '0',
+                    'price': str(round(float(position.current_price), 2)),
                     'validity': 'day',
                     'stoploss': '0',
                     'disclosed_quantity': '0',
@@ -2504,6 +2518,7 @@ def close_live_position(request):
                 right = matching_pos.get('right', 'others')
                 strike_price = matching_pos.get('strike_price', '0')
                 pos_quantity = int(matching_pos.get('quantity', 0))
+                pos_ltp = float(matching_pos.get('ltp') or matching_pos.get('average_price') or 0)
 
                 logger.info(f"Position details:")
                 logger.info(f"  stock_code={stock_code}")
@@ -2618,9 +2633,9 @@ def close_live_position(request):
                         'exchange_code': exchange_code,
                         'product': product_type.lower(),  # 'futures' or 'options'
                         'action': action,
-                        'order_type': 'market',
+                        'order_type': 'limit',
                         'quantity': str(batch_shares),
-                        'price': '0',
+                        'price': str(round(pos_ltp, 2)) if pos_ltp else '0',
                         'validity': 'day',
                         'stoploss': '0',
                         'disclosed_quantity': '0',

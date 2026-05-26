@@ -2780,8 +2780,9 @@ def execute_strangle_orders(request):
 
         suggestion_id = data.get('suggestion_id')
         total_lots_raw = data.get('total_lots', 0)
+        batch_delay_seconds = int(data.get('batch_delay_seconds', 20))
 
-        logger.info(f"Extracted values - suggestion_id: {suggestion_id}, total_lots: {total_lots_raw}")
+        logger.info(f"Extracted values - suggestion_id: {suggestion_id}, total_lots: {total_lots_raw}, delay: {batch_delay_seconds}s")
 
         try:
             total_lots = int(total_lots_raw) if total_lots_raw else 0
@@ -2844,13 +2845,13 @@ def execute_strangle_orders(request):
 
         logger.info(f"Executing strangle orders: {call_symbol} + {put_symbol}, {total_lots} lots")
 
-        # Place orders in batches (max 20 lots per order, 20 sec delays - Neo API limits)
+        # Place orders in batches (max 20 lots per order, user-configurable delay)
         batch_result = place_strangle_orders_in_batches(
             call_symbol=call_symbol,
             put_symbol=put_symbol,
             total_lots=total_lots,
             batch_size=20,
-            delay_seconds=20,
+            delay_seconds=batch_delay_seconds,
             product='NRML'
         )
 

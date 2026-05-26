@@ -147,19 +147,24 @@
           </div>
 
           <!-- Batch Execution Info -->
-          <div class="alert alert-info">
-            <h6 class="font-weight-bold"><i class="fas fa-info-circle"></i> Execution Details</h6>
-            <p class="mb-0">
-              <strong>Neo API Limit:</strong> Maximum 20 lots per order
-            </p>
-            <p class="mb-0 mt-1">
-              Orders will be placed with <strong>20-second delays</strong> between each order.
-            </p>
-            <p class="mb-0 mt-2">
-              <strong>Total Orders:</strong> <span id="modal-total-orders">-</span> orders
+          <div class="alert alert-success">
+            <h6 class="font-weight-bold"><i class="fas fa-clock"></i> Batch Order Settings</h6>
+            <p class="mb-2 small text-muted">Orders &gt; 20 lots are split into batches (Neo API limit). Set the delay between each batch to avoid rate limits.</p>
+            <div class="d-flex align-items-center mb-2" style="gap: 12px;">
+              <label class="font-weight-bold mb-0 text-nowrap">Delay between batches:</label>
+              <div class="d-flex align-items-center" style="gap: 6px;">
+                <input type="number" id="modal-batch-delay" value="20" min="5" max="300" step="5"
+                       style="width: 75px; padding: 4px 8px; border: 2px solid #28a745; border-radius: 6px;
+                              font-size: 1rem; font-weight: 600; text-align: center; font-family: monospace;">
+                <span>seconds</span>
+              </div>
+            </div>
+            <p class="mb-0 small">
+              <strong>Neo API Limit:</strong> Max 20 lots per order &nbsp;·&nbsp;
+              <strong>Total Orders:</strong> <span id="modal-total-orders">-</span>
               (<span id="modal-call-orders">-</span> Call + <span id="modal-put-orders">-</span> Put)
             </p>
-            <p class="mb-0 mt-1">
+            <p class="mb-0 mt-1 small">
               <strong>Estimated Time:</strong> <span id="modal-estimated-time">-</span> seconds
             </p>
           </div>
@@ -691,13 +696,19 @@ function executeStrangleOrders() {
         .then(res => res.json())
         .then(() => {
             // STEP 3: Execute orders with fresh data
+            const batchDelayInput = document.getElementById('modal-batch-delay');
+            const batchDelaySec = batchDelayInput ? Math.max(5, parseInt(batchDelayInput.value) || 20) : 20;
             return fetch('/trading/trigger/execute-strangle/', {
                 method: 'POST',
                 headers: {
-                    'Content-Type': 'application/x-www-form-urlencoded',
+                    'Content-Type': 'application/json',
                     'X-CSRFToken': getCookie('csrftoken')
                 },
-                body: `suggestion_id=${suggestionId}&total_lots=${totalLots}`
+                body: JSON.stringify({
+                    suggestion_id: suggestionId,
+                    total_lots: totalLots,
+                    batch_delay_seconds: batchDelaySec
+                })
             });
         });
     })

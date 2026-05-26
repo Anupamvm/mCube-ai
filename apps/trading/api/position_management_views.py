@@ -307,9 +307,9 @@ def close_position(request):
                     'exchange_code': 'NFO',
                     'product': 'futures',
                     'action': action,
-                    'order_type': 'market',
+                    'order_type': 'limit',
                     'quantity': str(batch_quantity),
-                    'price': '0',
+                    'price': str(round(float(position.current_price), 2)),
                     'validity': 'day',
                     'stoploss': '0',
                     'disclosed_quantity': '0',
@@ -614,6 +614,7 @@ def _close_breeze_position(request, symbol, abs_quantity, direction, product, ca
         expiry_date = matching_pos.get('expiry_date', '')
         right = matching_pos.get('right', 'others')
         strike_price = matching_pos.get('strike_price', '0')
+        pos_ltp = float(matching_pos.get('ltp') or matching_pos.get('average_price') or 0)
 
     except Exception as e:
         logger.error(f"Error fetching Breeze positions: {e}", exc_info=True)
@@ -698,9 +699,9 @@ def _close_breeze_position(request, symbol, abs_quantity, direction, product, ca
                 'exchange_code': exchange_code,
                 'product': product_type.lower(),
                 'action': action,
-                'order_type': 'market',
+                'order_type': 'limit',
                 'quantity': str(batch_shares),
-                'price': '0',
+                'price': str(round(pos_ltp, 2)) if pos_ltp else '0',
                 'validity': 'day',
                 'stoploss': '0',
                 'disclosed_quantity': '0',

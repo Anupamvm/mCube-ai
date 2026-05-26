@@ -947,6 +947,7 @@ def execute_iron_condor_orders(request):
         suggestion_id = data.get('suggestion_id')
         total_lots = int(data.get('total_lots', 0))
         adjusted_strikes = data.get('adjusted_strikes')  # User-modified strikes
+        batch_delay_seconds = int(data.get('batch_delay_seconds', 20))
 
         if not suggestion_id or total_lots <= 0:
             return JsonResponse({
@@ -1041,7 +1042,7 @@ def execute_iron_condor_orders(request):
             insurance_symbol=insurance_mapping['neo_symbol'],
             total_lots=total_lots,
             batch_size=20,
-            delay_seconds=20,
+            delay_seconds=batch_delay_seconds,
             product='NRML',
             lot_size=lot_size,
             cancellation_key=cancellation_key,

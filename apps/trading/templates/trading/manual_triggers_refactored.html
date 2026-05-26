@@ -2639,6 +2639,23 @@ const NiftyStrangle = {
                     </ul>
                 </div>
 
+                <!-- Batch Order Settings -->
+                <div style="background: #f0fdf4; padding: 15px; border-radius: 8px; margin-bottom: 20px; border: 1px solid #bbf7d0;">
+                    <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 8px;">
+                        <span style="font-size: 1.2rem;">⏱️</span>
+                        <div>
+                            <div style="color: #15803d; font-size: 0.875rem; font-weight: 600;">Batch Order Delay</div>
+                            <div style="color: #166534; font-size: 0.75rem;">Orders &gt;20 lots are split into batches of 20 (Neo limit). Set the wait time between each batch.</div>
+                        </div>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 10px;">
+                        <label style="color: #374151; font-size: 0.875rem; font-weight: 600; white-space: nowrap;">Delay between batches:</label>
+                        <input type="number" id="strangle-confirm-batch-delay" value="20" min="5" max="300" step="5"
+                               style="width: 80px; padding: 6px 8px; border: 2px solid #22c55e; border-radius: 6px; font-size: 1rem; font-weight: 700; text-align: center; font-family: monospace;">
+                        <span style="color: #374151; font-size: 0.875rem;">seconds</span>
+                    </div>
+                </div>
+
                 <!-- Action Buttons -->
                 <div style="display: flex; gap: 15px; justify-content: center;">
                     <button onclick="NiftyStrangle.executeStrangle()"
@@ -2758,6 +2775,10 @@ const NiftyStrangle = {
         const callLots = parseInt(document.getElementById('callLotsInput').value) || 0;
         const putLots = parseInt(document.getElementById('putLotsInput').value) || 0;
 
+        // Read batch delay BEFORE closing modal (DOM will be destroyed)
+        const delayEl = document.getElementById('strangle-confirm-batch-delay');
+        const batchDelaySeconds = delayEl ? Math.max(5, parseInt(delayEl.value) || 20) : 20;
+
         // Validate lots are equal (strangle requires equal call and put lots)
         if (callLots !== putLots) {
             UIBuilders.showNotification({
@@ -2790,13 +2811,15 @@ const NiftyStrangle = {
                 suggestion_id: this.currentData.strangle.suggestion_id,
                 total_lots: callLots,
                 call_lots: callLots,
-                put_lots: putLots
+                put_lots: putLots,
+                batch_delay_seconds: batchDelaySeconds
             });
 
             // Backend expects total_lots (same for both call and put in a strangle)
             const response = await ApiClient.post(ApiClient.endpoints.executeStrangle, {
                 suggestion_id: this.currentData.strangle.suggestion_id,
-                total_lots: callLots  // Use callLots as total (they're equal)
+                total_lots: callLots,  // Use callLots as total (they're equal)
+                batch_delay_seconds: batchDelaySeconds
             });
 
             console.log('[Strangle] Order response:', response);
@@ -3967,9 +3990,22 @@ const BrokenIronCondor = {
                     </div>
                 </div>
 
+                <!-- Batch Order Settings -->
+                <div style="background: #f0fdf4; padding: 15px; border-radius: 8px; margin-bottom: 20px; border: 1px solid #bbf7d0;">
+                    <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+                        <span style="font-size: 1rem;">⏱️</span>
+                        <span style="font-weight: 600; color: #166534; font-size: 0.9rem;">BATCH ORDER SETTINGS</span>
+                        <span style="color: #374151; font-size: 0.875rem;">Delay between batches:</span>
+                        <input type="number" id="ic-batch-delay" value="20" min="5" max="300" step="5"
+                               style="width: 80px; padding: 6px 8px; border: 2px solid #22c55e; border-radius: 6px; font-size: 0.9rem; font-weight: 600; color: #166534; text-align: center;">
+                        <span style="color: #374151; font-size: 0.875rem;">seconds</span>
+                        <span style="color: #6b7280; font-size: 0.8rem;">(orders &gt; 20 lots placed in batches of 20)</span>
+                    </div>
+                </div>
+
                 <!-- Action Buttons -->
                 <div style="display: flex; gap: 15px; justify-content: center;">
-                    <button onclick="BrokenIronCondor.closeConfirmation(false); BrokenIronCondor.executeOrders();"
+                    <button onclick="BrokenIronCondor.executeOrders();"
                             style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; padding: 12px 30px; border: none; border-radius: 6px; font-size: 1rem; font-weight: 600; cursor: pointer;">
                         ✅ Confirm & Place Orders
                     </button>
@@ -4217,6 +4253,13 @@ const BrokenIronCondor = {
         const ic = this.data.iron_condor;
         const lots = parseInt(document.getElementById('icLotsInput')?.value || ic.lots);
 
+        // Read batch delay BEFORE closing modal (DOM will be destroyed)
+        const delayEl = document.getElementById('ic-batch-delay');
+        const batchDelaySeconds = delayEl ? Math.max(5, parseInt(delayEl.value) || 20) : 20;
+
+        // Close the confirmation modal now that we've read all inputs
+        this.closeConfirmation(false);
+
         // Check if strikes have been adjusted
         const strikesAdjusted = this.adjustedStrikes.call_strike !== null &&
             (this.adjustedStrikes.call_strike !== ic.call_strike ||
@@ -4234,7 +4277,8 @@ const BrokenIronCondor = {
             // Build request body - include adjusted strikes if modified
             const requestBody = {
                 suggestion_id: ic.suggestion_id,
-                total_lots: lots
+                total_lots: lots,
+                batch_delay_seconds: batchDelaySeconds
             };
 
             if (strikesAdjusted) {
@@ -7399,6 +7443,30 @@ const TradeVerification = {
                     </ul>
                 </div>
 
+                <!-- Batch Order Settings -->
+                <div style="background: #f0fdf4; padding: 15px; border-radius: 8px; margin-bottom: 20px; border: 1px solid #bbf7d0;">
+                    <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 8px;">
+                        <span style="font-size: 1.2rem;">⏱️</span>
+                        <div>
+                            <div style="color: #15803d; font-size: 0.875rem; font-weight: 600;">Batch Order Delay</div>
+                            <div style="color: #166534; font-size: 0.75rem;">Orders &gt;10 lots are split into batches of 10. Set the wait time between each batch.</div>
+                        </div>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 10px;">
+                        <label style="color: #374151; font-size: 0.875rem; font-weight: 600; white-space: nowrap;">Delay between batches:</label>
+                        <input type="number" id="verify-batch-delay"
+                               value="${Math.min(300, Math.max(60, Math.round((analysis.traded_contracts || 0) / 1000) * 60 || 120))}"
+                               min="10" max="600" step="10"
+                               style="width: 80px; padding: 6px 8px; border: 2px solid #22c55e; border-radius: 6px; font-size: 1rem; font-weight: 700; text-align: center; font-family: monospace;">
+                        <span style="color: #374151; font-size: 0.875rem;">seconds</span>
+                        <span style="color: #6b7280; font-size: 0.75rem; margin-left: 4px;">
+                            ${(analysis.traded_contracts || 0) > 0
+                                ? `(auto from volume: ${(analysis.traded_contracts || 0).toLocaleString()} lots/day)`
+                                : '(default — volume unavailable)'}
+                        </span>
+                    </div>
+                </div>
+
                 <!-- Action Buttons -->
                 <div style="display: flex; gap: 15px; justify-content: center;">
                     <button onclick="TradeVerification.executeTrade()"
@@ -7521,6 +7589,8 @@ const TradeVerification = {
 
     async executeTrade() {
         const lots = parseInt(document.getElementById('verifyLotsInput').value) || 1;
+        const batchDelayEl = document.getElementById('verify-batch-delay');
+        const batchDelaySeconds = batchDelayEl ? Math.max(10, parseInt(batchDelayEl.value) || 120) : 120;
 
         this.closeConfirmation(false);  // Keep user-selected expiry for order placement
 
@@ -7548,7 +7618,8 @@ const TradeVerification = {
                 lots: lots,
                 price: analysis.contract_price,
                 stop_loss: analysis.stop_loss,
-                target: analysis.target
+                target: analysis.target,
+                batch_delay_seconds: batchDelaySeconds
             };
 
             console.log('[Verify Trade] ========================================');

@@ -143,12 +143,25 @@
     .loading-spinner {
         display: none;
         margin-top: 1rem;
-        text-align: center;
         color: var(--primary);
     }
 
     .loading-spinner.active {
         display: block;
+    }
+
+    .futures-spinner-ring {
+        flex-shrink: 0;
+        width: 22px;
+        height: 22px;
+        border: 3px solid #e0e7ff;
+        border-top-color: var(--primary);
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+    }
+
+    @keyframes spin {
+        to { transform: rotate(360deg); }
     }
 
     .result-panel {
@@ -424,7 +437,20 @@
                 Run Futures Screening
             </button>
             <div class="loading-spinner" id="loadingFutures">
-                <div>⏳ Analyzing stocks...</div>
+                <div style="display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.75rem;">
+                    <div class="futures-spinner-ring"></div>
+                    <div id="futuresLoadingText" style="font-weight: 600; color: var(--primary);">⏳ Analyzing stocks...</div>
+                </div>
+                <div id="futuresProgressWrap" style="display: none; margin-bottom: 0.5rem;">
+                    <div style="display: flex; justify-content: space-between; font-size: 0.75rem; color: var(--gray); margin-bottom: 0.35rem;">
+                        <span id="futuresProgressLabel">Fetching data...</span>
+                        <span id="futuresProgressPct">0%</span>
+                    </div>
+                    <div style="background: var(--light); border-radius: 999px; height: 8px; overflow: hidden;">
+                        <div id="futuresProgressBar" style="height: 100%; width: 0%; background: linear-gradient(90deg, var(--primary), #7c3aed); border-radius: 999px; transition: width 0.6s ease;"></div>
+                    </div>
+                    <div id="futuresEtaText" style="font-size: 0.75rem; color: var(--gray); margin-top: 0.35rem; text-align: right;"></div>
+                </div>
             </div>
         </div>
 
@@ -795,8 +821,78 @@
         }
     }
 
+    // Progress bar helpers for Futures Algorithm
+    let _futuresProgressTimer = null;
+
+    function startFuturesProgress(contractCount) {
+        const wrap = document.getElementById('futuresProgressWrap');
+        const bar = document.getElementById('futuresProgressBar');
+        const pct = document.getElementById('futuresProgressPct');
+        const eta = document.getElementById('futuresEtaText');
+        const label = document.getElementById('futuresProgressLabel');
+
+        const statusMessages = [
+            'Fetching security master…',
+            'Querying contract data…',
+            'Running OI analysis…',
+            'Checking sector strength…',
+            'Computing technical indicators…',
+            'Calculating DMA levels…',
+            'Running S/R analysis…',
+            'Scoring contracts…',
+            'Building position sizing…',
+            'Finalising results…',
+        ];
+
+        const estSeconds = contractCount ? contractCount * 3 : 30;
+        wrap.style.display = 'block';
+        document.getElementById('futuresLoadingText').textContent =
+            contractCount ? `⏳ Analyzing ${contractCount} contracts…` : '⏳ Analyzing stocks…';
+
+        let elapsed = 0;
+        let msgIdx = 0;
+        const intervalMs = 1000;
+
+        _futuresProgressTimer = setInterval(() => {
+            elapsed += intervalMs / 1000;
+            const raw = Math.min((elapsed / estSeconds) * 100, 95);
+            bar.style.width = raw.toFixed(1) + '%';
+            pct.textContent = Math.round(raw) + '%';
+
+            const remaining = Math.max(Math.round(estSeconds - elapsed), 0);
+            eta.textContent = remaining > 0 ? `~${remaining}s remaining` : 'Almost done…';
+
+            msgIdx = Math.min(Math.floor(elapsed / (estSeconds / statusMessages.length)), statusMessages.length - 1);
+            label.textContent = statusMessages[msgIdx];
+        }, intervalMs);
+    }
+
+    function stopFuturesProgress(success) {
+        if (_futuresProgressTimer) {
+            clearInterval(_futuresProgressTimer);
+            _futuresProgressTimer = null;
+        }
+        const bar = document.getElementById('futuresProgressBar');
+        const pct = document.getElementById('futuresProgressPct');
+        const eta = document.getElementById('futuresEtaText');
+        const label = document.getElementById('futuresProgressLabel');
+        const wrap = document.getElementById('futuresProgressWrap');
+
+        if (success) {
+            bar.style.width = '100%';
+            pct.textContent = '100%';
+            label.textContent = 'Analysis complete!';
+            eta.textContent = '';
+        }
+        setTimeout(() => {
+            wrap.style.display = 'none';
+            bar.style.width = '0%';
+            pct.textContent = '0%';
+        }, 800);
+    }
+
     // 1. Run Futures Algorithm
-    async function runFuturesAlgorithm(btn, confirmed = false) {
+    async function runFuturesAlgorithm(btn, confirmed = false, contractCount = null) {
         console.log('[Futures] runFuturesAlgorithm called with confirmed=', confirmed);
 
         const thisMonthVol = document.getElementById('futuresThisMonthVolume').value || 1000;
@@ -807,6 +903,10 @@
         btn.disabled = true;
         document.getElementById('loadingFutures').classList.add('active');
         document.getElementById('resultsPanel').classList.remove('active');
+
+        if (confirmed && contractCount) {
+            startFuturesProgress(contractCount);
+        }
 
         try {
             const response = await fetch('{% url "trading:trigger_futures" %}', {
@@ -833,9 +933,11 @@
             }
 
             if (data.success) {
+                stopFuturesProgress(true);
                 displayFuturesTop3Result(data);
             } else if (data.requires_confirmation) {
                 // Stop spinner during confirmation dialog
+                stopFuturesProgress(false);
                 document.getElementById('loadingFutures').classList.remove('active');
                 btn.disabled = false;
 
@@ -853,8 +955,7 @@
 
                 if (userConfirmed) {
                     console.log('[Futures] Re-running with confirmation=true');
-                    // Re-run with confirmation
-                    await runFuturesAlgorithm(btn, true);
+                    await runFuturesAlgorithm(btn, true, data.contract_count);
                     return;
                 } else {
                     console.log('[Futures] User cancelled');
@@ -862,9 +963,11 @@
                 }
             } else {
                 console.error('[Futures] Unexpected response:', data);
+                stopFuturesProgress(false);
                 displayError(data.error || data.message || 'Failed to run futures algorithm. Please check console for details.');
             }
         } catch (error) {
+            stopFuturesProgress(false);
             displayError('Network error: ' + error.message);
         } finally {
             btn.disabled = false;
@@ -5420,13 +5523,23 @@ Are you absolutely sure?
                                 </div>
                             </div>
 
-                            <div style="background: #FEF3C7; border-left: 4px solid #F59E0B; padding: 15px; margin-bottom: 20px;">
-                                <h3 style="margin-top: 0; color: #92400E;">⏱️ EXECUTION DETAILS</h3>
-                                <div>
-                                    <div><strong>Total Orders:</strong> ${totalOrders} (${ordersPerLeg} CALL + ${ordersPerLeg} PUT)</div>
-                                    <div><strong>Order Spacing:</strong> 20 seconds between orders</div>
-                                    <div><strong>Estimated Time:</strong> ~${estimatedTime} seconds</div>
-                                    <div><strong>Broker:</strong> Kotak Neo</div>
+                            <div style="background: #F0FDF4; border-left: 4px solid #22C55E; padding: 15px; margin-bottom: 20px;">
+                                <h3 style="margin-top: 0; color: #15803D; font-size: 0.95rem;">⏱️ BATCH ORDER SETTINGS</h3>
+                                <p style="margin: 0 0 10px 0; font-size: 0.8rem; color: #166534;">
+                                    Orders are split into batches of 20 lots (Neo API limit). Set the delay between each batch.
+                                </p>
+                                <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 8px;">
+                                    <label style="font-weight: bold; white-space: nowrap;">Delay between batches:</label>
+                                    <div style="display: flex; align-items: center; gap: 6px;">
+                                        <input type="number" id="strangle-batch-delay" value="20" min="5" max="300" step="5"
+                                               style="width: 70px; padding: 6px 8px; border: 2px solid #22C55E; border-radius: 6px;
+                                                      font-size: 1rem; font-weight: 600; text-align: center; font-family: monospace;">
+                                        <span style="color: #374151;">seconds</span>
+                                    </div>
+                                </div>
+                                <div style="font-size: 0.75rem; color: #6B7280;">
+                                    <strong>Total Orders:</strong> ${totalOrders} (${ordersPerLeg} CALL + ${ordersPerLeg} PUT) &nbsp;·&nbsp;
+                                    <strong>Broker:</strong> Kotak Neo
                                 </div>
                             </div>
 
@@ -5504,9 +5617,11 @@ Are you absolutely sure?
 
                     // Handle confirmation
                     confirmBtn.addEventListener('click', () => {
+                        const delayInput = modal.querySelector('#strangle-batch-delay');
+                        const batchDelay = delayInput ? Math.max(5, parseInt(delayInput.value) || 20) : 20;
                         modal.remove();
-                        console.log('[DEBUG] User confirmed with all checkboxes, executing strangle orders...');
-                        executeStrangleOrdersDirect(suggestionId, recommendedLots);
+                        console.log(`[DEBUG] User confirmed with all checkboxes, executing strangle orders (delay: ${batchDelay}s)...`);
+                        executeStrangleOrdersDirect(suggestionId, recommendedLots, batchDelay);
                     });
 
                     // Handle cancellation
@@ -5554,21 +5669,22 @@ Are you absolutely sure?
         }
     }
 
-    async function executeStrangleOrdersDirect(suggestionId, totalLots) {
+    async function executeStrangleOrdersDirect(suggestionId, totalLots, batchDelaySeconds = 20) {
         console.log('[EXECUTE] Starting strangle order execution...');
-        console.log('[EXECUTE] Suggestion ID:', suggestionId, 'Total Lots:', totalLots);
+        console.log('[EXECUTE] Suggestion ID:', suggestionId, 'Total Lots:', totalLots, 'Delay:', batchDelaySeconds + 's');
 
         try {
             // Call the execute endpoint
             const response = await fetch('/trading/trigger/execute-strangle/', {
                 method: 'POST',
                 headers: {
-                    'Content-Type': 'application/x-www-form-urlencoded',
+                    'Content-Type': 'application/json',
                     'X-CSRFToken': csrftoken
                 },
-                body: new URLSearchParams({
-                    'suggestion_id': suggestionId,
-                    'total_lots': totalLots
+                body: JSON.stringify({
+                    suggestion_id: suggestionId,
+                    total_lots: totalLots,
+                    batch_delay_seconds: batchDelaySeconds
                 })
             });
 
@@ -6021,6 +6137,15 @@ Please check your connection and try again.`);
                 console.error('[ERROR] Failed to fetch contract details:', error);
             }
 
+            // Smart default for batch delay based on volume
+            const tradedContracts = suggestion.traded_contracts || 0;
+            const smartDelay = tradedContracts > 0
+                ? Math.min(300, Math.max(60, Math.round(tradedContracts / 1000) * 60))
+                : 120;
+            const smartDelayNote = tradedContracts > 0
+                ? `Auto-set from volume (${tradedContracts.toLocaleString()} lots/day ≈ ${Math.round(tradedContracts/1000)}k)`
+                : 'Default (volume data unavailable)';
+
             // Create enhanced confirmation with checkboxes
             const confirmationHTML = `
                 <div style="max-width: 600px; margin: 0 auto; padding: 20px; font-family: monospace;">
@@ -6036,11 +6161,31 @@ Please check your connection and try again.`);
                             <div><strong>Expiry:</strong> ${expiryFormatted}</div>
                             <div><strong>Lots:</strong> ${finalLots}</div>
                             <div><strong>Lot Size:</strong> ${lotSize}</div>
-                            <div><strong>Lots:</strong> ${finalLots}</div>
                             <div><strong>Entry Price:</strong> ₹${futuresPrice.toFixed(2)}</div>
                             <div><strong>Stop Loss:</strong> ₹${stopLoss.toFixed(2)}</div>
                             <div><strong>Target:</strong> ₹${target.toFixed(2)}</div>
                         </div>
+                    </div>
+
+                    <div style="background: #F0FDF4; border-left: 4px solid #22C55E; padding: 15px; margin-bottom: 20px;">
+                        <h3 style="margin-top: 0; color: #15803D; font-size: 0.95rem;">⏱️ BATCH ORDER SETTINGS</h3>
+                        <p style="margin: 0 0 10px 0; font-size: 0.8rem; color: #166534;">
+                            Orders &gt;10 lots are split into batches of 10. Set the delay between each batch to
+                            avoid rate limits and reduce market impact.
+                        </p>
+                        <div style="display: flex; align-items: center; gap: 12px;">
+                            <label style="font-weight: bold; white-space: nowrap;">Delay between batches:</label>
+                            <div style="display: flex; align-items: center; gap: 6px;">
+                                <input type="number" id="futures-batch-delay" value="${smartDelay}" min="10" max="600" step="10"
+                                       style="width: 80px; padding: 6px 8px; border: 2px solid #22C55E; border-radius: 6px;
+                                              font-size: 1rem; font-weight: 600; text-align: center; font-family: monospace;">
+                                <span style="color: #374151;">seconds</span>
+                            </div>
+                        </div>
+                        <p style="margin: 8px 0 0 0; font-size: 0.75rem; color: #6B7280;">
+                            💡 ${smartDelayNote}
+                            &nbsp;·&nbsp; Formula: max(60s, volume÷1000 × 60s), capped at 5 min
+                        </p>
                     </div>
 
                     <div style="background: #FEF3C7; border-left: 4px solid #F59E0B; padding: 15px; margin-bottom: 20px;">
@@ -6137,10 +6282,12 @@ Please check your connection and try again.`);
 
             // Handle confirmation
             const handleConfirm = async () => {
+                const delayInput = modal.querySelector('#futures-batch-delay');
+                const batchDelay = delayInput ? Math.max(10, parseInt(delayInput.value) || 120) : 120;
                 modal.remove();
                 btn.innerHTML = '⏳ Placing Order...';
-                console.log('User confirmed with all checkboxes, placing order...');
-                return true;
+                console.log(`User confirmed with all checkboxes, placing order (batch delay: ${batchDelay}s)...`);
+                return batchDelay;
             };
 
             // Handle cancellation
@@ -6154,18 +6301,20 @@ Please check your connection and try again.`);
             };
 
             // Wait for user response
-            const userConfirmed = await new Promise((resolve) => {
+            const userConfirmedResult = await new Promise((resolve) => {
                 confirmBtn.addEventListener('click', () => resolve(handleConfirm()));
                 cancelBtn.addEventListener('click', () => resolve(handleCancel()));
             });
 
-            if (!userConfirmed) {
+            if (!userConfirmedResult) {
                 return;
             }
 
+            const batchDelaySeconds = (typeof userConfirmedResult === 'number') ? userConfirmedResult : 120;
+
             // Update button to show placing order
             btn.innerHTML = '⏳ Placing Order...';
-            console.log('User confirmed, placing order...');
+            console.log(`User confirmed, placing order (batch delay: ${batchDelaySeconds}s)...`);
 
             // Prepare order data with expiry
             const orderData = {
@@ -6175,7 +6324,8 @@ Please check your connection and try again.`);
                 price: futuresPrice,
                 stop_loss: stopLoss,
                 target: target,
-                expiry: expiry  // CRITICAL: Include expiry to ensure correct contract selection
+                expiry: expiry,  // CRITICAL: Include expiry to ensure correct contract selection
+                batch_delay_seconds: batchDelaySeconds
             };
             console.log('Order data (with expiry):', orderData);
 
