@@ -405,51 +405,181 @@
         color: #3b82f6;
     }
 
-    /* Tooltip Styles */
-    .stat-tooltip {
+    /* ── Stat Card Wrapper (hover reveals ? button) ── */
+    .stat-card-wrapper {
         position: relative;
     }
 
-    .stat-tooltip .tooltip-content {
-        visibility: hidden;
+    /* streak-display children need flex:1 to fill container */
+    .streak-display .stat-card-wrapper {
+        flex: 1;
+        min-width: 120px;
+    }
+
+    /* ? button — appears on card hover */
+    .stat-info-btn {
+        position: absolute;
+        top: 7px;
+        right: 7px;
+        width: 22px;
+        height: 22px;
+        border-radius: 50%;
+        background: rgba(102, 126, 234, 0.18);
+        color: #667eea;
+        border: 1.5px solid rgba(102, 126, 234, 0.35);
+        cursor: pointer;
+        font-size: 11px;
+        font-weight: 800;
+        line-height: 1;
+        display: flex;
+        align-items: center;
+        justify-content: center;
         opacity: 0;
-        position: absolute;
-        bottom: 100%;
-        left: 50%;
-        transform: translateX(-50%);
-        background: #1e293b;
-        color: #f8fafc;
-        padding: 0.75rem 1rem;
-        border-radius: 8px;
-        font-size: 0.75rem;
-        line-height: 1.5;
-        width: 220px;
-        text-align: left;
-        z-index: 100;
-        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-        transition: opacity 0.2s, visibility 0.2s;
-        margin-bottom: 8px;
+        transition: opacity 0.18s, background 0.18s;
+        z-index: 5;
     }
 
-    .stat-tooltip .tooltip-content::after {
-        content: '';
-        position: absolute;
-        top: 100%;
-        left: 50%;
-        transform: translateX(-50%);
-        border: 6px solid transparent;
-        border-top-color: #1e293b;
-    }
-
-    .stat-tooltip:hover .tooltip-content {
-        visibility: visible;
+    .stat-card-wrapper:hover .stat-info-btn {
         opacity: 1;
     }
 
-    .stat-tooltip .tooltip-content strong {
-        color: #60a5fa;
-        display: block;
-        margin-bottom: 0.5rem;
+    .stat-info-btn:hover {
+        background: rgba(102, 126, 234, 0.4);
+        opacity: 1;
+    }
+
+    /* ── Slide-down Info Panel ── */
+    .stat-info-overlay {
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.35);
+        z-index: 9998;
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.3s;
+    }
+    .stat-info-overlay.open {
+        opacity: 1;
+        pointer-events: auto;
+    }
+
+    .stat-info-panel {
+        position: fixed;
+        top: -480px;
+        left: 50%;
+        transform: translateX(-50%);
+        width: min(700px, 94vw);
+        background: #0f172a;
+        color: #f8fafc;
+        border-radius: 0 0 20px 20px;
+        box-shadow: 0 20px 60px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255,255,255,0.07);
+        z-index: 9999;
+        transition: top 0.4s cubic-bezier(0.34, 1.15, 0.64, 1);
+        overflow: hidden;
+    }
+    .stat-info-panel.open {
+        top: 0;
+    }
+
+    .stat-info-header {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        padding: 1.1rem 1.4rem;
+        background: linear-gradient(135deg, #1e3a8a 0%, #4338ca 100%);
+        border-bottom: 1px solid rgba(255,255,255,0.08);
+    }
+
+    .stat-info-title {
+        flex: 1;
+        margin: 0;
+        font-size: 1.15rem;
+        font-weight: 700;
+        color: #fff;
+        letter-spacing: -0.01em;
+    }
+
+    .stat-info-close {
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        background: rgba(255, 255, 255, 0.12);
+        border: none;
+        color: #fff;
+        font-size: 16px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+        transition: background 0.2s;
+    }
+    .stat-info-close:hover {
+        background: rgba(255, 255, 255, 0.28);
+    }
+
+    .stat-info-body {
+        display: grid;
+        grid-template-columns: 1fr 1fr 1fr;
+        gap: 1rem;
+        padding: 1.25rem 1.4rem 1.5rem;
+    }
+
+    @media (max-width: 600px) {
+        .stat-info-body { grid-template-columns: 1fr; }
+    }
+
+    .stat-info-row {
+        padding: 1rem 1.1rem;
+        border-radius: 12px;
+        display: flex;
+        flex-direction: column;
+        gap: 0.45rem;
+    }
+
+    .why-row  { background: rgba(251,191,36,0.08);  border: 1px solid rgba(251,191,36,0.22); }
+    .what-row { background: rgba(52,211,153,0.08);  border: 1px solid rgba(52,211,153,0.22); }
+    .how-row  { background: rgba(96,165,250,0.08);  border: 1px solid rgba(96,165,250,0.22); }
+
+    .stat-info-row-label {
+        font-size: 0.63rem;
+        font-weight: 800;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+    }
+
+    .why-row  .stat-info-row-label { color: #fbbf24; }
+    .what-row .stat-info-row-label { color: #34d399; }
+    .how-row  .stat-info-row-label { color: #60a5fa; }
+
+    .stat-info-row-text {
+        font-size: 0.83rem;
+        line-height: 1.65;
+        color: #cbd5e1;
+    }
+
+    /* chart ⓘ button reuse stat-info-btn style */
+    .chart-stat-info-btn {
+        position: absolute;
+        top: 7px;
+        right: 7px;
+        width: 24px;
+        height: 24px;
+        border-radius: 50%;
+        background: rgba(102, 126, 234, 0.18);
+        color: #667eea;
+        border: 1.5px solid rgba(102, 126, 234, 0.35);
+        cursor: pointer;
+        font-size: 12px;
+        font-weight: 700;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 5;
+        transition: background 0.18s;
+    }
+    .chart-stat-info-btn:hover {
+        background: rgba(102, 126, 234, 0.38);
     }
 
     @media (max-width: 992px) {
@@ -479,6 +609,31 @@
 {% block page_content %}
 {% with overview=patterns_data.overview streaks=patterns_data.streaks consistency=patterns_data.consistency %}
 
+<!-- ══════════════════════════════════════════════
+     Stat Info Panel — slides down from top on ? click
+     ══════════════════════════════════════════════ -->
+<div id="statInfoOverlay" class="stat-info-overlay" onclick="closeStatInfo()"></div>
+<div id="statInfoPanel" class="stat-info-panel" role="dialog" aria-modal="true" aria-labelledby="statInfoTitle">
+    <div class="stat-info-header">
+        <h3 class="stat-info-title" id="statInfoTitle"></h3>
+        <button class="stat-info-close" onclick="closeStatInfo()" title="Close (Esc)">✕</button>
+    </div>
+    <div class="stat-info-body">
+        <div class="stat-info-row why-row">
+            <div class="stat-info-row-label">⚡ Why It Matters</div>
+            <div class="stat-info-row-text" id="statInfoWhy"></div>
+        </div>
+        <div class="stat-info-row what-row">
+            <div class="stat-info-row-label">📌 What It Shows</div>
+            <div class="stat-info-row-text" id="statInfoWhat"></div>
+        </div>
+        <div class="stat-info-row how-row">
+            <div class="stat-info-row-label">🔢 How It's Calculated</div>
+            <div class="stat-info-row-text" id="statInfoHow"></div>
+        </div>
+    </div>
+</div>
+
 <!-- Global Filter Bar (affects initial load) -->
 <div class="pattern-filter-bar">
     <span class="filter-label">Global Filter:</span>
@@ -496,7 +651,7 @@
 <!-- Overview Stats Section -->
 <div class="section-card" id="overviewSection">
     <div class="section-header">
-        <h3 class="section-title" data-bs-toggle="tooltip" title="Key performance metrics aggregated across all your trades. Win Rate, Profit Factor, and Expectancy are the most important indicators of trading edge.">Overview Statistics <span class="info-tooltip">?</span></h3>
+        <h3 class="section-title" data-bs-toggle="tooltip" title="&lt;b&gt;Why:&lt;/b&gt; These 8 metrics tell the complete story of your trading edge — win rate alone is misleading without profit factor and expectancy.&lt;br&gt;&lt;b&gt;What:&lt;/b&gt; Aggregate performance stats across all filtered trades — the core dashboard of your trading health.&lt;br&gt;&lt;b&gt;How:&lt;/b&gt; Computed from net P&amp;L, trade counts, and win/loss splits of uploaded broker CSVs.">Overview Statistics <span class="info-tooltip">?</span></h3>
         <div class="section-fy-filter">
             <label>Asset:</label>
             <select id="overviewAssetFilter" onchange="loadSectionData('overview')">
@@ -527,51 +682,76 @@
         <div class="section-loading"><span>Loading...</span></div>
         <div class="section-content" id="overviewContent">
             <div class="stats-grid">
-                <div class="stat-card neutral">
-                    <div class="stat-value" id="ov-total-trades">{{ overview.total_trades|default:0 }}</div>
-                    <div class="stat-label">Total Trades</div>
-                    <div class="stat-subtitle"><span id="ov-winners">{{ overview.winners|default:0 }}</span>W / <span id="ov-losers">{{ overview.losers|default:0 }}</span>L</div>
+                <!-- Total Trades -->
+                <div class="stat-card-wrapper">
+                    <div class="stat-card neutral">
+                        <div class="stat-value" id="ov-total-trades">{{ overview.total_trades|default:0 }}</div>
+                        <div class="stat-label">Total Trades</div>
+                        <div class="stat-subtitle"><span id="ov-winners">{{ overview.winners|default:0 }}</span>W / <span id="ov-losers">{{ overview.losers|default:0 }}</span>L</div>
+                    </div>
+                    <button class="stat-info-btn" onclick="showStatInfo('total-trades')">?</button>
                 </div>
-
-                <div class="stat-card {% if overview.win_rate >= 50 %}positive{% else %}negative{% endif %}" id="ov-winrate-card">
-                    <div class="stat-value" id="ov-win-rate">{{ overview.win_rate|default:0 }}%</div>
-                    <div class="stat-label">Win Rate</div>
-                    <div class="stat-subtitle">Target: 50%+</div>
+                <!-- Win Rate -->
+                <div class="stat-card-wrapper">
+                    <div class="stat-card {% if overview.win_rate >= 50 %}positive{% else %}negative{% endif %}" id="ov-winrate-card">
+                        <div class="stat-value" id="ov-win-rate">{{ overview.win_rate|default:0 }}%</div>
+                        <div class="stat-label">Win Rate</div>
+                        <div class="stat-subtitle">Target: 50%+</div>
+                    </div>
+                    <button class="stat-info-btn" onclick="showStatInfo('win-rate')">?</button>
                 </div>
-
-                <div class="stat-card {% if overview.profit_factor >= 1 %}positive{% else %}negative{% endif %}" id="ov-pf-card">
-                    <div class="stat-value" id="ov-profit-factor">{{ overview.profit_factor|default:0 }}</div>
-                    <div class="stat-label">Profit Factor</div>
-                    <div class="stat-subtitle">Target: 1.5+</div>
+                <!-- Profit Factor -->
+                <div class="stat-card-wrapper">
+                    <div class="stat-card {% if overview.profit_factor >= 1 %}positive{% else %}negative{% endif %}" id="ov-pf-card">
+                        <div class="stat-value" id="ov-profit-factor">{{ overview.profit_factor|default:0 }}</div>
+                        <div class="stat-label">Profit Factor</div>
+                        <div class="stat-subtitle">Target: 1.5+</div>
+                    </div>
+                    <button class="stat-info-btn" onclick="showStatInfo('profit-factor')">?</button>
                 </div>
-
-                <div class="stat-card {% if overview.total_pnl >= 0 %}positive{% else %}negative{% endif %}" id="ov-pnl-card">
-                    <div class="stat-value" id="ov-total-pnl">₹{{ overview.total_pnl|floatformat:0|default:0 }}</div>
-                    <div class="stat-label">Total P&L</div>
+                <!-- Total P&L -->
+                <div class="stat-card-wrapper">
+                    <div class="stat-card {% if overview.total_pnl >= 0 %}positive{% else %}negative{% endif %}" id="ov-pnl-card">
+                        <div class="stat-value" id="ov-total-pnl">₹{{ overview.total_pnl|floatformat:0|default:0 }}</div>
+                        <div class="stat-label">Total P&L</div>
+                    </div>
+                    <button class="stat-info-btn" onclick="showStatInfo('total-pnl')">?</button>
                 </div>
-
-                <div class="stat-card {% if overview.expectancy >= 0 %}positive{% else %}negative{% endif %}" id="ov-exp-card">
-                    <div class="stat-value" id="ov-expectancy">₹{{ overview.expectancy|floatformat:0|default:0 }}</div>
-                    <div class="stat-label">Expectancy</div>
-                    <div class="stat-subtitle">Per Trade</div>
+                <!-- Expectancy -->
+                <div class="stat-card-wrapper">
+                    <div class="stat-card {% if overview.expectancy >= 0 %}positive{% else %}negative{% endif %}" id="ov-exp-card">
+                        <div class="stat-value" id="ov-expectancy">₹{{ overview.expectancy|floatformat:0|default:0 }}</div>
+                        <div class="stat-label">Expectancy</div>
+                        <div class="stat-subtitle">Per Trade</div>
+                    </div>
+                    <button class="stat-info-btn" onclick="showStatInfo('expectancy')">?</button>
                 </div>
-
-                <div class="stat-card {% if overview.risk_reward >= 1 %}positive{% else %}warning{% endif %}" id="ov-rr-card">
-                    <div class="stat-value" id="ov-risk-reward">{{ overview.risk_reward|default:0 }}</div>
-                    <div class="stat-label">Risk/Reward</div>
-                    <div class="stat-subtitle">Target: 1.5+</div>
+                <!-- Risk/Reward -->
+                <div class="stat-card-wrapper">
+                    <div class="stat-card {% if overview.risk_reward >= 1 %}positive{% else %}warning{% endif %}" id="ov-rr-card">
+                        <div class="stat-value" id="ov-risk-reward">{{ overview.risk_reward|default:0 }}</div>
+                        <div class="stat-label">Risk/Reward</div>
+                        <div class="stat-subtitle">Target: 1.5+</div>
+                    </div>
+                    <button class="stat-info-btn" onclick="showStatInfo('risk-reward')">?</button>
                 </div>
-
-                <div class="stat-card positive">
-                    <div class="stat-value" id="ov-avg-profit">₹{{ overview.avg_profit|floatformat:0|default:0 }}</div>
-                    <div class="stat-label">Avg Win</div>
-                    <div class="stat-subtitle">Max: ₹<span id="ov-max-profit">{{ overview.max_profit|floatformat:0|default:0 }}</span></div>
+                <!-- Avg Win -->
+                <div class="stat-card-wrapper">
+                    <div class="stat-card positive">
+                        <div class="stat-value" id="ov-avg-profit">₹{{ overview.avg_profit|floatformat:0|default:0 }}</div>
+                        <div class="stat-label">Avg Win</div>
+                        <div class="stat-subtitle">Max: ₹<span id="ov-max-profit">{{ overview.max_profit|floatformat:0|default:0 }}</span></div>
+                    </div>
+                    <button class="stat-info-btn" onclick="showStatInfo('avg-win')">?</button>
                 </div>
-
-                <div class="stat-card negative">
-                    <div class="stat-value" id="ov-avg-loss">₹{{ overview.avg_loss|floatformat:0|default:0 }}</div>
-                    <div class="stat-label">Avg Loss</div>
-                    <div class="stat-subtitle">Max: ₹<span id="ov-max-loss">{{ overview.max_loss|floatformat:0|default:0 }}</span></div>
+                <!-- Avg Loss -->
+                <div class="stat-card-wrapper">
+                    <div class="stat-card negative">
+                        <div class="stat-value" id="ov-avg-loss">₹{{ overview.avg_loss|floatformat:0|default:0 }}</div>
+                        <div class="stat-label">Avg Loss</div>
+                        <div class="stat-subtitle">Max: ₹<span id="ov-max-loss">{{ overview.max_loss|floatformat:0|default:0 }}</span></div>
+                    </div>
+                    <button class="stat-info-btn" onclick="showStatInfo('avg-loss')">?</button>
                 </div>
             </div>
 
@@ -611,7 +791,7 @@
 <!-- Streak Analysis -->
 <div class="section-card" id="streaksSection">
     <div class="section-header">
-        <h3 class="section-title" data-bs-toggle="tooltip" title="Analysis of winning and losing streaks. Long losing streaks may indicate need for strategy review or risk management adjustments.">Streak Analysis <span class="info-tooltip">?</span></h3>
+        <h3 class="section-title" data-bs-toggle="tooltip" title="&lt;b&gt;Why:&lt;/b&gt; Streaks reveal psychological and strategic vulnerabilities — long losing streaks often mean strategy breakdown, not just bad luck.&lt;br&gt;&lt;b&gt;What:&lt;/b&gt; Current, best, worst, and average consecutive win/loss runs across your trading history.&lt;br&gt;&lt;b&gt;How:&lt;/b&gt; Trades sorted chronologically; consecutive same-result trades counted as a streak.">Streak Analysis <span class="info-tooltip">?</span></h3>
         <div class="section-fy-filter">
             <label>Year:</label>
             <select id="streaksFyFilter" onchange="loadSectionData('streaks')">
@@ -626,32 +806,41 @@
         <div class="section-loading"><span>Loading...</span></div>
         <div class="section-content" id="streaksContent">
             <div class="streak-display">
-                <div class="streak-item" id="streak-current-item" style="{% if streaks.current_streak_type == 'win' %}background: #d1fae5;{% else %}background: #fee2e2;{% endif %}">
-                    <div class="streak-value" id="streak-current" style="{% if streaks.current_streak_type == 'win' %}color: #065f46;{% else %}color: #991b1b;{% endif %}">
-                        {{ streaks.current_streak|default:0 }}
+                <div class="stat-card-wrapper">
+                    <div class="streak-item" id="streak-current-item" style="{% if streaks.current_streak_type == 'win' %}background: #d1fae5;{% else %}background: #fee2e2;{% endif %}">
+                        <div class="streak-value" id="streak-current" style="{% if streaks.current_streak_type == 'win' %}color: #065f46;{% else %}color: #991b1b;{% endif %}">
+                            {{ streaks.current_streak|default:0 }}
+                        </div>
+                        <div class="streak-label">Current <span id="streak-type">{{ streaks.current_streak_type|default:'—'|title }}</span> Streak</div>
                     </div>
-                    <div class="streak-label">Current <span id="streak-type">{{ streaks.current_streak_type|default:'—'|title }}</span> Streak</div>
+                    <button class="stat-info-btn" onclick="showStatInfo('current-streak')">?</button>
                 </div>
-
-                <div class="streak-item" style="background: #d1fae5;">
-                    <div class="streak-value" id="streak-max-win" style="color: #065f46;">{{ streaks.max_win_streak|default:0 }}</div>
-                    <div class="streak-label">Best Win Streak</div>
+                <div class="stat-card-wrapper">
+                    <div class="streak-item" style="background: #d1fae5;">
+                        <div class="streak-value" id="streak-max-win" style="color: #065f46;">{{ streaks.max_win_streak|default:0 }}</div>
+                        <div class="streak-label">Best Win Streak</div>
+                    </div>
+                    <button class="stat-info-btn" onclick="showStatInfo('best-win-streak')">?</button>
                 </div>
-
-                <div class="streak-item" style="background: #fee2e2;">
-                    <div class="streak-value" id="streak-max-loss" style="color: #991b1b;">{{ streaks.max_loss_streak|default:0 }}</div>
-                    <div class="streak-label">Worst Loss Streak</div>
+                <div class="stat-card-wrapper">
+                    <div class="streak-item" style="background: #fee2e2;">
+                        <div class="streak-value" id="streak-max-loss" style="color: #991b1b;">{{ streaks.max_loss_streak|default:0 }}</div>
+                        <div class="streak-label">Worst Loss Streak</div>
+                    </div>
+                    <button class="stat-info-btn" onclick="showStatInfo('worst-loss-streak')">?</button>
                 </div>
             </div>
 
             <div style="margin-top: 1.5rem; display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
-                <div style="text-align: center; padding: 1rem; background: var(--lighter); border-radius: var(--radius-md);">
+                <div class="stat-card-wrapper" style="text-align: center; padding: 1rem; background: var(--lighter); border-radius: var(--radius-md);">
                     <div id="streak-avg-win" style="font-size: 1.25rem; font-weight: 600; color: #065f46;">{{ streaks.avg_win_streak|default:0 }}</div>
                     <div style="font-size: 0.75rem; color: var(--gray);">Avg Win Streak</div>
+                    <button class="stat-info-btn" onclick="showStatInfo('avg-win-streak')">?</button>
                 </div>
-                <div style="text-align: center; padding: 1rem; background: var(--lighter); border-radius: var(--radius-md);">
+                <div class="stat-card-wrapper" style="text-align: center; padding: 1rem; background: var(--lighter); border-radius: var(--radius-md);">
                     <div id="streak-avg-loss" style="font-size: 1.25rem; font-weight: 600; color: #991b1b;">{{ streaks.avg_loss_streak|default:0 }}</div>
                     <div style="font-size: 0.75rem; color: var(--gray);">Avg Loss Streak</div>
+                    <button class="stat-info-btn" onclick="showStatInfo('avg-loss-streak')">?</button>
                 </div>
             </div>
 
@@ -669,7 +858,7 @@
     <!-- Segment Analysis (Futures vs Options) -->
     <div class="section-card" id="segmentsSection">
         <div class="section-header">
-            <h3 class="section-title" data-bs-toggle="tooltip" title="Performance breakdown by instrument type: Futures vs Options vs Equity. Identify which segment is most profitable for your trading style.">Segment Analysis <span class="info-tooltip">?</span></h3>
+            <h3 class="section-title" data-bs-toggle="tooltip" title="&lt;b&gt;Why:&lt;/b&gt; Different segments suit different market conditions — knowing your strongest segment helps you allocate capital more efficiently.&lt;br&gt;&lt;b&gt;What:&lt;/b&gt; Performance breakdown by instrument type: Futures, Options, Equity, ETF, Mutual Funds.&lt;br&gt;&lt;b&gt;How:&lt;/b&gt; Trades grouped by segment; P&amp;L, win rate, and profit factor computed per group.">Segment Analysis <span class="info-tooltip">?</span></h3>
             <div class="section-fy-filter">
                 <label>Year:</label>
                 <select id="segmentsFyFilter" onchange="loadSectionData('segments')">
@@ -712,7 +901,7 @@
     <!-- Broker Comparison -->
     <div class="section-card" id="brokersSection">
         <div class="section-header">
-            <h3 class="section-title" data-bs-toggle="tooltip" title="Side-by-side comparison of trading performance across different broker accounts. Compare execution quality, fees, and overall profitability.">Broker Comparison <span class="info-tooltip">?</span></h3>
+            <h3 class="section-title" data-bs-toggle="tooltip" title="&lt;b&gt;Why:&lt;/b&gt; High brokerage/charges can silently erode profits — comparing brokers helps you optimise execution costs.&lt;br&gt;&lt;b&gt;What:&lt;/b&gt; Side-by-side performance across Kotak Neo and ICICI Breeze accounts: P&amp;L, win rate, trade count, and total charges.&lt;br&gt;&lt;b&gt;How:&lt;/b&gt; Trades grouped by broker; metrics computed per group from uploaded CSV data.">Broker Comparison <span class="info-tooltip">?</span></h3>
             <div class="section-fy-filter">
                 <label>Year:</label>
                 <select id="brokersFyFilter" onchange="loadSectionData('brokers')">
@@ -756,7 +945,7 @@
 <!-- Tax Calculation Section -->
 <div class="section-card" id="taxSection" style="margin-top: 1.5rem;">
     <div class="section-header">
-        <h3 class="section-title" data-bs-toggle="tooltip" title="Estimate your capital gains tax liability based on trade profits. STCG (15%) for trades held < 1 year, LTCG (10%) for > 1 year. Consult a tax advisor for actual filing.">Capital Gains Tax Calculator <span class="info-tooltip">?</span></h3>
+        <h3 class="section-title" data-bs-toggle="tooltip" title="&lt;b&gt;Why:&lt;/b&gt; Tax is often the biggest hidden cost — understanding your liability early lets you plan better and avoid surprises during filing.&lt;br&gt;&lt;b&gt;What:&lt;/b&gt; Estimated tax liability per segment: F&amp;O (30% business income), Equity STCG (15%), plus net after deducting expenses.&lt;br&gt;&lt;b&gt;How:&lt;/b&gt; Gross P&amp;L per segment × applicable tax rate; expenses deducted from F&amp;O income proportionally. Consult a CA for actual filing.">Capital Gains Tax Calculator <span class="info-tooltip">?</span></h3>
         <div class="section-fy-filter">
             <label>Year:</label>
             <select id="taxFyFilter" onchange="loadSectionData('tax')">
@@ -861,7 +1050,7 @@
 <!-- P&L Summary -->
 <div class="section-card" id="pnlSummarySection">
     <div class="section-header">
-        <h3 class="section-title" data-bs-toggle="tooltip" title="Overall profit and loss summary. See how much you've earned vs lost and your net trading profit.">P&L Summary <span class="info-tooltip">?</span></h3>
+        <h3 class="section-title" data-bs-toggle="tooltip" title="&lt;b&gt;Why:&lt;/b&gt; Seeing earnings and losses separately (not just net) reveals whether profitability comes from big wins or from avoiding big losses.&lt;br&gt;&lt;b&gt;What:&lt;/b&gt; Total gross profits from winning trades, total gross losses from losing trades, and the net difference.&lt;br&gt;&lt;b&gt;How:&lt;/b&gt; Sum of positive net_pnl values (earned) and sum of negative net_pnl values (lost), computed per trade from broker CSV.">P&L Summary <span class="info-tooltip">?</span></h3>
         <div class="section-fy-filter">
             <label>Year:</label>
             <select id="pnlSummaryFyFilter" onchange="loadSectionData('pnlSummary')">
@@ -877,20 +1066,29 @@
         <div class="section-content" id="pnlSummaryContent">
             {% with summary=patterns_data.symbols.summary %}
             <div class="stats-grid" style="grid-template-columns: repeat(3, 1fr);">
-                <div class="stat-card positive">
-                    <div class="stat-value" id="summary-total-earned">₹{{ summary.total_earned|floatformat:0|default:0 }}</div>
-                    <div class="stat-label">Total Earned</div>
-                    <div class="stat-subtitle"><span id="summary-winning-trades">{{ summary.winning_trades|default:0 }}</span> winning trades</div>
+                <div class="stat-card-wrapper">
+                    <div class="stat-card positive">
+                        <div class="stat-value" id="summary-total-earned">₹{{ summary.total_earned|floatformat:0|default:0 }}</div>
+                        <div class="stat-label">Total Earned</div>
+                        <div class="stat-subtitle"><span id="summary-winning-trades">{{ summary.winning_trades|default:0 }}</span> winning trades</div>
+                    </div>
+                    <button class="stat-info-btn" onclick="showStatInfo('total-earned')">?</button>
                 </div>
-                <div class="stat-card negative">
-                    <div class="stat-value" id="summary-total-lost">₹{{ summary.total_lost|floatformat:0|default:0 }}</div>
-                    <div class="stat-label">Total Lost</div>
-                    <div class="stat-subtitle"><span id="summary-losing-trades">{{ summary.losing_trades|default:0 }}</span> losing trades</div>
+                <div class="stat-card-wrapper">
+                    <div class="stat-card negative">
+                        <div class="stat-value" id="summary-total-lost">₹{{ summary.total_lost|floatformat:0|default:0 }}</div>
+                        <div class="stat-label">Total Lost</div>
+                        <div class="stat-subtitle"><span id="summary-losing-trades">{{ summary.losing_trades|default:0 }}</span> losing trades</div>
+                    </div>
+                    <button class="stat-info-btn" onclick="showStatInfo('total-lost')">?</button>
                 </div>
-                <div class="stat-card {% if summary.net_profit >= 0 %}positive{% else %}negative{% endif %}" id="summary-net-card">
-                    <div class="stat-value" id="summary-net-profit">₹{{ summary.net_profit|floatformat:0|default:0 }}</div>
-                    <div class="stat-label">Net Profit</div>
-                    <div class="stat-subtitle"><span id="summary-total-trades">{{ summary.total_trades|default:0 }}</span> total trades</div>
+                <div class="stat-card-wrapper">
+                    <div class="stat-card {% if summary.net_profit >= 0 %}positive{% else %}negative{% endif %}" id="summary-net-card">
+                        <div class="stat-value" id="summary-net-profit">₹{{ summary.net_profit|floatformat:0|default:0 }}</div>
+                        <div class="stat-label">Net Profit</div>
+                        <div class="stat-subtitle"><span id="summary-total-trades">{{ summary.total_trades|default:0 }}</span> total trades</div>
+                    </div>
+                    <button class="stat-info-btn" onclick="showStatInfo('net-profit')">?</button>
                 </div>
             </div>
             {% endwith %}
@@ -901,7 +1099,7 @@
 <!-- Symbol Performance -->
 <div class="section-card" id="symbolsSection">
     <div class="section-header">
-        <h3 class="section-title" data-bs-toggle="tooltip" title="Per-symbol trading statistics showing P&L, trade count, and win rate. Identify which instruments you trade best and which to avoid.">Symbol Performance <span class="info-tooltip">?</span></h3>
+        <h3 class="section-title" data-bs-toggle="tooltip" title="&lt;b&gt;Why:&lt;/b&gt; Not all symbols suit your style equally — identifying your best and worst performers helps you focus on your edge and avoid money-losing instruments.&lt;br&gt;&lt;b&gt;What:&lt;/b&gt; Per-symbol breakdown: trades, win rate, avg P&amp;L, total P&amp;L — shown across 6 tabs (top performers, losers, biggest single trades, most traded).&lt;br&gt;&lt;b&gt;How:&lt;/b&gt; Trades grouped by underlying symbol; metrics computed per group from broker CSV uploads.">Symbol Performance <span class="info-tooltip">?</span></h3>
         <div class="section-fy-filter" style="display:flex; gap:0.75rem; align-items:center;">
             <label>Broker:</label>
             <select id="symbolsBrokerFilter" onchange="loadSectionData('symbols')">
@@ -1119,7 +1317,7 @@
     <!-- P&L Distribution -->
     <div class="section-card" id="distributionSection">
         <div class="section-header">
-            <h3 class="section-title" data-bs-toggle="tooltip" title="Statistical distribution of your trade profits and losses. A right-skewed distribution (more small losses, few large wins) indicates good risk management.">P&L Distribution <span class="info-tooltip">?</span></h3>
+            <h3 class="section-title" data-bs-toggle="tooltip" title="&lt;b&gt;Why:&lt;/b&gt; Distribution shape reveals your risk profile — a right skew (small losses, big wins) is the hallmark of good risk management.&lt;br&gt;&lt;b&gt;What:&lt;/b&gt; Bar chart showing how often trades fall in each P&amp;L range, plus key percentile statistics.&lt;br&gt;&lt;b&gt;How:&lt;/b&gt; All trade P&amp;Ls binned into equal-width buckets; bar height = count of trades in each bucket.">P&L Distribution <span class="info-tooltip">?</span></h3>
             <div class="section-fy-filter">
                 <label>Year:</label>
                 <select id="distributionFyFilter" onchange="loadSectionData('distribution')">
@@ -1133,47 +1331,32 @@
         <div class="section-body">
             <div class="section-loading"><span>Loading...</span></div>
             <div class="section-content" id="distributionContent">
-                <div style="height: 220px;">
+                <div style="height: 220px; position: relative;">
+                    <button class="chart-stat-info-btn" onclick="showStatInfo('dist-chart')" title="About this chart">ⓘ</button>
                     <canvas id="distributionChart"></canvas>
                 </div>
                 {% with dist=patterns_data.distribution.stats %}
                 {% if dist %}
                 <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; margin-top: 1rem;" id="dist-stats">
-                    <div class="stat-tooltip" style="text-align: center; cursor: help;">
+                    <div class="stat-card-wrapper" style="text-align: center; padding: 0.5rem 0;">
                         <div style="font-size: 1rem; font-weight: 600;" id="dist-p25">₹{{ dist.p25|floatformat:0|default:0 }}</div>
                         <div style="font-size: 0.7rem; color: var(--gray);">25th Percentile</div>
-                        <div class="tooltip-content">
-                            <strong>25th Percentile</strong><br>
-                            25% of your trades made less than this amount.<br><br>
-                            This is your "bad trade" threshold - 1 in 4 trades falls below this value.
-                        </div>
+                        <button class="stat-info-btn" onclick="showStatInfo('p25')">?</button>
                     </div>
-                    <div class="stat-tooltip" style="text-align: center; cursor: help;">
+                    <div class="stat-card-wrapper" style="text-align: center; padding: 0.5rem 0;">
                         <div style="font-size: 1rem; font-weight: 600;" id="dist-median">₹{{ dist.median|floatformat:0|default:0 }}</div>
                         <div style="font-size: 0.7rem; color: var(--gray);">Median</div>
-                        <div class="tooltip-content">
-                            <strong>Median (50th Percentile)</strong><br>
-                            The middle value - half your trades made more, half made less.<br><br>
-                            More reliable than average as it's not skewed by outliers. This is your "typical" trade result.
-                        </div>
+                        <button class="stat-info-btn" onclick="showStatInfo('median')">?</button>
                     </div>
-                    <div class="stat-tooltip" style="text-align: center; cursor: help;">
+                    <div class="stat-card-wrapper" style="text-align: center; padding: 0.5rem 0;">
                         <div style="font-size: 1rem; font-weight: 600;" id="dist-p75">₹{{ dist.p75|floatformat:0|default:0 }}</div>
                         <div style="font-size: 0.7rem; color: var(--gray);">75th Percentile</div>
-                        <div class="tooltip-content">
-                            <strong>75th Percentile</strong><br>
-                            75% of trades made less than this amount.<br><br>
-                            Your top 25% of trades exceed this value - these are your "big winners".
-                        </div>
+                        <button class="stat-info-btn" onclick="showStatInfo('p75')">?</button>
                     </div>
-                    <div class="stat-tooltip" style="text-align: center; cursor: help;">
+                    <div class="stat-card-wrapper" style="text-align: center; padding: 0.5rem 0;">
                         <div style="font-size: 1rem; font-weight: 600;" id="dist-stddev">₹{{ dist.std_dev|floatformat:0|default:0 }}</div>
                         <div style="font-size: 0.7rem; color: var(--gray);">Std Deviation</div>
-                        <div class="tooltip-content">
-                            <strong>Standard Deviation</strong><br>
-                            Measures how much your P&L varies from trade to trade.<br><br>
-                            A HIGH value means inconsistent results - some big wins, some big losses. Consider tighter position sizing to reduce variance.
-                        </div>
+                        <button class="stat-info-btn" onclick="showStatInfo('std-dev')">?</button>
                     </div>
                 </div>
                 {% endif %}
@@ -1185,7 +1368,7 @@
     <!-- Consistency Score -->
     <div class="section-card" id="consistencySection">
         <div class="section-header">
-            <h3 class="section-title" data-bs-toggle="tooltip" title="Measures how consistent your trading results are over time. High consistency indicates a repeatable edge; high variance may suggest strategy refinement needed.">Trading Consistency <span class="info-tooltip">?</span></h3>
+            <h3 class="section-title" data-bs-toggle="tooltip" title="&lt;b&gt;Why:&lt;/b&gt; Consistent monthly profits are more valuable than occasional huge wins — consistency enables financial planning and proves strategy robustness.&lt;br&gt;&lt;b&gt;What:&lt;/b&gt; Consistency score (% profitable months), average monthly P&amp;L, and monthly volatility.&lt;br&gt;&lt;b&gt;How:&lt;/b&gt; Trades aggregated by calendar month; score = profitable months ÷ total months × 100.">Trading Consistency <span class="info-tooltip">?</span></h3>
             <div class="section-fy-filter">
                 <label>Year:</label>
                 <select id="consistencyFyFilter" onchange="loadSectionData('consistency')">
@@ -1199,7 +1382,7 @@
         <div class="section-body">
             <div class="section-loading"><span>Loading...</span></div>
             <div class="section-content" id="consistencyContent">
-                <div class="consistency-gauge">
+                <div class="stat-card-wrapper consistency-gauge">
                     <div class="gauge-circle" id="consistency-gauge" style="--percentage: {{ consistency.consistency_score|default:0 }}%;">
                         <div class="gauge-inner" id="consistency-score">{{ consistency.consistency_score|default:0 }}%</div>
                     </div>
@@ -1207,16 +1390,19 @@
                     <div style="font-size: 0.875rem; color: var(--gray);">
                         <span id="consistency-profitable">{{ consistency.profitable_months|default:0 }}</span> profitable out of <span id="consistency-total">{{ consistency.total_months|default:0 }}</span> months
                     </div>
+                    <button class="stat-info-btn" onclick="showStatInfo('consistency-score')">?</button>
                 </div>
 
                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-top: 1rem;">
-                    <div style="text-align: center; padding: 1rem; background: var(--lighter); border-radius: var(--radius-md);">
+                    <div class="stat-card-wrapper" style="text-align: center; padding: 1rem; background: var(--lighter); border-radius: var(--radius-md);">
                         <div id="consistency-avg-monthly" style="font-size: 1.25rem; font-weight: 600;">₹{{ consistency.avg_monthly_pnl|floatformat:0|default:0 }}</div>
                         <div style="font-size: 0.75rem; color: var(--gray);">Avg Monthly P&L</div>
+                        <button class="stat-info-btn" onclick="showStatInfo('avg-monthly-pnl')">?</button>
                     </div>
-                    <div style="text-align: center; padding: 1rem; background: var(--lighter); border-radius: var(--radius-md);">
+                    <div class="stat-card-wrapper" style="text-align: center; padding: 1rem; background: var(--lighter); border-radius: var(--radius-md);">
                         <div id="consistency-volatility" style="font-size: 1.25rem; font-weight: 600;">₹{{ consistency.monthly_volatility|floatformat:0|default:0 }}</div>
                         <div style="font-size: 0.75rem; color: var(--gray);">Monthly Volatility</div>
+                        <button class="stat-info-btn" onclick="showStatInfo('monthly-volatility')">?</button>
                     </div>
                 </div>
 
@@ -1235,7 +1421,7 @@
 <!-- Trading Timeline with Nifty Overlay -->
 <div class="section-card" id="timelineSection" style="margin-top: 1.5rem;">
     <div class="section-header">
-        <h3 class="section-title" data-bs-toggle="tooltip" title="Your portfolio equity curve overlaid with Nifty index. Outperforming Nifty indicates positive alpha generation from your trading strategy.">Trading Timeline vs Nifty <span class="info-tooltip">?</span></h3>
+        <h3 class="section-title" data-bs-toggle="tooltip" title="&lt;b&gt;Why:&lt;/b&gt; Outperforming Nifty proves you're generating real alpha — if Nifty beats you, passive index investing would be more efficient.&lt;br&gt;&lt;b&gt;What:&lt;/b&gt; Your cumulative P&amp;L equity curve alongside the Nifty 50 index. Coloured dots mark individual trades (green = win, red = loss, orange = streak).&lt;br&gt;&lt;b&gt;How:&lt;/b&gt; Cumulative sum of net_pnl plotted over trade dates; Nifty prices synced from broker historical API.">Trading Timeline vs Nifty <span class="info-tooltip">?</span></h3>
         <div class="section-fy-filter">
             <label>Year:</label>
             <select id="timelineFyFilter" onchange="loadSectionData('timeline')">
@@ -1295,6 +1481,7 @@
 
             <!-- Chart Container -->
             <div style="height: 350px; position: relative;">
+                <button class="chart-stat-info-btn" onclick="showStatInfo('timeline-chart')" title="About this chart">ⓘ</button>
                 <canvas id="timelineChart"></canvas>
             </div>
 
@@ -1325,7 +1512,7 @@
 <!-- Yearly Income Comparison -->
 <div class="section-card" id="yearlyComparisonSection" style="margin-top: 1.5rem;">
     <div class="section-header">
-        <h3 class="section-title" data-bs-toggle="tooltip" title="Month-by-month P&L comparison across financial years. Identify seasonal patterns and compare year-over-year performance growth.">Year-wise Monthly Income Comparison <span class="info-tooltip">?</span></h3>
+        <h3 class="section-title" data-bs-toggle="tooltip" title="&lt;b&gt;Why:&lt;/b&gt; Year-over-year trends reveal trader improvement — a rising monthly average confirms your skill is compounding over time.&lt;br&gt;&lt;b&gt;What:&lt;/b&gt; Monthly P&amp;L bars for each financial year, plus a summary table with FY-level win rate and profit factor.&lt;br&gt;&lt;b&gt;How:&lt;/b&gt; Trades grouped by financial year (Apr–Mar) and calendar month; each bar = total P&amp;L for that month.">Year-wise Monthly Income Comparison <span class="info-tooltip">?</span></h3>
         <div style="font-size: 0.75rem; color: var(--gray);">
             Total P&L / Months = Average Monthly Income
         </div>
@@ -1335,6 +1522,7 @@
         <div class="section-content" id="yearlyComparisonContent">
             <!-- Chart Container -->
             <div style="height: 350px; position: relative;">
+                <button class="chart-stat-info-btn" onclick="showStatInfo('yearly-chart')" title="About this chart">ⓘ</button>
                 <canvas id="yearlyComparisonChart"></canvas>
             </div>
 
@@ -2721,6 +2909,188 @@ document.addEventListener('DOMContentLoaded', function() {
     switchTaxAccount('KOTAK');
     initTimelineChart();
     loadYearlyComparison();
+});
+
+// ══════════════════════════════════════════════════════════
+//  Stat Info Panel — slide-down dialog on ? click
+// ══════════════════════════════════════════════════════════
+const STAT_INFO = {
+    'total-trades': {
+        title: '📊 Total Trades',
+        why: 'A larger sample of trades gives more statistically reliable results. A low count (under 30) means patterns could be random noise rather than a true edge.',
+        what: 'Count of all closed trades in the selected period. W = winning trades (positive P&L), L = losing trades (negative P&L).',
+        how: 'All completed buy+sell pairs from uploaded broker CSVs are counted. Each contract round-trip = 1 trade.'
+    },
+    'win-rate': {
+        title: '🎯 Win Rate',
+        why: 'Even a 40% win rate can be highly profitable if your winners are much larger than your losers. A rising win rate over time confirms improving entry selection skill.',
+        what: 'Percentage of trades that closed with a positive P&L after all brokerage and exchange charges.',
+        how: '(Winning Trades ÷ Total Trades) × 100. Target: 50%+ for trend-following; 40%+ is acceptable with strong risk/reward.'
+    },
+    'profit-factor': {
+        title: '⚖️ Profit Factor',
+        why: 'More meaningful than win rate alone — it shows whether your winners actually outsize your losers in rupee terms. Above 1.5 is healthy; above 2.0 is excellent.',
+        what: 'Gross profit earned for every rupee of gross loss across all trades.',
+        how: 'Sum of all positive P&L trades ÷ Sum of all negative P&L trades (absolute values). A Profit Factor of 1.8 means you earn ₹1.80 for every ₹1.00 you lose.'
+    },
+    'total-pnl': {
+        title: '💰 Total P&L',
+        why: 'The real bottom line — this is the actual money made or lost after all charges (brokerage, STT, exchange fees, taxes). This is what hits your bank account.',
+        what: 'Net profit or loss across all trades in the selected period after all deductions.',
+        how: 'Sum of net_pnl for all trades from uploaded broker CSVs. Charges are already deducted in the broker CSV data.'
+    },
+    'expectancy': {
+        title: '📐 Expectancy',
+        why: 'The mathematical "expected value" of your strategy per trade. A positive expectancy means you have a proven edge — you will profit over a large enough number of trades.',
+        what: 'Average rupees you can expect to make per trade when you run your strategy repeatedly over time.',
+        how: '(Win Rate × Avg Win Amount) − (Loss Rate × Avg Loss Amount). E.g. 50% win rate × ₹2,000 avg win − 50% × ₹1,000 avg loss = ₹500 expectancy per trade.'
+    },
+    'risk-reward': {
+        title: '📏 Risk / Reward Ratio',
+        why: 'With a 1:2 R/R ratio, you only need to be right 34% of the time to break even. A higher R/R lets you be wrong more often and still be profitable.',
+        what: 'How much you make on average winning trades compared to how much you lose on average losing trades.',
+        how: 'Avg Winning Trade P&L ÷ Avg Losing Trade P&L (absolute). A ratio of 1.5 means winners are 1.5× larger than losers on average.'
+    },
+    'avg-win': {
+        title: '📈 Average Win',
+        why: 'Higher average wins mean fewer wins needed to cover your losses. A declining average win over time signals you may be cutting profitable trades too early.',
+        what: 'Mean P&L of all profitable trades in the selected period. "Max" shows your single best individual trade.',
+        how: 'Sum of all positive net_pnl values ÷ count of winning trades.'
+    },
+    'avg-loss': {
+        title: '📉 Average Loss',
+        why: 'If your average loss is growing over time, your stop losses may be too wide — a capital preservation warning. Smaller average losses give you more trades before a serious drawdown.',
+        what: 'Mean P&L of all losing trades (shown as a negative number). "Max" shows your single worst individual trade.',
+        how: 'Sum of all negative net_pnl values ÷ count of losing trades.'
+    },
+    'current-streak': {
+        title: '🔥 Current Streak',
+        why: 'Active momentum signal. A long losing streak (5+) may warrant reducing position size or pausing trading to review your approach before resuming.',
+        what: 'The number of consecutive wins or losses from your most recent trade backwards.',
+        how: 'Starting from the most recent trade, count backwards through the trade history until the result type (win/loss) changes.'
+    },
+    'best-win-streak': {
+        title: '🏆 Best Win Streak',
+        why: 'Study what market conditions, strategies, or setups produced this run — it is your personal blueprint for peak performance. Try to replicate those conditions.',
+        what: 'The longest consecutive run of winning trades in your entire trading history.',
+        how: 'Scan all trades sorted by date; find the maximum unbroken sequence of winning trades.'
+    },
+    'worst-loss-streak': {
+        title: '⚠️ Worst Loss Streak',
+        why: 'Reveals your maximum vulnerability to adverse market conditions. If this number is 5 or higher, implement a "circuit breaker" rule to pause trading after N consecutive losses.',
+        what: 'The longest consecutive run of losing trades in your entire trading history.',
+        how: 'Scan all trades sorted by date; find the maximum unbroken sequence of losing trades.'
+    },
+    'avg-win-streak': {
+        title: '📊 Average Win Streak',
+        why: 'Sets your baseline expectation for how long winning runs typically last. If your current win streak far exceeds this, consider whether to lock in profits or size up cautiously.',
+        what: 'The typical length of a winning streak — how many consecutive wins you average before a loss breaks the run.',
+        how: 'Sum of the lengths of all distinct win streaks ÷ total number of distinct win streaks.'
+    },
+    'avg-loss-streak': {
+        title: '📊 Average Loss Streak',
+        why: 'Sets your recovery expectation. If your current loss streak exceeds this average, it is a strong signal to pause, review your strategy, and only resume with reduced size.',
+        what: 'The typical length of a losing streak — how many consecutive losses you average before a win breaks the run.',
+        how: 'Sum of the lengths of all distinct loss streaks ÷ total number of distinct loss streaks.'
+    },
+    'total-earned': {
+        title: '✅ Total Earned',
+        why: 'Shows the gross income potential of your strategy before netting out losses. A large Total Earned with a large Total Lost means high variance — you may need tighter risk controls.',
+        what: 'Sum of all profits from winning trades only, before subtracting losses.',
+        how: 'Sum of all positive net_pnl values from broker CSV uploads across the selected period.'
+    },
+    'total-lost': {
+        title: '❌ Total Lost',
+        why: 'Reveals total capital consumed by losing trades. Compare this to Total Earned — their ratio equals your Profit Factor. High Total Lost relative to earnings means poor loss management.',
+        what: 'Sum of all losses from losing trades (displayed as a positive number for readability).',
+        how: 'Sum of all negative net_pnl values (taken as absolute values) from broker CSV uploads.'
+    },
+    'net-profit': {
+        title: '💎 Net Profit',
+        why: 'The single most important number — your actual take-home from trading. This is what matters for evaluating whether your strategy is worth pursuing.',
+        what: 'Total earned minus total lost — the real bottom line after all charges across all trades.',
+        how: 'Total Earned − Total Lost. This is identical to Total P&L shown in the Overview section.'
+    },
+    'consistency-score': {
+        title: '🎯 Consistency Score',
+        why: 'Consistent monthly profits are more valuable than occasional large windfalls. A high score proves your strategy works across different market conditions, not just lucky periods.',
+        what: 'Percentage of active trading months where you ended the month with a net profit.',
+        how: '(Number of Profitable Months ÷ Total Active Months) × 100. A score of 70% means you were profitable in 7 out of every 10 months traded.'
+    },
+    'avg-monthly-pnl': {
+        title: '📅 Average Monthly P&L',
+        why: 'Your expected monthly income from trading — useful for financial planning, deciding whether to trade full-time, and benchmarking against alternative income sources.',
+        what: 'Mean profit or loss per calendar month across the entire selected period.',
+        how: 'Total P&L ÷ Number of active trading months (months with at least one trade).'
+    },
+    'monthly-volatility': {
+        title: '〰️ Monthly Volatility',
+        why: 'High volatility means unpredictable income — psychologically difficult and hard to plan finances around. Target: monthly volatility below 50% of your average monthly P&L.',
+        what: 'How much your monthly P&L varies from month to month — the standard deviation of monthly returns.',
+        how: '√(Σ(monthly_pnl − avg_monthly_pnl)² ÷ n). Lower is better. It measures the spread around your monthly average.'
+    },
+    'p25': {
+        title: '📊 25th Percentile',
+        why: 'Your "bad trade" floor — 1 in every 4 trades falls below this threshold. If it represents a large loss, your worst quarter of trades is severely impacting overall performance.',
+        what: '25% of your trades made less (or lost more) than this amount. The other 75% did better.',
+        how: 'Sort all trade P&Ls from lowest to highest. The value at position 25 out of 100 is the 25th percentile.'
+    },
+    'median': {
+        title: '📊 Median (50th Percentile)',
+        why: 'More representative of your "typical" trade than the average — not distorted by a few unusually large wins or losses. A positive median is a healthy sign.',
+        what: 'The middle trade result — exactly half your trades did better than this, and half did worse.',
+        how: 'Sort all trade P&Ls; take the value at the exact midpoint. If you have 100 trades, it is the average of trades 50 and 51.'
+    },
+    'p75': {
+        title: '📊 75th Percentile',
+        why: 'Your top 25% of trades exceed this value — these are your "big winners" that drive overall profitability. A high 75th percentile relative to the 25th shows good asymmetry.',
+        what: '75% of your trades made less than this amount. Only your top 1 in 4 trades beats it.',
+        how: 'Sort all trade P&Ls; take the value at position 75 out of 100.'
+    },
+    'std-dev': {
+        title: '📊 Standard Deviation',
+        why: 'High standard deviation means highly inconsistent results — some huge wins, some huge losses. Consider tighter position sizing to reduce variance without sacrificing expectancy.',
+        what: 'How much your individual trade P&L values vary around the average P&L. Lower = more consistent.',
+        how: '√(Σ(trade_pnl − avg_pnl)² ÷ n) — the square root of the average squared deviation from the mean.'
+    },
+    'dist-chart': {
+        title: '📊 P&L Distribution Chart',
+        why: 'The shape of the distribution reveals your risk profile. Right-skewed (tall bars on the loss side, long tail on the win side) means many small losses and few big wins — ideal for options strategies.',
+        what: 'A bar chart grouping all trades into equal P&L ranges (buckets). The height of each bar shows how many trades fell into that range.',
+        how: 'All trade P&Ls are sorted and binned into equal-width buckets (e.g. every ₹10,000). Bar height = count of trades in that range.'
+    },
+    'timeline-chart': {
+        title: '📈 Trading Timeline vs Nifty',
+        why: 'If your cumulative P&L curve beats the Nifty line, you are generating positive alpha — returns above what passive index investing would deliver. This is the ultimate proof of trading skill.',
+        what: 'Your cumulative P&L equity curve (green/red area) overlaid with the Nifty 50 price index (blue line). Individual trade dots show wins (green), losses (red), and streak trades (orange).',
+        how: 'Cumulative sum of net_pnl values plotted over trade dates. Nifty data is synced from broker historical price APIs and normalised to start at the same level as your portfolio.'
+    },
+    'yearly-chart': {
+        title: '📅 Year-wise Monthly Comparison',
+        why: 'Year-over-year trends reveal whether you are improving as a trader. Rising monthly averages across financial years confirm that your skill and strategy are compounding over time.',
+        what: 'Monthly P&L bars for each financial year (Apr–Mar), grouped by colour. The trend line shows the cumulative monthly average across all years combined.',
+        how: 'Trades are grouped by financial year and calendar month. Each bar = total net P&L for that month. The line is the running average monthly P&L across the full trading history.'
+    }
+};
+
+function showStatInfo(key) {
+    const info = STAT_INFO[key];
+    if (!info) return;
+    document.getElementById('statInfoTitle').textContent = info.title;
+    document.getElementById('statInfoWhy').textContent = info.why;
+    document.getElementById('statInfoWhat').textContent = info.what;
+    document.getElementById('statInfoHow').textContent = info.how;
+    document.getElementById('statInfoPanel').classList.add('open');
+    document.getElementById('statInfoOverlay').classList.add('open');
+}
+
+function closeStatInfo() {
+    document.getElementById('statInfoPanel').classList.remove('open');
+    document.getElementById('statInfoOverlay').classList.remove('open');
+}
+
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') closeStatInfo();
 });
 </script>
 {% endblock %}
