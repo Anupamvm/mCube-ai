@@ -88,3 +88,15 @@ kotak-neo-api/neo_api_client.egg-info/
 logs/
 *.sqlite3-shm
 *.sqlite3-wal
+
+# Trendlyne generated exports
+trendlyne_data/*.xlsx
+trendlyne_data/contracts_*.xlsx
+trendlyne_data/fno_data_*.xlsx
+trendlyne_data/Stocks-data-*.xlsx
+
+# Trendlyne generated forecaster outputs
+trendlyne_data/forecaster/*.csv
+
+# Celery sqlite variants
+celerybeat-schedule*
