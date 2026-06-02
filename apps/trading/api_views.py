@@ -2994,12 +2994,12 @@ def analyze_position_averaging(request):
         import json
         from apps.trading.averaging_analyzer import AveragingAnalyzer
         from apps.brokers.integrations.breeze import get_breeze_client
-        from apps.brokers.integrations.kotak_neo import get_kotak_neo_client
         from apps.data.models import ContractData
 
         data = json.loads(request.body)
         broker = data.get('broker', '').lower()
         symbol = data.get('symbol', '')
+        trading_symbol = data.get('trading_symbol', '')
         direction = data.get('direction', 'LONG').upper()
         entry_price = float(data.get('entry_price', 0))
         quantity = int(data.get('quantity', 0))
@@ -3027,7 +3027,50 @@ def analyze_position_averaging(request):
 
         logger.info(f"Extracted base symbol: '{base_symbol}' from '{symbol}'")
 
-        # Get lot size from ContractData
+        # For Neo broker, map trading symbol to Breeze stock_code for LTP fetching.
+        # Neo uses NSE-standard names (e.g. HDFCBANK) but Breeze's option chain API
+        # expects its own codes (e.g. HDFBAN).  Without this mapping the Breeze API
+        # call returns empty data → "Unable to fetch current price".
+        #
+        # Also: Neo stores the LAST CALENDAR DAY of the month as expiry (e.g. Jun 30)
+        # but Breeze requires the actual last-Thursday F&O expiry (e.g. Jun 25).
+        analysis_symbol = base_symbol
+        if broker == 'neo':
+            # Step 1: symbol + expiry from full trading symbol (most accurate)
+            if trading_symbol:
+                try:
+                    from apps.brokers.integrations.kotak_neo import map_neo_symbol_to_breeze
+                    mapping = map_neo_symbol_to_breeze(trading_symbol)
+                    if mapping.get('success') and mapping.get('stock_code'):
+                        analysis_symbol = mapping['stock_code']
+                        logger.info(f"Neo→Breeze symbol: {trading_symbol} → {analysis_symbol}")
+                        if mapping.get('expiry_date'):
+                            from datetime import datetime as _dt
+                            try:
+                                expiry_date = _dt.strptime(mapping['expiry_date'], '%d-%b-%Y').strftime('%Y-%m-%d')
+                                logger.info(f"Neo expiry from mapping: {expiry_date}")
+                            except Exception:
+                                pass
+                    else:
+                        logger.warning(f"Neo→Breeze mapping failed for {trading_symbol}: {mapping.get('error')}")
+                except Exception as _e:
+                    logger.warning(f"Error mapping Neo symbol to Breeze: {_e}")
+
+            # Step 2: Fallback — if expiry is still not a Thursday (Neo end-of-month date),
+            # roll back to the last Thursday so the Breeze API can find the contract.
+            if expiry_date:
+                try:
+                    from datetime import datetime as _dt2, timedelta as _td
+                    expiry_obj = _dt2.strptime(expiry_date, '%Y-%m-%d').date()
+                    if expiry_obj.weekday() != 3:  # 3 = Thursday
+                        days_back = (expiry_obj.weekday() - 3) % 7
+                        thursday = expiry_obj - _td(days=days_back)
+                        logger.info(f"Neo expiry adjusted to last Thursday: {expiry_obj} → {thursday}")
+                        expiry_date = thursday.strftime('%Y-%m-%d')
+                except Exception:
+                    pass
+
+        # Get lot size from ContractData (uses NSE base_symbol, works for both brokers)
         lot_size = 0
         if expiry_date:
             contract = ContractData.objects.filter(
@@ -3059,19 +3102,34 @@ def analyze_position_averaging(request):
         breeze = get_breeze_client()
         analyzer = AveragingAnalyzer(breeze_client=breeze)
 
-        # Get Neo client if needed (for future margin calculations)
-        if broker == 'neo':
-            get_kotak_neo_client()
+        # For Neo positions, fetch LTP via get_ltp_from_neo which uses empty-expiry
+        # Breeze API + month/year matching.  This avoids the fragile exact-Thursday
+        # expiry lookup that breaks when holidays shift the actual expiry.
+        prefetched_ltp = None
+        if broker == 'neo' and trading_symbol:
+            try:
+                from apps.brokers.integrations.neo.quotes import get_ltp_from_neo
+                prefetched_ltp = get_ltp_from_neo(trading_symbol)
+                if prefetched_ltp:
+                    logger.info(f"Pre-fetched Neo LTP for {trading_symbol}: ₹{prefetched_ltp:.2f}")
+                else:
+                    logger.warning(f"get_ltp_from_neo returned no price for {trading_symbol}")
+            except Exception as _e:
+                logger.warning(f"get_ltp_from_neo failed for {trading_symbol}: {_e}")
 
-        # Run averaging analysis
+        # Run averaging analysis using the Breeze-compatible symbol.
+        # nse_symbol (NSE/Trendlyne format) is passed separately so checks
+        # that query ContractData can use the correct symbol.
         analysis_result = analyzer.analyze_position_for_averaging(
-            symbol=base_symbol,
+            symbol=analysis_symbol,
             direction=direction,
             entry_price=entry_price,
             current_quantity=quantity,
             lot_size=lot_size,
             expiry_date=expiry_date,
-            exchange='NFO'
+            exchange='NFO',
+            current_price=prefetched_ltp,
+            nse_symbol=base_symbol if analysis_symbol != base_symbol else None,
         )
 
         logger.info(f"Analysis result received: success={analysis_result.get('success')}, recommendation={analysis_result.get('recommendation')}")

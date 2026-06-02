@@ -2120,6 +2120,7 @@ async function verifyPositionForAveraging(broker, symbol) {
             body: JSON.stringify({
                 broker: broker,
                 symbol: symbol,
+                trading_symbol: position.trading_symbol || '',
                 direction: position.direction,
                 entry_price: position.average_price,
                 quantity: position.net_quantity_shares || position.quantity,

@@ -779,7 +779,7 @@ def get_and_save_option_chain_quotes(stock_code, expiry_date=None, product_type=
                 expiry_date=expiry_date,
                 right=right,
             )
-            quotes.extend(resp.get("Success", []))
+            quotes.extend(resp.get("Success") or [])
     else:
         resp = breeze.get_option_chain_quotes(
             stock_code=stock_code,
@@ -787,7 +787,7 @@ def get_and_save_option_chain_quotes(stock_code, expiry_date=None, product_type=
             product_type=product_type,
             expiry_date=expiry_date
         )
-        quotes.extend(resp.get("Success", []))
+        quotes.extend(resp.get("Success") or [])
 
     objs = []
     for q in quotes:

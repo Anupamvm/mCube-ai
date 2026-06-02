@@ -39,19 +39,24 @@ class AveragingAnalyzer:
         current_quantity: int,
         lot_size: int,
         expiry_date: str = None,
-        exchange: str = "NFO"
+        exchange: str = "NFO",
+        current_price: float = None,
+        nse_symbol: str = None,
     ) -> Dict[str, Any]:
         """
         Comprehensive analysis for position averaging.
 
         Args:
-            symbol: Stock symbol (e.g., 'RELIANCE')
+            symbol: Stock symbol in broker format (e.g., 'RELIANCE', 'HDFBAN')
             direction: Position direction ('LONG' or 'SHORT')
             entry_price: Original entry price
             current_quantity: Current position quantity
             lot_size: Lot size for the futures contract
             expiry_date: Expiry date (YYYY-MM-DD)
             exchange: Exchange code (default: NFO)
+            current_price: Pre-fetched LTP (skips internal price lookup when provided)
+            nse_symbol: NSE-standard symbol for Trendlyne/ContractData lookups (e.g. 'HDFCBANK'
+                        when symbol is the Breeze code 'HDFBAN')
 
         Returns:
             Dictionary with averaging recommendation and analysis
@@ -79,8 +84,9 @@ class AveragingAnalyzer:
         }
 
         try:
-            # Step 1: Get current market price
-            current_price = self._get_current_price(symbol, expiry_date)
+            # Step 1: Get current market price (use pre-fetched price if supplied)
+            if not current_price:
+                current_price = self._get_current_price(symbol, expiry_date)
             if not current_price:
                 result['error'] = 'Unable to fetch current price'
                 return result
@@ -134,7 +140,7 @@ class AveragingAnalyzer:
 
             # CRITICAL CHECK 3: Open Interest Analysis
             oi_check = self._check_open_interest(
-                symbol, expiry_date, direction
+                symbol, expiry_date, direction, nse_symbol=nse_symbol
             )
             result['critical_checks']['open_interest_check'] = oi_check
 
@@ -553,7 +559,7 @@ class AveragingAnalyzer:
             }
 
     def _check_open_interest(
-        self, symbol: str, expiry_date: str, direction: str
+        self, symbol: str, expiry_date: str, direction: str, nse_symbol: str = None
     ) -> Dict[str, Any]:
         """
         CRITICAL CHECK 3: Open Interest should be building up (increasing OI is good for averaging)
@@ -589,31 +595,75 @@ class AveragingAnalyzer:
                         'open_interest': 0
                     }
 
-            # Get current futures quote for OI
+            # Try OptionChainQuote (populated from Breeze API)
             futures_quote = OptionChainQuote.objects.filter(
                 stock_code=symbol,
                 product_type__iexact='futures',
                 expiry_date=expiry_dt
             ).first()
 
-            if not futures_quote or not futures_quote.open_interest:
+            current_oi = None
+            pct_oi_change = None
+
+            if futures_quote and futures_quote.open_interest:
+                current_oi = float(futures_quote.open_interest)
+            else:
+                # Fallback: ContractData from Trendlyne — uses NSE symbols + end-of-month expiry.
+                # Match by year-month prefix (e.g. '2026-06') to handle Thursday vs month-end.
+                logger.info(f"No OI in OptionChainQuote for {symbol}, trying ContractData")
+                from apps.data.models import ContractData
+
+                lookup_symbol = nse_symbol or symbol
+                ym_prefix = expiry_dt.strftime('%Y-%m') if expiry_dt else None
+
+                contract = None
+                if ym_prefix:
+                    contract = ContractData.objects.filter(
+                        symbol=lookup_symbol,
+                        option_type='FUTURE',
+                        expiry__startswith=ym_prefix
+                    ).first()
+                    # If symbol was a Breeze code and not found, try nearest future expiry
+                    if not contract and lookup_symbol != symbol:
+                        contract = ContractData.objects.filter(
+                            symbol=symbol,
+                            option_type='FUTURE',
+                            expiry__startswith=ym_prefix
+                        ).first()
+
+                if not contract:
+                    # Last resort: most recent upcoming FUTURE for this stock
+                    contract = ContractData.objects.filter(
+                        symbol=lookup_symbol,
+                        option_type='FUTURE',
+                        expiry__gte=str(date.today())
+                    ).order_by('expiry').first()
+
+                if contract and contract.oi:
+                    current_oi = float(contract.oi)
+                    pct_oi_change = contract.pct_oi_change
+                    logger.info(f"OI from ContractData for {lookup_symbol}: {current_oi:,.0f} (change: {pct_oi_change}%)")
+
+            if not current_oi:
                 logger.warning(f"No OI data found for {symbol} expiry {expiry_dt}")
                 return {
                     'passed': False,
                     'message': '❌ Open Interest data not available',
                     'open_interest': 0
                 }
-
-            current_oi = float(futures_quote.open_interest)
             logger.info(f"Current Open Interest for {symbol}: {current_oi:,.0f}")
 
-            # OI should be meaningful (at least 10,000 for most stocks, 100,000 for indices)
-            min_oi_threshold = 100000 if symbol in ['NIFTY', 'BANKNIFTY', 'FINNIFTY'] else 10000
+            # Use NSE symbol for index detection (Breeze uses 'CNXBAN' for BANKNIFTY)
+            check_sym = (nse_symbol or symbol).upper()
+            index_symbols = {'NIFTY', 'BANKNIFTY', 'FINNIFTY', 'MIDCPNIFTY', 'CNXBAN'}
+            min_oi_threshold = 100000 if check_sym in index_symbols else 10000
+
+            oi_change_str = f' ({pct_oi_change:+.1f}% vs prev)' if pct_oi_change is not None else ''
 
             if current_oi < min_oi_threshold:
                 return {
                     'passed': False,
-                    'message': f'❌ Low Open Interest: {current_oi:,.0f} (need {min_oi_threshold:,.0f}+)',
+                    'message': f'❌ Low Open Interest: {current_oi:,.0f}{oi_change_str} (need {min_oi_threshold:,.0f}+)',
                     'open_interest': current_oi,
                     'min_threshold': min_oi_threshold
                 }
@@ -621,9 +671,10 @@ class AveragingAnalyzer:
             # OI is good - position has liquidity
             return {
                 'passed': True,
-                'message': f'✅ Healthy Open Interest: {current_oi:,.0f} contracts',
+                'message': f'✅ Healthy Open Interest: {current_oi:,.0f} contracts{oi_change_str}',
                 'open_interest': current_oi,
-                'min_threshold': min_oi_threshold
+                'min_threshold': min_oi_threshold,
+                'pct_oi_change': pct_oi_change,
             }
 
         except Exception as e:

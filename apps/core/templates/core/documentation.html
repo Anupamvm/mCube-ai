@@ -952,8 +952,8 @@
                     <div class="step-content">
                         <h4>Authenticate with Brokers</h4>
                         <p>
-                            Complete the OTP-based authentication for each broker. This enables secure API access
-                            for placing orders and fetching market data.
+                            <strong>Kotak Neo (v2):</strong> Go to <code>/brokers/kotak/login/</code> and enter your UCC, TOTP secret, and MPIN. Authentication is fully automated using TOTP + MPIN — no manual OTP required.<br>
+                            <strong>ICICI Breeze:</strong> Enter your API key/secret. When the system initiates a session, you'll receive an OTP on your registered mobile — send it to the Telegram bot to complete login. One auto-login attempt per day is enforced.
                         </p>
                     </div>
                 </div>
@@ -1030,6 +1030,8 @@
                             <div class="arch-box service">🔔 Alert System</div>
                             <div class="arch-box service">⏰ Scheduler</div>
                             <div class="arch-box service">📰 News Analyzer</div>
+                            <div class="arch-box service">🔗 TradingContext</div>
+                            <div class="arch-box service">✅ TradeConfirmation</div>
                         </div>
                     </div>
 
@@ -1050,7 +1052,7 @@
                     <div class="arch-layer">
                         <div class="arch-layer-label">Data Layer</div>
                         <div class="arch-boxes">
-                            <div class="arch-box data">🗄️ PostgreSQL</div>
+                            <div class="arch-box data">🗄️ SQLite</div>
                             <div class="arch-box data">🔴 Redis</div>
                             <div class="arch-box data">📁 File Storage</div>
                         </div>
@@ -1185,6 +1187,21 @@
                 </div>
             </div>
 
+            <div class="docs-card">
+                <h3>✅ Trade Confirmation Flow (Futures)</h3>
+                <p>Futures trades use a two-step Telegram confirmation flow managed by <code>TradeConfirmationService</code> (<code>apps/trading/services/trade_confirmation.py</code>):</p>
+                <ol>
+                    <li><strong>Selection Screen:</strong> Bot sends TOP 3 candidates with score summary and "View Details" buttons.</li>
+                    <li><strong>Detail View:</strong> Full 12-factor analysis with "✅ Confirm Trade" button. Use "← Back" to return to the list.</li>
+                    <li><strong>Execution:</strong> Background thread places orders (non-blocking). Orders &gt; 10 lots are split into batches of 10 with 10-second delays.</li>
+                    <li><strong>Stop Execution:</strong> A "🛑 Stop Execution" button appears during batching. Cancels remaining batches (already-placed orders are NOT reversed).</li>
+                </ol>
+                <p>Callback patterns: <code>select_futures_{id}</code> (view details), <code>confirm_futures_{id}</code> (execute), <code>back_futures_list</code> (return to list), <code>cancel_futures_exec_{id}</code> (stop batching).</p>
+                <div class="callout callout-info">
+                    <p><strong>Unified Context:</strong> Both Celery tasks and web views access trading state via <code>TradingContext</code> (<code>apps/core/services/trading_context.py</code>). Use <code>ctx = get_trading_context()</code> — it consolidates account retrieval, trading day validation, config access, and position queries.</p>
+                </div>
+            </div>
+
             <div class="callout warning">
                 <span class="callout-icon">⚠️</span>
                 <div class="callout-content">
@@ -1280,11 +1297,12 @@
                             <li>Used for Nifty Options trading</li>
                             <li>Strangle and Iron Condor execution</li>
                             <li>Real-time option chain data</li>
-                            <li>OTP-based authentication</li>
+                            <li>TOTP + MPIN automated authentication (v2 API, no manual OTP)</li>
                             <li>Margin and position APIs</li>
+                            <li>Session persists via saved <code>base_url</code> + <code>data_center</code></li>
                         </ul>
                         <p style="margin-top: 12px; font-size: 0.8rem; color: #6b7280;">
-                            📁 <code>apps/brokers/kotak/</code><br>
+                            📁 <code>apps/brokers/integrations/kotak_neo/</code><br>
                             📁 <code>tools/neo.py</code>
                         </p>
                     </div>
@@ -1303,51 +1321,109 @@
                             <li>Used for Stock Futures trading</li>
                             <li>Futures algorithm execution</li>
                             <li>Historical data access</li>
-                            <li>Session-based authentication</li>
+                            <li>Session-based authentication (OTP via Telegram relay)</li>
+                            <li>Auto-login with Selenium + daily attempt limit</li>
                             <li>Market data streaming</li>
                         </ul>
                         <p style="margin-top: 12px; font-size: 0.8rem; color: #6b7280;">
-                            📁 <code>apps/brokers/breeze/</code><br>
-                            📁 <code>tools/breeze.py</code>
+                            📁 <code>apps/brokers/integrations/breeze.py</code><br>
+                            📁 <code>apps/brokers/services/breeze_session.py</code>
                         </p>
                     </div>
                 </div>
             </div>
 
             <div class="docs-card">
-                <h3>🔐 Authentication Flow</h3>
+                <h3>🔐 Authentication Flows</h3>
+
+                <h4 style="margin: 16px 0 8px; color: #3b82f6;">Kotak Neo v2 (Automated — no manual OTP)</h4>
                 <div class="flow-diagram">
-                    <div class="flow-title">Broker Authentication Process</div>
                     <div class="flow-steps">
                         <div class="flow-step">
                             <div class="flow-step-box blue">
-                                <span class="flow-step-icon">🔑</span>
-                                Enter Credentials
+                                <span class="flow-step-icon">🔢</span>
+                                Generate TOTP<br><small>(pyotp from secret)</small>
                             </div>
                         </div>
                         <span class="flow-arrow">→</span>
                         <div class="flow-step">
                             <div class="flow-step-box purple">
                                 <span class="flow-step-icon">📲</span>
-                                Request OTP
+                                totp_login()<br><small>(mobile, ucc, totp)</small>
                             </div>
                         </div>
                         <span class="flow-arrow">→</span>
                         <div class="flow-step">
                             <div class="flow-step-box orange">
-                                <span class="flow-step-icon">✅</span>
-                                Verify OTP
+                                <span class="flow-step-icon">🔐</span>
+                                totp_validate()<br><small>(MPIN)</small>
                             </div>
                         </div>
                         <span class="flow-arrow">→</span>
                         <div class="flow-step">
                             <div class="flow-step-box green">
                                 <span class="flow-step-icon">🎫</span>
-                                Get Token
+                                Session + Save<br><small>base_url, data_center</small>
                             </div>
                         </div>
                     </div>
                 </div>
+                <p style="font-size: 0.8rem; color: #6b7280; margin-top: 8px;">Credentials stored in <code>CredentialStore</code>: <code>ucc</code>, <code>totp_secret</code>, <code>mobile_number</code>, <code>neo_password</code> (MPIN), <code>neo_base_url</code>, <code>neo_data_center</code>. One auto-login attempt per day enforced by <code>auto_login_date</code> field.</p>
+
+                <h4 style="margin: 20px 0 8px; color: #10b981;">ICICI Breeze (Selenium + Telegram OTP Relay)</h4>
+                <div class="flow-diagram">
+                    <div class="flow-steps">
+                        <div class="flow-step">
+                            <div class="flow-step-box blue">
+                                <span class="flow-step-icon">🌐</span>
+                                Selenium opens<br><small>ICICI portal</small>
+                            </div>
+                        </div>
+                        <span class="flow-arrow">→</span>
+                        <div class="flow-step">
+                            <div class="flow-step-box purple">
+                                <span class="flow-step-icon">📱</span>
+                                OTP sent to<br><small>registered mobile</small>
+                            </div>
+                        </div>
+                        <span class="flow-arrow">→</span>
+                        <div class="flow-step">
+                            <div class="flow-step-box orange">
+                                <span class="flow-step-icon">🤖</span>
+                                You type OTP in<br><small>Telegram bot</small>
+                            </div>
+                        </div>
+                        <span class="flow-arrow">→</span>
+                        <div class="flow-step">
+                            <div class="flow-step-box green">
+                                <span class="flow-step-icon">🎫</span>
+                                Session Token<br><small>saved to DB</small>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <p style="font-size: 0.8rem; color: #6b7280; margin-top: 8px;">Managed by <code>BreezeSessionManager</code> singleton in <code>apps/brokers/services/breeze_session.py</code>. One auto-login attempt per day. Lock mechanism (<code>breeze_auto_login_lock</code> in <code>NseFlag</code>, 300s expiry) prevents concurrent logins.</p>
+            </div>
+
+            <div class="docs-card">
+                <h3>📂 Trade History Upload (CSV / Excel)</h3>
+                <p>Import broker trade history for P&amp;L analysis and reporting at <code>/brokers/csv-upload/</code>.</p>
+                <table class="docs-table">
+                    <thead><tr><th>Broker</th><th>File Format</th><th>Key Info</th></tr></thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>Kotak Neo</strong></td>
+                            <td>Gain/Loss CSV or XLSX (<code>Gain_Loss_A0YPQ_*.xlsx</code>)</td>
+                            <td>FY extracted from filename. Unique constraint: (broker, trading_symbol, fy).</td>
+                        </tr>
+                        <tr>
+                            <td><strong>ICICI Breeze</strong></td>
+                            <td>FNO Portfolio CSV or XLSX</td>
+                            <td>Excel auto-converted via <code>openpyxl</code>. Incremental: creates new, updates changed, skips unchanged.</td>
+                        </tr>
+                    </tbody>
+                </table>
+                <p style="font-size: 0.8rem; color: #6b7280; margin-top: 8px;">📁 <code>apps/brokers/services/csv_importers.py</code> | Model: <code>BrokerContractPnL</code></p>
             </div>
         </section>
 
@@ -1741,10 +1817,10 @@
                     </thead>
                     <tbody>
                         <tr><td><strong>7:00 AM</strong></td><td>morning-data-sync</td><td>Trendlyne data, news sentiment, market snapshot</td></tr>
-                        <tr><td><strong>8:30 AM</strong></td><td>screen-futures-opportunities</td><td>Pre-market scan: top 50 F&amp;O stocks, 12-factor scoring (read-only)</td></tr>
                         <tr><td><strong>8:55 AM</strong></td><td>setup-trading-day</td><td>Initialize trading day, verify brokers, check NSE holidays</td></tr>
                         <tr><td><strong>9:15 AM</strong></td><td>start-trading-day</td><td>Validate market opening, activate live data feed</td></tr>
-                        <tr><td><strong>9:40 AM</strong></td><td>execute-futures-algorithm</td><td>Re-validate with live prices, pick TOP 3 &rarr; Telegram for approval</td></tr>
+                        <tr><td><strong>9:30 AM</strong></td><td>screen-futures-opportunities</td><td>Live scan: top 50 F&amp;O stocks, 12-factor scoring (min_score=60, read-only). Sends candidate list to Telegram.</td></tr>
+                        <tr><td><strong>9:40 AM</strong></td><td>execute-futures-algorithm</td><td>Deep parallel chord analysis (batch_size=2, soft_time_limit=540s). Picks TOP 3 above score 65 &rarr; Telegram two-step confirmation &rarr; executes on approval.</td></tr>
                         <tr><td><strong>Every 10 min</strong></td><td>check-futures-averaging</td><td>Monitor positions for 1% averaging trigger (9:30 AM &ndash; 3:00 PM)</td></tr>
                         <tr><td><strong>Every 1 min</strong></td><td>monitor-and-manage-positions</td><td>Real-time P&amp;L, stop-loss &amp; target monitoring, exit execution</td></tr>
                         <tr><td><strong>3:25 PM</strong></td><td>close-trading-day</td><td>EOD position evaluation &amp; reconciliation</td></tr>
@@ -2806,7 +2882,7 @@ Response: { call_premium, put_premium, total_premium, spot_price }
             <div class="docs-section-header">
                 <h1>📱 Telegram Bot</h1>
                 <p>Interactive trading control from your phone</p>
-                <p style="font-size: 0.85rem; color: #6b7280; margin-top: 8px;">📁 <code>apps/alerts/services/telegram_bot.py</code> | <code>telegram_bot_menus.py</code> | <code>telegram_bot_data.py</code></p>
+                <p style="font-size: 0.85rem; color: #6b7280; margin-top: 8px;">📁 <code>apps/alerts/services/telegram_bot.py</code> | <code>telegram_bot_menus.py</code> | <code>telegram_bot_data.py</code> | <code>telegram_bot_trade.py</code></p>
             </div>
 
             <div class="docs-card">
@@ -2817,11 +2893,16 @@ Response: { call_premium, put_premium, total_premium, spot_price }
 <span class="comment"># Start the bot (only ONE instance at a time)</span>
 python manage.py run_telegram_bot --force
 
-<span class="comment"># In Telegram, send:</span>
-/start    <span class="comment"># Interactive main menu</span>
-/positions <span class="comment"># Quick jump to positions</span>
-/core     <span class="comment"># Quick jump to settings</span>
-/test     <span class="comment"># Connectivity check</span>
+<span class="comment"># Slash commands (quick jump):</span>
+/start     <span class="comment"># Interactive main menu</span>
+/positions <span class="comment"># Open positions from all brokers</span>
+/orders    <span class="comment"># Order book from all brokers</span>
+/pnl       <span class="comment"># Today's P&L summary</span>
+/trade     <span class="comment"># Manual trade entry wizard</span>
+/margin    <span class="comment"># Margin and limits overview</span>
+/analytics <span class="comment"># Performance analytics</span>
+/core      <span class="comment"># Core trading settings</span>
+/test      <span class="comment"># Connectivity check</span>
                     </code>
                 </div>
                 <p style="margin-top: 12px;"><strong>Security:</strong> Only authorized chat IDs (from <code>CredentialStore</code>) can interact with the bot. A file lock (<code>/tmp/mcube_telegram_bot.lock</code>) prevents duplicate instances.</p>
@@ -2829,7 +2910,7 @@ python manage.py run_telegram_bot --force
 
             <div class="docs-card">
                 <h3>🏠 Main Menu (<code>/start</code>)</h3>
-                <p>The main menu shows a live header with key trading metrics and a 9-button navigation grid:</p>
+                <p>The main menu shows a live header with key trading metrics and a 14-button navigation grid (7 rows × 2):</p>
 
                 <div class="code-block">
                     <code>
@@ -2838,19 +2919,22 @@ Thu 06 Feb | 10:32 AM
 ============================
 VIX: 14.2 (Normal) | Tradable: Yes
 P&amp;L: +12,450 | Positions: 3 open
+ICICI: 4.2L | Kotak: 3.1L free
 
-[📊 Positions]    [💰 P&amp;L Today]
+[🔀 Trade]        [📋 Orders]
+[📊 Positions]    [💰 P&amp;L]
 [📈 Market]       [🛡 Risk]
-[⚙️ Tasks]        [🎛 Settings]
-[🏥 System]       [⚡ Quick Actions]
-[🔄 Refresh]
+[⚙️ Tasks]        [🔧 Settings]
+[🏢 System]       [⚡ Quick Actions]
+[📉 Analytics]   [📄 History]
+[💵 Margin]       [🔄 Refresh]
                     </code>
                 </div>
-                <p style="margin-top: 12px;">Header data is fetched live from <code>NseFlag</code> (VIX, tradability, P&amp;L, positions).</p>
+                <p style="margin-top: 12px;">Header data is fetched live from <code>NseFlag</code> (VIX, tradability, P&amp;L, positions) plus live margin from both broker APIs.</p>
             </div>
 
             <div class="docs-card">
-                <h3>📋 Sub-Menus (8 total)</h3>
+                <h3>📋 Sub-Menus (13 total)</h3>
                 <table class="docs-table">
                     <thead>
                         <tr>
@@ -2861,12 +2945,22 @@ P&amp;L: +12,450 | Positions: 3 open
                     </thead>
                     <tbody>
                         <tr>
+                            <td><strong>🔀 Trade</strong> <span class="badge badge-green" style="font-size:0.7rem;">NEW</span></td>
+                            <td>Django cache (wizard state)</td>
+                            <td>10-step manual trade wizard (broker → type → symbol → expiry → option type → strike → direction → lots → order type → confirm)</td>
+                        </tr>
+                        <tr>
+                            <td><strong>📋 Orders</strong> <span class="badge badge-green" style="font-size:0.7rem;">NEW</span></td>
+                            <td>Kotak Neo &amp; Breeze order book APIs</td>
+                            <td>View pending/executed orders, cancel pending Kotak orders</td>
+                        </tr>
+                        <tr>
                             <td><strong>📊 Positions</strong></td>
                             <td>ICICI Breeze &amp; Kotak Neo APIs</td>
                             <td>View, close (batched %), average positions</td>
                         </tr>
                         <tr>
-                            <td><strong>💰 P&amp;L Today</strong></td>
+                            <td><strong>💰 P&amp;L</strong></td>
                             <td><code>DailyPnL</code> model, <code>NseFlag</code> fallback</td>
                             <td>View realized/unrealized/total, win rate</td>
                         </tr>
@@ -2886,12 +2980,12 @@ P&amp;L: +12,450 | Positions: 3 open
                             <td>Toggle on/off, run now, start/stop all</td>
                         </tr>
                         <tr>
-                            <td><strong>🎛 Settings</strong></td>
+                            <td><strong>🔧 Settings</strong></td>
                             <td><code>TradingCoreConfig</code></td>
-                            <td>Toggle futures, options strategy, lot counts</td>
+                            <td>Toggle futures, options strategy, lot counts, position sizing mode</td>
                         </tr>
                         <tr>
-                            <td><strong>🏥 System</strong></td>
+                            <td><strong>🏢 System</strong></td>
                             <td>Process checks, Redis, <code>BkLog</code></td>
                             <td>View Celery/Redis/broker health, error count</td>
                         </tr>
@@ -2899,6 +2993,21 @@ P&amp;L: +12,450 | Positions: 3 open
                             <td><strong>⚡ Quick Actions</strong></td>
                             <td>Various tasks &amp; <code>NseFlag</code></td>
                             <td>Pause/resume, close all, refresh Breeze, run algo</td>
+                        </tr>
+                        <tr>
+                            <td><strong>📉 Analytics</strong> <span class="badge badge-green" style="font-size:0.7rem;">NEW</span></td>
+                            <td><code>DailyPnL</code>, <code>BrokerContractPnL</code></td>
+                            <td>Performance summary, win rate, strategy breakdown</td>
+                        </tr>
+                        <tr>
+                            <td><strong>📄 History</strong> <span class="badge badge-green" style="font-size:0.7rem;">NEW</span></td>
+                            <td><code>BrokerContractPnL</code>, trade history</td>
+                            <td>View past trades, filter by strategy or broker</td>
+                        </tr>
+                        <tr>
+                            <td><strong>💵 Margin</strong> <span class="badge badge-green" style="font-size:0.7rem;">NEW</span></td>
+                            <td>Kotak Neo &amp; Breeze margin APIs</td>
+                            <td>View free margin, utilization, per-account breakdown</td>
                         </tr>
                     </tbody>
                 </table>
@@ -2963,7 +3072,7 @@ P&amp;L: +12,450 | Positions: 3 open
 
             <div class="docs-card">
                 <h3>🏗️ Architecture (Mixin Pattern)</h3>
-                <p>The bot is split into three files using Python mixins for clean separation of concerns:</p>
+                <p>The bot is split into four files using Python mixins for clean separation of concerns:</p>
                 <table class="docs-table">
                     <thead>
                         <tr>
@@ -2976,7 +3085,7 @@ P&amp;L: +12,450 | Positions: 3 open
                         <tr>
                             <td><code>telegram_bot.py</code></td>
                             <td><code>TelegramBotHandler</code></td>
-                            <td>Main class, callback router, position/trade handlers, OTP relay</td>
+                            <td>Main class, callback router, slash command handlers, OTP relay, new-user approval</td>
                         </tr>
                         <tr>
                             <td><code>telegram_bot_menus.py</code></td>
@@ -2986,12 +3095,17 @@ P&amp;L: +12,450 | Positions: 3 open
                         <tr>
                             <td><code>telegram_bot_data.py</code></td>
                             <td><code>DataMixin</code></td>
-                            <td>All <code>@sync_to_async</code> data fetchers (DB queries, system checks)</td>
+                            <td>All <code>@sync_to_async</code> data fetchers (DB queries, system checks, Breeze refresh)</td>
+                        </tr>
+                        <tr>
+                            <td><code>telegram_bot_trade.py</code></td>
+                            <td><code>TradeMixin</code></td>
+                            <td>Manual trade wizard (10-step flow), futures confirmation callbacks, order execution control</td>
                         </tr>
                     </tbody>
                 </table>
-                <p style="margin-top: 12px;"><strong>MRO:</strong> <code>TelegramBotHandler(MenuMixin, DataMixin)</code> &mdash; all methods accessible on <code>self</code>.</p>
-                <p><strong>Callback Routing:</strong> Prefix-based dispatch in <code>_route_callback()</code>. Key prefixes: <code>menu_</code>, <code>task_cat_</code>, <code>tt_</code> (toggle), <code>tr_</code> (run), <code>qa_</code> (quick action), <code>broker_</code>, <code>core_</code>, <code>confirm_</code>.</p>
+                <p style="margin-top: 12px;"><strong>MRO:</strong> <code>TelegramBotHandler(MenuMixin, DataMixin, TradeMixin)</code> &mdash; all methods accessible on <code>self</code>.</p>
+                <p><strong>Callback Routing:</strong> Prefix-based dispatch in <code>_route_callback()</code>. Key prefixes: <code>menu_</code>, <code>task_cat_</code>, <code>tt_</code> (toggle), <code>tr_</code> (run), <code>qa_</code> (quick action), <code>broker_</code>, <code>core_</code>, <code>confirm_</code>, <code>select_futures_</code>, <code>confirm_futures_</code>, <code>cancel_futures_exec_</code>, <code>back_futures_list</code>, <code>ord_</code>, <code>margin_</code>, <code>wizard_</code>.</p>
                 <p><strong>Thread Safety:</strong> All data fetchers use <code>@sync_to_async(thread_sensitive=False)</code> with <code>close_old_connections()</code> before every DB access.</p>
             </div>
 
@@ -3015,10 +3129,15 @@ P&amp;L: +12,450 | Positions: 3 open
                 <p style="margin-bottom: 16px; color: #4b5563;">This is the exact sequence of automated events on a weekday. Each task is a separate background job managed by Celery Beat.</p>
 
                 <!-- PRE-MARKET -->
-                <h4 style="margin: 20px 0 10px; padding: 8px 14px; background: #fef3c7; border-left: 4px solid #d97706; border-radius: 0 6px 6px 0; color: #92400e;">Phase 1: Pre-Market Preparation (7:00 &ndash; 9:14 AM)</h4>
+                <h4 style="margin: 20px 0 10px; padding: 8px 14px; background: #fef3c7; border-left: 4px solid #d97706; border-radius: 0 6px 6px 0; color: #92400e;">Phase 1: Pre-Market Preparation (6:45 &ndash; 9:14 AM)</h4>
                 <table class="docs-table">
                     <thead><tr><th style="width:90px;">Time</th><th style="width:240px;">Task</th><th>What Happens</th></tr></thead>
                     <tbody>
+                        <tr>
+                            <td><strong>6:45 AM</strong></td>
+                            <td>Broker Health Check</td>
+                            <td>Runs 2+ hours before market open to verify broker API connectivity (Kotak Neo + ICICI Breeze) and ensure sessions are live. Sends Telegram alert if either broker is unreachable.</td>
+                        </tr>
                         <tr>
                             <td><strong>7:00 AM</strong></td>
                             <td>Morning Data Sync</td>
@@ -3026,8 +3145,8 @@ P&amp;L: +12,450 | Positions: 3 open
                         </tr>
                         <tr>
                             <td><strong>8:30 AM</strong></td>
-                            <td>Futures Screening (Passive)</td>
-                            <td>Scans the top 50 F&amp;O stocks by volume and runs the 12-factor scoring model on each. Ranks them by composite score. This is a <em>read-only scan</em> &mdash; no orders are placed. Results are cached for the active algorithm to use at 9:40 AM.</td>
+                            <td>Hindsight Morning Digest</td>
+                            <td>Sends yesterday's hindsight analysis summary to Telegram &mdash; which setups would have been profitable in hindsight, useful for strategy calibration. Also reviews any open overnight positions.</td>
                         </tr>
                         <tr>
                             <td><strong>8:50 AM</strong></td>
@@ -3036,8 +3155,13 @@ P&amp;L: +12,450 | Positions: 3 open
                         </tr>
                         <tr>
                             <td><strong>8:55 AM</strong></td>
-                            <td>Setup Trading Day</td>
+                            <td>Setup Trading Day &amp; Review Overnight</td>
                             <td>The system's "morning checklist": verifies broker connectivity (Kotak Neo + ICICI Breeze), checks account margins, validates that no stale positions exist from yesterday, determines if today is tradeable (no holidays, no major events), and loads active strategy configurations.</td>
+                        </tr>
+                        <tr>
+                            <td><strong>9:00 AM</strong></td>
+                            <td>Morning Briefing &amp; Opening Volatility Monitor</td>
+                            <td>Sends a consolidated morning briefing to Telegram (market outlook, key levels, strategy plan). Simultaneously starts monitoring opening volatility every 5 minutes (9:00, 9:05, 9:10, 9:15, 9:20 AM) for gap events or unusual moves before first trades.</td>
                         </tr>
                     </tbody>
                 </table>
@@ -3058,9 +3182,19 @@ P&amp;L: +12,450 | Positions: 3 open
                             <td>Starts updating live prices every 5 minutes throughout market hours (until 3:30 PM). Feeds real-time data to the position monitor and P&amp;L calculations.</td>
                         </tr>
                         <tr>
+                            <td><strong>9:20 AM</strong></td>
+                            <td>Seed Hindsight Opening Prices</td>
+                            <td>Records opening prices for all tracked instruments — used later by the hindsight analysis engine to evaluate "what would have happened if you had traded at open."</td>
+                        </tr>
+                        <tr>
                             <td><strong>9:30 AM</strong></td>
                             <td>Evaluate Options Strategy</td>
                             <td><strong>Options Algorithm decision point.</strong> Analyzes current VIX, overnight global cues, Nifty opening range, and news sentiment. Decides: (a) Should we trade today? (b) Strangle or Broken Iron Condor? (c) What strike distances? Sends the evaluation to Telegram for your review.</td>
+                        </tr>
+                        <tr>
+                            <td><strong>9:30 AM</strong></td>
+                            <td>Screen Futures Opportunities</td>
+                            <td><strong>Futures screening.</strong> Scans the top 50 F&amp;O stocks with live prices, runs the 12-factor scoring model, and picks TOP 3 candidates above score 65. Sends them to Telegram with full analysis for your approval. No orders placed yet — execution happens only after you confirm.</td>
                         </tr>
                         <tr>
                             <td><strong>9:40 AM</strong></td>
@@ -3069,8 +3203,8 @@ P&amp;L: +12,450 | Positions: 3 open
                         </tr>
                         <tr>
                             <td><strong>9:40 AM</strong></td>
-                            <td>Screen Futures Opportunities</td>
-                            <td><strong>Futures Algorithm execution.</strong> Uses the pre-market screening results, re-validates with live prices, picks the TOP 3 candidates above score 65, and sends them to Telegram with full analysis. Waits for your approval before placing any order. On approval, executes immediately with batched ordering.</td>
+                            <td>Execute Futures Algorithm</td>
+                            <td><strong>Futures execution.</strong> If you confirmed a futures candidate via Telegram, this task places the actual futures buy/sell orders with batched execution (splits &gt; 10 lots into batches of 10 with 10-second delays). Supports "🛑 Stop Execution" mid-batch.</td>
                         </tr>
                     </tbody>
                 </table>
@@ -3096,6 +3230,11 @@ P&amp;L: +12,450 | Positions: 3 open
                             <td>Runs every 10 minutes from 9:30 AM to 3:00 PM. Checks if any active futures position has dropped 1% from entry. If so, evaluates averaging opportunity (max 3 attempts) using the protocol: 20% &rarr; 50% &rarr; 50% of remaining balance.</td>
                         </tr>
                         <tr>
+                            <td><strong>Every 15 min</strong></td>
+                            <td>Strangle Delta Monitor</td>
+                            <td>Runs every 15 minutes during market hours. Checks if the strangle delta has drifted beyond the configured threshold. Sends Telegram alert if adjustment is warranted (does not auto-execute).</td>
+                        </tr>
+                        <tr>
                             <td><strong>Continuous</strong></td>
                             <td>Position Monitor &amp; Manager</td>
                             <td><em>Runs every minute during market hours.</em> The heartbeat of the system. Updates real-time P&amp;L for all active positions, checks stop-loss and target conditions, monitors delta for options positions, and triggers exits when conditions are met.</td>
@@ -3119,10 +3258,15 @@ P&amp;L: +12,450 | Positions: 3 open
                 </table>
 
                 <!-- DAY CLOSE -->
-                <h4 style="margin: 20px 0 10px; padding: 8px 14px; background: #ede9fe; border-left: 4px solid #7c3aed; border-radius: 0 6px 6px 0; color: #5b21b6;">Phase 4: Day Close &amp; Reporting (3:25 &ndash; 5:00 PM)</h4>
+                <h4 style="margin: 20px 0 10px; padding: 8px 14px; background: #ede9fe; border-left: 4px solid #7c3aed; border-radius: 0 6px 6px 0; color: #5b21b6;">Phase 4: Day Close &amp; Reporting (3:15 &ndash; 5:00 PM)</h4>
                 <table class="docs-table">
                     <thead><tr><th style="width:90px;">Time</th><th style="width:240px;">Task</th><th>What Happens</th></tr></thead>
                     <tbody>
+                        <tr>
+                            <td><strong>3:15 PM</strong></td>
+                            <td>Alert Open Positions Pre-Close</td>
+                            <td>Sends a Telegram warning listing all still-open positions 15 minutes before market close, so you can decide whether to hold or exit manually.</td>
+                        </tr>
                         <tr>
                             <td><strong>3:25 PM</strong></td>
                             <td>Close Trading Day</td>
@@ -3132,6 +3276,16 @@ P&amp;L: +12,450 | Positions: 3 open
                             <td><strong>3:35 PM</strong></td>
                             <td>Post-Market Data Update</td>
                             <td>Downloads final closing prices, volume data, and settlement values. Updates all position records with accurate closing P&amp;L.</td>
+                        </tr>
+                        <tr>
+                            <td><strong>3:45 PM</strong></td>
+                            <td>Reconcile Positions EOD</td>
+                            <td>Cross-checks mCube's position records against the actual broker position reports (Kotak Neo + ICICI Breeze). Flags any discrepancies and sends a reconciliation report to Telegram.</td>
+                        </tr>
+                        <tr>
+                            <td><strong>3:50 PM</strong></td>
+                            <td>Update Hindsight Checkpoints</td>
+                            <td>Records end-of-day price checkpoints for the hindsight analysis engine. These are used in the next morning's digest to show "what actually happened" for each instrument screened today.</td>
                         </tr>
                         <tr>
                             <td><strong>4:00 PM</strong></td>
@@ -3415,7 +3569,12 @@ python -m celery -A mcube_ai beat \
                         </tr>
                         <tr>
                             <td><strong>OTP Request</strong></td>
-                            <td>Breeze auto-login needs OTP</td>
+                            <td>Breeze auto-login needs OTP (reply with 6-digit code)</td>
+                            <td><span class="badge badge-orange">High</span></td>
+                        </tr>
+                        <tr>
+                            <td><strong>New User Approval</strong></td>
+                            <td>Unknown Telegram user sent /start — admin approves/rejects</td>
                             <td><span class="badge badge-orange">High</span></td>
                         </tr>
                         <tr>
@@ -3439,15 +3598,17 @@ python -m celery -A mcube_ai beat \
             <div class="docs-card">
                 <h3>📰 News Impact Analyzer</h3>
                 <p>
-                    The LLM-based news analyzer processes market news and assesses potential impact on your positions:
+                    The LLM-based news analyzer processes market news and assesses potential impact on positions. Uses <strong>Ollama/vLLM</strong> (local inference — no external API calls):
                 </p>
                 <ul class="module-features">
-                    <li>Scrapes news from multiple financial sources</li>
-                    <li>Analyzes sentiment using GPT models</li>
-                    <li>Identifies stocks mentioned in news</li>
-                    <li>Assesses potential price impact</li>
-                    <li>Generates trading recommendations</li>
+                    <li>News fetched via GNews API (cached 8 hours via Django cache)</li>
+                    <li>Analyzes sentiment using local Ollama/vLLM models</li>
+                    <li>Three-layer caching: GNews API (8h) → NewsArticle DB (persisted) → In-memory (30 min)</li>
+                    <li>Market sentiment cached 30 min to prevent 50× redundant LLM calls during futures screening</li>
+                    <li>LLM validation for futures trades requires 70% confidence minimum</li>
+                    <li>Analyzed articles saved to <code>NewsArticle</code> model with <code>sentiment_score</code></li>
                 </ul>
+                <p style="font-size: 0.8rem; color: #6b7280; margin-top: 8px;">📁 <code>apps/strategies/services/strangle_news_analyzer.py</code> | <code>apps/llm/</code></p>
             </div>
 
             <div class="feature-grid">
@@ -3507,6 +3668,54 @@ python -m celery -A mcube_ai beat \
                     </tbody>
                 </table>
             </div>
+
+            <div class="docs-card">
+                <h3>🎛 TradingCoreConfig — Central Trading Control</h3>
+                <p>Singleton model (<code>apps/core/models.py — TradingCoreConfig</code>) that centralizes all trading control decisions. Accessible via Telegram Settings menu and web admin.</p>
+
+                <h4 style="margin: 16px 0 8px;">Position Sizing Modes</h4>
+                <table class="docs-table">
+                    <thead><tr><th>Mode</th><th>Behavior</th></tr></thead>
+                    <tbody>
+                        <tr>
+                            <td><span class="badge badge-blue">TEST</span></td>
+                            <td>Always trades 1 lot regardless of margin. Safe for testing new strategies.</td>
+                        </tr>
+                        <tr>
+                            <td><span class="badge badge-purple">MANUAL</span></td>
+                            <td>Fixed lot count set by you in the config. Ignores margin calculations.</td>
+                        </tr>
+                        <tr>
+                            <td><span class="badge badge-green">AUTO</span></td>
+                            <td>Margin-based sizing: uses <code>get_lots_for_trade()</code> with available margin and margin-per-lot. Respects the 50% margin rule.</td>
+                        </tr>
+                        <tr>
+                            <td><span class="badge badge-orange">SIMULATED</span></td>
+                            <td>Paper trading. Full analysis runs but no orders are placed. Positions recorded as simulated.</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <h4 style="margin: 16px 0 8px;">Notification Levels</h4>
+                <table class="docs-table">
+                    <thead><tr><th>Level</th><th>Behavior</th></tr></thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>FULL_CONTROL</strong></td>
+                            <td>Confirm everything via Telegram before execution. Maximum oversight.</td>
+                        </tr>
+                        <tr>
+                            <td><strong>SUPERVISED</strong></td>
+                            <td>Confirm only major actions (new positions, large orders). Minor adjustments auto-execute.</td>
+                        </tr>
+                        <tr>
+                            <td><strong>AUTONOMOUS</strong></td>
+                            <td>Notifications only — no confirmation required. All approved actions execute automatically.</td>
+                        </tr>
+                    </tbody>
+                </table>
+                <p style="font-size: 0.8rem; color: #6b7280; margin-top: 8px;">Check mode: <code>config.requires_confirmation()</code>, <code>config.is_simulated()</code>, <code>config.is_auto_sizing()</code>.</p>
+            </div>
         </section>
 
         <!-- API Section -->
@@ -3531,9 +3740,11 @@ POST /trading/trigger/execute-strangle/  <span class="comment"># Execute strangl
 POST /trading/trigger/place-future-order/  <span class="comment"># Place futures order</span>
 
 <span class="comment"># Broker Authentication</span>
-POST /brokers/kotak/otp/            <span class="comment"># Request Kotak OTP</span>
-POST /brokers/kotak/verify/         <span class="comment"># Verify Kotak OTP</span>
-POST /brokers/breeze/login/         <span class="comment"># Breeze login</span>
+GET  /brokers/kotak/login/          <span class="comment"># Kotak Neo v2 login page (TOTP+MPIN)</span>
+POST /brokers/kotak/login/          <span class="comment"># Submit Kotak Neo v2 credentials</span>
+POST /brokers/breeze/login/         <span class="comment"># Breeze session token login</span>
+GET  /brokers/csv-upload/           <span class="comment"># Broker trade history CSV/Excel upload dashboard</span>
+POST /brokers/api/upload-csv/       <span class="comment"># Upload CSV/Excel (Kotak or Breeze)</span>
 
 <span class="comment"># Analytics</span>
 GET /analytics/historical-analysis/  <span class="comment"># Historical data</span>
@@ -3596,13 +3807,28 @@ GET /analytics/insights/            <span class="comment"># Smart insights</span
                         </tr>
                         <tr>
                             <td><strong>Broker Integration</strong></td>
-                            <td><code>apps/brokers/</code></td>
-                            <td>Kotak Neo, ICICI Breeze APIs</td>
+                            <td><code>apps/brokers/integrations/</code></td>
+                            <td>Kotak Neo (kotak_neo/), ICICI Breeze (breeze.py)</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Broker Services</strong></td>
+                            <td><code>apps/brokers/services/</code></td>
+                            <td>breeze_session.py (singleton session manager), auth_manager.py</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Core Services</strong></td>
+                            <td><code>apps/core/services/</code></td>
+                            <td>trading_context.py (unified context), decorators, task_logger</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Trade Confirmation</strong></td>
+                            <td><code>apps/trading/services/</code></td>
+                            <td>trade_confirmation.py (Telegram approval flow), position_sizer.py</td>
                         </tr>
                         <tr>
                             <td><strong>Tools</strong></td>
                             <td><code>tools/</code></td>
-                            <td>neo.py, breeze.py, telegram.py</td>
+                            <td>neo.py (Kotak Neo v2 client), breeze.py, telegram.py</td>
                         </tr>
                     </tbody>
                 </table>
@@ -3649,6 +3875,26 @@ GET /analytics/insights/            <span class="comment"># Smart insights</span
                         <tr>
                             <td><code>tasks.py</code> / <code>tasks_strangle.py</code></td>
                             <td>Exit logic, Celery background tasks</td>
+                        </tr>
+                        <tr>
+                            <td><code>trading_context.py</code></td>
+                            <td>TradingContext — unified context for tasks &amp; views (account, config, positions)</td>
+                        </tr>
+                        <tr>
+                            <td><code>trade_confirmation.py</code></td>
+                            <td>TradeConfirmationService — Telegram approval flow, futures/options confirmation</td>
+                        </tr>
+                        <tr>
+                            <td><code>telegram_bot_trade.py</code></td>
+                            <td>TradeMixin — manual trade wizard, futures confirmation callbacks</td>
+                        </tr>
+                        <tr>
+                            <td><code>tools/neo.py</code></td>
+                            <td>NeoAPI class — Kotak Neo v2 auth (TOTP+MPIN), session restore, order/quote APIs</td>
+                        </tr>
+                        <tr>
+                            <td><code>apps/brokers/services/breeze_session.py</code></td>
+                            <td>BreezeSessionManager — singleton, Selenium auto-login, daily attempt limit</td>
                         </tr>
                     </tbody>
                 </table>
@@ -5060,21 +5306,21 @@ threshold = clamp(threshold, [0.10, 0.35])
                     </thead>
                     <tbody>
                         <tr>
-                            <td><strong>1. Pre-Market Scan</strong></td>
-                            <td>8:30 AM</td>
+                            <td><strong>1. Live Scan</strong></td>
+                            <td>9:30 AM</td>
                             <td>
-                                Screen top 50 F&O stocks by volume.
+                                Screen top 50 F&amp;O stocks by volume with live prices.
                                 Run 12-factor composite scoring (300 pts scaled to 100).
-                                Apply hard reject filters (MWPL < 80%, Volatility < 60%, Piotroski >= 4, etc.).
-                                Cache results for Phase 2.
+                                Apply hard reject filters (MWPL &lt; 80%, Volatility &lt; 60%, Piotroski &gt;= 4, etc.).
+                                Send candidate list to Telegram (min_score=60).
                             </td>
                         </tr>
                         <tr>
-                            <td><strong>2. Execution</strong></td>
+                            <td><strong>2. Deep Analysis</strong></td>
                             <td>9:40 AM</td>
                             <td>
-                                Re-validate with live prices.
-                                Filter: composite_score >= 65 (configurable).
+                                Parallel chord analysis (batch_size=2, soft_time_limit=540s).
+                                Filter: composite_score &gt;= 65 (configurable).
                                 Rank by score, take top 3 candidates.
                                 Verify ONE POSITION rule and margin availability.
                             </td>
@@ -5090,12 +5336,13 @@ threshold = clamp(threshold, [0.10, 0.35])
                             </td>
                         </tr>
                         <tr>
-                            <td><strong>4. Approval & Entry</strong></td>
+                            <td><strong>4. Two-Step Approval &amp; Entry</strong></td>
                             <td>User-dependent</td>
                             <td>
-                                Manual mode: wait for Telegram [Approve] tap.
-                                Calculate position size (50% margin, beta/vol/score adjusted).
-                                Place market order. Batching for > 10 lots.
+                                Step 1: Selection screen with TOP 3 + "View Details" buttons.
+                                Step 2: Detail view with full analysis + "✅ Confirm Trade" button.
+                                On confirm: calculate position size (50% margin, beta/vol/score adjusted).
+                                Place market order. Batching for &gt; 10 lots (10 per batch, 10-sec delay).
                                 Set initial SL/target from SR engine (<code>compute_initial_sl_target()</code>).
                             </td>
                         </tr>
