@@ -31,8 +31,10 @@
     <!-- Quick Actions Bar -->
     {% include 'core/celery/_quick_actions.html' %}
 
-    <!-- 24-Hour Timeline -->
+    <!-- 24-Hour Timeline (hidden on mobile — too wide, replaced by task row timestamps) -->
+    <div class="mobile-hide">
     {% include 'core/celery/_timeline.html' %}
+    </div>
 
     <!-- Recent Executions -->
     {% include 'core/celery/_recent_executions.html' %}

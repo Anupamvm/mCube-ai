@@ -13,6 +13,9 @@
     <link rel="stylesheet" href="{% static 'core/css/design-system.css' %}">
     <link rel="stylesheet" href="{% static 'core/css/main.css' %}">
 
+    <!-- Mobile Enhancement Layer (media-query isolated — zero desktop impact) -->
+    <link rel="stylesheet" href="{% static 'core/css/mobile.css' %}">
+
     <!-- Page-specific CSS -->
     {% block extra_css %}{% endblock %}
 
@@ -171,6 +174,8 @@
 
     <!-- JavaScript -->
     <script src="{% static 'core/js/main.js' %}"></script>
+    <!-- Mobile Enhancement Layer -->
+    <script src="{% static 'core/js/mobile.js' %}"></script>
     {% block extra_js %}{% endblock %}
 </body>
 </html>

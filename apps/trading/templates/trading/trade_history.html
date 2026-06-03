@@ -298,7 +298,7 @@
 
             <!-- Closed Trades Table -->
             <div class="table-responsive">
-                <table class="table table-hover">
+                <table class="table table-hover mobile-cards">
                     <thead class="table-light">
                         <tr>
                             <th data-bs-toggle="tooltip" title="Date when the trade was closed">Date</th>
@@ -314,23 +314,23 @@
                     </thead>
                     <tbody>
                         {% for trade in closed_trades %}
-                        <tr class="trade-row">
-                            <td>{{ trade.closed_at|date:"d M Y" }}</td>
-                            <td>
+                        <tr class="trade-row {% if trade.net_pnl >= 0 %}profit{% else %}loss{% endif %}">
+                            <td data-label="Date">{{ trade.closed_at|date:"d M Y" }}</td>
+                            <td data-label="Instrument">
                                 <span class="fw-semibold">{{ trade.instrument }}</span>
                                 <br><small class="text-muted">{{ trade.quantity }} lots</small>
                             </td>
-                            <td>{{ trade.get_strategy_display }}</td>
-                            <td>{{ trade.direction }}</td>
-                            <td class="text-end">{{ trade.entry_price|floatformat:2 }}</td>
-                            <td class="text-end">{{ trade.exit_price|floatformat:2 }}</td>
-                            <td class="text-end {% if trade.net_pnl >= 0 %}pnl-positive{% else %}pnl-negative{% endif %}">
+                            <td data-label="Strategy" class="mc-secondary">{{ trade.get_strategy_display }}</td>
+                            <td data-label="Direction">{{ trade.direction }}</td>
+                            <td data-label="Entry" class="text-end">{{ trade.entry_price|floatformat:2 }}</td>
+                            <td data-label="Exit" class="text-end mc-secondary">{{ trade.exit_price|floatformat:2 }}</td>
+                            <td data-label="P&amp;L" class="text-end {% if trade.net_pnl >= 0 %}pnl-positive{% else %}pnl-negative{% endif %}">
                                 {{ trade.net_pnl|floatformat:0 }}
                             </td>
-                            <td>
+                            <td data-label="Outcome">
                                 <span class="badge-status badge-{{ trade.outcome_color }}">{{ trade.outcome }}</span>
                             </td>
-                            <td>
+                            <td data-label="">
                                 <a href="{% url 'trading:trade_detail' trade.id %}" class="btn btn-sm btn-link">Details</a>
                             </td>
                         </tr>

@@ -748,7 +748,7 @@
             </h2>
         </div>
 
-        <table class="suggestions-table">
+        <table class="suggestions-table mobile-cards">
             <thead>
                 <tr>
                     <th data-bs-toggle="tooltip" title="Unique suggestion identifier">ID</th>
@@ -765,10 +765,10 @@
                 {% if suggestions %}
                     {% for suggestion in suggestions %}
                         <tr>
-                            <td>
+                            <td data-label="ID">
                                 <span class="suggestion-id">#{{ suggestion.id }}</span>
                             </td>
-                            <td>
+                            <td data-label="Score">
                                 {% with score=suggestion.composite_score %}
                                     {% if score >= 80 %}
                                         <span class="score-badge green">{{ score }}</span>
@@ -781,7 +781,7 @@
                                     {% endif %}
                                 {% endwith %}
                             </td>
-                            <td>
+                            <td data-label="Instrument">
                                 <div class="instrument-cell">
                                     <span class="instrument-name">{{ suggestion.instrument }}</span>
                                     <span class="instrument-type">
@@ -792,7 +792,7 @@
                                     </span>
                                 </div>
                             </td>
-                            <td>
+                            <td data-label="Direction">
                                 {% if suggestion.direction == 'LONG' %}
                                     <span class="badge badge-long">&#9650; LONG</span>
                                 {% elif suggestion.direction == 'SHORT' %}
@@ -801,7 +801,7 @@
                                     <span class="badge badge-neutral">{{ suggestion.direction }}</span>
                                 {% endif %}
                             </td>
-                            <td>
+                            <td data-label="R:R">
                                 {% if suggestion.risk_reward_ratio %}
                                     {% with rr=suggestion.risk_reward_ratio %}
                                         {% if rr >= 2 %}
@@ -816,7 +816,7 @@
                                     <span class="rr-text" style="color: #9ca3af;">-</span>
                                 {% endif %}
                             </td>
-                            <td>
+                            <td data-label="Status">
                                 {% if suggestion.status == 'PENDING' or suggestion.status == 'PENDING_CONFIRMATION' %}
                                     <span class="badge badge-pending">&#9203; Pending</span>
                                 {% elif suggestion.status == 'APPROVED' %}
@@ -831,10 +831,10 @@
                                     <span class="badge badge-expired">&#8987; Expired</span>
                                 {% endif %}
                             </td>
-                            <td>
+                            <td data-label="Created" class="mc-secondary">
                                 <span class="date-cell">{{ suggestion.created_at|date:"M d, H:i" }}</span>
                             </td>
-                            <td>
+                            <td data-label="Actions">
                                 <div class="action-buttons">
                                     <a href="{% url 'trading:suggestion_detail' suggestion.id %}" class="action-btn view" title="View Details">
                                         &#128065;

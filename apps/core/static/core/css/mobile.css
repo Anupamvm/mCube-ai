@@ -1,0 +1,1083 @@
+/*
+ * mobile.css — mCube Mobile Enhancement Layer
+ *
+ * Loaded after design-system.css and main.css.
+ * Every rule is inside a media query so desktop (≥1025px) is untouched.
+ * Breakpoints:
+ *   768–1024px  →  Tablet: single-column adjustments, touch targets
+ *   ≤767px      →  Mobile: full redesign (bottom nav, card tables, bottom sheets)
+ */
+
+/* ============================================================
+   REDUCE MOTION ACCESSIBILITY
+   ============================================================ */
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        transition-duration: 0.01ms !important;
+    }
+}
+
+/* ============================================================
+   1. TABLET (768–1024px) — STRUCTURAL ENHANCEMENTS ONLY
+   ============================================================ */
+
+@media (min-width: 768px) and (max-width: 1024px) {
+    /* Hamburger touch target */
+    .mobile-menu-toggle {
+        padding: 10px !important;
+        min-width: 44px;
+        min-height: 44px;
+        justify-content: center;
+    }
+
+    /* Nav max-height give room for all items */
+    .main-nav.active {
+        max-height: 800px !important;
+    }
+
+    /* Touch-sized nav links */
+    .nav-link, .dropdown-toggle {
+        padding: 0.875rem 1rem !important;
+        min-height: 44px;
+    }
+
+    /* Charts — single column on tablet */
+    .charts-grid {
+        grid-template-columns: 1fr !important;
+    }
+
+    .chart-card canvas {
+        max-height: 240px !important;
+    }
+
+    /* Summary cards — 2-up on tablet */
+    .summary-cards-grid,
+    [class*="summary-grid"] {
+        grid-template-columns: repeat(2, 1fr) !important;
+    }
+
+    /* Filter rows — wrap nicely */
+    .filter-section .row,
+    .filters-row {
+        row-gap: 0.75rem;
+    }
+
+    /* Analytics dashboard filters */
+    .dashboard-filters {
+        flex-wrap: wrap;
+        gap: 0.5rem;
+    }
+
+    .dashboard-filters select,
+    .dashboard-filters .form-select {
+        min-width: 140px;
+    }
+
+    /* Tables — ensure horizontal scroll */
+    .table-responsive,
+    .positions-table-wrapper {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+}
+
+/* ============================================================
+   2. MOBILE FOUNDATION (≤767px)
+   ============================================================ */
+
+@media (max-width: 767px) {
+
+    /* Body padding prevents content hiding behind bottom nav */
+    body {
+        padding-bottom: 70px !important;
+    }
+
+    /* Container padding */
+    .container,
+    .container-fluid {
+        padding-left: 0.875rem !important;
+        padding-right: 0.875rem !important;
+    }
+
+    /* Main content */
+    .main-content {
+        padding: 0.75rem 0 !important;
+    }
+
+    /* Hide desktop hamburger (replaced by bottom nav drawer) */
+    .mobile-menu-toggle {
+        display: none !important;
+    }
+
+    /* ============================================================
+       3. BOTTOM NAVIGATION BAR (.mc-bottom-nav)
+          Injected by mobile.js
+       ============================================================ */
+
+    .mc-bottom-nav {
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        height: 60px;
+        background: var(--darker, #0f172a);
+        display: flex;
+        align-items: stretch;
+        z-index: 1050;
+        border-top: 1px solid rgba(255, 255, 255, 0.1);
+        box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.3);
+    }
+
+    .mc-bottom-nav-item {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 2px;
+        text-decoration: none;
+        color: rgba(255, 255, 255, 0.6);
+        font-size: 0.625rem;
+        font-weight: 500;
+        letter-spacing: 0.3px;
+        padding: 0.25rem 0;
+        transition: color 0.2s ease, background 0.2s ease;
+        cursor: pointer;
+        border: none;
+        background: transparent;
+        position: relative;
+        -webkit-tap-highlight-color: transparent;
+    }
+
+    .mc-bottom-nav-item.active {
+        color: var(--primary-light, #60a5fa);
+    }
+
+    .mc-bottom-nav-item.active::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 20%;
+        right: 20%;
+        height: 2px;
+        background: var(--primary-light, #60a5fa);
+        border-radius: 0 0 2px 2px;
+    }
+
+    .mc-bottom-nav-item:active {
+        background: rgba(255, 255, 255, 0.06);
+    }
+
+    .mc-bottom-nav-icon {
+        font-size: 1.25rem;
+        line-height: 1;
+    }
+
+    .mc-bottom-nav-label {
+        font-size: 0.6rem;
+        line-height: 1;
+    }
+
+    /* ============================================================
+       4. SLIDE-OUT DRAWER (.mc-nav-drawer)
+          Injected by mobile.js
+       ============================================================ */
+
+    .mc-drawer-backdrop {
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.55);
+        z-index: 1060;
+        opacity: 0;
+        transition: opacity 0.25s ease;
+        pointer-events: none;
+    }
+
+    .mc-drawer-backdrop.open {
+        opacity: 1;
+        pointer-events: all;
+    }
+
+    .mc-nav-drawer {
+        position: fixed;
+        top: 0;
+        right: 0;
+        bottom: 0;
+        width: 82vw;
+        max-width: 340px;
+        background: var(--darker, #0f172a);
+        z-index: 1070;
+        transform: translateX(100%);
+        transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        display: flex;
+        flex-direction: column;
+    }
+
+    .mc-nav-drawer.open {
+        transform: translateX(0);
+    }
+
+    .mc-drawer-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 1.25rem 1rem 1rem;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        flex-shrink: 0;
+    }
+
+    .mc-drawer-title {
+        color: var(--white, #fff);
+        font-size: 1rem;
+        font-weight: 700;
+        margin: 0;
+    }
+
+    .mc-drawer-close {
+        background: none;
+        border: none;
+        color: rgba(255, 255, 255, 0.7);
+        font-size: 1.5rem;
+        cursor: pointer;
+        padding: 0.25rem;
+        line-height: 1;
+        min-width: 44px;
+        min-height: 44px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: var(--radius-md, 8px);
+        -webkit-tap-highlight-color: transparent;
+    }
+
+    .mc-drawer-close:active { background: rgba(255,255,255,0.1); }
+
+    .mc-drawer-nav {
+        flex: 1;
+        padding: 0.75rem 0;
+    }
+
+    .mc-drawer-section-label {
+        padding: 0.75rem 1.25rem 0.375rem;
+        font-size: 0.6875rem;
+        font-weight: 700;
+        color: rgba(255, 255, 255, 0.4);
+        text-transform: uppercase;
+        letter-spacing: 0.7px;
+    }
+
+    .mc-drawer-link {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        padding: 0.75rem 1.25rem;
+        color: rgba(255, 255, 255, 0.85);
+        text-decoration: none;
+        font-size: 0.9375rem;
+        font-weight: 500;
+        min-height: 48px;
+        transition: background 0.15s ease, color 0.15s ease;
+        -webkit-tap-highlight-color: transparent;
+    }
+
+    .mc-drawer-link:active,
+    .mc-drawer-link:hover {
+        background: rgba(255, 255, 255, 0.07);
+        color: var(--white, #fff);
+    }
+
+    .mc-drawer-link.highlight {
+        color: var(--success, #10b981);
+    }
+
+    .mc-drawer-divider {
+        height: 1px;
+        background: rgba(255, 255, 255, 0.08);
+        margin: 0.5rem 0;
+    }
+
+    /* ============================================================
+       5. TYPOGRAPHY SCALE
+       ============================================================ */
+
+    h1, .page-title { font-size: 1.375rem !important; }
+    h2 { font-size: 1.25rem !important; }
+    h3 { font-size: 1.125rem !important; }
+
+    .page-subtitle {
+        font-size: 0.8125rem !important;
+    }
+
+    /* ============================================================
+       6. TOUCH TARGETS — ALL INTERACTIVE ELEMENTS
+       ============================================================ */
+
+    .btn,
+    button,
+    [role="button"],
+    .filter-tab,
+    .nav-link,
+    .dropdown-toggle,
+    a.btn {
+        min-height: 44px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    /* Small contextual buttons keep compact width but tall */
+    .btn-sm,
+    .btn.btn-sm {
+        min-height: 36px;
+        padding: 0.375rem 0.75rem;
+        font-size: 0.8125rem;
+    }
+
+    /* ============================================================
+       7. FORM INPUTS (prevent iOS zoom: must be ≥16px)
+       ============================================================ */
+
+    input[type="text"],
+    input[type="number"],
+    input[type="date"],
+    input[type="email"],
+    input[type="password"],
+    input[type="search"],
+    input[type="tel"],
+    select,
+    textarea,
+    .form-control,
+    .form-select {
+        font-size: 16px !important;
+        min-height: 44px;
+        padding: 0.625rem 0.875rem;
+    }
+
+    textarea,
+    textarea.form-control {
+        min-height: 80px;
+    }
+
+    label,
+    .form-label {
+        font-size: 0.875rem;
+        font-weight: 600;
+        margin-bottom: 0.375rem;
+    }
+
+    /* 2-column input rows → single column */
+    .input-row,
+    .form-row,
+    .filter-row {
+        grid-template-columns: 1fr !important;
+    }
+
+    /* Bootstrap grid form rows */
+    .row.g-3 > [class*="col-"] {
+        width: 100% !important;
+        flex: 0 0 100% !important;
+        max-width: 100% !important;
+    }
+
+    /* ============================================================
+       8. MODALS → BOTTOM SHEETS
+       ============================================================ */
+
+    /* Bootstrap modals */
+    .modal-dialog {
+        position: fixed !important;
+        bottom: 0 !important;
+        top: auto !important;
+        left: 0 !important;
+        right: 0 !important;
+        margin: 0 !important;
+        max-width: 100% !important;
+        width: 100% !important;
+        transform: translateY(0) !important;
+    }
+
+    .modal.fade .modal-dialog {
+        transform: translateY(100%) !important;
+        transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
+    }
+
+    .modal.show .modal-dialog {
+        transform: translateY(0) !important;
+    }
+
+    .modal-content {
+        border-radius: 1rem 1rem 0 0 !important;
+        border: none !important;
+        max-height: 88vh;
+        overflow-y: auto;
+    }
+
+    .modal-header {
+        border-radius: 1rem 1rem 0 0;
+        padding: 1.25rem 1.25rem 1rem;
+    }
+
+    /* Bottom sheet drag handle */
+    .modal-content::before {
+        content: '';
+        display: block;
+        width: 40px;
+        height: 4px;
+        background: rgba(0, 0, 0, 0.2);
+        border-radius: 2px;
+        margin: 0.75rem auto 0;
+    }
+
+    /* Custom JS edit modal (system_positions) */
+    .edit-modal {
+        position: fixed !important;
+        top: auto !important;
+        bottom: 60px !important;
+        left: 0 !important;
+        right: 0 !important;
+        width: 100% !important;
+        max-width: 100% !important;
+        max-height: 70vh;
+        border-radius: 1rem 1rem 0 0 !important;
+        overflow-y: auto;
+        z-index: 1080 !important;
+        box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.25);
+    }
+
+    .edit-modal-content {
+        border-radius: 1rem 1rem 0 0;
+    }
+
+    /* ============================================================
+       9. TOOLTIPS — DISABLED ON TOUCH (hover doesn't work)
+       ============================================================ */
+
+    [data-bs-toggle="tooltip"] {
+        cursor: default;
+    }
+
+    /* ============================================================
+       10. HEADER — SLIMMER ON MOBILE
+       ============================================================ */
+
+    .header-content {
+        padding: 0.625rem 0 !important;
+        gap: 0.75rem !important;
+    }
+
+    .logo-image {
+        height: 36px !important;
+    }
+
+    .logo-content h1 {
+        font-size: 18px !important;
+    }
+
+    .tagline {
+        display: none !important;
+    }
+
+    /* Keep user icon but hide name (already handled at 1024px) */
+    .user-name { display: none !important; }
+    .user-badge { display: none !important; }
+
+    /* Compact user icon */
+    .user-info {
+        padding: 0.375rem 0.5rem !important;
+    }
+
+    /* Footer — hide on mobile (not critical for trading app) */
+    .main-footer {
+        display: none !important;
+    }
+
+    /* ============================================================
+       11. HOME DASHBOARD
+       ============================================================ */
+
+    /* Stat cards — 2-column grid */
+    .dashboard-stats {
+        grid-template-columns: repeat(2, 1fr) !important;
+        gap: 0.75rem !important;
+    }
+
+    .stat-card {
+        padding: 1rem !important;
+    }
+
+    .stat-value {
+        font-size: 1.375rem !important;
+    }
+
+    /* Hero section — tighten */
+    .hero-section {
+        padding: 1.5rem 0 !important;
+    }
+
+    .hero-title {
+        font-size: 1.5rem !important;
+    }
+
+    .hero-subtitle,
+    .hero-description {
+        font-size: 0.875rem !important;
+    }
+
+    .hero-actions {
+        flex-direction: column;
+        gap: 0.75rem;
+    }
+
+    .hero-actions .btn {
+        width: 100%;
+    }
+
+    /* Quick actions — 2-column */
+    .quick-actions {
+        grid-template-columns: repeat(2, 1fr) !important;
+        gap: 0.75rem !important;
+    }
+
+    .quick-action-card {
+        padding: 1rem !important;
+    }
+
+    /* Features — stack */
+    .features-grid,
+    .features-section .row {
+        grid-template-columns: 1fr !important;
+    }
+
+    /* Docs — 2-column */
+    .docs-grid {
+        grid-template-columns: repeat(2, 1fr) !important;
+    }
+
+    /* System health */
+    .system-health-card {
+        padding: 1rem !important;
+    }
+
+    /* ============================================================
+       12. ANALYTICS DASHBOARD
+       ============================================================ */
+
+    /* Charts — single column, capped height */
+    .charts-grid {
+        grid-template-columns: 1fr !important;
+    }
+
+    .chart-card canvas,
+    .chart-container canvas {
+        max-height: 200px !important;
+    }
+
+    .chart-card {
+        min-height: 260px;
+    }
+
+    /* Summary cards — 2-column */
+    .summary-cards-grid {
+        grid-template-columns: repeat(2, 1fr) !important;
+        gap: 0.625rem !important;
+    }
+
+    /* Analytics filter row */
+    .dashboard-filters {
+        flex-wrap: wrap !important;
+        gap: 0.5rem !important;
+    }
+
+    .dashboard-filters select,
+    .dashboard-filters .form-select {
+        flex: 1 1 45% !important;
+        min-width: 0 !important;
+    }
+
+    /* Collapsible filter toggle (added by mobile.js) */
+    .mc-filter-toggle {
+        width: 100%;
+        background: var(--lighter, #f8fafc);
+        border: 1px solid var(--light, #f1f5f9);
+        border-radius: var(--radius-md, 8px);
+        padding: 0.75rem 1rem;
+        font-size: 0.9rem;
+        font-weight: 600;
+        color: var(--dark, #1e293b);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        cursor: pointer;
+        min-height: 44px;
+        margin-bottom: 0.75rem;
+    }
+
+    .mc-filter-toggle .mc-filter-arrow {
+        transition: transform 0.2s ease;
+        font-size: 0.75rem;
+    }
+
+    .mc-filter-toggle.open .mc-filter-arrow {
+        transform: rotate(180deg);
+    }
+
+    #analytics-filters.mc-filters-hidden {
+        display: none !important;
+    }
+
+    /* ============================================================
+       13. TABLE → CARD TRANSFORM (.mobile-cards)
+       ============================================================ */
+
+    table.mobile-cards {
+        border-collapse: separate !important;
+        border-spacing: 0 0.625rem !important;
+        background: transparent !important;
+        width: 100% !important;
+    }
+
+    table.mobile-cards thead {
+        display: none !important;
+    }
+
+    table.mobile-cards tbody tr {
+        display: block !important;
+        background: var(--white, #fff) !important;
+        border-radius: var(--radius-lg, 12px) !important;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08) !important;
+        margin-bottom: 0.75rem !important;
+        padding: 0.875rem 1rem !important;
+        border: 1px solid var(--light, #f1f5f9) !important;
+        border-left: 4px solid var(--primary, #2563eb) !important;
+        position: relative !important;
+    }
+
+    /* Color-coded card borders by row state */
+    table.mobile-cards tbody tr.profit,
+    table.mobile-cards tbody tr.row-open { border-left-color: var(--success, #10b981) !important; }
+
+    table.mobile-cards tbody tr.loss { border-left-color: var(--danger, #ef4444) !important; }
+
+    table.mobile-cards tbody tr td {
+        display: flex !important;
+        justify-content: space-between !important;
+        align-items: center !important;
+        padding: 0.3125rem 0 !important;
+        border-bottom: 1px solid var(--light, #f1f5f9) !important;
+        min-height: 32px !important;
+        gap: 0.5rem;
+        font-size: 0.875rem !important;
+    }
+
+    table.mobile-cards tbody tr td:last-child {
+        border-bottom: none !important;
+        padding-bottom: 0 !important;
+    }
+
+    /* Column label from data-label attribute */
+    table.mobile-cards tbody tr td::before {
+        content: attr(data-label);
+        font-size: 0.6875rem !important;
+        font-weight: 700 !important;
+        color: var(--gray, #64748b) !important;
+        text-transform: uppercase !important;
+        letter-spacing: 0.4px !important;
+        flex: 0 0 42% !important;
+        white-space: nowrap;
+    }
+
+    /* Value side */
+    table.mobile-cards tbody tr td > *,
+    table.mobile-cards tbody tr td > span {
+        text-align: right;
+    }
+
+    /* Secondary columns (hidden by default, shown with Show More) */
+    table.mobile-cards tbody tr td.mc-secondary {
+        display: none !important;
+    }
+
+    table.mobile-cards tbody tr.mc-expanded td.mc-secondary {
+        display: flex !important;
+    }
+
+    /* Show More toggle button (injected by mobile.js) */
+    .mc-row-toggle {
+        display: block;
+        width: 100%;
+        text-align: center;
+        padding: 0.5rem 0 0.125rem;
+        font-size: 0.75rem;
+        font-weight: 600;
+        color: var(--primary, #2563eb);
+        cursor: pointer;
+        border: none;
+        background: transparent;
+        -webkit-tap-highlight-color: transparent;
+    }
+
+    /* Table wrappers reset on mobile */
+    .positions-table-wrapper,
+    .table-responsive {
+        background: transparent !important;
+        border-radius: 0 !important;
+        box-shadow: none !important;
+        overflow-x: visible !important;
+        padding: 0 !important;
+    }
+
+    /* ============================================================
+       14. SYSTEM POSITIONS PAGE
+       ============================================================ */
+
+    .positions-page .page-header {
+        flex-direction: column !important;
+        gap: 0.75rem !important;
+        margin-bottom: 1rem !important;
+    }
+
+    .positions-page .summary-cards {
+        flex-direction: row !important;
+        gap: 0.75rem !important;
+        width: 100%;
+    }
+
+    .positions-page .summary-card {
+        flex: 1;
+        padding: 0.75rem !important;
+    }
+
+    .positions-page .summary-value {
+        font-size: 1rem !important;
+    }
+
+    /* Filter tabs — scrollable horizontally */
+    .filter-tabs {
+        overflow-x: auto !important;
+        -webkit-overflow-scrolling: touch !important;
+        white-space: nowrap !important;
+        flex-wrap: nowrap !important;
+        scrollbar-width: none;
+        padding-bottom: 2px !important;
+    }
+
+    .filter-tabs::-webkit-scrollbar { display: none; }
+
+    .filter-tab {
+        flex-shrink: 0 !important;
+        padding: 0.625rem 0.875rem !important;
+        font-size: 0.875rem !important;
+    }
+
+    /* ============================================================
+       15. TRADE HISTORY PAGE
+       ============================================================ */
+
+    /* Tabs — scrollable */
+    .trade-tabs,
+    .nav-tabs {
+        overflow-x: auto !important;
+        -webkit-overflow-scrolling: touch !important;
+        flex-wrap: nowrap !important;
+        scrollbar-width: none;
+    }
+
+    .trade-tabs::-webkit-scrollbar,
+    .nav-tabs::-webkit-scrollbar { display: none; }
+
+    .trade-tabs .nav-item,
+    .nav-tabs .nav-item {
+        flex-shrink: 0 !important;
+    }
+
+    /* Filter section — stack vertically */
+    .filter-section {
+        padding: 0.875rem !important;
+    }
+
+    /* Quick date buttons — wrap freely */
+    .date-quick-select {
+        gap: 0.375rem !important;
+    }
+
+    .date-quick-select .btn {
+        min-height: 36px !important;
+        font-size: 0.75rem !important;
+    }
+
+    /* Stats cards row */
+    .stat-card {
+        margin-bottom: 0.5rem !important;
+    }
+
+    /* Pagination */
+    .pagination {
+        flex-wrap: wrap;
+        gap: 0.25rem;
+    }
+
+    .pagination .page-link {
+        min-width: 40px;
+        min-height: 40px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    /* ============================================================
+       16. SUGGESTIONS LIST PAGE
+       ============================================================ */
+
+    .stats-grid {
+        grid-template-columns: repeat(2, 1fr) !important;
+        gap: 0.75rem !important;
+    }
+
+    .stat-card {
+        padding: 1rem !important;
+    }
+
+    /* Action buttons inside card — full width */
+    table.mobile-cards td .btn,
+    table.mobile-cards td a.btn {
+        width: 100%;
+        justify-content: center;
+        min-height: 40px !important;
+    }
+
+    /* ============================================================
+       17. OPTION CHAIN — HORIZONTAL SCROLL
+       ============================================================ */
+
+    .option-chain-wrapper {
+        overflow-x: auto !important;
+        -webkit-overflow-scrolling: touch !important;
+        margin: 0 -0.875rem !important;
+        padding: 0 0.875rem !important;
+    }
+
+    .option-chain-wrapper table {
+        min-width: 680px;
+    }
+
+    /* Sticky strike column */
+    .option-chain-wrapper th.col-strike,
+    .option-chain-wrapper td.col-strike {
+        position: sticky;
+        left: 0;
+        z-index: 2;
+        background: var(--white, #fff);
+    }
+
+    .option-chain-wrapper thead th.col-strike {
+        background: #f5f5f5;
+        z-index: 3;
+    }
+
+    /* ============================================================
+       18. CELERY TASKS PAGE
+       ============================================================ */
+
+    /* Status bar — compact */
+    .celery-status-bar,
+    .task-status-bar {
+        padding: 0.5rem 0.875rem !important;
+        font-size: 0.75rem !important;
+        overflow-x: auto;
+        white-space: nowrap;
+    }
+
+    /* Timeline — hidden on mobile */
+    .mobile-hide,
+    .timeline-section,
+    .task-timeline {
+        display: none !important;
+    }
+
+    /* Task row actions */
+    .task-row {
+        padding: 0.75rem 0.875rem !important;
+    }
+
+    .task-row .task-actions {
+        flex-wrap: wrap;
+        gap: 0.375rem;
+    }
+
+    /* Workflow hero cards — stack */
+    .workflow-cards,
+    .workflow-groups {
+        grid-template-columns: 1fr !important;
+        gap: 0.75rem !important;
+    }
+
+    /* Logs slide-in panel — full width on mobile */
+    .logs-panel,
+    .slide-panel {
+        width: 100% !important;
+        max-width: 100% !important;
+    }
+
+    /* Config panel */
+    .config-panel-grid {
+        grid-template-columns: 1fr !important;
+    }
+
+    /* Category sections */
+    .category-tasks-grid,
+    .task-grid {
+        grid-template-columns: 1fr !important;
+    }
+
+    /* ============================================================
+       19. ANALYTICS PAGES (patterns, learning, insights)
+       ============================================================ */
+
+    .analytics-summary-grid,
+    .insights-grid {
+        grid-template-columns: 1fr !important;
+    }
+
+    /* ============================================================
+       20. BROKER PAGES (login, dashboard)
+       ============================================================ */
+
+    /* Login form — center & constrain */
+    .login-card,
+    .auth-card {
+        margin: 1rem auto !important;
+        padding: 1.5rem 1.25rem !important;
+    }
+
+    /* Broker data cards */
+    .broker-data-grid {
+        grid-template-columns: 1fr !important;
+    }
+
+    /* ============================================================
+       21. ALGO TEST FORMS
+       ============================================================ */
+
+    /* 2-column grid pairs → single column */
+    .input-row {
+        display: grid !important;
+        grid-template-columns: 1fr !important;
+        gap: 0.75rem !important;
+    }
+
+    /* Result/score boxes */
+    .score-grid,
+    .result-grid {
+        grid-template-columns: 1fr !important;
+    }
+
+    /* Decision box */
+    .decision-box {
+        padding: 1rem !important;
+        font-size: 1rem !important;
+    }
+
+    /* ============================================================
+       22. LLM CHAT PAGE
+       ============================================================ */
+
+    /* Chat already mobile-friendly; just ensure input is accessible */
+    .chat-input-area {
+        padding: 0.75rem !important;
+    }
+
+    .chat-input-area textarea {
+        font-size: 16px !important;
+    }
+
+    /* ============================================================
+       23. SYSTEM CONFIG / SETTINGS
+       ============================================================ */
+
+    .config-grid,
+    .settings-grid {
+        grid-template-columns: 1fr !important;
+    }
+
+    fieldset {
+        padding: 1rem !important;
+    }
+
+    /* ============================================================
+       24. CSV UPLOAD DASHBOARD
+       ============================================================ */
+
+    .upload-area {
+        padding: 1.5rem 1rem !important;
+    }
+
+    .upload-results-table-wrapper {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    /* ============================================================
+       25. PAGE HEADERS (common pattern across many pages)
+       ============================================================ */
+
+    .page-header {
+        flex-direction: column !important;
+        gap: 0.75rem !important;
+        padding: 1rem 0 !important;
+    }
+
+    .page-header-content {
+        flex-direction: column !important;
+        gap: 0.75rem !important;
+    }
+
+    .header-actions,
+    .page-header .header-actions {
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        width: 100%;
+    }
+
+    .header-actions .btn {
+        flex: 1;
+        min-width: 120px;
+    }
+
+    /* ============================================================
+       26. BREADCRUMB — COMPACT
+       ============================================================ */
+
+    .breadcrumb-container,
+    .breadcrumb-nav {
+        padding: 0.5rem 0 !important;
+        font-size: 0.8125rem !important;
+    }
+
+    /* ============================================================
+       27. ALERTS / MESSAGES
+       ============================================================ */
+
+    .alert,
+    .messages-container .alert {
+        padding: 0.75rem 1rem !important;
+        font-size: 0.875rem !important;
+        border-radius: var(--radius-md, 8px) !important;
+    }
+
+    /* ============================================================
+       28. DOCUMENTATION PAGE
+       ============================================================ */
+
+    .docs-grid,
+    .documentation-grid {
+        grid-template-columns: 1fr !important;
+    }
+
+    .doc-card {
+        padding: 1rem !important;
+    }
+
+} /* end @media (max-width: 767px) */

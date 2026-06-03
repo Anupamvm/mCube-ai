@@ -121,12 +121,12 @@
 {% if option_chain %}
 <div class="card">
     <h3>Option Chain for {{ selected_expiry|date:"d-M-Y" }} ({{ option_chain|length }} strikes)</h3>
-    <div style="overflow-x: auto;">
-        <table>
+    <div class="option-chain-wrapper" style="overflow-x: auto;">
+        <table style="min-width: 680px;">
             <thead>
                 <tr>
                     <th colspan="5" style="text-align: center; background-color: #e8f5e9;" data-bs-toggle="tooltip" title="Call options - give the holder the right to BUY the underlying at the strike price. Bullish bets.">CALLS <span class="info-tooltip">?</span></th>
-                    <th style="text-align: center; background-color: #fff3e0;">STRIKE</th>
+                    <th class="col-strike" style="text-align: center; background-color: #fff3e0;">STRIKE</th>
                     <th colspan="5" style="text-align: center; background-color: #ffebee;" data-bs-toggle="tooltip" title="Put options - give the holder the right to SELL the underlying at the strike price. Bearish bets.">PUTS <span class="info-tooltip">?</span></th>
                 </tr>
                 <tr>
@@ -137,7 +137,7 @@
                     <th data-bs-toggle="tooltip" title="Bid Price: Highest price a buyer is willing to pay. You can sell at this price immediately.">Bid</th>
                     <th data-bs-toggle="tooltip" title="Ask Price: Lowest price a seller is willing to accept. You can buy at this price immediately.">Ask</th>
                     <!-- Strike -->
-                    <th data-bs-toggle="tooltip" title="Strike Price: The price at which the option can be exercised. Options near spot price (ATM) have highest time value.">Price</th>
+                    <th class="col-strike" data-bs-toggle="tooltip" title="Strike Price: The price at which the option can be exercised. Options near spot price (ATM) have highest time value.">Price</th>
                     <!-- Put columns -->
                     <th data-bs-toggle="tooltip" title="Ask Price: Lowest price a seller is willing to accept for this put option.">Ask</th>
                     <th data-bs-toggle="tooltip" title="Bid Price: Highest price a buyer is willing to pay for this put option.">Bid</th>
@@ -155,8 +155,8 @@
                     <td style="font-weight: bold;">₹{{ oc.call_ltp|floatformat:2 }}</td>
                     <td>₹{{ oc.call_bid|floatformat:2 }}</td>
                     <td>₹{{ oc.call_ask|floatformat:2 }}</td>
-                    <!-- Strike -->
-                    <td style="text-align: center; font-weight: bold; background-color: #f5f5f5;">{{ oc.strike_price|floatformat:2 }}</td>
+                    <!-- Strike (sticky on mobile) -->
+                    <td class="col-strike" style="text-align: center; font-weight: bold; background-color: #f5f5f5;">{{ oc.strike_price|floatformat:2 }}</td>
                     <!-- Put data -->
                     <td>₹{{ oc.put_ask|floatformat:2 }}</td>
                     <td>₹{{ oc.put_bid|floatformat:2 }}</td>

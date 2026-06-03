@@ -43,7 +43,7 @@
     <!-- Positions Table -->
     {% if position_data %}
     <div class="positions-table-wrapper">
-        <table class="positions-table">
+        <table class="positions-table mobile-cards">
             <thead>
                 <tr>
                     <th class="col-instrument">Instrument</th>
@@ -68,7 +68,7 @@
                 {% for item in position_data %}
                 <tr class="position-row {% if item.position.status == 'OPEN' %}row-open{% elif item.position.status == 'CLOSED' %}row-closed{% endif %}" data-id="{{ item.position.id }}">
                     <!-- Instrument -->
-                    <td class="col-instrument">
+                    <td class="col-instrument" data-label="Instrument">
                         <div class="instrument-name">{{ item.position.label }}</div>
                         {% if item.position.expiry_date %}
                         <div class="instrument-expiry">Exp: {{ item.position.expiry_date|date:"d M" }}</div>
@@ -76,7 +76,7 @@
                     </td>
 
                     <!-- Broker -->
-                    <td class="col-broker">
+                    <td class="col-broker mc-secondary" data-label="Broker">
                         {% if item.position.account %}
                         <span class="broker-badge broker-{{ item.position.account.broker|lower }}">{{ item.broker_display }}</span>
                         {% else %}
@@ -85,12 +85,12 @@
                     </td>
 
                     <!-- Direction -->
-                    <td class="col-dir">
+                    <td class="col-dir" data-label="Dir">
                         <span class="dir-badge dir-{{ item.position.direction|lower }}">{{ item.position.direction }}</span>
                     </td>
 
                     <!-- Quantity (lots) -->
-                    <td class="col-qty">
+                    <td class="col-qty" data-label="Lots">
                         <span class="editable-field" data-field="quantity" data-id="{{ item.position.id }}" data-type="int" data-lot-size="{{ item.position.lot_size }}">{{ item.position.lots }}</span>
                         {% if item.position.lot_size > 1 %}
                         <div class="lot-info">x{{ item.position.lot_size }}</div>
@@ -98,15 +98,15 @@
                     </td>
 
                     <!-- Entry Price (editable) -->
-                    <td class="col-price">
+                    <td class="col-price" data-label="Entry">
                         <span class="editable-field" data-field="entry_price" data-id="{{ item.position.id }}" data-type="decimal">{{ item.position.entry_price|floatformat:2 }}</span>
                     </td>
 
                     <!-- Current Price -->
-                    <td class="col-price">{{ item.position.current_price|floatformat:2 }}</td>
+                    <td class="col-price" data-label="CMP">{{ item.position.current_price|floatformat:2 }}</td>
 
                     <!-- P&L -->
-                    <td class="col-pnl {% if item.position.status == 'OPEN' %}{% if item.position.unrealized_pnl > 0 %}profit{% elif item.position.unrealized_pnl < 0 %}loss{% endif %}{% else %}{% if item.position.realized_pnl > 0 %}profit{% elif item.position.realized_pnl < 0 %}loss{% endif %}{% endif %}">
+                    <td class="col-pnl {% if item.position.status == 'OPEN' %}{% if item.position.unrealized_pnl > 0 %}profit{% elif item.position.unrealized_pnl < 0 %}loss{% endif %}{% else %}{% if item.position.realized_pnl > 0 %}profit{% elif item.position.realized_pnl < 0 %}loss{% endif %}{% endif %}" data-label="P&amp;L">
                         {% if item.position.status == 'OPEN' %}
                             {{ item.position.unrealized_pnl|floatformat:2 }}
                         {% else %}
@@ -115,12 +115,12 @@
                     </td>
 
                     <!-- P&L % -->
-                    <td class="col-pnl {% if item.pnl_pct != None %}{% if item.pnl_pct > 0 %}profit{% elif item.pnl_pct < 0 %}loss{% endif %}{% endif %}">
+                    <td class="col-pnl mc-secondary {% if item.pnl_pct != None %}{% if item.pnl_pct > 0 %}profit{% elif item.pnl_pct < 0 %}loss{% endif %}{% endif %}" data-label="P&amp;L %">
                         {% if item.pnl_pct != None %}{{ item.pnl_pct }}%{% else %}-{% endif %}
                     </td>
 
                     <!-- Stop Loss (editable) -->
-                    <td class="col-editable">
+                    <td class="col-editable" data-label="Stop Loss">
                         <span class="editable-field {% if item.position.is_stop_loss_hit %}sl-hit{% endif %}" data-field="stop_loss" data-id="{{ item.position.id }}" data-type="decimal">
                             {% if item.position.stop_loss %}{{ item.position.stop_loss|floatformat:2 }}{% else %}<span class="not-set">Set SL</span>{% endif %}
                         </span>
@@ -130,12 +130,12 @@
                     </td>
 
                     <!-- SL Distance -->
-                    <td class="col-sl-info {% if item.sl_distance != None %}{% if item.sl_distance <= 1 %}danger-zone{% elif item.sl_distance <= 3 %}warning-zone{% endif %}{% endif %}" data-sl-distance="{{ item.position.id }}">
+                    <td class="col-sl-info mc-secondary {% if item.sl_distance != None %}{% if item.sl_distance <= 1 %}danger-zone{% elif item.sl_distance <= 3 %}warning-zone{% endif %}{% endif %}" data-sl-distance="{{ item.position.id }}" data-label="SL Away">
                         {% if item.sl_distance != None %}{{ item.sl_distance }}%{% else %}-{% endif %}
                     </td>
 
                     <!-- Target (editable) -->
-                    <td class="col-editable">
+                    <td class="col-editable mc-secondary" data-label="Target">
                         <span class="editable-field" data-field="target" data-id="{{ item.position.id }}" data-type="decimal">
                             {% if item.position.target %}{{ item.position.target|floatformat:2 }}{% else %}<span class="not-set">Set Tgt</span>{% endif %}
                         </span>
@@ -145,27 +145,27 @@
                     </td>
 
                     <!-- Target Distance -->
-                    <td class="col-tgt-info" data-tgt-distance="{{ item.position.id }}">
+                    <td class="col-tgt-info mc-secondary" data-tgt-distance="{{ item.position.id }}" data-label="Tgt Away">
                         {% if item.target_distance != None %}{{ item.target_distance }}%{% else %}-{% endif %}
                     </td>
 
                     <!-- Strategy (editable) -->
-                    <td class="col-strategy">
+                    <td class="col-strategy mc-secondary" data-label="Strategy">
                         <span class="editable-field" data-field="strategy_type" data-id="{{ item.position.id }}" data-type="text">{% if item.position.strategy_type %}{{ item.position.strategy_type }}{% else %}<span class="not-set">-</span>{% endif %}</span>
                     </td>
 
                     <!-- Notes (editable) -->
-                    <td class="col-notes">
+                    <td class="col-notes mc-secondary" data-label="Notes">
                         <span class="editable-field editable-notes" data-field="notes" data-id="{{ item.position.id }}" data-type="text">{% if item.position.notes %}{{ item.position.notes|truncatewords:8 }}{% else %}<span class="not-set">Add note</span>{% endif %}</span>
                     </td>
 
                     <!-- Status -->
-                    <td class="col-status">
+                    <td class="col-status" data-label="Status">
                         <span class="status-badge status-{{ item.position.status|lower }}">{{ item.position.get_status_display }}</span>
                     </td>
 
                     <!-- Entry Time -->
-                    <td class="col-time">
+                    <td class="col-time mc-secondary" data-label="Entry Time">
                         {% if item.position.entry_time %}
                             {{ item.position.entry_time|date:"d M H:i" }}
                         {% else %}
