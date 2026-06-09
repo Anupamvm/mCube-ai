@@ -434,6 +434,7 @@ class BreezeSessionManager:
                     "No more auto-login attempts today",
                     "Please login manually via the web UI",
                 ],
+                keyboard=[[{'text': '🔄 Retry Login', 'callback_data': 'login_breeze'}]],
                 collapsible=False,
             )
         except Exception as e:

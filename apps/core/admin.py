@@ -10,12 +10,23 @@ from .models import (
 )
 
 
+@admin.action(description='Reset auto-login status (allow retry today)')
+def reset_auto_login_status_action(modeladmin, request, queryset):
+    from apps.brokers.utils.auth_manager import reset_auto_login_status
+    count = 0
+    for obj in queryset:
+        reset_auto_login_status(obj.service)
+        count += 1
+    modeladmin.message_user(request, f'Auto-login status reset for {count} credential(s). The next login attempt will proceed normally.')
+
+
 @admin.register(CredentialStore)
 class CredentialStoreAdmin(admin.ModelAdmin):
     list_display = ['service', 'name', 'username', 'auto_login_status', 'auto_login_date', 'created_at', 'last_session_update']
     list_filter = ['service', 'auto_login_status']
     search_fields = ['service', 'name', 'username']
     readonly_fields = ['created_at', 'last_session_update']
+    actions = [reset_auto_login_status_action]
 
     fieldsets = (
         ('Service Information', {

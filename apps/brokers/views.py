@@ -364,6 +364,10 @@ def breeze_update_credentials(request):
         if auto_login:
             try:
                 from apps.brokers.services.breeze_auto_login import auto_login_breeze
+                from apps.brokers.utils.auth_manager import reset_auto_login_status
+
+                # User-triggered — clear any previous daily limit state
+                reset_auto_login_status('breeze')
 
                 # Run the auto-login process (skip validation since we know token is expired)
                 success, message = auto_login_breeze(
@@ -417,6 +421,10 @@ def breeze_auto_login(request):
 
     try:
         from apps.brokers.services.breeze_auto_login import auto_login_breeze
+        from apps.brokers.utils.auth_manager import reset_auto_login_status
+
+        # User-triggered — clear any previous daily limit state
+        reset_auto_login_status('breeze')
 
         # Run the auto-login process
         success, message = auto_login_breeze(
