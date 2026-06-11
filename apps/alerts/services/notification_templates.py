@@ -108,14 +108,14 @@ TemplateRegistry.register('CIRCUIT_BREAKER', NotificationTemplate(
 TemplateRegistry.register('SYSTEM_STATUS', NotificationTemplate(
     default_status='INFO',
     default_priority='INFO',
-    collapsible=False,
+    collapsible=True,
     service_group='system',
 ))
 
 TemplateRegistry.register('JOB_COMPLETED', NotificationTemplate(
     default_status='SUCCESS',
     default_priority='INFO',
-    collapsible=False,
+    collapsible=True,
     service_group='system',
 ))
 
@@ -130,6 +130,14 @@ TemplateRegistry.register('CRITICAL_ERROR', NotificationTemplate(
 TemplateRegistry.register('TRADE_EXECUTED', NotificationTemplate(
     default_status='EXECUTED',
     default_priority='HIGH',
+    title_format='Position Closed',
+    collapsible=True,
+    service_group='position_monitor',
+))
+
+TemplateRegistry.register('EXIT_EXECUTED', NotificationTemplate(
+    default_status='EXECUTED',
+    default_priority='INFO',
     title_format='Position Closed',
     collapsible=True,
     service_group='position_monitor',
@@ -158,6 +166,7 @@ TemplateRegistry.register('TASK_ERROR', NotificationTemplate(
 TemplateRegistry.register('BROKER_HEALTH', NotificationTemplate(
     default_status='WARNING',
     default_priority='HIGH',
+    buttons='BROKER_LOGIN',
     dedup_key_format='broker_health_{instrument}',
     service_group='system',
 ))

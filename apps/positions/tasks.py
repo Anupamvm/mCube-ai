@@ -647,7 +647,6 @@ def _monitor_paper_position(position, config, now, today):
                     'P&L': f'₹{pnl:,.0f}',
                     'Exit': f'₹{exit_price:,.2f}',
                 },
-                collapsible=False,
             )
 
 
@@ -759,7 +758,6 @@ def reconcile_positions_eod():
                 title='EOD Reconciliation',
                 task='reconcile_positions_eod',
                 context=['All positions closed. Clean slate for tomorrow.'],
-                collapsible=False,
             )
             return {'success': True, 'open_count': 0, 'status': 'clean'}
 

@@ -650,7 +650,6 @@ class TradeConfirmationService:
                 title='Timeout - Expired',
                 status='WARNING',
                 context=[reason, 'Will try again tomorrow.'],
-                collapsible=False,
             )
 
             message = format_notification(payload)
@@ -702,7 +701,6 @@ class TradeConfirmationService:
                 instrument=suggestion.instrument,
                 metrics={'Score': f'{current_score}/100'},
                 context=['Opportunity no longer meets criteria.'],
-                collapsible=False,
             )
 
             message = format_notification(payload)
@@ -974,7 +972,7 @@ class TradeConfirmationService:
                 logger.info(f"SIMULATED: Would execute {symbol} {direction} {final_lots} lots")
                 notify('SYSTEM_STATUS', title='Simulated Futures Trade', instrument=symbol,
                        metrics={'Direction': direction, 'Lots': str(final_lots)},
-                       context=['Paper trade - no real order placed.'], collapsible=False)
+                       context=['Paper trade - no real order placed.'])
                 suggestion.status = 'SIMULATED'
                 suggestion.save()
                 return {'success': True, 'simulated': True, 'lots': final_lots}
@@ -1017,8 +1015,7 @@ class TradeConfirmationService:
                 # Send progress update
                 total_batches = execution_control.total_batches
                 notify('SYSTEM_STATUS', title='Starting Futures Execution', instrument=symbol,
-                       metrics={'Total Lots': str(final_lots), 'Batches': str(total_batches)},
-                       collapsible=False)
+                       metrics={'Total Lots': str(final_lots), 'Batches': str(total_batches)})
 
                 # Progress callback
                 def on_progress(completed, total, orders):
@@ -1135,7 +1132,7 @@ class TradeConfirmationService:
                     ]
 
                 notify('TRADE_EXECUTED', title='Futures Trade Executed', instrument=symbol,
-                       metrics=exec_metrics, context=exec_context, collapsible=False)
+                       metrics=exec_metrics, context=exec_context)
 
                 return {
                     'success': True,
@@ -1160,7 +1157,7 @@ class TradeConfirmationService:
 
                 error_msg = str(order_result.get('error', 'Unknown'))[:200]
                 notify('TASK_ERROR', title='Futures Trade Failed', instrument=symbol,
-                       context=[error_msg], collapsible=False)
+                       context=[error_msg])
 
                 return order_result
 
@@ -1234,8 +1231,7 @@ class TradeConfirmationService:
             logger.info(f"[PAPER] Options trade executed: {strategy} {lots} lots, premium={total_premium}")
             notify('TRADE_EXECUTED', title=f'[PAPER] Options {strategy} Executed',
                    instrument=suggestion.instrument or 'NIFTY',
-                   metrics={'Lots': str(lots), 'Premium': f'₹{total_premium:,.2f}'},
-                   collapsible=False)
+                   metrics={'Lots': str(lots), 'Premium': f'₹{total_premium:,.2f}'})
 
             return {
                 'success': True,
@@ -1314,8 +1310,7 @@ class TradeConfirmationService:
 
             logger.info(f"[PAPER] Futures trade executed: {symbol} {direction} {lots} lots @ {fill_price}")
             notify('TRADE_EXECUTED', title='[PAPER] Futures Trade Executed', instrument=symbol,
-                   metrics={'Lots': str(lots), 'Price': f'₹{fill_price:,.2f}'},
-                   collapsible=False)
+                   metrics={'Lots': str(lots), 'Price': f'₹{fill_price:,.2f}'})
 
             return {
                 'success': True,

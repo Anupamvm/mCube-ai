@@ -119,13 +119,11 @@ def evaluate_kotak_strangle_entry():
                     'Premium': f"₹{result['details']['premium_collected']:,.0f}",
                     'Margin': f"₹{result['details']['margin_used']:,.0f}",
                 },
-                collapsible=False,
             )
         else:
             notify('SYSTEM_STATUS',
                 title='Kotak Strangle Entry Skipped',
                 context=[result['message']],
-                collapsible=False,
             )
 
         logger.info("=" * 80)
@@ -473,13 +471,11 @@ def setup_trading_day(self):
                     'SGX Change': f"{setup.sgx_nifty_change or 'N/A'}%",
                 },
                 context=['Day cleared for trading. Waiting for market open validation at 9:15 AM.'],
-                collapsible=False,
             )
         else:
             notify('SYSTEM_STATUS',
                 title='No Trading Today',
                 context=[setup.setup_reason],
-                collapsible=False,
             )
 
         task_logger.success("Trading day setup completed", context={
@@ -669,7 +665,6 @@ def start_trading_day(self):
                 title='Trading Day Started',
                 metrics=metrics,
                 context=strategy_lines,
-                collapsible=False,
             )
         else:
             notify('RISK_WARNING',
@@ -808,7 +803,6 @@ def evaluate_options_strategy(self):
                     f"Reason: {', '.join(strategy_reason)}",
                     'Will re-evaluate at 9:40 AM.',
                 ],
-                collapsible=False,
             )
         else:
             if config.requires_confirmation('ENTRY'):
@@ -824,7 +818,6 @@ def evaluate_options_strategy(self):
                     'Mode': config.get_notification_level_display_short(),
                 },
                 context=[next_step],
-                collapsible=False,
             )
 
         task_logger.success("Options strategy evaluation completed", context={
@@ -880,7 +873,6 @@ def start_options_trade(self):
             notify('SYSTEM_STATUS',
                 title='Options Trade Skipped',
                 context=['Trading disabled in Core Config'],
-                collapsible=False,
             )
             return {'success': True, 'skipped': True, 'reason': 'Options trading disabled'}
 
@@ -1015,7 +1007,6 @@ def start_options_trade(self):
                     'Movement': f"{current_movement:.2f}%",
                 },
                 context=['Paper trade mode - no real orders placed.'],
-                collapsible=False,
             )
             return {'success': True, 'simulated': True, 'lots': lots, 'strategy': strategy}
 
@@ -1594,7 +1585,6 @@ def close_trading_day(self):
                     'Hypothetical P&L': f"₹{total_pnl:,.0f}",
                 },
                 context=['Paper trade mode - no real closes.'],
-                collapsible=False,
             )
             return {'success': True, 'simulated': True, 'positions': option_positions.count()}
 
@@ -1723,7 +1713,6 @@ def close_trading_day(self):
             title='Trading Day Closed',
             status='SUCCESS' if close_results['total_pnl'] >= 0 else 'WARNING',
             metrics=close_metrics,
-            collapsible=False,
         )
 
         task_logger.success("Trading day close completed", context={
@@ -1860,7 +1849,6 @@ def check_futures_averaging():
                                     'New Avg': f"₹{result.get('new_avg', 0):,.2f}",
                                 },
                                 position_id=position.id,
-                                collapsible=False,
                             )
                         else:
                             logger.warning(f"Auto-averaging failed for {position.id}: {result.get('error')}")
@@ -2486,7 +2474,6 @@ def execute_futures_algorithm(self, this_month_volume=1000, next_month_volume=80
                 notify('SYSTEM_STATUS',
                     title='Futures Algorithm Skipped',
                     context=['Trading disabled in Core Config'],
-                    collapsible=False,
                 )
                 return {'success': True, 'skipped': True, 'reason': 'Futures trading disabled'}
 
@@ -2574,7 +2561,6 @@ def execute_futures_algorithm(self, this_month_volume=1000, next_month_volume=80
                 title='Futures Algorithm',
                 metrics={'Contracts': '0'},
                 context=['No contracts match volume criteria'],
-                collapsible=False,
             )
             return {'success': True, 'candidates_found': 0, 'qualified': 0}
 

@@ -145,7 +145,6 @@ def health_check_brokers():
                 "Market opens in ~2.5 hours",
                 "Resolve authentication issues before 09:15",
             ],
-            collapsible=False,
         )
     else:
         active_brokers = [k for k, v in results.items() if v == 'OK']
@@ -229,7 +228,6 @@ def monitor_opening_volatility():
                     'Gap': f"{gap_pct:+.2f}%",
                 },
                 context=reasons + ["Strategy evaluation may be deferred until market stabilises"],
-                collapsible=False,
             )
 
         return {
@@ -314,7 +312,6 @@ def review_overnight_positions():
                     "Review positions before market opens",
                     "Consider tightening stop-losses",
                 ],
-                collapsible=False,
             )
         else:
             logger.info(

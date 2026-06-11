@@ -117,7 +117,6 @@ def check_confirmation_timeouts(self):
                             "Position remains open",
                             "MANUAL ACTION REQUIRED",
                         ],
-                        collapsible=False,
                     )
                     suggestion.escalated = True
                     suggestion.save(update_fields=['escalated'])

@@ -304,7 +304,6 @@ def execute_averaging(position: Position, current_price: Decimal) -> Tuple[bool,
                     'New SL': f"₹{new_stop_loss:,.2f} (0.5% from avg)",
                 },
                 context=[f"Averaging Count: {position.averaging_count}/3"],
-                collapsible=False,
             )
 
             logger.info("✅ Alert sent")

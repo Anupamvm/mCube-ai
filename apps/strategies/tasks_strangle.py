@@ -236,7 +236,6 @@ def premarket_data_fetch():
             title='Pre-Market Task Failed',
             task='premarket_data_fetch',
             context=[str(e)[:200]],
-            collapsible=False,
         )
         return {'success': False, 'error': str(e)}
 
@@ -361,7 +360,6 @@ def market_opening_validation():
                 'VIX': f"{vix_current:.2f}",
             },
             context=opening_context if opening_context else None,
-            collapsible=False,
         )
 
         return {
@@ -377,7 +375,6 @@ def market_opening_validation():
             title='Market Opening Validation Failed',
             task='market_opening_validation',
             context=[str(e)[:200]],
-            collapsible=False,
         )
         return {'success': False, 'error': str(e)}
 
@@ -448,7 +445,6 @@ def trade_start_evaluation():
                     'Threshold': '±0.5%',
                 },
                 context=["Movement too small, waiting for better conditions"],
-                collapsible=False,
             )
             return {
                 'success': True,
@@ -483,7 +479,6 @@ def trade_start_evaluation():
                     "Entry conditions met",
                     "Staggered entries scheduled (9:30-10:00)",
                 ],
-                collapsible=False,
             )
         else:
             logger.warning(f"❌ Entry evaluation failed: {entry_result['message']}")
@@ -492,7 +487,6 @@ def trade_start_evaluation():
                 task='trade_start_evaluation',
                 metrics={'Movement': f"{movement_percent:+.2f}% (substantial)"},
                 context=[f"Reason: {entry_result['message']}"],
-                collapsible=False,
             )
 
         logger.info("=" * 80)
@@ -510,7 +504,6 @@ def trade_start_evaluation():
             title='Trade Start Evaluation Failed',
             task='trade_start_evaluation',
             context=[str(e)[:200]],
-            collapsible=False,
         )
         return {'success': False, 'error': str(e)}
 
@@ -677,7 +670,6 @@ def day_close_reconciliation():
                 'Active Positions': str(active_positions.count()),
                 'Total P&L': f"₹{total_pnl:,.2f}",
             },
-            collapsible=False,
         )
 
         return {
@@ -692,7 +684,6 @@ def day_close_reconciliation():
             title='Day Close Failed',
             task='day_close_reconciliation',
             context=[str(e)[:200]],
-            collapsible=False,
         )
         return {'success': False, 'error': str(e)}
 
@@ -865,7 +856,6 @@ def analyze_day():
             title='Day Analysis Failed',
             task='analyze_day',
             context=[str(e)[:200]],
-            collapsible=False,
         )
         return {'success': False, 'error': str(e)}
 

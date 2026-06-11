@@ -278,7 +278,6 @@ def monitor_delta(position: Position, delta_threshold: Decimal = Decimal('300'))
                         'Put': f"{position.put_strike}PE (Δ={put_delta:.4f})",
                     },
                     context=[recommendation[:200] if recommendation else "Adjustment needed"],
-                    collapsible=False,
                 )
 
                 alert_sent = True

@@ -272,6 +272,7 @@ class BreezeAutoLogin:
         self.driver = None
         self.credentials = None
         self._telegram_otp_sent = False
+        self._driver_error = None
 
     def _load_credentials(self) -> bool:
         """Load Breeze credentials from database."""
@@ -297,6 +298,17 @@ class BreezeAutoLogin:
     def _setup_driver(self) -> bool:
         """Setup Chrome WebDriver."""
         try:
+            # Ensure the correct ChromeDriver version is installed for the local Chrome build.
+            # chromedriver-autoinstaller is a no-op if the driver is already present and
+            # matches the Chrome version; it only downloads when there's a mismatch.
+            try:
+                import chromedriver_autoinstaller
+                chromedriver_autoinstaller.install()
+            except ImportError:
+                pass  # Not installed — fall back to Selenium's built-in manager
+            except Exception as ci_err:
+                logger.debug(f"chromedriver-autoinstaller: {ci_err}")
+
             from selenium import webdriver
             from selenium.webdriver.chrome.options import Options
 
@@ -323,6 +335,7 @@ class BreezeAutoLogin:
 
         except Exception as e:
             logger.error(f"Failed to initialize Chrome WebDriver: {e}")
+            self._driver_error = str(e)
             return False
 
     def _get_login_url(self) -> str:
@@ -643,6 +656,7 @@ class BreezeAutoLogin:
                     'Reply with the OTP digits (4-6 digits)',
                     'Or enter it directly in the browser window',
                 ],
+                keyboard=[],   # suppress web-login button; OTP is entered via Telegram reply
                 collapsible=False,
             )
 
@@ -846,7 +860,8 @@ class BreezeAutoLogin:
 
             # Setup browser
             if not self._setup_driver():
-                return False, "Failed to initialize Chrome browser. Ensure Chrome is installed."
+                detail = self._driver_error or "Chrome binary not found"
+                return False, f"Failed to initialize Chrome browser: {detail}. Ensure Chrome is installed and chromedriver is accessible."
 
             # Navigate to login page
             login_url = self._get_login_url()

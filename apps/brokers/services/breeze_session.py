@@ -431,11 +431,9 @@ class BreezeSessionManager:
                 instrument=name,
                 task='breeze_session_get_client',
                 context=[
-                    "No more auto-login attempts today",
-                    "Please login manually via the web UI",
+                    "Daily auto-login limit reached",
+                    "Tap below to open the login page",
                 ],
-                keyboard=[[{'text': '🔄 Retry Login', 'callback_data': 'login_breeze'}]],
-                collapsible=False,
             )
         except Exception as e:
             logger.warning(f"Failed to send login-failed notification: {e}")

@@ -61,11 +61,21 @@ _TASK_LABELS = {
     'close_trading_day':                 'close trading day',
     'send_morning_briefing':             'morning brief',
     'health_check_brokers':              'broker health',
+    'broker_health_check':               'broker health',
     'evaluate_kotak_strangle_entry':     'strangle entry',
     'evaluate_kotak_strangle_exit':      'strangle exit',
     'batch_options_averaging':           'options averaging',
     'review_overnight_positions':        'overnight review',
     'monitor_opening_volatility':        'opening volatility',
+    'breeze_session_get_client':         'broker auth',
+    'refresh_breeze_session':            'session refresh',
+    'premarket_data_fetch':              'pre-market data',
+    'market_opening_validation':         'market open',
+    'trade_start_evaluation':            'trade start',
+    'check_futures_averaging':           'futures averaging',
+    'start_options_trade':               'options trade',
+    'aggregate_futures_results':         'futures screening',
+    'run_day_analysis':                  'day analysis',
 }
 
 

@@ -180,7 +180,6 @@ def check_risk_limits_all_accounts():
                                         'Drawdown': f"{drawdown_pct:.1f}% of capital",
                                     },
                                     context=["Approaching circuit breaker threshold"],
-                                    collapsible=False,
                                 )
 
                         elif drawdown_pct >= _INTRADAY_WARN_PCT:
@@ -197,7 +196,6 @@ def check_risk_limits_all_accounts():
                                         'Drawdown': f"{drawdown_pct:.1f}% of capital",
                                     },
                                     context=["Monitor open positions closely"],
-                                    collapsible=False,
                                 )
                 except Exception as dd_err:
                     logger.error(
@@ -250,7 +248,6 @@ def check_risk_limits_all_accounts():
                                 'Drawdown': f"{portfolio_dd_pct:.1f}% of total capital",
                             },
                             context=["Total unrealized loss across all accounts", "Review all open positions"],
-                            collapsible=False,
                         )
         except Exception as port_err:
             logger.error(f"Portfolio drawdown check failed: {port_err}")
@@ -277,7 +274,6 @@ def check_risk_limits_all_accounts():
             title='Risk Limits Check Failed',
             task='check_risk_limits_all_accounts',
             context=[str(e)[:200]],
-            collapsible=False,
         )
         return {'success': False, 'message': str(e)}
 
@@ -522,6 +518,5 @@ def generate_daily_risk_report():
             title='Risk Report Failed',
             task='generate_daily_risk_report',
             context=[str(e)[:200]],
-            collapsible=False,
         )
         return {'success': False, 'message': str(e)}

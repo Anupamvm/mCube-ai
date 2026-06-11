@@ -60,6 +60,10 @@ ALLOWED_HOSTS = [
     '192.168.1.32',
 ]
 
+# Base URL used for constructing absolute links in Telegram button URLs.
+# Override with SITE_URL env var in production.
+SITE_URL = env('SITE_URL', default='http://localhost:8000')
+
 
 # Application definition
 

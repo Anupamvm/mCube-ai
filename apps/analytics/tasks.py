@@ -317,7 +317,6 @@ def generate_daily_pnl_report():
             title='P&L Report Failed',
             task='generate_daily_pnl_report',
             context=[str(e)[:200]],
-            collapsible=False,
         )
         return {'success': False, 'message': str(e)}
 

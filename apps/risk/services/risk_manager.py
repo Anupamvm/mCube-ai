@@ -353,7 +353,6 @@ def activate_circuit_breaker(
                     "Positions will NOT close until you confirm",
                     "ACT NOW — confirm all exit suggestions immediately",
                 ],
-                collapsible=False,
             )
         else:
             notify('CIRCUIT_BREAKER',
@@ -369,7 +368,6 @@ def activate_circuit_breaker(
                     "Account has been deactivated",
                     "No new trades will be placed",
                 ],
-                collapsible=False,
             )
     else:
         notify('CIRCUIT_BREAKER',
@@ -386,7 +384,6 @@ def activate_circuit_breaker(
                 "24-hour cooldown activated",
                 "IMMEDIATE ATTENTION REQUIRED",
             ],
-            collapsible=False,
         )
 
     # Step 2: Deactivate account

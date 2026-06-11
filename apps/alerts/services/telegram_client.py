@@ -324,21 +324,20 @@ class TelegramClient:
 
         message = format_notification(payload)
 
-        if payload.keyboard:
-            # keyboard is a list of rows; wrap in the API dict format
-            keyboard_dict = {'inline_keyboard': payload.keyboard}
-            return self.send_message(
-                message,
-                chat_id=chat_id,
-                reply_markup=keyboard_dict,
-            )
+        # Rate-limit check applies regardless of whether a keyboard is present.
+        if self._is_rate_limited(message, payload.priority, dedup_key=payload.dedup_key):
+            logger.debug(f"Telegram [{payload.priority}] suppressed by rate limiter: {message[:60]!r}")
+            return True, "rate_limited"
 
-        # No keyboard — use priority rate-limiting
-        return self.send_priority_message(
+        reply_markup = {'inline_keyboard': payload.keyboard} if payload.keyboard else None
+        # Only CRITICAL and HIGH priority messages trigger a sound notification.
+        disable_notification = payload.priority not in ('CRITICAL', 'HIGH')
+
+        return self.send_message(
             message,
-            priority=payload.priority,
             chat_id=chat_id,
-            dedup_key=payload.dedup_key,
+            reply_markup=reply_markup,
+            disable_notification=disable_notification,
         )
 
     def send_position_alert(
