@@ -100,30 +100,90 @@ class Command(BaseCommand):
         return download_dir
 
     def full_cycle(self):
-        """Complete workflow: Download -> Parse -> Populate -> Clean"""
+        """Complete workflow: Download -> Convert -> Parse -> Populate -> Clean"""
         self.stdout.write(self.style.SUCCESS('\n' + '=' * 70))
         self.stdout.write(self.style.SUCCESS('TRENDLYNE DATA FULL CYCLE'))
         self.stdout.write(self.style.SUCCESS('=' * 70 + '\n'))
 
         # Step 1: Clear previous files
-        self.stdout.write(self.style.WARNING('\n[1/4] Clearing previous files...'))
+        self.stdout.write(self.style.WARNING('\n[1/5] Clearing previous files...'))
         self.clear_files()
 
         # Step 2: Download new data
-        self.stdout.write(self.style.WARNING('\n[2/4] Downloading data from Trendlyne...'))
+        self.stdout.write(self.style.WARNING('\n[2/5] Downloading data from Trendlyne...'))
         self.download_all()
 
-        # Step 3: Parse and populate database
-        self.stdout.write(self.style.WARNING('\n[3/4] Parsing files and populating database...'))
+        # Step 3: Convert XLSX downloads to CSV for parsing
+        self.stdout.write(self.style.WARNING('\n[3/5] Converting XLSX files to CSV...'))
+        self.convert_xlsx_to_csv()
+
+        # Step 4: Parse and populate database
+        self.stdout.write(self.style.WARNING('\n[4/5] Parsing files and populating database...'))
         self.parse_all()
 
-        # Step 4: Clean up files
-        self.stdout.write(self.style.WARNING('\n[4/4] Cleaning up temporary files...'))
+        # Step 5: Clean up files
+        self.stdout.write(self.style.WARNING('\n[5/5] Cleaning up temporary files...'))
         self.clear_files()
 
         self.stdout.write(self.style.SUCCESS('\n' + '=' * 70))
         self.stdout.write(self.style.SUCCESS('✅ FULL CYCLE COMPLETE'))
         self.stdout.write(self.style.SUCCESS('=' * 70 + '\n'))
+
+    def convert_xlsx_to_csv(self):
+        """Convert downloaded XLSX files to CSV with normalised column names."""
+        import pandas as pd
+        import numpy as np
+
+        download_dir = self.get_download_dir()
+
+        # --- F&O contracts: fno_data_*.xlsx → contract_data.csv ---
+        fno_files = sorted(download_dir.glob('fno_data_*.xlsx'), key=lambda p: p.stat().st_mtime, reverse=True)
+        if fno_files:
+            src = fno_files[0]
+            self.stdout.write(f'  📊 Converting F&O: {src.name}')
+            try:
+                df = pd.read_excel(src, sheet_name=0)
+                df.columns = [
+                    col.lower().replace(' ', '_').replace('%', 'pct_')
+                    .replace('(', '').replace(')', '').replace('__', '_')
+                    for col in df.columns
+                ]
+                df = df.replace([np.inf, -np.inf], np.nan)
+                df = df.fillna(0)
+                for col in df.select_dtypes(include=['object', 'str']).columns:
+                    df[col] = df[col].replace({'nan': '', 'Export NA': ''})
+                csv_path = download_dir / 'contract_data.csv'
+                df.to_csv(csv_path, index=False)
+                self.stdout.write(self.style.SUCCESS(f'  ✅ {len(df):,} rows → contract_data.csv'))
+            except Exception as e:
+                raise CommandError(f'F&O XLSX conversion failed: {e}')
+        else:
+            raise CommandError('No fno_data_*.xlsx file found after download — cannot proceed')
+
+        # --- Market snapshot: Stocks-data*.xlsx → stock_data.csv ---
+        stock_files = sorted(download_dir.glob('Stocks-data*.xlsx'), key=lambda p: p.stat().st_mtime, reverse=True)
+        if stock_files:
+            src = stock_files[0]
+            self.stdout.write(f'  📊 Converting stocks: {src.name}')
+            try:
+                df = pd.read_excel(src, sheet_name=0)
+                df.columns = [
+                    col.lower().replace(' ', '_').replace('%', 'pct_')
+                    .replace('(', '').replace(')', '').replace('__', '_').replace('-', '_')
+                    for col in df.columns
+                ]
+                df = df.replace([np.inf, -np.inf], np.nan)
+                for col in df.select_dtypes(include=['float64', 'int64']).columns:
+                    df[col] = df[col].fillna(0)
+                for col in df.select_dtypes(include=['object', 'str']).columns:
+                    df[col] = df[col].fillna('').replace({'nan': '', 'Export NA': ''})
+                csv_path = download_dir / 'stock_data.csv'
+                df.to_csv(csv_path, index=False)
+                self.stdout.write(self.style.SUCCESS(f'  ✅ {len(df):,} rows → stock_data.csv'))
+            except Exception as e:
+                raise CommandError(f'Stock XLSX conversion failed: {e}')
+        else:
+            self.stdout.write(self.style.WARNING('  ⚠️  No Stocks-data-IND-*.xlsx file found — stock_data.csv will be skipped'))
 
     def download_all(self):
         """Download all Trendlyne data using TrendlyneProvider"""

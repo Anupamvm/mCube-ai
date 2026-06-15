@@ -263,7 +263,7 @@ class BreezeSessionManager:
 
                 logger.info("Attempting Breeze auto-login...")
                 success, message = auto_login_breeze(
-                    headless=False,  # Show browser for OTP entry
+                    headless=True,  # OTP is handled via Telegram; headless works on Ubuntu and Mac
                     timeout=300,
                     skip_validation=True,  # We know session is expired
                     task_name=task_name or "session auto-refresh",

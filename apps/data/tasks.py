@@ -15,6 +15,7 @@ from .signals import SignalGenerator
 # Import TaskLogger and task guard
 from apps.core.utils.task_logger import TaskLogger
 from apps.core.utils.decorators import task_enabled_guard
+from apps.alerts.services.telegram_client import send_telegram_notification
 
 
 @shared_task(name='fetch_trendlyne_data', bind=True, max_retries=3)
@@ -825,6 +826,7 @@ def morning_data_sync(self):
             'error': str(e)
         }
         logger.error('trendlyne_failed', f"Trendlyne sync failed: {e}")
+        send_telegram_notification(f"⚠️ *Morning Data Sync Failed*\n\nTrendlyne download/import failed — market data is stale.\n\n`{str(e)[:300]}`")
 
     # ==========================================================================
     # STEP 1b: Sync Trendlyne IDs (if step 1 succeeded)
@@ -939,11 +941,21 @@ def morning_data_sync(self):
     news_ok = results['news'] and results['news'].get('status') in ['success', 'skipped']
 
     if trendlyne_ok and news_ok:
+        tl_stats = results['trendlyne'].get('stats', {})
+        news_stats = results['news'].get('stats', {}) if results['news'].get('status') == 'success' else {}
         logger.success("Morning data sync completed successfully", context={
-            'trendlyne': results['trendlyne'].get('stats'),
-            'news': results['news'].get('stats') if results['news'].get('status') == 'success' else results['news'].get('status')
+            'trendlyne': tl_stats,
+            'news': news_stats or results['news'].get('status')
         })
+        send_telegram_notification(
+            f"✅ *Morning Data Sync Complete*\n\n"
+            f"F&O: {tl_stats.get('ContractData', '?')} | Stocks: {tl_stats.get('TLStockData', '?')}\n"
+            f"News: {news_stats.get('processed', 0)} processed, {news_stats.get('skipped', 0)} skipped"
+        )
         results['status'] = 'success'
+    elif trendlyne_ok and not news_ok:
+        logger.warning('partial_success', "Morning data sync completed with news errors")
+        results['status'] = 'partial'
     else:
         logger.warning('partial_success', "Morning data sync completed with some errors")
         results['status'] = 'partial'

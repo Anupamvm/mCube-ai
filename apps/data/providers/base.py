@@ -13,10 +13,6 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-import chromedriver_autoinstaller
-
-# Auto-install ChromeDriver
-chromedriver_autoinstaller.install()
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +58,14 @@ class BaseDataProvider(ABC):
         Returns:
             Configured Chrome WebDriver instance
         """
+        try:
+            import chromedriver_autoinstaller
+            chromedriver_autoinstaller.install()
+        except ImportError:
+            pass  # Not installed — fall back to Selenium's built-in manager
+        except Exception as ci_err:
+            self.logger.debug(f"chromedriver-autoinstaller: {ci_err}")
+
         chrome_options = Options()
 
         # Download configuration
@@ -89,7 +93,6 @@ class BaseDataProvider(ABC):
         chrome_options.add_argument("--disable-gpu")
         chrome_options.add_argument("--disable-software-rasterizer")
         chrome_options.add_argument("--disable-extensions")
-        chrome_options.add_argument("--start-maximized")
         chrome_options.add_argument("--window-size=1920,1080")
 
         # Anti-detection
