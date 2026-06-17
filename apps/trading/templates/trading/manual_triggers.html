@@ -436,20 +436,45 @@
             <button class="btn btn-primary" onclick="runFuturesAlgorithm(this)" id="btnFutures">
                 Run Futures Screening
             </button>
+
+            <!-- Inline confirmation panel (replaces browser confirm dialog) -->
+            <div id="futuresConfirmPanel" style="display:none; margin-top:1rem; background: linear-gradient(135deg, #fffbeb, #fef3c7); border: 1.5px solid #f59e0b; border-radius: var(--radius-md); padding: 1.25rem;">
+                <div style="display:flex; align-items:flex-start; gap:0.75rem; margin-bottom:1rem;">
+                    <span style="font-size:1.4rem; flex-shrink:0;">📋</span>
+                    <div>
+                        <div style="font-weight:700; color:#92400e; font-size:1rem; margin-bottom:0.25rem;">Confirmation Required</div>
+                        <div style="font-size:0.85rem; color:#78350f;">
+                            Found <strong id="futuresConfirmCount">0</strong> contracts matching your filters.
+                        </div>
+                        <div style="font-size:0.8rem; color:#92400e; margin-top:0.4rem;">
+                            Estimated time: <strong id="futuresConfirmEta">~2 min</strong> &nbsp;·&nbsp; Each contract takes ~3 seconds to analyse.
+                        </div>
+                    </div>
+                </div>
+                <div style="display:flex; gap:0.75rem; flex-wrap:wrap;">
+                    <button onclick="confirmFuturesRun()" style="flex:1; min-width:120px; padding:0.6rem 1rem; background:#f59e0b; color:white; border:none; border-radius:var(--radius-md); font-weight:600; cursor:pointer; font-size:0.9rem;">
+                        Proceed with Analysis
+                    </button>
+                    <button onclick="cancelFuturesRun()" style="flex:1; min-width:120px; padding:0.6rem 1rem; background:white; color:#92400e; border:1.5px solid #f59e0b; border-radius:var(--radius-md); font-weight:600; cursor:pointer; font-size:0.9rem;">
+                        Adjust Filters
+                    </button>
+                </div>
+            </div>
+
             <div class="loading-spinner" id="loadingFutures">
                 <div style="display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.75rem;">
                     <div class="futures-spinner-ring"></div>
-                    <div id="futuresLoadingText" style="font-weight: 600; color: var(--primary);">⏳ Analyzing stocks...</div>
+                    <div id="futuresLoadingText" style="font-weight: 600; color: var(--primary);">Updating market data…</div>
                 </div>
-                <div id="futuresProgressWrap" style="display: none; margin-bottom: 0.5rem;">
+                <div id="futuresProgressWrap" style="margin-bottom: 0.5rem;">
                     <div style="display: flex; justify-content: space-between; font-size: 0.75rem; color: var(--gray); margin-bottom: 0.35rem;">
-                        <span id="futuresProgressLabel">Fetching data...</span>
+                        <span id="futuresProgressLabel">Scanning available contracts…</span>
                         <span id="futuresProgressPct">0%</span>
                     </div>
                     <div style="background: var(--light); border-radius: 999px; height: 8px; overflow: hidden;">
                         <div id="futuresProgressBar" style="height: 100%; width: 0%; background: linear-gradient(90deg, var(--primary), #7c3aed); border-radius: 999px; transition: width 0.6s ease;"></div>
                     </div>
-                    <div id="futuresEtaText" style="font-size: 0.75rem; color: var(--gray); margin-top: 0.35rem; text-align: right;"></div>
+                    <div id="futuresEtaText" style="font-size: 0.75rem; color: var(--gray); margin-top: 0.35rem; text-align: right;">Usually takes 30–90 sec for standard scans</div>
                 </div>
             </div>
         </div>
@@ -685,7 +710,7 @@
 
         if (type === 'futures_algorithm') {
             const btn = document.getElementById('btnFutures');
-            await runFuturesAlgorithm(btn, params.confirmed);
+            await runFuturesAlgorithm(btn);
         } else if (type === 'verify_trade') {
             const btn = document.getElementById('btnVerify');
             await verifyFutureTrade(btn);
@@ -823,48 +848,101 @@
 
     // Progress bar helpers for Futures Algorithm
     let _futuresProgressTimer = null;
+    let _futuresPhase = 'scan';       // 'scan' | 'analyze'
+    let _futuresPhaseStart = 0;
+    let _futuresScanElapsed = 0;
+    let _futuresContractCount = null;
+    let _futuresBtnRef = null;
 
-    function startFuturesProgress(contractCount) {
-        const wrap = document.getElementById('futuresProgressWrap');
+    const PHASE1_MESSAGES = [
+        'Updating security master…',
+        'Fetching contract universe…',
+        'Applying volume filters…',
+        'Counting eligible contracts…',
+    ];
+    const PHASE2_MESSAGES = [
+        'Fetching historical data…',
+        'Running OI analysis…',
+        'Checking sector strength…',
+        'Computing technical indicators…',
+        'Calculating DMA levels…',
+        'Running S/R analysis…',
+        'Scoring contracts…',
+        'Building position sizing…',
+        'Verifying risk parameters…',
+        'Finalising top 3…',
+    ];
+
+    function startFuturesPhase1() {
+        _futuresPhase = 'scan';
+        _futuresPhaseStart = Date.now();
+        _futuresScanElapsed = 0;
+
         const bar = document.getElementById('futuresProgressBar');
         const pct = document.getElementById('futuresProgressPct');
         const eta = document.getElementById('futuresEtaText');
         const label = document.getElementById('futuresProgressLabel');
+        const loadingText = document.getElementById('futuresLoadingText');
 
-        const statusMessages = [
-            'Fetching security master…',
-            'Querying contract data…',
-            'Running OI analysis…',
-            'Checking sector strength…',
-            'Computing technical indicators…',
-            'Calculating DMA levels…',
-            'Running S/R analysis…',
-            'Scoring contracts…',
-            'Building position sizing…',
-            'Finalising results…',
-        ];
-
-        const estSeconds = contractCount ? contractCount * 3 : 30;
-        wrap.style.display = 'block';
-        document.getElementById('futuresLoadingText').textContent =
-            contractCount ? `⏳ Analyzing ${contractCount} contracts…` : '⏳ Analyzing stocks…';
+        loadingText.textContent = 'Updating market data…';
+        bar.style.width = '0%';
+        pct.textContent = '0%';
+        label.textContent = PHASE1_MESSAGES[0];
+        eta.textContent = 'Usually takes 15–45 sec for this step';
 
         let elapsed = 0;
         let msgIdx = 0;
-        const intervalMs = 1000;
+        const PHASE1_EST = 30;  // seconds
 
+        if (_futuresProgressTimer) clearInterval(_futuresProgressTimer);
         _futuresProgressTimer = setInterval(() => {
-            elapsed += intervalMs / 1000;
-            const raw = Math.min((elapsed / estSeconds) * 100, 95);
+            elapsed += 1;
+            _futuresScanElapsed = elapsed;
+            // Phase 1 occupies 0–15% of the total bar
+            const raw = Math.min((elapsed / PHASE1_EST) * 15, 14);
+            bar.style.width = raw.toFixed(1) + '%';
+            pct.textContent = Math.round(raw) + '%';
+            msgIdx = Math.min(Math.floor(elapsed / (PHASE1_EST / PHASE1_MESSAGES.length)), PHASE1_MESSAGES.length - 1);
+            label.textContent = PHASE1_MESSAGES[msgIdx];
+        }, 1000);
+    }
+
+    function startFuturesPhase2(contractCount) {
+        _futuresPhase = 'analyze';
+        _futuresContractCount = contractCount;
+
+        const bar = document.getElementById('futuresProgressBar');
+        const pct = document.getElementById('futuresProgressPct');
+        const eta = document.getElementById('futuresEtaText');
+        const label = document.getElementById('futuresProgressLabel');
+        const loadingText = document.getElementById('futuresLoadingText');
+
+        loadingText.textContent = `Analysing ${contractCount} contracts…`;
+
+        const estSeconds = contractCount * 3;
+        let elapsed = 0;
+        let msgIdx = 0;
+
+        if (_futuresProgressTimer) clearInterval(_futuresProgressTimer);
+        _futuresProgressTimer = setInterval(() => {
+            elapsed += 1;
+            // Phase 2 occupies 15–95% of the total bar
+            const raw = 15 + Math.min((elapsed / estSeconds) * 80, 79);
             bar.style.width = raw.toFixed(1) + '%';
             pct.textContent = Math.round(raw) + '%';
 
             const remaining = Math.max(Math.round(estSeconds - elapsed), 0);
-            eta.textContent = remaining > 0 ? `~${remaining}s remaining` : 'Almost done…';
+            if (remaining > 60) {
+                eta.textContent = `~${Math.ceil(remaining / 60)} min remaining`;
+            } else if (remaining > 0) {
+                eta.textContent = `~${remaining}s remaining`;
+            } else {
+                eta.textContent = 'Almost done…';
+            }
 
-            msgIdx = Math.min(Math.floor(elapsed / (estSeconds / statusMessages.length)), statusMessages.length - 1);
-            label.textContent = statusMessages[msgIdx];
-        }, intervalMs);
+            msgIdx = Math.min(Math.floor(elapsed / (estSeconds / PHASE2_MESSAGES.length)), PHASE2_MESSAGES.length - 1);
+            label.textContent = PHASE2_MESSAGES[msgIdx];
+        }, 1000);
     }
 
     function stopFuturesProgress(success) {
@@ -876,37 +954,67 @@
         const pct = document.getElementById('futuresProgressPct');
         const eta = document.getElementById('futuresEtaText');
         const label = document.getElementById('futuresProgressLabel');
-        const wrap = document.getElementById('futuresProgressWrap');
 
         if (success) {
             bar.style.width = '100%';
             pct.textContent = '100%';
             label.textContent = 'Analysis complete!';
             eta.textContent = '';
-        }
-        setTimeout(() => {
-            wrap.style.display = 'none';
+            setTimeout(() => {
+                bar.style.width = '0%';
+                pct.textContent = '0%';
+            }, 1200);
+        } else {
             bar.style.width = '0%';
             pct.textContent = '0%';
-        }, 800);
+            label.textContent = 'Scanning available contracts…';
+            eta.textContent = 'Usually takes 30–90 sec for standard scans';
+        }
+    }
+
+    function showFuturesConfirmPanel(contractCount) {
+        const estSec = contractCount * 3;
+        const estMin = Math.ceil(estSec / 60);
+        document.getElementById('futuresConfirmCount').textContent = contractCount;
+        document.getElementById('futuresConfirmEta').textContent =
+            estMin >= 2 ? `~${estMin} min` : `~${estSec}s`;
+        document.getElementById('futuresConfirmPanel').style.display = 'block';
+        document.getElementById('loadingFutures').classList.remove('active');
+    }
+
+    function hideFuturesConfirmPanel() {
+        document.getElementById('futuresConfirmPanel').style.display = 'none';
+    }
+
+    function confirmFuturesRun() {
+        hideFuturesConfirmPanel();
+        if (_futuresBtnRef && _futuresContractCount) {
+            document.getElementById('loadingFutures').classList.add('active');
+            startFuturesPhase2(_futuresContractCount);
+            _doFuturesRequest(_futuresBtnRef, true);
+        }
+    }
+
+    function cancelFuturesRun() {
+        hideFuturesConfirmPanel();
+        stopFuturesProgress(false);
+        if (_futuresBtnRef) _futuresBtnRef.disabled = false;
     }
 
     // 1. Run Futures Algorithm
-    async function runFuturesAlgorithm(btn, confirmed = false, contractCount = null) {
-        console.log('[Futures] runFuturesAlgorithm called with confirmed=', confirmed);
+    async function runFuturesAlgorithm(btn) {
+        _futuresBtnRef = btn;
+        btn.disabled = true;
+        hideFuturesConfirmPanel();
+        document.getElementById('resultsPanel').classList.remove('active');
+        document.getElementById('loadingFutures').classList.add('active');
+        startFuturesPhase1();
+        await _doFuturesRequest(btn, false);
+    }
 
+    async function _doFuturesRequest(btn, confirmed) {
         const thisMonthVol = document.getElementById('futuresThisMonthVolume').value || 1000;
         const nextMonthVol = document.getElementById('futuresNextMonthVolume').value || 800;
-
-        console.log('[Futures] Volume filters:', { thisMonthVol, nextMonthVol });
-
-        btn.disabled = true;
-        document.getElementById('loadingFutures').classList.add('active');
-        document.getElementById('resultsPanel').classList.remove('active');
-
-        if (confirmed && contractCount) {
-            startFuturesProgress(contractCount);
-        }
 
         try {
             const response = await fetch('{% url "trading:trigger_futures" %}', {
@@ -923,55 +1031,37 @@
             });
 
             const data = await response.json();
-
-            // Debug logging
             console.log('Futures algorithm response:', data);
 
-            // Check for authentication error
             if (handleAuthError(data, 'futures_algorithm', { confirmed })) {
+                stopFuturesProgress(false);
+                document.getElementById('loadingFutures').classList.remove('active');
+                btn.disabled = false;
                 return;
             }
 
             if (data.success) {
                 stopFuturesProgress(true);
                 displayFuturesTop3Result(data);
-            } else if (data.requires_confirmation) {
-                // Stop spinner during confirmation dialog
-                stopFuturesProgress(false);
                 document.getElementById('loadingFutures').classList.remove('active');
                 btn.disabled = false;
-
-                console.log('[Futures] Showing confirmation dialog for', data.contract_count, 'contracts');
-
-                // Ask user for confirmation
-                const userConfirmed = confirm(
-                    `${data.message}\n\n` +
-                    `Contracts found: ${data.contract_count}\n` +
-                    `This will analyze ALL contracts and may take several minutes.\n\n` +
-                    `Click OK to proceed or Cancel to adjust filters.`
-                );
-
-                console.log('[Futures] User confirmed:', userConfirmed);
-
-                if (userConfirmed) {
-                    console.log('[Futures] Re-running with confirmation=true');
-                    await runFuturesAlgorithm(btn, true, data.contract_count);
-                    return;
-                } else {
-                    console.log('[Futures] User cancelled');
-                    displayError('Analysis cancelled. Please adjust volume filters to reduce contract count.');
-                }
-            } else {
-                console.error('[Futures] Unexpected response:', data);
+            } else if (data.requires_confirmation) {
+                // Pause progress at ~14% and show inline confirm panel
                 stopFuturesProgress(false);
+                _futuresContractCount = data.contract_count;
+                showFuturesConfirmPanel(data.contract_count);
+                btn.disabled = false;
+            } else {
+                stopFuturesProgress(false);
+                document.getElementById('loadingFutures').classList.remove('active');
                 displayError(data.error || data.message || 'Failed to run futures algorithm. Please check console for details.');
+                btn.disabled = false;
             }
         } catch (error) {
             stopFuturesProgress(false);
-            displayError('Network error: ' + error.message);
-        } finally {
-            btn.disabled = false;
             document.getElementById('loadingFutures').classList.remove('active');
+            displayError('Network error: ' + error.message);
+            btn.disabled = false;
         }
     }
 
