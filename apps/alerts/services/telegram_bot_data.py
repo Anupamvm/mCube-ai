@@ -541,9 +541,10 @@ class DataMixin:
         """
         Trigger breeze session refresh on-demand (via Telegram quick action).
 
-        User-triggered: always resets the daily auto-login limit before attempting,
-        consistent with _trigger_breeze_login(). The daily limit is only enforced
-        for automated Celery paths (get_client).
+        Manual triggers bypass the daily-limit check naturally — refresh_session()
+        calls _try_auto_login() directly without going through get_client().
+        The daily limit (can_attempt_auto_login) is only enforced on the
+        automatic Celery path (get_client).
         """
         from django.db import close_old_connections
         close_old_connections()
@@ -556,10 +557,6 @@ class DataMixin:
 
             if is_valid:
                 return {'success': True, 'message': f'Breeze session already valid: {msg}'}
-
-            # User-triggered — reset daily limit so previous automated failures don't block us
-            from apps.brokers.utils.auth_manager import reset_auto_login_status
-            reset_auto_login_status('breeze')
 
             success, refresh_msg = manager.refresh_session()
             if success:
@@ -1246,10 +1243,6 @@ class DataMixin:
 
         try:
             from apps.brokers.services.breeze_auto_login import auto_login_breeze
-            from apps.brokers.utils.auth_manager import reset_auto_login_status
-
-            # Reset any previous failed/in_progress state so a manual trigger is never blocked.
-            reset_auto_login_status('breeze')
 
             success, message = auto_login_breeze(headless=True, task_name="Telegram manual login")
             if success:

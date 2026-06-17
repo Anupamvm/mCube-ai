@@ -265,6 +265,91 @@
         margin-right: 10px;
         font-size: 1.2em;
     }
+
+    .otp-pending-section {
+        background: linear-gradient(135deg, #fff3e0 0%, #ffe0b2 100%);
+        border: 2px solid #ff9800;
+        border-radius: 8px;
+        padding: 24px;
+        margin-bottom: 20px;
+        display: none;
+    }
+
+    .otp-pending-section.active {
+        display: block;
+    }
+
+    .otp-pending-section .section-title {
+        color: #e65100;
+    }
+
+    .otp-input-group {
+        display: flex;
+        gap: 12px;
+        margin-top: 16px;
+    }
+
+    .otp-input-group input[type="text"] {
+        flex: 1;
+        padding: 14px 18px;
+        border: 2px solid #ff9800;
+        border-radius: 8px;
+        font-size: 1.4em;
+        letter-spacing: 0.3em;
+        text-align: center;
+        font-weight: 600;
+        background: white;
+        transition: border-color 0.2s;
+    }
+
+    .otp-input-group input[type="text"]:focus {
+        outline: none;
+        border-color: #e65100;
+        box-shadow: 0 0 0 3px rgba(230, 81, 0, 0.15);
+    }
+
+    .btn-otp-submit {
+        padding: 14px 24px;
+        background: linear-gradient(135deg, #ff9800 0%, #e65100 100%);
+        color: white;
+        border: none;
+        border-radius: 8px;
+        font-size: 1em;
+        font-weight: 600;
+        cursor: pointer;
+        transition: transform 0.1s, box-shadow 0.2s;
+        white-space: nowrap;
+    }
+
+    .btn-otp-submit:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 4px 12px rgba(230, 81, 0, 0.3);
+    }
+
+    .otp-feedback {
+        margin-top: 12px;
+        font-size: 0.9em;
+        font-weight: 500;
+        min-height: 20px;
+    }
+
+    .otp-feedback.success { color: #2e7d32; }
+    .otp-feedback.error   { color: #c62828; }
+
+    .pulse-dot {
+        display: inline-block;
+        width: 10px;
+        height: 10px;
+        background: #ff9800;
+        border-radius: 50%;
+        margin-right: 8px;
+        animation: pulse 1.2s infinite;
+    }
+
+    @keyframes pulse {
+        0%, 100% { opacity: 1; transform: scale(1); }
+        50%       { opacity: 0.5; transform: scale(0.8); }
+    }
 </style>
 {% endblock %}
 
@@ -277,6 +362,25 @@
         </div>
 
         <div class="breeze-body">
+
+            <!-- OTP entry panel — shown when auto-login is waiting for OTP -->
+            <div class="otp-pending-section" id="otp-pending-section">
+                <div class="section-title">
+                    <span class="pulse-dot"></span>
+                    Auto-Login Waiting for OTP
+                </div>
+                <p style="color: #5d4037; margin-bottom: 4px;">
+                    A browser-based login is in progress. Enter the OTP here <em>or</em> reply to the Telegram message.
+                </p>
+                <small id="otp-task-label" style="color: #795548;"></small>
+                <div class="otp-input-group">
+                    <input type="text" id="otp-input" maxlength="6" inputmode="numeric"
+                           placeholder="••••••" autocomplete="one-time-code">
+                    <button class="btn-otp-submit" onclick="submitOtp()">Submit OTP</button>
+                </div>
+                <div class="otp-feedback" id="otp-feedback"></div>
+            </div>
+
             {% if session_expired %}
             <div class="status-badge expired">
                 <span class="icon">&#9888;</span>
@@ -430,5 +534,118 @@ function toggleManual() {
         arrow.innerHTML = '&#9652;';
     }
 }
+
+// ── OTP / auto-login polling ─────────────────────────────────────────────────
+
+const OTP_POLL_INTERVAL = 3000; // ms
+let otpPollTimer = null;
+let otpSubmitted = false;
+let loginDone = false;
+
+function getCsrfToken() {
+    const el = document.querySelector('[name=csrfmiddlewaretoken]');
+    return el ? el.value : '';
+}
+
+function setOtpFeedback(msg, type) {
+    const el = document.getElementById('otp-feedback');
+    el.textContent = msg;
+    el.className = 'otp-feedback ' + (type || '');
+}
+
+async function pollOtpStatus() {
+    if (loginDone) return;
+    try {
+        const resp = await fetch('{% url "brokers:breeze_otp_status" %}', {credentials: 'same-origin'});
+        if (!resp.ok) return;
+        const data = await resp.json();
+        const section = document.getElementById('otp-pending-section');
+
+        // ── Login completed successfully ──
+        if (data.login_result === 'success') {
+            loginDone = true;
+            clearInterval(otpPollTimer);
+            section.classList.remove('active');
+            const dest = data.next_url || '/brokers/breeze/data/';
+            // Redirect to original destination
+            window.location.href = dest;
+            return;
+        }
+
+        // ── Login failed ──
+        if (data.login_result && data.login_result.startsWith('failed:')) {
+            loginDone = true;
+            clearInterval(otpPollTimer);
+            section.classList.remove('active');
+            const reason = data.login_result.replace('failed:', '');
+            // Show inline error then reload page so Django messages display
+            alert('Auto-login failed: ' + reason);
+            window.location.reload();
+            return;
+        }
+
+        // ── OTP pending: show entry panel ──
+        if (data.otp_pending && !otpSubmitted) {
+            section.classList.add('active');
+            const label = document.getElementById('otp-task-label');
+            if (data.task) label.textContent = 'Task: ' + data.task;
+            // Only focus if user hasn't already started typing
+            const inp = document.getElementById('otp-input');
+            if (!inp.value) inp.focus();
+        } else if (!data.login_running) {
+            section.classList.remove('active');
+        }
+    } catch (e) {
+        // silently ignore network errors during polling
+    }
+}
+
+async function submitOtp() {
+    const otp = document.getElementById('otp-input').value.trim();
+    if (!/^\d{4,6}$/.test(otp)) {
+        setOtpFeedback('Enter 4–6 digits only.', 'error');
+        return;
+    }
+
+    const btn = document.querySelector('.btn-otp-submit');
+    btn.disabled = true;
+    btn.textContent = 'Submitting...';
+    setOtpFeedback('', '');
+
+    try {
+        const body = new URLSearchParams({otp, csrfmiddlewaretoken: getCsrfToken()});
+        const resp = await fetch('{% url "brokers:breeze_submit_otp" %}', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: {'X-CSRFToken': getCsrfToken()},
+            body,
+        });
+        const data = await resp.json();
+        if (data.success) {
+            otpSubmitted = true;
+            setOtpFeedback('OTP submitted — completing login...', 'success');
+            document.getElementById('otp-input').disabled = true;
+            // Keep polling; the success state will trigger redirect
+        } else {
+            setOtpFeedback(data.error || 'Failed to submit OTP.', 'error');
+            btn.disabled = false;
+            btn.textContent = 'Submit OTP';
+        }
+    } catch (e) {
+        setOtpFeedback('Network error — try again.', 'error');
+        btn.disabled = false;
+        btn.textContent = 'Submit OTP';
+    }
+}
+
+// Allow Enter key to submit OTP
+document.addEventListener('DOMContentLoaded', () => {
+    document.getElementById('otp-input').addEventListener('keydown', e => {
+        if (e.key === 'Enter') submitOtp();
+    });
+    // Start polling immediately, then on interval
+    pollOtpStatus();
+    otpPollTimer = setInterval(pollOtpStatus, OTP_POLL_INTERVAL);
+});
 </script>
 {% endblock %}

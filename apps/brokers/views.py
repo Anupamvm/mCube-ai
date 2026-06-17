@@ -311,6 +311,25 @@ def breeze_login(request):
     except:
         session_expired = True
 
+    # Clear stale auto-login result flags when no login is actively running.
+    # Prevents the polling JS from acting on a result left over from a previous session.
+    try:
+        from apps.core.models import NseFlag
+        import time as _time
+        running_ts = NseFlag.get('breeze_auto_login_running', '')
+        is_running = False
+        if running_ts:
+            try:
+                elapsed = _time.time() - float(running_ts)
+                is_running = elapsed < 360  # 5-min timeout + 60s buffer
+            except ValueError:
+                pass
+        if not is_running:
+            NseFlag.set('breeze_auto_login_running', '', 'Cleared on login page load')
+            NseFlag.set('breeze_auto_login_result', '', 'Cleared on login page load')
+    except Exception:
+        pass
+
     # Check if auto-login credentials are configured
     creds = CredentialStore.objects.filter(service='breeze').first()
     auto_login_available = creds and creds.username and creds.password and creds.api_key
@@ -360,36 +379,42 @@ def breeze_update_credentials(request):
         messages.success(request, "Credentials saved successfully!")
         logger.info(f"Breeze auto-login credentials updated for user: {request.user}")
 
-        # If auto_login is requested, trigger it immediately
+        # If auto_login is requested, trigger it in a background thread so the
+        # user lands back on the login page and can enter the OTP via web or Telegram.
         if auto_login:
             try:
                 from apps.brokers.services.breeze_auto_login import auto_login_breeze
-                from apps.brokers.utils.auth_manager import reset_auto_login_status
+                from apps.core.models import NseFlag
+                import threading, time as _time
 
-                # User-triggered — clear any previous daily limit state
-                reset_auto_login_status('breeze')
+                NseFlag.set('breeze_auto_login_next', next_url, 'Target URL after auto-login')
+                NseFlag.set('breeze_auto_login_running', str(_time.time()), 'Auto-login start timestamp')
+                NseFlag.set('breeze_auto_login_result', '', 'Pending')
 
-                # Run the auto-login process (skip validation since we know token is expired)
-                success, message = auto_login_breeze(
-                    headless=True, timeout=300, skip_validation=True,
-                    task_name="credential update login"
-                )
+                def _run():
+                    result = 'failed:login error'
+                    try:
+                        success, message = auto_login_breeze(
+                            headless=True, timeout=300, skip_validation=True,
+                            task_name="credential update login"
+                        )
+                        result = 'success' if success else f'failed:{message}'
+                    except Exception as exc:
+                        result = f'failed:{exc}'
+                    finally:
+                        from apps.core.models import NseFlag as _NF
+                        _NF.set('breeze_auto_login_running', '', 'Auto-login done')
+                        _NF.set('breeze_auto_login_result', result, 'Auto-login result')
 
-                if success:
-                    messages.success(request, f"Auto-login successful! {message}")
-                    # Redirect to the original page
-                    if next_url:
-                        return redirect(next_url)
-                    return redirect('brokers:breeze_data')
-                else:
-                    messages.error(request, f"Auto-login failed: {message}")
+                threading.Thread(target=_run, daemon=True).start()
+                messages.info(request, "Auto-login started — enter the OTP when prompted below.")
 
             except ImportError as e:
                 logger.exception(f"Selenium not installed: {e}")
                 messages.error(request, "Auto-login requires Selenium. Install with: pip install selenium")
 
             except Exception as e:
-                logger.exception(f"Error in auto-login: {e}")
+                logger.exception(f"Error launching auto-login thread: {e}")
                 messages.error(request, f"Auto-login error: {str(e)}")
 
     except Exception as e:
@@ -397,9 +422,10 @@ def breeze_update_credentials(request):
         messages.error(request, f"Error saving credentials: {str(e)}")
 
     # Redirect back to login page (with next parameter if provided)
+    login_url = '/brokers/breeze/login/'
     if next_url:
-        return redirect(f"/brokers/breeze/login/?next={next_url}")
-    return redirect('brokers:breeze_login')
+        login_url += '?' + urlencode({'next': next_url})
+    return redirect(login_url)
 
 
 @login_required
@@ -408,48 +434,142 @@ def breeze_auto_login(request):
     """
     Automated Breeze login using Selenium (Admin only).
 
-    Opens browser, fills credentials, waits for OTP, captures session token.
+    Launches the Selenium login in a background thread and immediately redirects
+    back to the login page so the user can enter the OTP via Telegram or the
+    web OTP panel (polled via /breeze/otp-status/).
 
-    Supports 'next' parameter for redirect after successful login.
-    This enables automatic re-authentication flow when session expires.
+    The next_url is stored in NseFlag so the page can redirect when login completes.
     """
     if request.method != 'POST':
         return redirect('brokers:breeze_login')
 
-    # Get the return URL (where to redirect after successful login)
-    next_url = request.POST.get('next') or request.GET.get('next') or 'brokers:breeze_data'
+    next_url = request.POST.get('next') or request.GET.get('next') or ''
 
     try:
         from apps.brokers.services.breeze_auto_login import auto_login_breeze
-        from apps.brokers.utils.auth_manager import reset_auto_login_status
+        from apps.core.models import NseFlag
+        import threading
 
-        # User-triggered — clear any previous daily limit state
-        reset_auto_login_status('breeze')
+        # Prevent duplicate launches: check running flag with timestamp expiry
+        import time as _time
+        running_ts = NseFlag.get('breeze_auto_login_running', '')
+        already_running = False
+        if running_ts:
+            try:
+                already_running = (_time.time() - float(running_ts)) < 360
+            except ValueError:
+                pass
+        if already_running:
+            messages.info(request, "Auto-login already in progress — enter the OTP below.")
+            login_url = '/brokers/breeze/login/'
+            if next_url:
+                login_url += '?' + urlencode({'next': next_url})
+            return redirect(login_url)
 
-        # Run the auto-login process
-        success, message = auto_login_breeze(
-            headless=True, timeout=300,
-            task_name="web UI login"
-        )
+        # Store next_url so the polling JS can redirect after success.
+        # Use timestamp for running flag so it auto-expires if the thread crashes.
+        NseFlag.set('breeze_auto_login_next', next_url, 'Target URL after auto-login')
+        NseFlag.set('breeze_auto_login_running', str(_time.time()), 'Auto-login start timestamp')
+        NseFlag.set('breeze_auto_login_result', '', 'Pending')
 
-        if success:
-            messages.success(request, message)
-            # Redirect to the original page user was trying to access
-            if next_url.startswith('/'):
-                return redirect(next_url)
-            return redirect(next_url)
-        else:
-            messages.error(request, f"Auto-login failed: {message}")
+        def _run():
+            result = 'failed:login error'
+            try:
+                success, message = auto_login_breeze(
+                    headless=True, timeout=300,
+                    task_name="web UI login"
+                )
+                result = 'success' if success else f'failed:{message}'
+            except Exception as exc:
+                result = f'failed:{exc}'
+            finally:
+                from apps.core.models import NseFlag as _NseFlag
+                _NseFlag.set('breeze_auto_login_running', '', 'Auto-login done')
+                _NseFlag.set('breeze_auto_login_result', result, 'Auto-login result')
 
-    except ImportError as e:
-        logger.exception(f"Selenium not installed: {e}")
+        threading.Thread(target=_run, daemon=True).start()
+        messages.info(request, "Auto-login started — enter the OTP when prompted below.")
+
+    except ImportError:
         messages.error(request, "Auto-login requires Selenium. Install with: pip install selenium")
-
     except Exception as e:
-        logger.exception(f"Error in Breeze auto-login: {e}")
+        logger.exception(f"Error launching Breeze auto-login thread: {e}")
         messages.error(request, f"Auto-login error: {str(e)}")
 
-    return redirect('brokers:breeze_login')
+    login_url = '/brokers/breeze/login/'
+    if next_url:
+        login_url += '?' + urlencode({'next': next_url})
+    return redirect(login_url)
+
+
+@login_required
+@user_passes_test(is_admin_user, login_url='/brokers/login/')
+@require_http_methods(["GET"])
+def breeze_otp_status(request):
+    """
+    Combined status endpoint polled by the login page.
+
+    Returns:
+        JsonResponse: {
+            'otp_pending': bool,       # OTP is waiting to be entered
+            'task': str,               # name of the task requesting OTP
+            'login_running': bool,     # auto-login thread is active
+            'login_result': str,       # '' | 'success' | 'failed:<reason>'
+            'next_url': str,           # redirect target after success
+        }
+    """
+    try:
+        from apps.core.models import NseFlag
+        otp_status = NseFlag.get('breeze_otp_request', '')
+        task = NseFlag.get('breeze_otp_task', 'Breeze login')
+        import time as _time
+        running_ts = NseFlag.get('breeze_auto_login_running', '')
+        try:
+            running = bool(running_ts and (_time.time() - float(running_ts)) < 360)
+        except (ValueError, TypeError):
+            running = False
+        result = NseFlag.get('breeze_auto_login_result', '')
+        next_url = NseFlag.get('breeze_auto_login_next', '')
+        return JsonResponse({
+            'otp_pending': otp_status == 'pending',
+            'task': task,
+            'login_running': running,
+            'login_result': result,
+            'next_url': next_url,
+        })
+    except Exception as e:
+        return JsonResponse({'otp_pending': False, 'task': '', 'login_running': False,
+                             'login_result': '', 'next_url': '', 'error': str(e)})
+
+
+@login_required
+@user_passes_test(is_admin_user, login_url='/brokers/login/')
+@require_http_methods(["POST"])
+def breeze_submit_otp(request):
+    """
+    Accept OTP from the web UI and fulfill the pending Breeze OTP request.
+
+    Works identically to the Telegram OTP path — sets the same NseFlag values
+    that the auto-login loop polls.
+    """
+    import re
+    otp = (request.POST.get('otp') or '').strip()
+
+    if not re.match(r'^\d{4,6}$', otp):
+        return JsonResponse({'success': False, 'error': 'OTP must be 4-6 digits'}, status=400)
+
+    try:
+        from apps.core.models import NseFlag
+        status = NseFlag.get('breeze_otp_request', '')
+        if status != 'pending':
+            return JsonResponse({'success': False, 'error': 'No pending OTP request'}, status=400)
+
+        NseFlag.set('breeze_otp_value', otp, 'OTP from web UI')
+        NseFlag.set('breeze_otp_request', 'fulfilled', 'OTP fulfilled via web UI')
+        return JsonResponse({'success': True})
+    except Exception as e:
+        logger.exception(f"Error submitting Breeze OTP from web: {e}")
+        return JsonResponse({'success': False, 'error': str(e)}, status=500)
 
 
 @login_required
