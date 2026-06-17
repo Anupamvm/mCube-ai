@@ -125,27 +125,36 @@ class StrangleNewsAnalyzer:
         Returns:
             List of article dicts
         """
-        if not self.gnews_client:
+        articles = []
+
+        # GNews fetch
+        if self.gnews_client:
+            try:
+                result = self.gnews_client.fetch_market_news(
+                    max_results_per_keyword=5,
+                    use_cache=True
+                )
+                if result.get('success'):
+                    articles = result.get('articles', [])[:max_articles]
+                    logger.info(f"[StrangleNews] Fetched {len(articles)} articles from GNews")
+                else:
+                    logger.warning(f"[StrangleNews] GNews fetch failed: {result.get('error')}")
+            except Exception as e:
+                logger.error(f"[StrangleNews] Error fetching from GNews: {e}")
+        else:
             logger.warning("[StrangleNews] GNewsClient not available")
-            return []
 
+        # Google News supplemental (non-critical)
         try:
-            result = self.gnews_client.fetch_market_news(
-                max_results_per_keyword=5,
-                use_cache=True
-            )
-
-            if result.get('success'):
-                articles = result.get('articles', [])[:max_articles]
-                logger.info(f"[StrangleNews] Fetched {len(articles)} fresh market articles")
-                return articles
-            else:
-                logger.warning(f"[StrangleNews] GNews fetch failed: {result.get('error')}")
-                return []
-
+            from apps.data.services.google_news_scraper import get_google_news_scraper
+            gn_result = get_google_news_scraper().fetch_market_news(max_results=20)
+            if gn_result.get('success'):
+                articles.extend(gn_result.get('articles', []))
+                logger.info(f"[StrangleNews] Combined total: {len(articles)} articles (GNews + Google News)")
         except Exception as e:
-            logger.error(f"[StrangleNews] Error fetching fresh news: {e}")
-            return []
+            logger.warning(f"[StrangleNews] Google News failed (non-critical): {e}")
+
+        return articles
 
     def _persist_analyzed_articles(self, analyzed_articles: List[Dict]):
         """

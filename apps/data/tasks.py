@@ -920,6 +920,52 @@ def morning_data_sync(self):
                     except Exception:
                         news_stats['errors'] += 1
 
+                # Google News supplemental fetch (non-critical)
+                try:
+                    from apps.data.services.google_news_scraper import get_google_news_scraper
+                    gn_result = get_google_news_scraper().fetch_market_news(max_results=20)
+                    gn_articles = gn_result.get('articles', [])
+
+                    gn_stats = {'fetched': len(gn_articles), 'processed': 0, 'skipped': 0, 'errors': 0}
+
+                    for article in gn_articles:
+                        try:
+                            url = article.get('url', '')
+                            if url and NewsArticle.objects.filter(url=url).exists():
+                                gn_stats['skipped'] += 1
+                                continue
+
+                            published_at = None
+                            if article.get('publishedAt'):
+                                try:
+                                    published_at = datetime.fromisoformat(
+                                        article['publishedAt'].replace('Z', '+00:00')
+                                    )
+                                except (ValueError, AttributeError):
+                                    published_at = timezone.now()
+
+                            success, _, _ = news_processor.process_article(
+                                title=article.get('title', 'No Title'),
+                                content=article.get('content') or article.get('description', ''),
+                                source=article.get('source', {}).get('name', 'GoogleNews'),
+                                url=url,
+                                published_at=published_at,
+                                symbols=[],
+                                author=None
+                            )
+                            if success:
+                                gn_stats['processed'] += 1
+                            else:
+                                gn_stats['errors'] += 1
+                        except Exception:
+                            gn_stats['errors'] += 1
+
+                    news_stats['google_news'] = gn_stats
+                    logger.info('google_news_complete', "Google News processing completed", context=gn_stats)
+
+                except Exception as e:
+                    logger.warning(f"[MorningSync] Google News failed (non-critical): {e}")
+
                 results['news'] = {
                     'status': 'success',
                     'stats': news_stats
@@ -947,10 +993,12 @@ def morning_data_sync(self):
             'trendlyne': tl_stats,
             'news': news_stats or results['news'].get('status')
         })
+        gn_stats = news_stats.get('google_news', {})
+        gn_line = f" | GNews: {gn_stats.get('processed', 0)} new" if gn_stats else ""
         send_telegram_notification(
             f"✅ *Morning Data Sync Complete*\n\n"
             f"F&O: {tl_stats.get('ContractData', '?')} | Stocks: {tl_stats.get('TLStockData', '?')}\n"
-            f"News: {news_stats.get('processed', 0)} processed, {news_stats.get('skipped', 0)} skipped"
+            f"News: {news_stats.get('processed', 0)} processed, {news_stats.get('skipped', 0)} skipped{gn_line}"
         )
         results['status'] = 'success'
     elif trendlyne_ok and not news_ok:

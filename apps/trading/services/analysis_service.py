@@ -366,6 +366,28 @@ def run_news_verification(
             max_results=max_articles
         )
 
+        # Google News supplemental fetch (non-critical)
+        try:
+            from apps.data.services.google_news_scraper import get_google_news_scraper
+            gn_result = get_google_news_scraper().fetch_stock_news(
+                stock_symbol=stock_symbol,
+                stock_name=stock_name,
+                max_results=20
+            )
+            gn_articles = gn_result.get('articles', [])
+        except Exception as e:
+            logger.warning(f"[NewsVerification] Google News failed (non-critical): {e}")
+            gn_articles = []
+
+        # Merge Google News into GNews results — deduplicate by URL
+        seen_urls = {a.get('url', '') for a in stock_news_result.get('articles', []) if a.get('url')}
+        for article in gn_articles:
+            url = article.get('url', '')
+            if url and url not in seen_urls:
+                seen_urls.add(url)
+                stock_news_result.setdefault('articles', []).append(article)
+        stock_news_result['totalArticles'] = len(stock_news_result.get('articles', []))
+
         # Analyze news impact
         if stock_news_result.get('articles'):
             analyzer = get_news_impact_analyzer()
