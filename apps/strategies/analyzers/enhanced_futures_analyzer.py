@@ -1427,8 +1427,9 @@ class EnhancedFuturesAnalyzer:
             # Get stock-specific news from last 24 hours (single query)
             cutoff = timezone.now() - timedelta(hours=24)
             now = timezone.now()
+            # SQLite JSONField doesn't support __contains for arrays; use __icontains string match
             stock_news = list(NewsArticle.objects.filter(
-                symbols_mentioned__contains=[self.symbol],
+                symbols_mentioned__icontains=f'"{self.symbol}"',
                 published_at__gte=cutoff
             ).order_by('-published_at')[:10])
 
@@ -1547,9 +1548,10 @@ class EnhancedFuturesAnalyzer:
 
             from apps.data.models import NewsArticle
             cutoff = timezone.now() - timedelta(hours=24)
+            # SQLite JSONField doesn't support __contains for arrays; use __icontains string match
             sector_articles = list(NewsArticle.objects.filter(
                 news_type='INDUSTRY',
-                sectors_mentioned__contains=[sector_name],
+                sectors_mentioned__icontains=f'"{sector_name}"',
                 published_at__gte=cutoff
             ).order_by('-published_at')[:10])
 

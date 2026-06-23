@@ -77,8 +77,9 @@ def _build_news_attribution(analysis_result: Dict[str, Any], symbol: str) -> Dic
             from datetime import timedelta
             from apps.data.models import NewsArticle
             cutoff = timezone.now() - timedelta(hours=24)
+            # SQLite JSONField doesn't support __contains for arrays; use __icontains string match
             candidates = list(NewsArticle.objects.filter(
-                symbols_mentioned__contains=[symbol],
+                symbols_mentioned__icontains=f'"{symbol}"',
                 published_at__gte=cutoff,
                 sentiment_score__isnull=False,
             ).order_by('-published_at')[:20])

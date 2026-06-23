@@ -282,7 +282,7 @@ def review_overnight_positions():
             negative_news = NewsArticle.objects.filter(
                 created_at__gte=since,
                 sentiment_label='NEGATIVE',
-                symbols_mentioned__contains=symbol,
+                symbols_mentioned__icontains=f'"{symbol}"',
             ).order_by('-created_at').first()
 
             if negative_news:

@@ -133,7 +133,7 @@ def news_list(request):
         )
 
     if symbol:
-        articles = articles.filter(symbols_mentioned__contains=symbol)
+        articles = articles.filter(symbols_mentioned__icontains=f'"{symbol}"')
 
     if source:
         articles = articles.filter(source=source)
