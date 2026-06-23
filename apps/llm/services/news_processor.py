@@ -28,6 +28,19 @@ from apps.data.models import NewsArticle, KnowledgeBase
 from apps.llm.services.ollama_client import get_ollama_client, generate_embedding
 from apps.llm.services.vector_store import get_vector_store, COLLECTION_NEWS
 
+
+def _get_source_quality(source: str) -> float:
+    """Return quality weight for a news source name (0.4–1.0)."""
+    try:
+        from apps.core.constants import NEWS_SOURCE_QUALITY, NEWS_SOURCE_QUALITY_DEFAULT
+        source_lower = source.lower()
+        for key, score in NEWS_SOURCE_QUALITY.items():
+            if key.lower() in source_lower:
+                return score
+        return NEWS_SOURCE_QUALITY_DEFAULT
+    except Exception:
+        return 0.6
+
 logger = logging.getLogger(__name__)
 
 
@@ -103,15 +116,24 @@ class NewsProcessor:
                     url=url or '',
                     published_at=published_at or timezone.now(),
                     author=author or '',
-                    symbols=symbols or [],
+                    symbols_mentioned=symbols or [],
                     sentiment_score=sentiment_score,
                     sentiment_label=sentiment_label,
                     llm_summary=summary,
                     key_insights=insights,
-                    embedding_stored=False
+                    embedding_stored=False,
+                    source_quality_score=_get_source_quality(source),
                 )
 
                 logger.info(f"Article saved: {article.id}")
+
+            # Step 5b: Auto-extract symbols if none were provided
+            if not article.symbols_mentioned:
+                try:
+                    from apps.data.services.symbol_extractor import get_symbol_extractor
+                    get_symbol_extractor().extract_and_tag(article)
+                except Exception as _exc:
+                    logger.warning(f"Symbol extraction failed for article {article.id}: {_exc}")
 
             # Step 6: Generate and store embeddings
             embedding_success = self._store_embeddings(article)
@@ -277,7 +299,7 @@ Key Insights:
                     'title': article.title,
                     'source': article.source,
                     'published_at': article.published_at.isoformat(),
-                    'symbols': json.dumps(article.symbols),
+                    'symbols': json.dumps(article.symbols_mentioned),
                     'sentiment': article.sentiment_label,
                     'sentiment_score': article.sentiment_score,
                     'chunk_type': chunk['type'],
@@ -306,7 +328,7 @@ Key Insights:
                         embedding_id=chunk_id,
                         metadata={
                             'source': article.source,
-                            'symbols': article.symbols,
+                            'symbols': article.symbols_mentioned,
                             'sentiment': article.sentiment_label,
                             'chunk_type': chunk['type']
                         }

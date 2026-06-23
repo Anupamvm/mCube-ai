@@ -50,6 +50,68 @@ def clean_dict_for_json(data):
         return clean_numeric_value(data)
 
 
+def _build_news_attribution(analysis_result: Dict[str, Any], symbol: str) -> Dict:
+    """
+    Build a news attribution summary to explain which news drove the news component score.
+    Attached to the suggestion so users can see WHY news contributed to the recommendation.
+    """
+    try:
+        details = analysis_result.get('details', {})
+        scores = analysis_result.get('scores', {})
+        news_details = details.get('news_sentiment', {})
+        news_score = scores.get('news_sentiment', 0)
+
+        market_sentiment_raw = news_details.get('market_news', {}).get('sentiment', 0)
+        if market_sentiment_raw > 0.2:
+            market_label = 'BULLISH'
+        elif market_sentiment_raw < -0.2:
+            market_label = 'BEARISH'
+        else:
+            market_label = 'NEUTRAL'
+
+        # Fetch the top 3 most impactful articles for this stock (last 24h),
+        # ordered by absolute sentiment score so the highest-signal articles surface first.
+        top_articles = []
+        try:
+            from django.utils import timezone
+            from datetime import timedelta
+            from apps.data.models import NewsArticle
+            cutoff = timezone.now() - timedelta(hours=24)
+            candidates = list(NewsArticle.objects.filter(
+                symbols_mentioned__contains=[symbol],
+                published_at__gte=cutoff,
+                sentiment_score__isnull=False,
+            ).order_by('-published_at')[:20])
+            # Sort by absolute impact so the most signal-rich articles come first
+            candidates.sort(key=lambda a: abs(a.sentiment_score or 0), reverse=True)
+            top_articles = [
+                {
+                    'title': a.title[:80],
+                    'source': a.source,
+                    'impact_score': round(a.sentiment_score, 3) if a.sentiment_score else 0,
+                    'event_type': getattr(a, 'event_type', '') or '',
+                    'url': a.url,
+                    'published_at': a.published_at.isoformat(),
+                }
+                for a in candidates[:3]
+            ]
+        except Exception:
+            pass
+
+        return {
+            'component_score': news_score,
+            'component_max': 25,
+            'stock_news': news_details.get('stock_news', {}),
+            'market_news': news_details.get('market_news', {}),
+            'sector_news': news_details.get('sector_news', {}),
+            'market_sentiment': market_label,
+            'market_sentiment_raw': round(market_sentiment_raw, 3),
+            'top_articles': top_articles,
+        }
+    except Exception:
+        return {}
+
+
 def build_suggestion_result(contract, analysis_result: Dict[str, Any]) -> Dict[str, Any]:
     """
     Build a standardized result dict suitable for save_futures_suggestions().
@@ -105,6 +167,7 @@ def build_suggestion_result(contract, analysis_result: Dict[str, Any]) -> Dict[s
         'hard_reject': analysis_result.get('hard_reject', False),
         'reject_reason': analysis_result.get('reject_reason'),
         'recommendation': analysis_result.get('recommendation', 'N/A'),
+        'news_attribution': _build_news_attribution(analysis_result, contract.symbol),
     }
 
 

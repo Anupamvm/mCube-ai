@@ -4,7 +4,7 @@ Enhanced Futures Analyzer
 Comprehensive multi-factor analysis for Futures trading decisions.
 Incorporates 12 scoring components across technical, fundamental, and sentiment dimensions.
 
-Scoring Components (300 pts total, scaled to 100):
+Scoring Components (315 pts total, scaled to 100):
 1. OI & F&O Analysis (45 pts)
 2. Technical Momentum (35 pts)
 3. Trend Confirmation (30 pts) - includes 52W breakout detection
@@ -446,7 +446,21 @@ class EnhancedFuturesAnalyzer:
             }
 
             if not passed:
-                # Soft warning — log but do NOT raise HardRejectError
+                # Check if hard-block is configured (default: soft warning only)
+                try:
+                    from apps.core.models import TradingCoreConfig
+                    config = TradingCoreConfig.get_instance()
+                    avg_sentiment = news_result.get('details', {}).get('average_sentiment', 0)
+                    if config.news_hard_block_enabled and avg_sentiment < config.news_hard_block_threshold:
+                        raise HardRejectError(
+                            f"News hard block: market sentiment {avg_sentiment:.2f} "
+                            f"< threshold {config.news_hard_block_threshold:.2f}"
+                        )
+                except HardRejectError:
+                    raise
+                except Exception:
+                    pass  # Fail-open if config lookup errors
+                # Default: soft warning — proceed
                 self.details['news_warning'] = news_result.get('message', 'Negative market sentiment')
                 logger.warning(f"  Market News: {news_result.get('message', '')[:60]} - WARNING (proceeding)")
             else:
@@ -568,7 +582,29 @@ class EnhancedFuturesAnalyzer:
         for component, score in self.scores.items():
             max_score = self.WEIGHTS[component]
             pct = (score / max_score * 100) if max_score > 0 else 0
-            logger.info(f"  {component}: {score}/{max_score} ({pct:.0f}%)")
+            detail = self.details.get(component, {})
+            gap_tag = ' [DATA GAP]' if (
+                score == 0
+                and isinstance(detail, dict)
+                and detail.get('reason', '').lower().startswith('no ')
+            ) else ''
+            logger.info(f"  {component}: {score}/{max_score} ({pct:.0f}%){gap_tag}")
+
+        # Warn when data gaps deflate the composite (score=0 because data was missing, not bad)
+        data_gaps = []
+        gap_pts = 0
+        for component, score in self.scores.items():
+            if score == 0:
+                detail = self.details.get(component, {})
+                reason = detail.get('reason', '') if isinstance(detail, dict) else ''
+                if reason.lower().startswith('no '):
+                    data_gaps.append(f"{component}({self.WEIGHTS[component]}pts)")
+                    gap_pts += self.WEIGHTS[component]
+        if data_gaps:
+            logger.warning(
+                f"[{self.symbol}] DATA GAPS — {gap_pts}/{self.TOTAL_WEIGHT}pts from missing data: "
+                + ", ".join(data_gaps)
+            )
 
     def _score_oi_fno(self) -> int:
         """
@@ -724,7 +760,6 @@ class EnhancedFuturesAnalyzer:
         macd = tl.day_macd
         macd_signal = tl.day_macd_signal_line
         if macd is not None and macd_signal is not None:
-            macd - macd_signal
             if self.direction == 'LONG':
                 if macd > 0 and macd > macd_signal:
                     macd_score = 10  # Bullish and above signal
@@ -1389,18 +1424,37 @@ class EnhancedFuturesAnalyzer:
         try:
             from apps.data.models import NewsArticle
 
-            # Get stock-specific news from last 24 hours
+            # Get stock-specific news from last 24 hours (single query)
             cutoff = timezone.now() - timedelta(hours=24)
-            stock_news = NewsArticle.objects.filter(
+            now = timezone.now()
+            stock_news = list(NewsArticle.objects.filter(
                 symbols_mentioned__contains=[self.symbol],
                 published_at__gte=cutoff
-            ).order_by('-published_at')[:10]
+            ).order_by('-published_at')[:10])
 
-            if stock_news.exists():
-                # Calculate average sentiment
-                sentiments = [n.sentiment_score for n in stock_news if n.sentiment_score is not None]
-                if sentiments:
-                    avg_sentiment = sum(sentiments) / len(sentiments)
+            if stock_news:
+                # Freshness-weighted + source-quality-weighted average sentiment
+                # OPINION/GENERAL articles are capped at ±0.3 (low-value commentary)
+                OPINION_TYPES = {'OPINION', 'GENERAL'}
+                weighted_sum, total_weight = 0.0, 0.0
+                article_count = 0
+                for n in stock_news:
+                    if n.sentiment_score is None:
+                        continue
+                    sentiment = n.sentiment_score
+                    # Cap low-value event types so they can't dominate the signal
+                    if getattr(n, 'event_type', '') in OPINION_TYPES:
+                        sentiment = max(-0.3, min(0.3, sentiment))
+                    hours_old = max(0, (now - n.published_at).total_seconds() / 3600)
+                    freshness = max(0.3, 1.0 - (hours_old / 24) * 0.7)  # 1.0→0.3 over 24h
+                    quality = getattr(n, 'source_quality_score', None) or 0.6
+                    w = freshness * quality
+                    weighted_sum += sentiment * w
+                    total_weight += w
+                    article_count += 1
+
+                if total_weight > 0:
+                    avg_sentiment = weighted_sum / total_weight
 
                     if self.direction == 'LONG':
                         if avg_sentiment > 0.5:
@@ -1425,12 +1479,16 @@ class EnhancedFuturesAnalyzer:
 
                     score += stock_score
                     details['stock_news'] = {
-                        'count': len(sentiments),
-                        'avg_sentiment': avg_sentiment,
+                        'count': article_count,
+                        'avg_sentiment': round(avg_sentiment, 3),
                         'score': stock_score
                     }
+                else:
+                    # Articles exist but none have been LLM-analyzed yet — neutral fallback
+                    score += 7
+                    details['stock_news'] = {'count': len(stock_news), 'score': 7, 'reason': 'No sentiment data yet'}
             else:
-                # No news is neutral
+                # No news found — neutral fallback
                 score += 7
                 details['stock_news'] = {'count': 0, 'score': 7, 'reason': 'No recent news'}
 
@@ -1456,10 +1514,10 @@ class EnhancedFuturesAnalyzer:
             score += market_score
             details['market_news'] = {'sentiment': market_sentiment, 'score': market_score}
 
-            # Sector news (simplified - use sector from TLStockData)
-            sector_score = 3  # Default neutral
+            # Sector news — real implementation
+            sector_score, sector_details = self._score_sector_news_component()
             score += sector_score
-            details['sector_news'] = {'score': sector_score}
+            details['sector_news'] = sector_details
 
         except Exception as e:
             logger.warning(f"News sentiment scoring error: {e}")
@@ -1470,6 +1528,96 @@ class EnhancedFuturesAnalyzer:
         logger.info(f"  News Sentiment: {score}/25")
 
         return min(score, 25)
+
+    def _score_sector_news_component(self):
+        """
+        Score sector news (0-5 pts).
+
+        Fetches or uses pre-fetched INDUSTRY articles for this stock's sector.
+        Falls back to neutral 3 pts if sector is unknown or fetch fails.
+        Returns (score, details_dict).
+        """
+        default_result = (3, {'score': 3, 'reason': 'No sector data'})
+        try:
+            sector_name = None
+            if self._tl_stock_data:
+                sector_name = getattr(self._tl_stock_data, 'sector_name', None)
+            if not sector_name:
+                return default_result
+
+            from apps.data.models import NewsArticle
+            cutoff = timezone.now() - timedelta(hours=24)
+            sector_articles = list(NewsArticle.objects.filter(
+                news_type='INDUSTRY',
+                sectors_mentioned__contains=[sector_name],
+                published_at__gte=cutoff
+            ).order_by('-published_at')[:10])
+
+            # If too few cached articles, fetch fresh from GNews and store for future runs.
+            # Newly stored articles have no LLM sentiment yet so are NOT scored this run.
+            if len(sector_articles) < 3:
+                try:
+                    from apps.data.services.gnews_client import get_gnews_client
+                    gnews = get_gnews_client()
+                    result = gnews.fetch_industry_news(
+                        industry=sector_name, max_results=5
+                    )
+                    for art in result.get('articles', []):
+                        url = art.get('url', '')
+                        if url and NewsArticle.objects.filter(url=url).exists():
+                            continue
+                        NewsArticle.objects.create(
+                            title=art.get('title', ''),
+                            content=art.get('content') or art.get('description', ''),
+                            source=art.get('source', {}).get('name', 'GNews'),
+                            url=url,
+                            published_at=timezone.now(),
+                            news_type='INDUSTRY',
+                            sectors_mentioned=[sector_name],
+                        )
+                        # Not appended to sector_articles — no sentiment score yet
+                except Exception as _fe:
+                    logger.debug(f"Sector news fetch failed for {sector_name}: {_fe}")
+
+            if not sector_articles:
+                return default_result
+
+            # Weighted average (freshness + quality)
+            now = timezone.now()
+            weighted_sum, total_weight = 0.0, 0.0
+            for n in sector_articles:
+                if n.sentiment_score is None:
+                    continue
+                hours_old = max(0, (now - n.published_at).total_seconds() / 3600)
+                freshness = max(0.3, 1.0 - (hours_old / 24) * 0.7)
+                quality = getattr(n, 'source_quality_score', None) or 0.6
+                w = freshness * quality
+                weighted_sum += n.sentiment_score * w
+                total_weight += w
+
+            if total_weight == 0:
+                return default_result
+
+            avg = weighted_sum / total_weight
+            if avg > 0.2:
+                sector_score = 5
+            elif avg > 0:
+                sector_score = 3
+            elif avg > -0.2:
+                sector_score = 2
+            else:
+                sector_score = 1
+
+            return (sector_score, {
+                'score': sector_score,
+                'sector': sector_name,
+                'count': len(sector_articles),
+                'avg_sentiment': round(avg, 3),
+            })
+
+        except Exception as e:
+            logger.warning(f"Sector news scoring error: {e}")
+            return default_result
 
     def _score_analyst_consensus(self) -> int:
         """
@@ -1810,7 +1958,6 @@ class EnhancedFuturesAnalyzer:
             # Calculate changes
             day_change = current_momentum - prev_day_momentum
             week_change = current_momentum - prev_week_momentum
-            day_change - (prev_day_momentum - prev_week_momentum)
 
             details['day_change'] = round(day_change, 2)
             details['week_change'] = round(week_change, 2)
@@ -1865,10 +2012,14 @@ class EnhancedFuturesAnalyzer:
                 acceleration_score = 3
             details['pattern'] = pattern
         else:
-            # Only current momentum available
+            # Only current momentum available — D-1 data missing from Trendlyne import
             acceleration_score = 5  # Neutral
             pattern = 'CURRENT_ONLY'
             details['pattern'] = pattern
+            logger.warning(
+                f"[{self.symbol}] Momentum acceleration: prev_day data missing — "
+                f"using CURRENT_ONLY fallback (5/10 acceleration pts)"
+            )
 
         score += acceleration_score
         details['acceleration_score'] = acceleration_score
@@ -2191,10 +2342,12 @@ class EnhancedFuturesAnalyzer:
             risk_amount = DEFAULT_CAPITAL * BASE_RISK_PCT * sizing['final_multiplier']
             max_shares = int(risk_amount / risk_per_share)
 
-            # Get lot size if available
+            # Get lot size from ContractData (futures contract), fallback to 1
             lot_size = 1
-            if self._contract_stock_data and self._contract_stock_data.fno_lot_size:
-                lot_size = self._contract_stock_data.fno_lot_size
+            if self._contract_data is not None:
+                futures_contract = self._contract_data.filter(option_type='FUT').first()
+                if futures_contract and futures_contract.lot_size:
+                    lot_size = futures_contract.lot_size
 
             sizing['lot_size'] = lot_size
             sizing['max_shares_by_risk'] = max_shares

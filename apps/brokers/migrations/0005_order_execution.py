@@ -1,10 +1,25 @@
 # Generated manually - Take ownership of Order and Execution models from orders app
-# The database tables already exist, this just updates Django's model state
+# The database tables already exist in production, this just updates Django's model state.
+# database_operations creates tables only when they don't exist (e.g. fresh test DBs).
 
-from django.conf import settings
 from django.db import migrations, models
 import django.core.validators
 import django.db.models.deletion
+
+
+def _create_tables_if_not_exist(apps, schema_editor):
+    """Create orders/executions tables only if they don't already exist.
+
+    In production the tables exist from the old 'orders' app so this is a no-op.
+    In fresh test databases (manage.py test) they must be created here.
+    """
+    existing = schema_editor.connection.introspection.table_names()
+    if 'orders' not in existing:
+        Order = apps.get_model('brokers', 'Order')
+        schema_editor.create_model(Order)
+    if 'executions' not in existing:
+        Execution = apps.get_model('brokers', 'Execution')
+        schema_editor.create_model(Execution)
 
 
 class Migration(migrations.Migration):
@@ -16,8 +31,9 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        # Use SeparateDatabaseAndState to only update state, not database
-        # since tables already exist from the old 'orders' app
+        # Update Django's migration state to know about Order and Execution models.
+        # In production, the tables were inherited from the old 'orders' app.
+        # In fresh test databases, the RunPython below creates them if absent.
         migrations.SeparateDatabaseAndState(
             state_operations=[
                 migrations.CreateModel(
@@ -75,6 +91,12 @@ class Migration(migrations.Migration):
                     },
                 ),
             ],
-            database_operations=[],  # No database changes needed - tables exist
+            database_operations=[],  # No schema changes — tables exist in prod
+        ),
+        # Create tables only when they're missing (e.g. fresh test databases).
+        # In production this is a no-op because the tables already exist.
+        migrations.RunPython(
+            _create_tables_if_not_exist,
+            reverse_code=migrations.RunPython.noop,
         ),
     ]

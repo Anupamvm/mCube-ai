@@ -52,6 +52,39 @@ TASK_DEFAULT_CONFIG = {
         'default_days': [0, 1, 2, 3, 4],
     },
 
+    # Exchange filings — 3 beat entries share the same task function.
+    # All disabled by default; enable via Task Control UI after staging validation.
+    'fetch-exchange-filings-morning': {
+        'display_name': 'Fetch Exchange Filings (7:30 AM)',
+        'description': 'NSE/BSE corporate announcements — morning window (7:30 AM)',
+        'schedule_type': 'crontab',
+        'category': 'data',
+        'default_hour': 7,
+        'default_minute': 30,
+        'default_days': [0, 1, 2, 3, 4],
+        'is_enabled': False,
+    },
+    'fetch-exchange-filings-midday': {
+        'display_name': 'Fetch Exchange Filings (12:00 PM)',
+        'description': 'NSE/BSE corporate announcements — midday window (12:00 PM)',
+        'schedule_type': 'crontab',
+        'category': 'data',
+        'default_hour': 12,
+        'default_minute': 0,
+        'default_days': [0, 1, 2, 3, 4],
+        'is_enabled': False,
+    },
+    'fetch-exchange-filings-eod': {
+        'display_name': 'Fetch Exchange Filings (3:45 PM)',
+        'description': 'NSE/BSE corporate announcements — end-of-day window (3:45 PM)',
+        'schedule_type': 'crontab',
+        'category': 'data',
+        'default_hour': 15,
+        'default_minute': 45,
+        'default_days': [0, 1, 2, 3, 4],
+        'is_enabled': False,
+    },
+
     # =========================================================================
     # STRATEGY EXECUTION TASKS
     # =========================================================================

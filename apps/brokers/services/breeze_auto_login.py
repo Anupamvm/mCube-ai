@@ -460,6 +460,23 @@ class BreezeAutoLogin:
             logger.warning(f"Error detecting OTP input field: {e}")
             return None
 
+    def _check_page_error(self) -> Optional[str]:
+        """Check if Breeze is showing an error message on the current page."""
+        try:
+            from selenium.webdriver.common.by import By
+            for selector in ['#dvError', '#dvmsg', '.error', '.alert-danger', '.errorMsg', '.err-msg']:
+                try:
+                    el = self.driver.find_element(By.CSS_SELECTOR, selector)
+                    if el.is_displayed():
+                        text = el.text.strip()
+                        if text:
+                            return text
+                except Exception:
+                    pass
+            return None
+        except Exception:
+            return None
+
     def _enter_otp_and_submit(self, otp: str) -> bool:
         """
         Enter OTP into the detected field and submit.
@@ -468,7 +485,7 @@ class BreezeAutoLogin:
             otp: The OTP digits to enter
 
         Returns:
-            True if OTP was entered successfully
+            True if OTP was accepted (no error shown), False if rejected or field not found
         """
         try:
             from selenium.webdriver.common.by import By
@@ -515,6 +532,13 @@ class BreezeAutoLogin:
                 logger.info("Pressed Enter to submit OTP (no button found)")
 
             time.sleep(2)
+
+            # Check if Breeze rejected the OTP (error message visible on page)
+            error_text = self._check_page_error()
+            if error_text:
+                logger.warning(f"Breeze OTP rejected — page shows error: {error_text}")
+                return False
+
             return True
 
         except Exception as e:
@@ -683,6 +707,9 @@ class BreezeAutoLogin:
             The OTP string if available, None otherwise
         """
         try:
+            from django.db import close_old_connections
+            close_old_connections()
+
             from apps.core.models import NseFlag
 
             status = NseFlag.get(OTP_FLAG_REQUEST, "")
@@ -694,36 +721,31 @@ class BreezeAutoLogin:
                 else:
                     logger.warning(f"OTP flag fulfilled but value invalid: '{otp}'")
             return None
-        except Exception:
+        except Exception as e:
+            logger.error(f"Error reading OTP from NseFlag: {e}", exc_info=True)
             return None
+
+    def _send_telegram_message(self, text: str, disable_notification: bool = True):
+        """Send a Telegram notification (best-effort)."""
+        try:
+            from apps.alerts.services.telegram_client import get_telegram_client
+            client = get_telegram_client()
+            if client.is_enabled():
+                client.send_message(text, disable_notification=disable_notification)
+        except Exception:
+            pass
 
     def _send_telegram_timeout_message(self):
         """Notify the user on Telegram that OTP polling timed out."""
-        try:
-            from apps.alerts.services.telegram_client import get_telegram_client
-
-            client = get_telegram_client()
-            if client.is_enabled():
-                client.send_message(
-                    "Telegram OTP window expired. You can still enter the OTP in the browser.",
-                    disable_notification=True
-                )
-        except Exception:
-            pass
+        self._send_telegram_message(
+            "Telegram OTP window expired. You can still enter the OTP in the browser."
+        )
 
     def _send_telegram_success_message(self):
         """Notify the user on Telegram that OTP was received and entered."""
-        try:
-            from apps.alerts.services.telegram_client import get_telegram_client
-
-            client = get_telegram_client()
-            if client.is_enabled():
-                client.send_message(
-                    "OTP received and entered into Breeze login. Waiting for session...",
-                    disable_notification=True
-                )
-        except Exception:
-            pass
+        self._send_telegram_message(
+            "OTP received and entered into Breeze login. Waiting for session..."
+        )
 
     # =========================================================================
     # REDIRECT DETECTION
@@ -738,6 +760,14 @@ class BreezeAutoLogin:
         """
         try:
             current_url = self.driver.current_url
+
+            # Log current URL every ~15 seconds (8 poll cycles at 2s interval)
+            if not hasattr(self, '_redirect_log_counter'):
+                self._redirect_log_counter = 0
+            self._redirect_log_counter += 1
+            if self._redirect_log_counter % 8 == 1:
+                logger.info(f"Polling redirect — current URL: {current_url[:120]}")
+
             parsed = urlparse(current_url)
 
             if parsed.hostname == self.REDIRECT_HOST or parsed.hostname == 'localhost':
@@ -747,7 +777,8 @@ class BreezeAutoLogin:
                     logger.info(f"Captured session token: {session_token[:20]}...")
                     return session_token
             return None
-        except Exception:
+        except Exception as e:
+            logger.error(f"_check_redirect failed (driver may have crashed): {e}")
             return None
 
     # =========================================================================
@@ -812,9 +843,12 @@ class BreezeAutoLogin:
                             self._cleanup_otp_flags()
                             # Continue polling for redirect after OTP submission
                         else:
-                            logger.warning("Failed to enter Telegram OTP into browser - browser entry still open")
+                            logger.warning("Failed to enter Telegram OTP into browser (OTP rejected or field error)")
                             self._cleanup_otp_flags()
-                            telegram_active = False
+                            self._send_telegram_message(
+                                "❌ Breeze rejected the OTP. Please trigger a fresh Breeze login."
+                            )
+                            return False, "OTP was rejected by Breeze login page"
 
             # === Late Telegram request: if OTP panel appeared after initial check ===
             if not telegram_active and not self._telegram_otp_sent and not telegram_otp_entered:
@@ -862,6 +896,8 @@ class BreezeAutoLogin:
             if not self._setup_driver():
                 detail = self._driver_error or "Chrome binary not found"
                 return False, f"Failed to initialize Chrome browser: {detail}. Ensure Chrome is installed and chromedriver is accessible."
+
+            self._send_telegram_message("Browser launched, filling Breeze login form...")
 
             # Navigate to login page
             login_url = self._get_login_url()

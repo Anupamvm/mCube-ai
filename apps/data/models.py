@@ -616,6 +616,28 @@ class NewsArticle(TimeStampedModel):
         help_text="Complete LLM impact analysis results"
     )
 
+    # Source quality and news intelligence fields
+    source_quality_score = models.FloatField(
+        null=True,
+        blank=True,
+        default=0.6,
+        help_text="Source authority weight (0.4–1.0). Set from NEWS_SOURCE_QUALITY lookup."
+    )
+    event_type = models.CharField(
+        max_length=20,
+        blank=True,
+        default='',
+        help_text=(
+            "LLM-classified event type: EARNINGS, GUIDANCE, ACQUISITION, REGULATORY, "
+            "LEGAL, MACRO, SECTOR, OPINION, GENERAL"
+        )
+    )
+    already_priced_in = models.BooleanField(
+        null=True,
+        blank=True,
+        help_text="LLM judgment: is this news already reflected in the current price?"
+    )
+
     class Meta:
         db_table = 'news_articles'
         ordering = ['-published_at']

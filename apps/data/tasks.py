@@ -966,6 +966,59 @@ def morning_data_sync(self):
                 except Exception as e:
                     logger.warning(f"[MorningSync] Google News failed (non-critical): {e}")
 
+                # Pre-fetch sector news for top 10 sectors so articles have LLM
+                # sentiment scores by the time the 9:40 AM algorithm runs.
+                try:
+                    from apps.data.models import TLStockData, NewsArticle
+                    from apps.data.services.gnews_client import get_gnews_client
+                    from apps.llm.services.news_impact_analyzer import NewsImpactAnalyzer
+
+                    top_sectors = list(
+                        TLStockData.objects.exclude(sector_name__isnull=True)
+                        .exclude(sector_name='')
+                        .values_list('sector_name', flat=True)
+                        .distinct()[:10]
+                    )
+                    gnews_sector = get_gnews_client()
+                    analyzer = NewsImpactAnalyzer()
+                    sector_fetched = 0
+
+                    for sector in top_sectors:
+                        try:
+                            result = gnews_sector.fetch_industry_news(industry=sector, max_results=3)
+                            for art in result.get('articles', []):
+                                url = art.get('url', '')
+                                if url and NewsArticle.objects.filter(url=url).exists():
+                                    continue
+                                content = art.get('content') or art.get('description', '')
+                                # Run market impact analysis for sentiment score
+                                impact = analyzer.analyze_market_article_impact(art)
+                                source = art.get('source', {}).get('name', 'GNews')
+                                from apps.llm.services.news_processor import _get_source_quality
+                                na = NewsArticle.objects.create(
+                                    title=art.get('title', ''),
+                                    content=content,
+                                    source=source,
+                                    url=url,
+                                    published_at=timezone.now(),
+                                    news_type='INDUSTRY',
+                                    sectors_mentioned=[sector],
+                                    sentiment_score=impact.get('impact_score'),
+                                    sentiment_label='POSITIVE' if (impact.get('impact_score') or 0) > 0.3 else (
+                                        'NEGATIVE' if (impact.get('impact_score') or 0) < -0.3 else 'NEUTRAL'
+                                    ),
+                                    impact_reasoning=impact.get('reasoning', ''),
+                                    source_quality_score=_get_source_quality(source),
+                                    event_type=impact.get('event_type', ''),
+                                )
+                                sector_fetched += 1
+                        except Exception:
+                            pass
+
+                    logger.info(f"[MorningSync] Sector news pre-fetched: {sector_fetched} articles across {len(top_sectors)} sectors")
+                except Exception as e:
+                    logger.warning(f"[MorningSync] Sector news pre-fetch failed (non-critical): {e}")
+
                 results['news'] = {
                     'status': 'success',
                     'stats': news_stats
@@ -1009,6 +1062,55 @@ def morning_data_sync(self):
         results['status'] = 'partial'
 
     return results
+
+
+@shared_task(name='fetch_exchange_filings', bind=True)
+@task_enabled_guard(['fetch-exchange-filings-morning', 'fetch-exchange-filings-midday', 'fetch-exchange-filings-eod'])
+def fetch_exchange_filings(self):
+    """
+    Fetch NSE/BSE corporate announcements and store as NewsArticle records (3× daily).
+
+    Runs at 7:30 AM, 12:00 PM, and 3:45 PM IST on weekdays.
+    Disabled by default — enable via the Task Control UI after staging validation.
+
+    Stored articles get:
+      - source_quality_score = 1.0 (exchange-grade authority)
+      - news_type = 'STOCK'
+      - event_type classified from filing subject
+      - symbols_mentioned resolved via SymbolExtractor
+
+    LLM sentiment analysis is NOT run here — articles are scored on demand
+    when the futures algorithm runs and calls NewsImpactAnalyzer.
+    """
+    logger = TaskLogger(
+        task_name='fetch_exchange_filings',
+        task_category='data',
+        task_id=self.request.id
+    )
+    logger.start("Fetching NSE/BSE exchange filings")
+
+    try:
+        from apps.data.services.exchange_filings_client import get_exchange_filings_client
+        stats = get_exchange_filings_client().fetch_and_store_all(hours_back=4)
+
+        total_new = stats['nse'] + stats['bse']
+        summary = (
+            f"Exchange filings complete: NSE={stats['nse']}, BSE={stats['bse']}, "
+            f"skipped={stats['skipped']}, errors={stats['errors']}"
+        )
+        logger.success(summary, context=stats)
+
+        if total_new > 0:
+            send_telegram_notification(
+                f"📋 *Exchange Filings*: {total_new} new announcements "
+                f"(NSE: {stats['nse']}, BSE: {stats['bse']})"
+            )
+
+        return stats
+
+    except Exception as e:
+        logger.error('failed', f"Exchange filings fetch failed: {e}")
+        return {'status': 'error', 'error': str(e)}
 
 
 # Celery Beat Schedule

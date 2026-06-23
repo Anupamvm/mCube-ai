@@ -1386,6 +1386,20 @@ class TradingCoreConfig(TimeStampedModel):
         help_text="Lots for paper futures trades"
     )
 
+    # News intelligence controls
+    news_hard_block_enabled = models.BooleanField(
+        default=False,
+        help_text=(
+            "When enabled, raises HardRejectError instead of a soft warning when average "
+            "market sentiment falls below news_hard_block_threshold."
+        )
+    )
+    news_hard_block_threshold = models.FloatField(
+        default=-0.5,
+        validators=[MinValueValidator(-1.0), MaxValueValidator(0.0)],
+        help_text="Average market sentiment below which hard block triggers (default -0.5)."
+    )
+
     class Meta:
         db_table = 'trading_core_config'
         verbose_name = 'Trading Core Configuration'

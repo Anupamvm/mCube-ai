@@ -744,6 +744,88 @@
         </div>
     {% endif %}
 
+    <!-- News Intelligence Card -->
+    {% if reasoning.news_attribution %}
+    {% with na=reasoning.news_attribution %}
+    <div class="card mb-4">
+        <div class="card-header bg-light d-flex justify-content-between align-items-center">
+            <h6 class="mb-0">
+                <i class="fas fa-newspaper me-2"></i> News Intelligence
+            </h6>
+            <span class="badge {% if na.component_score >= 18 %}bg-success{% elif na.component_score >= 12 %}bg-warning text-dark{% else %}bg-secondary{% endif %}">
+                {{ na.component_score }}/25 pts
+            </span>
+        </div>
+        <div class="card-body">
+            <div class="row g-3">
+                <!-- Market & Stock sentiment summary -->
+                <div class="col-md-4">
+                    <p class="text-muted small mb-1">Market Sentiment</p>
+                    {% with ms=na.market_sentiment %}
+                    <span class="badge fs-6 {% if ms == 'BULLISH' %}bg-success{% elif ms == 'BEARISH' %}bg-danger{% else %}bg-secondary{% endif %}">
+                        {% if ms == 'BULLISH' %}📈{% elif ms == 'BEARISH' %}📉{% else %}➖{% endif %} {{ ms }}
+                    </span>
+                    {% endwith %}
+                </div>
+                <div class="col-md-4">
+                    <p class="text-muted small mb-1">Stock Articles (24h)</p>
+                    <strong>{{ na.stock_news.count|default:0 }}</strong>
+                    {% if na.stock_news.avg_sentiment is not None %}
+                        <span class="ms-2 small text-muted">avg {{ na.stock_news.avg_sentiment }}</span>
+                    {% endif %}
+                </div>
+                <div class="col-md-4">
+                    <p class="text-muted small mb-1">Sector</p>
+                    {% if na.sector_news.sector %}
+                        <span class="badge bg-light text-dark">{{ na.sector_news.sector }}</span>
+                        <span class="ms-1 small text-muted">{{ na.sector_news.score }}/5</span>
+                    {% else %}
+                        <span class="text-muted small">—</span>
+                    {% endif %}
+                </div>
+
+                <!-- Top contributing articles -->
+                {% if na.top_articles %}
+                <div class="col-12 mt-2">
+                    <p class="text-muted small mb-2">Top Contributing Articles</p>
+                    <div class="list-group list-group-flush">
+                        {% for article in na.top_articles %}
+                        <div class="list-group-item px-0 py-2">
+                            <div class="d-flex justify-content-between align-items-start">
+                                <div class="flex-grow-1 me-2">
+                                    {% if article.url %}
+                                    <a href="{{ article.url }}" target="_blank" rel="noopener" class="text-decoration-none small fw-medium">
+                                        {{ article.title }}
+                                    </a>
+                                    {% else %}
+                                    <span class="small fw-medium">{{ article.title }}</span>
+                                    {% endif %}
+                                    <div class="mt-1">
+                                        <span class="text-muted small">{{ article.source }}</span>
+                                        {% if article.event_type %}
+                                        <span class="badge bg-light text-dark ms-1" style="font-size:0.7rem;">{{ article.event_type }}</span>
+                                        {% endif %}
+                                    </div>
+                                </div>
+                                <div class="text-end flex-shrink-0">
+                                    {% with sc=article.impact_score %}
+                                    <span class="badge {% if sc >= 0.3 %}bg-success{% elif sc <= -0.3 %}bg-danger{% else %}bg-secondary{% endif %}">
+                                        {% if sc >= 0 %}+{% endif %}{{ sc }}
+                                    </span>
+                                    {% endwith %}
+                                </div>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    {% endwith %}
+    {% endif %}
+
     <!-- Algorithm Reasoning (Expandable) -->
     <div class="card mb-4">
         <div class="card-header bg-light">

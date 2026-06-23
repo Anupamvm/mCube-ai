@@ -108,6 +108,25 @@ def get_static_schedule():
         'options': {'queue': 'data'},
     },
 
+    # Exchange filings — NSE/BSE corporate announcements (3× daily)
+    # Disabled by default via TASK_DEFAULT_CONFIG is_enabled=False
+    # Enable via Task Control UI after staging validation.
+    'fetch-exchange-filings-morning': {
+        'task': 'fetch_exchange_filings',
+        'schedule': crontab(hour=7, minute=30, day_of_week='1-5'),   # 7:30 AM IST
+        'options': {'queue': 'data'},
+    },
+    'fetch-exchange-filings-midday': {
+        'task': 'fetch_exchange_filings',
+        'schedule': crontab(hour=12, minute=0, day_of_week='1-5'),   # 12:00 PM IST
+        'options': {'queue': 'data'},
+    },
+    'fetch-exchange-filings-eod': {
+        'task': 'fetch_exchange_filings',
+        'schedule': crontab(hour=15, minute=45, day_of_week='1-5'),  # 3:45 PM IST
+        'options': {'queue': 'data'},
+    },
+
     # =========================================================================
     # STRATEGY EXECUTION TASKS - DAILY TRADING WORKFLOW
     # =========================================================================

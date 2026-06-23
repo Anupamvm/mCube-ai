@@ -415,3 +415,34 @@ LOG_LEVEL_INFO = 'INFO'
 LOG_LEVEL_WARNING = 'WARNING'
 LOG_LEVEL_ERROR = 'ERROR'
 LOG_LEVEL_CRITICAL = 'CRITICAL'
+
+# ============================================================================
+# NEWS SOURCE QUALITY SCORES
+# ============================================================================
+# Used to weight sentiment averaging: tier-1 wire services outweigh blogs.
+# Substring match against article.source (case-insensitive).
+
+NEWS_SOURCE_QUALITY = {
+    # Exchange-grade (most authoritative)
+    'NSE': 1.0,
+    'BSE': 1.0,
+    'SEBI': 1.0,
+    # Premium financial wire
+    'PTI': 0.95,
+    'Reuters': 0.95,
+    'Bloomberg': 0.95,
+    # Major Indian financial press
+    'Economic Times': 0.85,
+    'Business Standard': 0.82,
+    'Livemint': 0.82,
+    'Mint': 0.80,
+    'MoneyControl': 0.80,
+    'Moneycontrol': 0.80,
+    # Mainstream financial media
+    'Financial Express': 0.75,
+    'NDTV Profit': 0.75,
+    'CNBC': 0.75,
+    'Hindu BusinessLine': 0.75,
+    'Business Today': 0.72,
+}
+NEWS_SOURCE_QUALITY_DEFAULT = 0.6  # Unknown / tier-3 sources

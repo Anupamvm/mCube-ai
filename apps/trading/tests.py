@@ -37,7 +37,7 @@ class TradeSuggestionModelTests(TestCase):
 
         self.assertEqual(suggestion.instrument, 'NIFTY')
         self.assertEqual(suggestion.direction, 'LONG')
-        self.assertEqual(suggestion.status, 'PENDING')
+        self.assertEqual(suggestion.status, 'SUGGESTED')
 
     def test_suggestion_properties(self):
         """Test suggestion property methods"""
@@ -51,15 +51,15 @@ class TradeSuggestionModelTests(TestCase):
             position_details={}
         )
 
-        # Test is_pending property
+        # New suggestion is pending and actionable
         self.assertTrue(suggestion.is_pending)
-        self.assertFalse(suggestion.is_approved)
+        self.assertFalse(suggestion.is_active)
+        self.assertTrue(suggestion.is_actionable)
 
-        # Change status and test is_approved
-        suggestion.status = 'APPROVED'
-        suggestion.save()
+        # After taking the trade, is_pending is False, is_active is True
+        suggestion.mark_taken()
         self.assertFalse(suggestion.is_pending)
-        self.assertTrue(suggestion.is_approved)
+        self.assertTrue(suggestion.is_active)
 
     def test_suggestion_expiry(self):
         """Test suggestion expiry logic"""
@@ -113,7 +113,7 @@ class TradeSuggestionServiceTests(TestCase):
         )
 
         self.assertIsNotNone(suggestion.id)
-        self.assertEqual(suggestion.status, 'PENDING')
+        self.assertEqual(suggestion.status, 'SUGGESTED')
         self.assertEqual(suggestion.instrument, 'NIFTY')
 
     def test_create_suggestion_with_expiry(self):
@@ -211,39 +211,28 @@ class TradeSuggestionApprovalWorkflowTests(TestCase):
         )
 
     def test_approval_workflow(self):
-        """Test complete approval workflow"""
-        self.client.login(username='testuser', password='testpass123')
+        """Test suggestion transitions from SUGGESTED to TAKEN via approve()"""
+        # New suggestion starts as SUGGESTED
+        self.assertEqual(self.suggestion.status, 'SUGGESTED')
+        self.assertTrue(self.suggestion.is_pending)
 
-        # Check suggestion is pending
-        self.assertEqual(self.suggestion.status, 'PENDING')
-
-        # Approve suggestion
-        self.client.post(f'/trading/suggestion/{self.suggestion.id}/approve/')
-
-        # Reload suggestion
+        # Take the trade
+        self.suggestion.mark_taken()
         self.suggestion.refresh_from_db()
 
-        # Check suggestion is approved
-        self.assertEqual(self.suggestion.status, 'APPROVED')
-        self.assertIsNotNone(self.suggestion.approved_by)
-        self.assertIsNotNone(self.suggestion.approval_timestamp)
+        self.assertEqual(self.suggestion.status, 'TAKEN')
+        self.assertTrue(self.suggestion.is_active)
+        self.assertFalse(self.suggestion.is_pending)
 
     def test_rejection_workflow(self):
-        """Test rejection workflow"""
-        self.client.login(username='testuser', password='testpass123')
-
+        """Test suggestion transitions from SUGGESTED to REJECTED via mark_rejected()"""
         # Reject suggestion
-        response = self.client.post(
-            f'/trading/suggestion/{self.suggestion.id}/reject/',
-            {'reason': 'Market conditions unfavorable'}
-        )
-
-        # Reload suggestion
+        self.suggestion.mark_rejected(user_notes='Market conditions unfavorable')
         self.suggestion.refresh_from_db()
 
-        # Check suggestion is rejected
         self.assertEqual(self.suggestion.status, 'REJECTED')
-        self.assertIn('Market conditions unfavorable', self.suggestion.approval_notes)
+        self.assertFalse(self.suggestion.is_pending)
+        self.assertIsNotNone(self.suggestion.rejected_timestamp)
 
     def test_approval_creates_log(self):
         """Test that approval creates audit log"""

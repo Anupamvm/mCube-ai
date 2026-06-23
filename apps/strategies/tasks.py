@@ -2051,9 +2051,12 @@ def aggregate_futures_results(self, batch_results, min_score=65, orchestrator_ta
     total_analyzed = 0
     timed_out_batches = 0
     partial_contracts = 0
+    null_batches = 0  # completely failed subtasks (no result at all)
 
     for batch in batch_results:
-        if batch:  # Handle potential None from failed subtasks
+        if batch is None:
+            null_batches += 1
+        else:
             all_passed_summary.extend(batch.get('passed_summary', []))
             all_passed_full.extend(batch.get('passed_full', []))
             all_errors.extend(batch.get('errors', []))
@@ -2064,10 +2067,20 @@ def aggregate_futures_results(self, batch_results, min_score=65, orchestrator_ta
                 timed_out_batches += 1
                 partial_contracts += batch.get('batch_size', 0) - batch.get('analyzed_count', 0)
 
+    # Warn when any batches are incomplete — these represent contracts that were not analyzed
+    completeness_issues = null_batches + timed_out_batches
+    if completeness_issues > 0:
+        logger.warning(
+            f"CHORD COMPLETENESS: {len(batch_results)} batches — "
+            f"{null_batches} failed (None), {timed_out_batches} timed out, "
+            f"~{partial_contracts} contracts skipped"
+        )
+
     task_logger.info('merged', f"Merged {len(batch_results)} batches", context={
         'total_analyzed': total_analyzed,
         'passed': len(all_passed_summary),
         'errors': len(all_errors),
+        'null_batches': null_batches,
         'timed_out_batches': timed_out_batches,
         'partial_contracts': partial_contracts
     })

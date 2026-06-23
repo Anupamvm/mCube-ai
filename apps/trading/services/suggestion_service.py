@@ -199,7 +199,8 @@ def save_futures_suggestions(passed_results, user=None, source='manual'):
                     'scores': result.get('scores', {}),
                     'explanation': result.get('explanation', ''),
                     'sr_data': result.get('sr_data'),
-                    'breach_risks': result.get('breach_risks')
+                    'breach_risks': result.get('breach_risks'),
+                    'news_attribution': result.get('news_attribution', {}),
                 }, default=_json_serial)
             )
 

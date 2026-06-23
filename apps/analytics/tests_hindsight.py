@@ -14,7 +14,7 @@ Tests cover:
   10. View endpoints
 """
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from unittest.mock import patch, MagicMock
 
@@ -181,7 +181,7 @@ class CheckpointCreationTests(TestCase):
         expiry = date(2026, 4, 16)  # Only 4 trading days after exit
 
         pos = _make_position(expiry_date=expiry)
-        pos.exit_time = timezone.now()
+        pos.exit_time = timezone.make_aware(datetime.combine(exit_date, datetime.min.time()))
         pos.exit_price = Decimal('1850.00')
         pos.exit_reason = 'TARGET'
         pos.status = 'CLOSED'

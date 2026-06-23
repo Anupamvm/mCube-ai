@@ -128,12 +128,12 @@ For a {trade_direction} trade:
 Consider:
 1. Direct impact on the company (earnings, management, operations)
 2. Regulatory or legal issues
-3. Market/industry headwinds
-4. Competitive threats
+3. Market/industry headwinds or tailwinds
+4. Competitive threats or opportunities
 5. Macroeconomic factors
 
 Return ONLY a valid JSON object (no markdown, no explanation):
-{{"impact_score": <-1.0 to 1.0>, "impact_label": "<HIGHLY_NEGATIVE|NEGATIVE|NEUTRAL|POSITIVE|HIGHLY_POSITIVE>", "reasoning": "<one sentence explaining the impact>", "confidence": <0.0 to 1.0>}}"""
+{{"event_type": "<EARNINGS|GUIDANCE|ACQUISITION|MERGER|REGULATORY|LEGAL|MACRO|SECTOR|PRODUCT|MANAGEMENT|INSTITUTIONAL|OPINION|GENERAL>", "impact_score": <-1.0 to 1.0>, "impact_label": "<HIGHLY_NEGATIVE|NEGATIVE|NEUTRAL|POSITIVE|HIGHLY_POSITIVE>", "already_priced_in": <true|false>, "time_horizon": "<INTRADAY|SWING|POSITION>", "magnitude": "<LOW|MEDIUM|HIGH>", "reasoning": "<one sentence explaining the impact>", "confidence": <0.0 to 1.0>}}"""
 
         system_prompt = "You are a financial news analyst. Respond ONLY with valid JSON, no markdown formatting."
 
@@ -193,7 +193,12 @@ Return ONLY a valid JSON object (no markdown, no explanation):
                 'impact_score': impact_score,
                 'impact_label': data.get('impact_label', self._get_impact_label(impact_score)),
                 'reasoning': data.get('reasoning', 'No reasoning provided'),
-                'confidence': float(data.get('confidence', 0.5))
+                'confidence': float(data.get('confidence', 0.5)),
+                # New enrichment fields (default gracefully if absent)
+                'event_type': data.get('event_type', ''),
+                'already_priced_in': bool(data.get('already_priced_in', False)),
+                'time_horizon': data.get('time_horizon', ''),
+                'magnitude': data.get('magnitude', ''),
             }
 
         except (json.JSONDecodeError, ValueError, KeyError) as e:
@@ -401,7 +406,7 @@ Analyze this news for its impact on Indian equity markets. Consider:
 6. Sector-specific impacts on Indian markets
 
 Return ONLY valid JSON (no markdown):
-{{"impact_score": <-1.0 to 1.0>, "impact_label": "<HIGHLY_NEGATIVE|NEGATIVE|NEUTRAL|POSITIVE|HIGHLY_POSITIVE>", "category": "<US_FED|GLOBAL_MARKETS|COMMODITIES|INDIAN_ECONOMY|FII_DII|SECTOR_NEWS|GEOPOLITICAL|OTHER>", "reasoning": "<one sentence on how this affects Indian markets>", "market_direction": "<BEARISH|NEUTRAL|BULLISH>", "relevance": <0.0 to 1.0>}}"""
+{{"event_type": "<MACRO|COMMODITIES|GEOPOLITICAL|REGULATORY|FII_DII|SECTOR|OPINION|GENERAL>", "impact_score": <-1.0 to 1.0>, "impact_label": "<HIGHLY_NEGATIVE|NEGATIVE|NEUTRAL|POSITIVE|HIGHLY_POSITIVE>", "category": "<US_FED|GLOBAL_MARKETS|COMMODITIES|INDIAN_ECONOMY|FII_DII|SECTOR_NEWS|GEOPOLITICAL|OTHER>", "already_priced_in": <true|false>, "reasoning": "<one sentence on how this affects Indian markets>", "market_direction": "<BEARISH|NEUTRAL|BULLISH>", "relevance": <0.0 to 1.0>}}"""
 
         system_prompt = "You are a financial market analyst. Respond ONLY with valid JSON."
 
@@ -449,7 +454,10 @@ Return ONLY valid JSON (no markdown):
                 'category': data.get('category', 'OTHER'),
                 'reasoning': data.get('reasoning', 'No reasoning provided'),
                 'market_direction': data.get('market_direction', 'NEUTRAL'),
-                'relevance': float(data.get('relevance', 0.5))
+                'relevance': float(data.get('relevance', 0.5)),
+                # New enrichment fields
+                'event_type': data.get('event_type', ''),
+                'already_priced_in': bool(data.get('already_priced_in', False)),
             }
 
         except (json.JSONDecodeError, ValueError, KeyError) as e:

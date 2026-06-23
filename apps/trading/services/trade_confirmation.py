@@ -354,6 +354,29 @@ class TradeConfirmationService:
             f"  OI: {oi_signal} | DMA: {dma_signal} | Sector: {sector_signal}"
         )
 
+        # News attribution section (from algorithm_reasoning saved in suggestion)
+        try:
+            news_attr = suggestion.algorithm_reasoning.get('news_attribution', {})
+            if news_attr:
+                ns = news_attr.get('component_score', 0)
+                market_sent = news_attr.get('market_sentiment', 'NEUTRAL')
+                sent_emoji = {'BULLISH': '📈', 'BEARISH': '📉', 'NEUTRAL': '➖'}.get(market_sent, '➖')
+                stock_info = news_attr.get('stock_news', {})
+                stock_count = stock_info.get('count', 0)
+                message += f"\n\n📰 <b>News</b> [{ns}/25pts]\n"
+                message += f"  Market: {sent_emoji} {market_sent}"
+                if stock_count > 0:
+                    message += f" | Stock: {stock_count} articles"
+                top = news_attr.get('top_articles', [])
+                if top:
+                    a = top[0]
+                    score_str = f"{a['impact_score']:+.2f}" if a.get('impact_score') is not None else ''
+                    src = a.get('source', '')[:15]
+                    ttl = a.get('title', '')[:40]
+                    message += f"\n  {src}: {ttl}... ({score_str})"
+        except Exception:
+            pass
+
         # Build keyboard for Step 2 — compact labels
         keyboard = {
             'inline_keyboard': [
