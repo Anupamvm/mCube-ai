@@ -1726,8 +1726,12 @@ const NiftyStrangle = {
                                     <div style="font-weight: 600; color: #1f2937; font-size: 0.875rem;">${log.factor}</div>
                                     <div style="color: #6b7280; font-size: 0.75rem;">${log.reason}</div>
                                 </div>
-                                <div style="font-weight: 700; color: ${log.multiplier > 1 ? '#10b981' : log.multiplier < 1 ? '#ef4444' : '#6b7280'}; min-width: 50px; text-align: right;">
-                                    ${log.multiplier !== 1.0 ? (log.multiplier * 100 - 100 > 0 ? '+' : '') + (log.multiplier * 100 - 100).toFixed(0) + '%' : '—'}
+                                <div style="font-weight: 700; color: ${log.multiplier > 1 ? '#10b981' : log.multiplier < 1 ? '#ef4444' : '#6b7280'}; min-width: 80px; text-align: right; font-size: 0.8rem;">
+                                    ${log.multiplier !== 1.0
+                                        ? (log.multiplier * 100 - 100 > 0 ? '+' : '') + (log.multiplier * 100 - 100).toFixed(0) + '%'
+                                        : (['FINAL DELTA', 'TECHNICAL ANALYSIS', 'NEWS BIAS'].includes(log.factor)
+                                            ? String(log.value || '—')
+                                            : '0% (neutral)')}
                                 </div>
                             </div>
                         `).join('')}
@@ -2037,7 +2041,7 @@ const NiftyStrangle = {
                         ${results.map(r => `
                             <div style="display: flex; align-items: center; gap: 10px; padding: 8px 12px; background: ${r.status === 'PASS' ? '#f0fdf4' : r.status === 'WARNING' ? '#fef3c7' : r.status === 'FAIL' ? '#fef2f2' : '#f9fafb'}; border-radius: 4px; border-left: 3px solid ${r.status === 'PASS' ? '#10b981' : r.status === 'WARNING' ? '#f59e0b' : r.status === 'FAIL' ? '#ef4444' : '#9ca3af'};">
                                 <span style="font-weight: 600; color: ${r.status === 'PASS' ? '#10b981' : r.status === 'WARNING' ? '#f59e0b' : r.status === 'FAIL' ? '#ef4444' : '#6b7280'}; min-width: 60px;">${r.status}</span>
-                                <span style="color: #374151;">${r.filter_name}</span>
+                                <span style="color: #374151;">${r.check}</span>
                                 <span style="color: #6b7280; font-size: 0.875rem; margin-left: auto;">${r.message || ''}</span>
                             </div>
                         `).join('')}
@@ -2067,8 +2071,12 @@ const NiftyStrangle = {
                                     <div style="font-weight: 600; color: #1f2937; font-size: 0.875rem;">${log.factor}</div>
                                     <div style="color: #6b7280; font-size: 0.75rem;">${log.reason}</div>
                                 </div>
-                                <div style="font-weight: 700; color: ${log.multiplier > 1 ? '#10b981' : log.multiplier < 1 ? '#ef4444' : '#6b7280'}; min-width: 50px; text-align: right;">
-                                    ${log.multiplier !== 1.0 ? (log.multiplier * 100 - 100 > 0 ? '+' : '') + (log.multiplier * 100 - 100).toFixed(0) + '%' : '—'}
+                                <div style="font-weight: 700; color: ${log.multiplier > 1 ? '#10b981' : log.multiplier < 1 ? '#ef4444' : '#6b7280'}; min-width: 80px; text-align: right; font-size: 0.8rem;">
+                                    ${log.multiplier !== 1.0
+                                        ? (log.multiplier * 100 - 100 > 0 ? '+' : '') + (log.multiplier * 100 - 100).toFixed(0) + '%'
+                                        : (['FINAL DELTA', 'TECHNICAL ANALYSIS', 'NEWS BIAS'].includes(log.factor)
+                                            ? String(log.value || '—')
+                                            : '0% (neutral)')}
                                 </div>
                             </div>
                         `).join('')}
