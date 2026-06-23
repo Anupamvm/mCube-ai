@@ -2208,8 +2208,15 @@ def verify_future_trade(request):
             if contract and contract.lot_size:
                 lot_size = contract.lot_size
             else:
-                # Fallback lot sizes for common stocks (estimated)
+                # Fallback lot sizes for common instruments (estimated)
                 fallback_lot_sizes = {
+                    # Indices
+                    'NIFTY': 65,
+                    'BANKNIFTY': 30,
+                    'FINNIFTY': 60,
+                    'MIDCPNIFTY': 120,
+                    'NIFTYNXT50': 25,
+                    # Stocks
                     'ASIANPAINT': 250,
                     'RELIANCE': 250,
                     'TCS': 150,

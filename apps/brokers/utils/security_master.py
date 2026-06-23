@@ -41,6 +41,16 @@ DEFAULT_SECURITY_MASTER_PATH = str(Path(settings.BASE_DIR) / 'data' / 'SecurityM
 # Cache timeout: 6 hours (SecurityMaster is updated once daily at 8 AM)
 CACHE_TIMEOUT = 6 * 60 * 60
 
+# Mapping from user-facing index symbol to SecurityMaster ShortName (for FUTIDX rows)
+INDEX_SHORT_NAME_MAP = {
+    'BANKNIFTY': 'CNXBAN',
+    'NIFTY': 'NIFTY',
+    'FINNIFTY': 'NIFFIN',
+    'MIDCPNIFTY': 'NIFSEL',
+    'NIFTYNXT50': 'NIFNEX',
+}
+
+
 
 def fetch_instrument_from_breeze(
     symbol: str,
@@ -248,27 +258,44 @@ def get_futures_instrument(
         try:
             logger.info(f"Reading SecurityMaster for {symbol} futures expiring {expiry_date}")
 
+            # For index futures (FUTIDX), SecurityMaster uses ShortName (e.g. CNXBAN for BANKNIFTY)
+            # instead of ExchangeCode. Resolve the short name if this is a known index.
+            index_short_name = INDEX_SHORT_NAME_MAP.get(symbol.upper())
+
             with open(security_master_path, 'r') as f:
                 reader = csv.DictReader(f)
 
                 for row in reader:
-                    # Match: ExchangeCode = symbol, ExpiryDate = expiry_date (case-insensitive), InstrumentName = FUTSTK
                     row_expiry = row.get('ExpiryDate', '').strip('"')
-                    if (row.get('ExchangeCode', '').strip('"') == symbol and
-                        row_expiry.upper() == expiry_date.upper() and  # Case-insensitive date comparison
-                        row.get('InstrumentName', '').strip('"') == 'FUTSTK'):
+                    instrument_name = row.get('InstrumentName', '').strip('"')
 
-                        instrument = parse_security_master_row(row)
-                        instrument['source'] = 'security_master'
+                    if not (row_expiry.upper() == expiry_date.upper()):
+                        continue
 
-                        logger.info(f"✅ Found in SecurityMaster: {symbol} futures - Token={instrument['token']}, "
-                                   f"StockCode={instrument['short_name']}, LotSize={instrument['lot_size']}")
+                    if instrument_name == 'FUTSTK':
+                        # Stock futures: match by ExchangeCode (underlying symbol)
+                        if row.get('ExchangeCode', '').strip('"') == symbol:
+                            instrument = parse_security_master_row(row)
+                            instrument['source'] = 'security_master'
+                            logger.info(f"✅ Found in SecurityMaster (FUTSTK): {symbol} futures - "
+                                       f"Token={instrument['token']}, StockCode={instrument['short_name']}, "
+                                       f"LotSize={instrument['lot_size']}")
+                            if use_cache:
+                                cache.set(cache_key, instrument, CACHE_TIMEOUT)
+                            return instrument
 
-                        # Cache the result
-                        if use_cache:
-                            cache.set(cache_key, instrument, CACHE_TIMEOUT)
-
-                        return instrument
+                    elif instrument_name == 'FUTIDX' and index_short_name:
+                        # Index futures: match by ShortName (e.g. CNXBAN for BANKNIFTY)
+                        if row.get('ShortName', '').strip('"') == index_short_name:
+                            instrument = parse_security_master_row(row)
+                            instrument['source'] = 'security_master'
+                            # Tag with the original user-facing symbol so callers know which index
+                            instrument['index_symbol'] = symbol.upper()
+                            logger.info(f"✅ Found in SecurityMaster (FUTIDX): {symbol} -> {index_short_name} futures - "
+                                       f"Token={instrument['token']}, LotSize={instrument['lot_size']}")
+                            if use_cache:
+                                cache.set(cache_key, instrument, CACHE_TIMEOUT)
+                            return instrument
 
             logger.warning(f"Instrument not found in SecurityMaster for {symbol} expiring {expiry_date}")
 

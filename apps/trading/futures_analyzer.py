@@ -25,8 +25,12 @@ from apps.data.data_analyzers import (
 )
 from apps.strategies.filters.sector_filter import analyze_sector
 from apps.data.models import ContractStockData, ContractData, TLStockData
+from apps.brokers.utils.security_master import INDEX_SHORT_NAME_MAP
 
 logger = logging.getLogger(__name__)
+
+# Set of known index symbols — spot price must be fetched with the index name, not the NFO short_name
+_INDEX_SYMBOLS = set(INDEX_SHORT_NAME_MAP.keys())
 
 
 def resolve_breeze_symbol(stock_symbol: str, expiry_date: str) -> Dict:
@@ -314,6 +318,10 @@ def comprehensive_futures_analysis(
 
         logger.info(f"Fetching quotes for: {breeze_symbol} (Original: {stock_symbol})")
 
+        # For indices (BANKNIFTY, NIFTY, etc.) the NFO short_name (e.g. "CNXBAN") differs from
+        # the NSE cash code. Always use the original symbol for the spot quote.
+        spot_stock_code = stock_symbol if stock_symbol.upper() in _INDEX_SYMBOLS else breeze_symbol
+
         # Fetch spot price with error handling and fallback
         spot_price = 0.0
         spot_data = {}
@@ -322,7 +330,7 @@ def comprehensive_futures_analysis(
 
         try:
             spot_resp = breeze.get_quotes(
-                stock_code=breeze_symbol,
+                stock_code=spot_stock_code,
                 exchange_code="NSE",
                 product_type="cash",
                 expiry_date="",
@@ -1520,13 +1528,17 @@ def enhanced_futures_analysis(
             logger.warning(f"Breeze not available, using database prices: {e}")
             breeze = None
 
+        # For indices the NFO short_name (e.g. "CNXBAN") differs from the NSE cash code.
+        # Always use the original symbol for the spot quote.
+        spot_stock_code = stock_symbol if stock_symbol.upper() in _INDEX_SYMBOLS else breeze_symbol
+
         # Fetch spot price
         spot_price = 0.0
         spot_source = "Breeze API"
 
         try:
             spot_resp = breeze.get_quotes(
-                stock_code=breeze_symbol,
+                stock_code=spot_stock_code,
                 exchange_code="NSE",
                 product_type="cash",
                 expiry_date="",
