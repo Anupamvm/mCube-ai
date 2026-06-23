@@ -318,9 +318,11 @@ def comprehensive_futures_analysis(
 
         logger.info(f"Fetching quotes for: {breeze_symbol} (Original: {stock_symbol})")
 
-        # For indices (BANKNIFTY, NIFTY, etc.) the NFO short_name (e.g. "CNXBAN") differs from
-        # the NSE cash code. Always use the original symbol for the spot quote.
-        spot_stock_code = stock_symbol if stock_symbol.upper() in _INDEX_SYMBOLS else breeze_symbol
+        # For indices (BANKNIFTY, NIFTY, etc.) the SecurityMaster short_name (e.g. "CNXBAN")
+        # is used for order placement only. Breeze get_quotes accepts the user-facing symbol
+        # for both NSE cash and NFO futures — same as how NIFTY is queried throughout.
+        is_index = stock_symbol.upper() in _INDEX_SYMBOLS
+        quote_stock_code = stock_symbol if is_index else breeze_symbol
 
         # Fetch spot price with error handling and fallback
         spot_price = 0.0
@@ -330,7 +332,7 @@ def comprehensive_futures_analysis(
 
         try:
             spot_resp = breeze.get_quotes(
-                stock_code=spot_stock_code,
+                stock_code=quote_stock_code,
                 exchange_code="NSE",
                 product_type="cash",
                 expiry_date="",
@@ -338,7 +340,7 @@ def comprehensive_futures_analysis(
                 strike_price=""
             )
 
-            logger.info(f"Spot response status: {spot_resp.get('Status')}")
+            logger.info(f"Spot response status: {spot_resp.get('Status')}, stock_code: {quote_stock_code}")
 
             if spot_resp and spot_resp.get("Status") == 200 and spot_resp.get("Success"):
                 spot_data = spot_resp["Success"][0] if spot_resp["Success"] else {}
@@ -360,7 +362,6 @@ def comprehensive_futures_analysis(
                     spot_source = "Trendlyne Stock Data (Cached)"
                     logger.info(f"✅ Using Trendlyne fallback - Spot Price: ₹{spot_price:.2f}")
                 elif contract and contract.price:
-                    # Use contract price as spot if stock data not available
                     spot_price = float(contract.price)
                     spot_source = "Contract Data (Cached)"
                     logger.info(f"✅ Using Contract Data fallback - Spot Price: ₹{spot_price:.2f}")
@@ -379,7 +380,7 @@ def comprehensive_futures_analysis(
 
         try:
             futures_resp = breeze.get_quotes(
-                stock_code=breeze_symbol,
+                stock_code=quote_stock_code,
                 exchange_code="NFO",
                 product_type="futures",
                 expiry_date=expiry_formatted,
@@ -387,7 +388,7 @@ def comprehensive_futures_analysis(
                 strike_price=""
             )
 
-            logger.info(f"Futures response status: {futures_resp.get('Status')}")
+            logger.info(f"Futures response status: {futures_resp.get('Status')}, stock_code: {quote_stock_code}")
 
             if futures_resp and futures_resp.get("Status") == 200 and futures_resp.get("Success"):
                 futures_data = futures_resp["Success"][0] if futures_resp["Success"] else {}
@@ -410,12 +411,16 @@ def comprehensive_futures_analysis(
             except Exception as e:
                 logger.warning(f"Trendlyne futures fallback failed: {e}")
 
-        # If still no futures price but we have spot, estimate futures price
+        # Cross-estimate if one price is still missing
         if futures_price == 0 and spot_price > 0:
-            # Estimate futures price as spot + 1% (typical contango)
-            futures_price = spot_price * 1.01
+            futures_price = spot_price * 1.005
             futures_source = "Estimated from Spot"
             logger.info(f"✅ Using estimated futures price: ₹{futures_price:.2f}")
+        elif spot_price == 0 and futures_price > 0 and is_index:
+            # For indices, futures ≈ spot; use as proxy so analysis can proceed
+            spot_price = futures_price
+            spot_source = "Estimated from Futures"
+            logger.info(f"✅ Estimated Spot Price from Futures: ₹{spot_price:.2f}")
 
         metrics['spot_price'] = spot_price
         metrics['futures_price'] = futures_price
@@ -1528,9 +1533,11 @@ def enhanced_futures_analysis(
             logger.warning(f"Breeze not available, using database prices: {e}")
             breeze = None
 
-        # For indices the NFO short_name (e.g. "CNXBAN") differs from the NSE cash code.
-        # Always use the original symbol for the spot quote.
-        spot_stock_code = stock_symbol if stock_symbol.upper() in _INDEX_SYMBOLS else breeze_symbol
+        # For indices (BANKNIFTY, NIFTY, etc.) the SecurityMaster short_name (e.g. "CNXBAN") is
+        # used for order placement only. Breeze get_quotes accepts the user-facing symbol for
+        # both NSE cash and NFO futures calls, same as how NIFTY is queried throughout the codebase.
+        is_index = stock_symbol.upper() in _INDEX_SYMBOLS
+        quote_stock_code = stock_symbol if is_index else breeze_symbol
 
         # Fetch spot price
         spot_price = 0.0
@@ -1538,7 +1545,7 @@ def enhanced_futures_analysis(
 
         try:
             spot_resp = breeze.get_quotes(
-                stock_code=spot_stock_code,
+                stock_code=quote_stock_code,
                 exchange_code="NSE",
                 product_type="cash",
                 expiry_date="",
@@ -1550,10 +1557,12 @@ def enhanced_futures_analysis(
                 spot_data = spot_resp["Success"][0] if spot_resp["Success"] else {}
                 spot_price = float(spot_data.get('ltp', 0))
                 logger.info(f"✅ Spot Price: ₹{spot_price:.2f}")
+            else:
+                logger.warning(f"Spot price fetch failed: status={spot_resp.get('Status') if spot_resp else 'None'}, error={spot_resp.get('Error') if spot_resp else 'No response'}")
         except Exception as e:
             logger.warning(f"Spot price fetch error: {e}")
 
-        # Fallback to database
+        # Fallback to database (Trendlyne stock data — works for stocks, not indices)
         if spot_price == 0:
             stock_data = ContractStockData.objects.filter(nse_code=stock_symbol).first()
             if stock_data and stock_data.current_price:
@@ -1568,7 +1577,7 @@ def enhanced_futures_analysis(
 
         try:
             futures_resp = breeze.get_quotes(
-                stock_code=breeze_symbol,
+                stock_code=quote_stock_code,
                 exchange_code="NFO",
                 product_type="futures",
                 expiry_date=expiry_formatted,
@@ -1580,6 +1589,8 @@ def enhanced_futures_analysis(
                 futures_data = futures_resp["Success"][0] if futures_resp["Success"] else {}
                 futures_price = float(futures_data.get('ltp', 0))
                 logger.info(f"✅ Futures Price: ₹{futures_price:.2f}")
+            else:
+                logger.warning(f"Futures price fetch failed: status={futures_resp.get('Status') if futures_resp else 'None'}, error={futures_resp.get('Error') if futures_resp else 'No response'}")
         except Exception as e:
             logger.warning(f"Futures price fetch error: {e}")
 
@@ -1589,10 +1600,16 @@ def enhanced_futures_analysis(
             futures_source = "Trendlyne (Cached)"
             logger.info(f"✅ Using fallback - Futures Price: ₹{futures_price:.2f}")
 
-        # Estimate if still no futures price
+        # Estimate futures from spot (or spot from futures for indices where basis is ~0.1%)
         if futures_price == 0 and spot_price > 0:
-            futures_price = spot_price * 1.01
+            futures_price = spot_price * 1.005
             futures_source = "Estimated from Spot"
+            logger.info(f"✅ Estimated Futures Price: ₹{futures_price:.2f}")
+        elif spot_price == 0 and futures_price > 0 and is_index:
+            # For indices, futures ≈ spot; use futures as a proxy so analysis can proceed
+            spot_price = futures_price
+            spot_source = "Estimated from Futures"
+            logger.info(f"✅ Estimated Spot Price from Futures: ₹{spot_price:.2f}")
 
         metrics['spot_price'] = spot_price
         metrics['futures_price'] = futures_price
