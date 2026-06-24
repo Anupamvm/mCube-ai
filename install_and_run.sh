@@ -249,6 +249,14 @@ else
     echo "✓ Redis is running"
 fi
 
+# Open ports in UFW if it is active — port 8001 (Django) and 3001 (Next.js frontend).
+# On a fresh Ubuntu server UFW is often enabled and blocks all non-SSH ports by default.
+if command -v ufw &>/dev/null && sudo ufw status 2>/dev/null | grep -q "Status: active"; then
+    sudo ufw allow 8001/tcp > /dev/null 2>&1 || true
+    sudo ufw allow 3001/tcp > /dev/null 2>&1 || true
+    echo "✓ UFW: ports 8001 and 3001 allowed"
+fi
+
 echo ""
 echo "✓ All system requirements satisfied"
 
@@ -809,6 +817,14 @@ if command -v fuser &>/dev/null; then
     fuser -k 3001/tcp 2>/dev/null || true
 elif command -v lsof &>/dev/null; then
     lsof -ti tcp:3001 | xargs -r kill -9 2>/dev/null || true
+fi
+
+# Kill existing tmux sessions — prevents silent "duplicate session" failure on restart
+# Without this, tmux new-session fails quietly and the service never starts.
+if command -v tmux &>/dev/null; then
+    for _s in mcube-django mcube-bot mcube-worker mcube-beat mcube-frontend; do
+        tmux kill-session -t "$_s" 2>/dev/null || true
+    done
 fi
 
 # Kill existing Celery workers
