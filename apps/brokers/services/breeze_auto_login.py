@@ -54,7 +54,7 @@ OTP_STATE_PENDING = 'pending'
 OTP_STATE_FULFILLED = 'fulfilled'
 
 # Telegram OTP polling config
-TELEGRAM_OTP_TIMEOUT = 120   # seconds to wait for Telegram OTP reply
+TELEGRAM_OTP_TIMEOUT = 240   # seconds before sending a reminder (loop continues polling until session timeout)
 TELEGRAM_OTP_POLL_INTERVAL = 2  # seconds between NseFlag checks
 
 
@@ -826,29 +826,31 @@ class BreezeAutoLogin:
                 return True, session_token
 
             # === Path 2: Check for Telegram OTP (only if active and not yet entered) ===
-            if telegram_active and not telegram_otp_entered and not telegram_poll_expired:
-                # Check if Telegram OTP polling window has expired
-                if elapsed > TELEGRAM_OTP_TIMEOUT:
+            if telegram_active and not telegram_otp_entered:
+                # Send a reminder when the initial window expires, but keep polling
+                if not telegram_poll_expired and elapsed > TELEGRAM_OTP_TIMEOUT:
                     telegram_poll_expired = True
-                    self._send_telegram_timeout_message()
-                    self._cleanup_otp_flags()
-                    logger.info(f"Telegram OTP window expired after {TELEGRAM_OTP_TIMEOUT}s - browser entry still open")
-                else:
-                    otp = self._check_telegram_otp()
-                    if otp:
-                        logger.info("Got OTP from Telegram - entering into browser")
-                        if self._enter_otp_and_submit(otp):
-                            telegram_otp_entered = True
-                            self._send_telegram_success_message()
-                            self._cleanup_otp_flags()
-                            # Continue polling for redirect after OTP submission
-                        else:
-                            logger.warning("Failed to enter Telegram OTP into browser (OTP rejected or field error)")
-                            self._cleanup_otp_flags()
-                            self._send_telegram_message(
-                                "❌ Breeze rejected the OTP. Please trigger a fresh Breeze login."
-                            )
-                            return False, "OTP was rejected by Breeze login page"
+                    self._send_telegram_message(
+                        "⏳ Still waiting for your Breeze OTP. "
+                        "Reply with the 4-6 digit OTP, or submit it via the Breeze login page."
+                    )
+                    logger.info(f"Telegram OTP reminder sent after {TELEGRAM_OTP_TIMEOUT}s - continuing to poll")
+                # Poll for OTP regardless of whether the initial window has expired
+                otp = self._check_telegram_otp()
+                if otp:
+                    logger.info("Got OTP from Telegram - entering into browser")
+                    if self._enter_otp_and_submit(otp):
+                        telegram_otp_entered = True
+                        self._send_telegram_success_message()
+                        self._cleanup_otp_flags()
+                        # Continue polling for redirect after OTP submission
+                    else:
+                        logger.warning("Failed to enter Telegram OTP into browser (OTP rejected or field error)")
+                        self._cleanup_otp_flags()
+                        self._send_telegram_message(
+                            "❌ Breeze rejected the OTP. Please trigger a fresh Breeze login."
+                        )
+                        return False, "OTP was rejected by Breeze login page"
 
             # === Late Telegram request: if OTP panel appeared after initial check ===
             if not telegram_active and not self._telegram_otp_sent and not telegram_otp_entered:
