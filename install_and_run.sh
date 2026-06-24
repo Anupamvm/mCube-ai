@@ -153,24 +153,37 @@ if [[ "$OSTYPE" != "darwin"* ]]; then
     fi
 fi
 
-# Check for Node.js (required for Next.js portfolio frontend)
-if ! command -v node &> /dev/null; then
-    echo "Node.js not found. Installing Node.js 20..."
+# Check for Node.js >= 18 (required for Next.js 16)
+# Ubuntu's system 'nodejs' package can be v10/v12 — too old. Re-install via nodesource if needed.
+_install_node() {
     if [[ "$OSTYPE" == "darwin"* ]]; then
         brew install node
     elif command -v apt-get &> /dev/null; then
-        curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-        sudo apt-get install -y nodejs
+        echo "  Installing Node.js 20 via NodeSource..."
+        curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash - > /dev/null 2>&1
+        sudo apt-get install -y nodejs > /dev/null 2>&1
     elif command -v yum &> /dev/null; then
-        curl -fsSL https://rpm.nodesource.com/setup_20.x | sudo bash -
-        sudo yum install -y nodejs
+        curl -fsSL https://rpm.nodesource.com/setup_20.x | sudo bash - > /dev/null 2>&1
+        sudo yum install -y nodejs > /dev/null 2>&1
     else
         echo "❌ Could not install Node.js automatically. Please install Node.js 18+ manually."
         exit 1
     fi
+}
+
+if ! command -v node &> /dev/null; then
+    echo "Node.js not found. Installing Node.js 20..."
+    _install_node
     echo "✓ Node.js $(node --version) installed"
 else
-    echo "✓ Node.js $(node --version) is installed"
+    _NODE_MAJOR=$(node --version 2>/dev/null | sed 's/v\([0-9]*\).*/\1/')
+    if [ -z "$_NODE_MAJOR" ] || [ "$_NODE_MAJOR" -lt 18 ]; then
+        echo "Node.js $( node --version ) is too old (need >= 18). Upgrading to Node.js 20..."
+        _install_node
+        echo "✓ Node.js $(node --version) installed"
+    else
+        echo "✓ Node.js $(node --version) is installed"
+    fi
 fi
 
 # Check for Redis
@@ -370,7 +383,11 @@ echo "  API base baked into bundle: ${_FRONTEND_API_BASE}"
 
 cd "$SCRIPT_DIR/portfolio_frontend"
 echo "  Installing npm packages..."
-npm install --prefer-offline 2>&1 | tail -3
+# Use a temp file so set -e can see npm's exit code (pipe would hide it)
+_npm_log=$(mktemp)
+npm install 2>&1 | tee "$_npm_log" | tail -3
+[ "${PIPESTATUS[0]}" -eq 0 ] || { echo "❌ npm install failed. See: $_npm_log"; exit 1; }
+rm -f "$_npm_log"
 echo "  Running production build..."
 npm run build
 cd "$SCRIPT_DIR"
@@ -797,6 +814,26 @@ for _i in $(seq 1 10); do
     echo "  Still waiting for port 8001... ($_i/10)"
     sleep 1
 done
+
+# ============================================================================
+# Ensure the Next.js frontend is built before starting it
+# (handles --run-only on a fresh clone where build was never run)
+# ============================================================================
+if [ ! -d "$SCRIPT_DIR/portfolio_frontend/.next" ]; then
+    echo ""
+    echo "Portfolio frontend not yet built — building now..."
+    _RUN_SERVER_IP=$(hostname -I 2>/dev/null | awk '{print $1}' || echo "")
+    _RUN_API_BASE="http://localhost:8001/investments/api"
+    [ -n "$_RUN_SERVER_IP" ] && _RUN_API_BASE="http://$_RUN_SERVER_IP:8001/investments/api"
+    cat > "$SCRIPT_DIR/portfolio_frontend/.env.local" << RUNENV
+NEXT_PUBLIC_API_BASE=${_RUN_API_BASE}
+RUNENV
+    cd "$SCRIPT_DIR/portfolio_frontend"
+    npm install
+    npm run build
+    cd "$SCRIPT_DIR"
+    echo "✓ Portfolio frontend built"
+fi
 
 # ============================================================================
 # Open Terminal windows for each service (macOS)
