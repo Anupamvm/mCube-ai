@@ -51,9 +51,9 @@ pyotp>=2.9.0  # TOTP generation for Kotak Neo v2 auto-login
 # Family Portfolio Intelligence
 djangorestframework>=3.14.0   # REST API for investments app
 django-cors-headers>=4.3.0    # CORS for Next.js frontend
-casparser>=2.4.0              # CAS PDF parser (NSDL, CAMS, KFintech)
-pyxirr>=0.9.0                 # XIRR calculation
-reportlab>=4.1.0              # PDF report generation
+casparser>=0.5.0,<0.9.0       # CAS PDF parser; 0.9+ requires Python >=3.11
+pyxirr>=0.7.0                 # XIRR calculation
+reportlab==3.6.13             # PDF reports; 4.x uses md5(usedforsecurity=False) which needs Python 3.9+
 cryptography>=41.0.0          # AES-256 encryption for CAS file storage
 
 # Development
