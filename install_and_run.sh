@@ -167,7 +167,7 @@ _install_node() {
         # Remove ALL nodesource apt sources and keys — search by content, not just filename,
         # so leftover entries from previous installs (which may use different key paths) don't
         # conflict with our new entry and cause "Conflicting values set for Signed-By" errors.
-        sudo grep -rl "nodesource" /etc/apt/sources.list.d/ 2>/dev/null | xargs sudo rm -f 2>/dev/null || true
+        sudo grep -rl "nodesource" /etc/apt/sources.list.d/ 2>/dev/null | xargs -r sudo rm -f 2>/dev/null || true
         sudo sed -i '/nodesource/d' /etc/apt/sources.list 2>/dev/null || true
         sudo rm -f /etc/apt/keyrings/nodesource*.gpg \
                    /usr/share/keyrings/nodesource*.gpg 2>/dev/null || true
