@@ -153,6 +153,26 @@ if [[ "$OSTYPE" != "darwin"* ]]; then
     fi
 fi
 
+# Check for Node.js (required for Next.js portfolio frontend)
+if ! command -v node &> /dev/null; then
+    echo "Node.js not found. Installing Node.js 20..."
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        brew install node
+    elif command -v apt-get &> /dev/null; then
+        curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+        sudo apt-get install -y nodejs
+    elif command -v yum &> /dev/null; then
+        curl -fsSL https://rpm.nodesource.com/setup_20.x | sudo bash -
+        sudo yum install -y nodejs
+    else
+        echo "❌ Could not install Node.js automatically. Please install Node.js 18+ manually."
+        exit 1
+    fi
+    echo "✓ Node.js $(node --version) installed"
+else
+    echo "✓ Node.js $(node --version) is installed"
+fi
+
 # Check for Redis
 if ! command -v redis-server &> /dev/null; then
     echo "Redis not found. Installing Redis..."
@@ -326,6 +346,35 @@ echo ""
 echo "Step 6/10: Installing kotak-neo-api..."
 echo "--------------------------------------------"
 python3 -m pip install -e ./kotak-neo-api
+
+# ============================================================================
+# STEP 6.5: Build Next.js portfolio frontend
+# ============================================================================
+echo ""
+echo "Step 6.5/10: Building Next.js portfolio frontend..."
+echo "--------------------------------------------"
+
+# Bake the correct API base URL into the Next.js bundle.
+# NEXT_PUBLIC_ env vars are resolved at build time, not runtime.
+# Use the detected server IP so browser requests reach Django from any machine.
+_FRONTEND_API_BASE="http://localhost:8001/investments/api"
+if [ -n "$SERVER_IP" ]; then
+    _FRONTEND_API_BASE="http://$SERVER_IP:8001/investments/api"
+fi
+
+cat > "$SCRIPT_DIR/portfolio_frontend/.env.local" << FRONTENDENV
+NEXT_PUBLIC_API_BASE=${_FRONTEND_API_BASE}
+FRONTENDENV
+
+echo "  API base baked into bundle: ${_FRONTEND_API_BASE}"
+
+cd "$SCRIPT_DIR/portfolio_frontend"
+echo "  Installing npm packages..."
+npm install --prefer-offline 2>&1 | tail -3
+echo "  Running production build..."
+npm run build
+cd "$SCRIPT_DIR"
+echo "✓ Next.js portfolio frontend built (serves on port 3001)"
 
 # ============================================================================
 # STEP 7: Create necessary directories
@@ -714,6 +763,14 @@ echo "   Only ONE polling bot instance can run at a time (across ALL machines)."
 echo "   If the bot is running on another machine (office/home), it will conflict!"
 echo ""
 
+# Kill existing Next.js frontend
+pkill -f "next.*start" 2>/dev/null || true
+if command -v fuser &>/dev/null; then
+    fuser -k 3001/tcp 2>/dev/null || true
+elif command -v lsof &>/dev/null; then
+    lsof -ti tcp:3001 | xargs -r kill -9 2>/dev/null || true
+fi
+
 # Kill existing Celery workers
 pkill -f "celery.*mcube" 2>/dev/null || true
 
@@ -811,6 +868,20 @@ APPLESCRIPT
 
     sleep 1
 
+    # Terminal 5: Next.js Portfolio Frontend
+    osascript <<APPLESCRIPT
+    tell application "Terminal"
+        activate
+        do script "cd '$SCRIPT_DIR/portfolio_frontend' && echo '============================================' && echo 'mCube Portfolio Frontend (Next.js)' && echo '============================================' && echo '' && npm start"
+        set custom title of front window to "mCube - Portfolio Frontend"
+    end tell
+APPLESCRIPT
+
+    echo "✓ Portfolio frontend starting in new terminal..."
+    echo "  URL: http://localhost:3001"
+
+    sleep 1
+
 else
     # Linux - Use gnome-terminal, konsole, xterm, or run in background
 
@@ -874,6 +945,10 @@ else
 
         # Celery Beat (with tee to log file)
         _gt --title="mCube - Celery Beat" -- bash -c "cd '$SCRIPT_DIR' && rm -f celerybeat-schedule.db && ./venv/bin/python -m celery -A mcube_ai beat --scheduler=mcube_ai.celery:DBReloadScheduler -l info 2>&1 | tee -a logs/celery_beat.log; exec bash"
+        sleep 1
+
+        # Portfolio Frontend (Next.js)
+        _gt --title="mCube - Portfolio Frontend" -- bash -c "cd '$SCRIPT_DIR/portfolio_frontend' && npm start; exec bash"
 
         echo "✓ All services started in gnome-terminal windows"
 
@@ -887,6 +962,8 @@ else
         konsole --new-tab -e bash -c "cd '$SCRIPT_DIR' && ./venv/bin/python -m celery -A mcube_ai worker -l info -Q data,strategies,monitoring,risk,reports,celery --concurrency=$CELERY_CONCURRENCY 2>&1 | tee -a logs/celery_worker.log" &
         sleep 1
         konsole --new-tab -e bash -c "cd '$SCRIPT_DIR' && rm -f celerybeat-schedule.db && ./venv/bin/python -m celery -A mcube_ai beat --scheduler=mcube_ai.celery:DBReloadScheduler -l info 2>&1 | tee -a logs/celery_beat.log" &
+        sleep 1
+        konsole --new-tab -e bash -c "cd '$SCRIPT_DIR/portfolio_frontend' && npm start" &
 
         echo "✓ All services started in konsole windows"
 
@@ -900,17 +977,20 @@ else
         xterm -title "mCube - Celery Worker" -e bash -c "cd '$SCRIPT_DIR' && ./venv/bin/python -m celery -A mcube_ai worker -l info -Q data,strategies,monitoring,risk,reports,celery --concurrency=$CELERY_CONCURRENCY 2>&1 | tee -a logs/celery_worker.log" &
         sleep 1
         xterm -title "mCube - Celery Beat" -e bash -c "cd '$SCRIPT_DIR' && rm -f celerybeat-schedule.db && ./venv/bin/python -m celery -A mcube_ai beat --scheduler=mcube_ai.celery:DBReloadScheduler -l info 2>&1 | tee -a logs/celery_beat.log" &
+        sleep 1
+        xterm -title "mCube - Portfolio Frontend" -e bash -c "cd '$SCRIPT_DIR/portfolio_frontend' && npm start" &
 
         echo "✓ All services started in xterm windows"
 
     elif command -v tmux &> /dev/null; then
         echo "Starting services in tmux sessions (reattachable)..."
 
-        tmux new-session  -d -s mcube-django  "fuser -k 8001/tcp 2>/dev/null; sleep 1; cd '$SCRIPT_DIR' && ./venv/bin/python manage.py runserver 0.0.0.0:8001"
-        tmux new-session  -d -s mcube-bot     "cd '$SCRIPT_DIR' && ./venv/bin/python manage.py run_telegram_bot"
-        tmux new-session  -d -s mcube-worker  "cd '$SCRIPT_DIR' && ./venv/bin/python -m celery -A mcube_ai worker -l info -Q data,strategies,monitoring,risk,reports,celery --concurrency=$CELERY_CONCURRENCY 2>&1 | tee -a logs/celery_worker.log"
+        tmux new-session  -d -s mcube-django   "fuser -k 8001/tcp 2>/dev/null; sleep 1; cd '$SCRIPT_DIR' && ./venv/bin/python manage.py runserver 0.0.0.0:8001"
+        tmux new-session  -d -s mcube-bot      "cd '$SCRIPT_DIR' && ./venv/bin/python manage.py run_telegram_bot"
+        tmux new-session  -d -s mcube-worker   "cd '$SCRIPT_DIR' && ./venv/bin/python -m celery -A mcube_ai worker -l info -Q data,strategies,monitoring,risk,reports,celery --concurrency=$CELERY_CONCURRENCY 2>&1 | tee -a logs/celery_worker.log"
         rm -f celerybeat-schedule.db
-        tmux new-session  -d -s mcube-beat    "cd '$SCRIPT_DIR' && ./venv/bin/python -m celery -A mcube_ai beat --scheduler=mcube_ai.celery:DBReloadScheduler -l info 2>&1 | tee -a logs/celery_beat.log"
+        tmux new-session  -d -s mcube-beat     "cd '$SCRIPT_DIR' && ./venv/bin/python -m celery -A mcube_ai beat --scheduler=mcube_ai.celery:DBReloadScheduler -l info 2>&1 | tee -a logs/celery_beat.log"
+        tmux new-session  -d -s mcube-frontend "cd '$SCRIPT_DIR/portfolio_frontend' && npm start 2>&1 | tee -a '$SCRIPT_DIR/logs/portfolio_frontend.log'"
 
         echo "✓ All services started in tmux sessions"
         echo ""
@@ -919,6 +999,7 @@ else
         echo "  tmux attach -t mcube-bot"
         echo "  tmux attach -t mcube-worker"
         echo "  tmux attach -t mcube-beat"
+        echo "  tmux attach -t mcube-frontend"
 
     else
         echo "No GUI terminal or tmux found. Starting services in background (headless mode)..."
@@ -939,12 +1020,18 @@ else
         nohup ./venv/bin/python -m celery -A mcube_ai beat --scheduler=mcube_ai.celery:DBReloadScheduler -l info > logs/celery_beat.log 2>&1 &
         echo "  ✓ Celery beat started (PID: $!) - log: logs/celery_beat.log"
 
+        cd "$SCRIPT_DIR/portfolio_frontend"
+        nohup npm start > "$SCRIPT_DIR/logs/portfolio_frontend.log" 2>&1 &
+        echo "  ✓ Portfolio frontend started (PID: $!) - log: logs/portfolio_frontend.log"
+        cd "$SCRIPT_DIR"
+
         echo ""
         echo "To view logs in real-time:"
         echo "  tail -f logs/django_server.log"
         echo "  tail -f logs/telegram_bot.log"
         echo "  tail -f logs/celery_worker.log"
         echo "  tail -f logs/celery_beat.log"
+        echo "  tail -f logs/portfolio_frontend.log"
     fi
 fi
 
@@ -957,13 +1044,15 @@ echo "All Services Started! ✓"
 echo "============================================"
 echo ""
 echo "Running Services (in separate terminals):"
-echo "  1. Django Server:    http://localhost:8001"
-echo "  2. Telegram Bot:     @dmcube_bot"
-echo "  3. Celery Worker:    Processing async tasks"
-echo "  4. Celery Beat:      Scheduling periodic tasks"
-echo "  5. Background Tasks: Django background processor"
+echo "  1. Django Server:      http://localhost:8001"
+echo "  2. Telegram Bot:       @dmcube_bot"
+echo "  3. Celery Worker:      Processing async tasks"
+echo "  4. Celery Beat:        Scheduling periodic tasks"
+echo "  5. Portfolio Frontend: http://localhost:3001"
 echo ""
-echo "Admin Panel: http://localhost:8001/admin/"
+echo "Admin Panel:        http://localhost:8001/admin/"
+echo "Investments (Django): http://localhost:8001/investments/"
+echo "Investments (Next.js): http://localhost:3001/"
 echo ""
 echo "Login Credentials:"
 echo "  Username: anupamvm"
