@@ -154,17 +154,36 @@ if [[ "$OSTYPE" != "darwin"* ]]; then
 fi
 
 # Check for Node.js >= 18 (required for Next.js 16)
-# Ubuntu's system 'nodejs' package can be v10/v12 — too old. Re-install via nodesource if needed.
+# Ubuntu's system 'nodejs' package can be v10/v12 — too old.
+# The old 'curl | bash' nodesource method conflicts with existing system nodejs.
+# Use the current NodeSource GPG-key method which handles upgrades cleanly.
 _install_node() {
     if [[ "$OSTYPE" == "darwin"* ]]; then
         brew install node
     elif command -v apt-get &> /dev/null; then
-        echo "  Installing Node.js 20 via NodeSource..."
-        curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash - > /dev/null 2>&1
-        sudo apt-get install -y nodejs > /dev/null 2>&1
+        echo "  Removing old Node.js packages (if any)..."
+        sudo apt-get remove -y nodejs npm libnode-dev libnode72 2>/dev/null || true
+        sudo apt-get autoremove -y 2>/dev/null || true
+        # Remove stale NodeSource entries that may conflict
+        sudo rm -f /etc/apt/sources.list.d/nodesource.list \
+                   /etc/apt/keyrings/nodesource.gpg \
+                   /usr/share/keyrings/nodesource.gpg 2>/dev/null || true
+        echo "  Adding NodeSource repository for Node.js 20..."
+        sudo apt-get install -y ca-certificates curl gnupg 2>/dev/null
+        sudo mkdir -p /etc/apt/keyrings
+        curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
+            | sudo gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg
+        echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" \
+            | sudo tee /etc/apt/sources.list.d/nodesource.list > /dev/null
+        sudo apt-get update -qq
+        sudo apt-get install -y nodejs
+        # Refresh shell's command cache so the new node binary is found immediately
+        hash -r 2>/dev/null || true
     elif command -v yum &> /dev/null; then
-        curl -fsSL https://rpm.nodesource.com/setup_20.x | sudo bash - > /dev/null 2>&1
-        sudo yum install -y nodejs > /dev/null 2>&1
+        sudo yum remove -y nodejs npm 2>/dev/null || true
+        curl -fsSL https://rpm.nodesource.com/setup_20.x | sudo bash -
+        sudo yum install -y nodejs
+        hash -r 2>/dev/null || true
     else
         echo "❌ Could not install Node.js automatically. Please install Node.js 18+ manually."
         exit 1
@@ -178,8 +197,9 @@ if ! command -v node &> /dev/null; then
 else
     _NODE_MAJOR=$(node --version 2>/dev/null | sed 's/v\([0-9]*\).*/\1/')
     if [ -z "$_NODE_MAJOR" ] || [ "$_NODE_MAJOR" -lt 18 ]; then
-        echo "Node.js $( node --version ) is too old (need >= 18). Upgrading to Node.js 20..."
+        echo "Node.js $(node --version) is too old (need >= 18). Upgrading to Node.js 20..."
         _install_node
+        hash -r 2>/dev/null || true
         echo "✓ Node.js $(node --version) installed"
     else
         echo "✓ Node.js $(node --version) is installed"
