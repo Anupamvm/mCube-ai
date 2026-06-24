@@ -391,10 +391,98 @@
             flex-direction: column;
         }
     }
+
+    /* Algorithm Running Banner */
+    #algoStatusBanner {
+        display: none;
+        padding: 1rem 1.5rem;
+        font-weight: 700;
+        font-size: 1rem;
+        border-radius: var(--radius-lg);
+        box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+        margin-bottom: 1.5rem;
+    }
+    #algoStatusBanner.banner-running {
+        background: linear-gradient(135deg, #2563EB 0%, #4F46E5 100%);
+        color: white;
+    }
+    #algoStatusBanner.banner-completed {
+        background: linear-gradient(135deg, #059669 0%, #047857 100%);
+        color: white;
+    }
+    #algoStatusBanner.banner-failed {
+        background: linear-gradient(135deg, #DC2626 0%, #B91C1C 100%);
+        color: white;
+    }
+    .banner-inner {
+        max-width: 1200px;
+        margin: 0 auto;
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+    }
+    .banner-spinner {
+        width: 20px;
+        height: 20px;
+        border: 3px solid rgba(255,255,255,0.3);
+        border-top-color: white;
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+        flex-shrink: 0;
+    }
+    .banner-text { flex: 1; }
+    .banner-close {
+        background: rgba(255,255,255,0.2);
+        border: none;
+        color: white;
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        font-size: 1.1rem;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+        transition: background 0.2s;
+    }
+    .banner-close:hover { background: rgba(255,255,255,0.35); }
+
+    /* Direction Filter Tabs */
+    .direction-filter-bar {
+        display: flex;
+        gap: 0.5rem;
+        margin-bottom: 1rem;
+        flex-wrap: wrap;
+        align-items: center;
+    }
+    .direction-filter-bar .dir-btn {
+        padding: 0.4rem 1rem;
+        border-radius: 2rem;
+        border: 2px solid #E5E7EB;
+        background: white;
+        color: #374151;
+        font-weight: 600;
+        font-size: 0.85rem;
+        cursor: pointer;
+        transition: all 0.15s;
+    }
+    .direction-filter-bar .dir-btn:hover { border-color: #6B7280; }
+    .direction-filter-bar .dir-btn.active-all  { background: #1F2937; color: white; border-color: #1F2937; }
+    .direction-filter-bar .dir-btn.active-long { background: #059669; color: white; border-color: #059669; }
+    .direction-filter-bar .dir-btn.active-short{ background: #DC2626; color: white; border-color: #DC2626; }
 </style>
 {% endblock %}
 
 {% block content %}
+<!-- Algorithm Status Banner -->
+<div id="algoStatusBanner">
+    <div class="banner-inner">
+        <div class="banner-spinner" id="bannerSpinner"></div>
+        <div class="banner-text" id="bannerText">Algorithm is running...</div>
+        <button class="banner-close" onclick="closeAlgoBanner()" title="Dismiss">×</button>
+    </div>
+</div>
 <div class="page-header">
     <div class="container">
         <h1 class="page-title">Manual Trade Triggers</h1>
@@ -620,6 +708,46 @@
 
 {% block extra_js %}
 <script>
+    // ─── Algorithm Status Banner ──────────────────────────────────────────────
+    const BANNER_KEY = 'futuresAlgoStatus';
+
+    function showAlgoBanner(state, message) {
+        const banner = document.getElementById('algoStatusBanner');
+        const text   = document.getElementById('bannerText');
+        const spinner = document.getElementById('bannerSpinner');
+
+        banner.className = '';
+        banner.classList.add('banner-' + state);
+        text.textContent = message;
+        spinner.style.display = (state === 'running') ? 'block' : 'none';
+        banner.style.display = 'block';
+
+        localStorage.setItem(BANNER_KEY, JSON.stringify({ state, message, ts: Date.now() }));
+    }
+
+    function updateAlgoBanner(state, message) {
+        showAlgoBanner(state, message);
+    }
+
+    function closeAlgoBanner() {
+        document.getElementById('algoStatusBanner').style.display = 'none';
+        localStorage.removeItem(BANNER_KEY);
+    }
+
+    // Restore banner on page load
+    document.addEventListener('DOMContentLoaded', function() {
+        const raw = localStorage.getItem(BANNER_KEY);
+        if (!raw) return;
+        try {
+            const saved = JSON.parse(raw);
+            const ageMin = (Date.now() - saved.ts) / 60000;
+            // Auto-expire after 30 minutes
+            if (ageMin > 30) { localStorage.removeItem(BANNER_KEY); return; }
+            showAlgoBanner(saved.state, saved.message);
+        } catch(e) { localStorage.removeItem(BANNER_KEY); }
+    });
+    // ─────────────────────────────────────────────────────────────────────────
+
     // CSRF token for POST requests
     function getCookie(name) {
         let cookieValue = null;
@@ -999,6 +1127,7 @@
         hideFuturesConfirmPanel();
         stopFuturesProgress(false);
         if (_futuresBtnRef) _futuresBtnRef.disabled = false;
+        closeAlgoBanner();
     }
 
     // 1. Run Futures Algorithm
@@ -1008,6 +1137,7 @@
         hideFuturesConfirmPanel();
         document.getElementById('resultsPanel').classList.remove('active');
         document.getElementById('loadingFutures').classList.add('active');
+        showAlgoBanner('running', '⏳ Futures algorithm is running in the background — this may take 30–90 seconds. Do not close the tab.');
         startFuturesPhase1();
         await _doFuturesRequest(btn, false);
     }
@@ -1037,6 +1167,7 @@
                 stopFuturesProgress(false);
                 document.getElementById('loadingFutures').classList.remove('active');
                 btn.disabled = false;
+                updateAlgoBanner('failed', '🔐 Session expired — please re-authenticate and retry.');
                 return;
             }
 
@@ -1045,23 +1176,28 @@
                 displayFuturesTop3Result(data);
                 document.getElementById('loadingFutures').classList.remove('active');
                 btn.disabled = false;
+                updateAlgoBanner('completed', `✅ Futures algorithm completed — ${data.total_passed || 0} contracts passed. Scroll down to view results.`);
             } else if (data.requires_confirmation) {
                 // Pause progress at ~14% and show inline confirm panel
                 stopFuturesProgress(false);
                 _futuresContractCount = data.contract_count;
                 showFuturesConfirmPanel(data.contract_count);
                 btn.disabled = false;
+                updateAlgoBanner('running', `⏳ Found ${data.contract_count} contracts — confirm to start full analysis.`);
             } else {
                 stopFuturesProgress(false);
                 document.getElementById('loadingFutures').classList.remove('active');
-                displayError(data.error || data.message || 'Failed to run futures algorithm. Please check console for details.');
+                const errMsg = data.error || data.message || 'Failed to run futures algorithm.';
+                displayError(errMsg);
                 btn.disabled = false;
+                updateAlgoBanner('failed', `❌ Algorithm failed: ${errMsg}`);
             }
         } catch (error) {
             stopFuturesProgress(false);
             document.getElementById('loadingFutures').classList.remove('active');
             displayError('Network error: ' + error.message);
             btn.disabled = false;
+            updateAlgoBanner('failed', `❌ Network error: ${error.message}`);
         }
     }
 
@@ -1526,6 +1662,13 @@
         console.log('Passed contracts:', passedContracts.length);
         console.log('All contracts:', allContracts.length);
 
+        // Count directions for filter badges
+        const longCount  = passedContracts.filter(c => (c.direction || '').toUpperCase() === 'LONG').length;
+        const shortCount = passedContracts.filter(c => (c.direction || '').toUpperCase() === 'SHORT').length;
+
+        // Store contracts for direction filtering
+        window._algoPassedContracts = passedContracts;
+
         // Build collapsible HTML for PASS contracts (with full verification UI)
         let passedHTML = '';
         let passedSuggestionIds = [];  // Track suggestion IDs for passed contracts only
@@ -1565,18 +1708,22 @@
                 </div>
             `;
 
+            const contractDirection = (contract.direction || 'LONG').toUpperCase();
+            const directionBadgeColor = contractDirection === 'LONG' ? '#059669' : '#DC2626';
+            const directionArrow = contractDirection === 'LONG' ? '↑' : '↓';
+
             passedHTML += `
-                <div style="background: white; border-radius: var(--radius-lg); margin-bottom: 1rem; box-shadow: 0 2px 8px rgba(0,0,0,0.1); overflow: hidden; border-left: 4px solid ${bgColor};">
+                <div data-direction="${contractDirection}" style="background: white; border-radius: var(--radius-lg); margin-bottom: 1rem; box-shadow: 0 2px 8px rgba(0,0,0,0.1); overflow: hidden; border-left: 4px solid ${bgColor};">
                     <!-- Collapsed Summary Header (always visible) -->
-                    <div onclick="toggleAlgoContract(${index})" style="padding: 1.25rem; cursor: pointer; background: linear-gradient(135deg, ${bgColor}15 0%, ${bgColor}05 100%); transition: all 0.2s;" onmouseover="this.style.background='linear-gradient(135deg, ${bgColor}25 0%, ${bgColor}15 100%)'" onmouseout="this.style.background='linear-gradient(135deg, ${bgColor}15 0%, ${bgColor}05 100%)'">
+                    <div style="padding: 1.25rem; background: linear-gradient(135deg, ${bgColor}15 0%, ${bgColor}05 100%);">
                         <div style="display: flex; align-items: center; justify-content: space-between;">
-                            <div style="display: flex; align-items: center; gap: 1rem; flex: 1;">
+                            <div onclick="toggleAlgoContract(${index})" style="display: flex; align-items: center; gap: 1rem; flex: 1; cursor: pointer;" onmouseover="this.parentElement.parentElement.style.background='linear-gradient(135deg, ${bgColor}25 0%, ${bgColor}15 100%)'" onmouseout="this.parentElement.parentElement.style.background='linear-gradient(135deg, ${bgColor}15 0%, ${bgColor}05 100%)'">
                                 <span style="font-size: 2rem;">${rankEmoji}</span>
                                 <div style="flex: 1;">
-                                    <div style="display: flex; align-items: center; gap: 1rem; margin-bottom: 0.5rem;">
+                                    <div style="display: flex; align-items: center; gap: 1rem; margin-bottom: 0.5rem; flex-wrap: wrap;">
                                         <h3 style="margin: 0; font-size: 1.5rem; font-weight: 700; color: var(--dark);">${contract.symbol}</h3>
                                         <span style="background: ${bgColor}; color: white; padding: 0.25rem 0.75rem; border-radius: var(--radius-sm); font-size: 0.875rem; font-weight: 600;">Score: ${contract.composite_score}</span>
-                                        <span style="background: #10B981; color: white; padding: 0.25rem 0.75rem; border-radius: var(--radius-sm); font-size: 0.875rem; font-weight: 600;">${contract.direction}</span>
+                                        <span style="background: ${directionBadgeColor}; color: white; padding: 0.25rem 0.75rem; border-radius: var(--radius-sm); font-size: 0.875rem; font-weight: 700;">${directionArrow} ${contractDirection}</span>
                                     </div>
                                     <div style="font-size: 0.875rem; color: var(--gray); margin-bottom: 0.5rem;">
                                         Expiry: ${contract.expiry} | Futures: ₹${contract.futures_price.toFixed(2)} | Basis: ${contract.basis_pct.toFixed(2)}% | Volume: ${contract.volume.toLocaleString()}
@@ -1584,8 +1731,14 @@
                                     ${scoreBreakdown}
                                 </div>
                             </div>
-                            <div style="display: flex; align-items: center; gap: 0.5rem;">
-                                <span id="algoToggleIcon${index}" style="font-size: 1.5rem; transition: transform 0.3s; color: ${bgColor};">▼</span>
+                            <div style="display: flex; align-items: center; gap: 0.75rem; flex-shrink: 0; margin-left: 1rem;">
+                                <button onclick="event.stopPropagation(); openFullAnalysisInNewTab(window.futuresAlgoContracts[${index}]);"
+                                    style="padding: 0.5rem 1rem; background: #2563EB; color: white; border: none; border-radius: var(--radius-md); font-size: 0.8rem; font-weight: 600; cursor: pointer; white-space: nowrap; transition: background 0.2s;"
+                                    onmouseover="this.style.background='#1D4ED8'" onmouseout="this.style.background='#2563EB'"
+                                    title="Open full analysis in a new window">
+                                    🔍 View Full Analysis
+                                </button>
+                                <span id="algoToggleIcon${index}" onclick="toggleAlgoContract(${index})" style="font-size: 1.5rem; transition: transform 0.3s; color: ${bgColor}; cursor: pointer;">▼</span>
                             </div>
                         </div>
                     </div>
@@ -1673,11 +1826,21 @@
             </div>
 
             <div class="result-section">
-                <h3>${totalPassed} Passed Contracts (Click to Expand)</h3>
+                <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 0.75rem; margin-bottom: 0.75rem;">
+                    <h3 style="margin: 0;">${totalPassed} Passed Contracts (Click to Expand)</h3>
+                    <div class="direction-filter-bar" id="directionFilterBar">
+                        <span style="font-size: 0.8rem; color: var(--gray); font-weight: 600;">Direction:</span>
+                        <button class="dir-btn" id="dirBtnAll"  onclick="filterContractsByDirection('ALL')" >All (${totalPassed})</button>
+                        <button class="dir-btn" id="dirBtnLong" onclick="filterContractsByDirection('LONG')">↑ Long (${longCount})</button>
+                        <button class="dir-btn" id="dirBtnShort" onclick="filterContractsByDirection('SHORT')">↓ Short (${shortCount})</button>
+                    </div>
+                </div>
                 <p style="color: var(--gray); margin-bottom: 1rem;">
-                    Click on any contract to view the full Position Sizing & Risk Analysis UI (same as Verify Future Trade).
+                    Click on any contract to expand in-page, or <strong>View Full Analysis</strong> to open it in a new window (run multiple in parallel).
                 </p>
-                ${contractsHTML}
+                <div id="passedContractsContainer">
+                    ${contractsHTML}
+                </div>
             </div>
 
             <div class="action-buttons">
@@ -1699,6 +1862,32 @@
             suggestionIds: window.futuresAlgoSuggestionIds,
             contracts: window.futuresAlgoContracts.map(c => c.symbol)
         });
+
+        // Default: show Long trades first (system preference)
+        filterContractsByDirection('LONG');
+    }
+
+    function filterContractsByDirection(dir) {
+        const container = document.getElementById('passedContractsContainer');
+        if (!container) return;
+
+        const cards = container.querySelectorAll('[data-direction]');
+        cards.forEach(card => {
+            const cardDir = (card.dataset.direction || '').toUpperCase();
+            if (dir === 'ALL' || cardDir === dir) {
+                card.style.display = '';
+            } else {
+                card.style.display = 'none';
+            }
+        });
+
+        // Update button styles
+        const btnAll   = document.getElementById('dirBtnAll');
+        const btnLong  = document.getElementById('dirBtnLong');
+        const btnShort = document.getElementById('dirBtnShort');
+        if (btnAll)   btnAll.className   = 'dir-btn' + (dir === 'ALL'   ? ' active-all'   : '');
+        if (btnLong)  btnLong.className  = 'dir-btn' + (dir === 'LONG'  ? ' active-long'  : '');
+        if (btnShort) btnShort.className = 'dir-btn' + (dir === 'SHORT' ? ' active-short' : '');
     }
 
     function openFullAnalysisInNewTab(contract) {
@@ -2262,7 +2451,12 @@
                             // Extract symbol and expiry from contract object
                             let symbol = contract.symbol;
                             let expiry = contract.expiry_date || contract.expiry;  // Prefer YYYY-MM-DD format
-                            let direction = contract.direction || 'LONG';
+                            // Normalize direction: always use the direction from the algorithm result
+                            let direction = (contract.direction || 'LONG').toUpperCase();
+                            // Guard: only allow LONG or SHORT
+                            if (direction !== 'LONG' && direction !== 'SHORT') direction = 'LONG';
+
+                            console.log('[FullAnalysisWindow] Direction locked from contract:', direction, '| contract.direction was:', contract.direction);
 
                             // Validate required fields
                             if (!symbol || !expiry) {

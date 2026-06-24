@@ -86,6 +86,11 @@
                             </ul>
                         </li>
 
+                        <!-- Investments -->
+                        <li>
+                            <a href="/investments/" class="nav-link">💼 Investments</a>
+                        </li>
+
                         <!-- Admin Dropdown (Admin Only) -->
                         {% if user.is_superuser or user.groups.all.0.name == 'Admin' %}
                         <li class="dropdown">

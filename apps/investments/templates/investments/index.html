@@ -1,0 +1,92 @@
+{% extends "core/master_base.html" %}
+{% load static %}
+
+{% block title %}Investments — Family Portfolio Intelligence{% endblock %}
+
+{% block extra_css %}
+<style>
+    #investments-app {
+        min-height: calc(100vh - 80px);
+        background: #f8fafc;
+    }
+    .inv-loading {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        min-height: 60vh;
+        color: #64748b;
+    }
+    .inv-spinner {
+        width: 48px;
+        height: 48px;
+        border: 4px solid #e2e8f0;
+        border-top: 4px solid #2563eb;
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+        margin-bottom: 16px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+{% endblock %}
+
+{% block content %}
+<div id="investments-app">
+    <div class="inv-loading" id="inv-loading">
+        <div class="inv-spinner"></div>
+        <p>Loading Family Portfolio Intelligence...</p>
+    </div>
+</div>
+
+<script>
+    // Pass Django session info to the Next.js frontend.
+    // Also sets the csrftoken cookie so the Next.js SPA can read it.
+    window.INVESTMENTS_CONFIG = {
+        apiBase: '/investments/api',
+        csrfToken: '{{ csrf_token }}',
+        user: {
+            id: {{ request.user.id }},
+            username: '{{ request.user.username|escapejs }}',
+            name: '{{ request.user.get_full_name|default:request.user.username|escapejs }}'
+        }
+    };
+</script>
+
+{% comment %}
+Development: Next.js runs at localhost:3001
+Production: build output served as static files
+{% endcomment %}
+<script>
+(function() {
+    var nextjsPort = '3001';
+    var isDev = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+    var loading = document.getElementById('inv-loading');
+
+    if (isDev) {
+        // Probe whether Next.js dev server is up, then redirect.
+        fetch('http://localhost:' + nextjsPort + '/', { mode: 'no-cors' })
+            .then(function() {
+                window.location.href = 'http://localhost:' + nextjsPort + '/';
+            })
+            .catch(function() {
+                loading.innerHTML =
+                    '<div style="text-align:center;padding:40px">' +
+                    '<h3 style="color:#ef4444;margin-bottom:12px">Next.js frontend not running</h3>' +
+                    '<p>Start it in a separate terminal:</p>' +
+                    '<code style="display:block;background:#1e293b;color:#e2e8f0;padding:12px 20px;border-radius:8px;margin:12px auto;max-width:400px">' +
+                    'cd portfolio_frontend &amp;&amp; npm run dev' +
+                    '</code>' +
+                    '<p style="margin-top:16px;color:#64748b">Or browse the API at ' +
+                    '<a href="/investments/api/family-members/">/investments/api/</a></p>' +
+                    '</div>';
+            });
+    } else {
+        loading.innerHTML =
+            '<div style="text-align:center;padding:40px">' +
+            '<h3>Production build required</h3>' +
+            '<p>Run: <code>cd portfolio_frontend && npm run build</code> then serve the <code>out/</code> directory.</p>' +
+            '</div>';
+    }
+})();
+</script>
+{% endblock %}

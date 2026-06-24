@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 Strategy Integration Layer for S/R Enhancement
 

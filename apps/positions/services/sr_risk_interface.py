@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 S/R Risk Management Interface
 

@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 OI Wall Enricher — Gamma Wall + OI Delta Tracking
 

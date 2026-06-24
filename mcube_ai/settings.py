@@ -78,6 +78,10 @@ INSTALLED_APPS = [
     # Third-party apps
     # Using Celery for background tasks (configured via CELERY_* settings below)
 
+    # Third-party
+    'rest_framework',
+    'corsheaders',
+
     # mCube Trading System Apps
     'apps.core.apps.CoreConfig',
     'apps.accounts.apps.AccountsConfig',
@@ -90,10 +94,14 @@ INSTALLED_APPS = [
     'apps.alerts.apps.AlertsConfig',
     'apps.brokers.apps.BrokersConfig',
     'apps.trading.apps.TradingConfig',
+
+    # Family Portfolio Intelligence
+    'apps.investments.apps.InvestmentsConfig',
 ]
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    'corsheaders.middleware.CorsMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -459,5 +467,59 @@ LOGGING = {
         'apps.core': _app_logger('core_fh'),
         'apps.accounts': _app_logger('accounts_fh'),
         'apps.algo_test': _app_logger('algo_test_fh'),
+        'apps.investments': _app_logger('core_fh'),
     },
 }
+
+
+# =============================================================================
+# DJANGO REST FRAMEWORK
+# =============================================================================
+
+REST_FRAMEWORK = {
+    'DEFAULT_AUTHENTICATION_CLASSES': [
+        'rest_framework.authentication.SessionAuthentication',
+    ],
+    'DEFAULT_PERMISSION_CLASSES': [
+        'rest_framework.permissions.IsAuthenticated',
+    ],
+    'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
+    'PAGE_SIZE': 50,
+    'DEFAULT_RENDERER_CLASSES': [
+        'rest_framework.renderers.JSONRenderer',
+    ],
+}
+
+
+# =============================================================================
+# CORS (for Next.js frontend dev server at localhost:3001)
+# =============================================================================
+
+CORS_ALLOWED_ORIGINS = [
+    'http://localhost:3000',
+    'http://localhost:3001',
+    'http://127.0.0.1:3000',
+    'http://127.0.0.1:3001',
+]
+CORS_ALLOW_CREDENTIALS = True
+
+
+# =============================================================================
+# INVESTMENTS APP (Family Portfolio Intelligence)
+# =============================================================================
+
+# MFAPI base URL
+MFAPI_BASE_URL = 'https://api.mfapi.in/mf'
+
+# Risk-free rate for Sharpe/Sortino calculations (annual, as decimal)
+INVESTMENTS_RISK_FREE_RATE = env.float('INVESTMENTS_RISK_FREE_RATE', default=0.065)
+
+# Redis cache DB for investments (use DB 2 to avoid conflicts with Celery)
+INVESTMENTS_REDIS_URL = env('INVESTMENTS_REDIS_URL', default='redis://localhost:6379/2')
+
+# AES encryption key for CAS file storage (derived from SECRET_KEY if not set)
+INVESTMENTS_ENCRYPTION_KEY = env('INVESTMENTS_ENCRYPTION_KEY', default='')
+
+# Allow JS to read csrftoken cookie (required for Next.js SPA calling Django REST endpoints)
+CSRF_COOKIE_HTTPONLY = False
+CSRF_COOKIE_SAMESITE = 'Lax'
