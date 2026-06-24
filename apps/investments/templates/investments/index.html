@@ -58,35 +58,28 @@ Production: build output served as static files
 {% endcomment %}
 <script>
 (function() {
-    var nextjsPort = '3001';
-    var isDev = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+    // Always probe port 3001 on the same host — works for localhost, LAN IPs, and
+    // production servers alike. install_and_run.sh starts Next.js on port 3001.
+    var nextjsBase = window.location.protocol + '//' + window.location.hostname + ':3001';
     var loading = document.getElementById('inv-loading');
 
-    if (isDev) {
-        // Probe whether Next.js dev server is up, then redirect.
-        fetch('http://localhost:' + nextjsPort + '/', { mode: 'no-cors' })
-            .then(function() {
-                window.location.href = 'http://localhost:' + nextjsPort + '/';
-            })
-            .catch(function() {
-                loading.innerHTML =
-                    '<div style="text-align:center;padding:40px">' +
-                    '<h3 style="color:#ef4444;margin-bottom:12px">Next.js frontend not running</h3>' +
-                    '<p>Start it in a separate terminal:</p>' +
-                    '<code style="display:block;background:#1e293b;color:#e2e8f0;padding:12px 20px;border-radius:8px;margin:12px auto;max-width:400px">' +
-                    'cd portfolio_frontend &amp;&amp; npm run dev' +
-                    '</code>' +
-                    '<p style="margin-top:16px;color:#64748b">Or browse the API at ' +
-                    '<a href="/investments/api/family-members/">/investments/api/</a></p>' +
-                    '</div>';
-            });
-    } else {
-        loading.innerHTML =
-            '<div style="text-align:center;padding:40px">' +
-            '<h3>Production build required</h3>' +
-            '<p>Run: <code>cd portfolio_frontend && npm run build</code> then serve the <code>out/</code> directory.</p>' +
-            '</div>';
-    }
+    fetch(nextjsBase + '/', { mode: 'no-cors' })
+        .then(function() {
+            window.location.href = nextjsBase + '/';
+        })
+        .catch(function() {
+            loading.innerHTML =
+                '<div style="text-align:center;padding:40px">' +
+                '<h3 style="color:#ef4444;margin-bottom:12px">Portfolio frontend not reachable</h3>' +
+                '<p>The investment frontend (port 3001) is not running on this server.</p>' +
+                '<p style="margin-top:8px">Re-run the install script to start all services:</p>' +
+                '<code style="display:block;background:#1e293b;color:#e2e8f0;padding:12px 20px;border-radius:8px;margin:12px auto;max-width:400px">' +
+                './install_and_run.sh --run-only' +
+                '</code>' +
+                '<p style="margin-top:16px;color:#64748b">Or browse the API directly at ' +
+                '<a href="/investments/api/family-members/">/investments/api/</a></p>' +
+                '</div>';
+        });
 })();
 </script>
 {% endblock %}
