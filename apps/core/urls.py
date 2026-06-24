@@ -68,4 +68,11 @@ urlpatterns = [
     path('celery/presets/', views.list_presets, name='list_presets'),
     path('celery/presets/apply/', views.apply_preset, name='apply_preset'),
     path('celery/presets/save/', views.save_preset, name='save_preset'),
+
+    # Log Viewer
+    path('logs/', views.log_viewer, name='log_viewer'),
+    path('api/logs/files/', views.api_log_files, name='api_log_files'),
+    path('api/logs/content/', views.api_log_content, name='api_log_content'),
+    path('api/logs/clear/', views.api_log_clear, name='api_log_clear'),
+    path('api/logs/download/', views.api_log_download, name='api_log_download'),
 ]

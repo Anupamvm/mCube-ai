@@ -6100,3 +6100,202 @@ def _build_data_monitoring_preset(task_config):
     """Build a preset with only data + monitoring + risk tasks."""
     enabled_categories = {'data', 'monitoring', 'risk'}
     return {k: (cfg.get('category') in enabled_categories) for k, cfg in task_config.items()}
+
+
+# =============================================================================
+# LOG VIEWER VIEWS
+# =============================================================================
+
+import os as _os
+import json as _json
+from pathlib import Path as _Path
+
+
+def _log_dir():
+    return _Path(getattr(settings, 'LOG_DIR', settings.BASE_DIR / 'logs'))
+
+
+def _validate_log_path(file_rel):
+    """Return absolute path if file_rel is safely inside LOG_DIR, else None."""
+    log_dir = _log_dir().resolve()
+    try:
+        abs_path = (log_dir / file_rel).resolve()
+        if str(abs_path).startswith(str(log_dir)):
+            return str(abs_path)
+    except Exception:
+        pass
+    return None
+
+
+def _human_log_size(size):
+    for unit in ('B', 'KB', 'MB', 'GB'):
+        if size < 1024:
+            return f'{size:.1f} {unit}'
+        size /= 1024
+    return f'{size:.1f} GB'
+
+
+def _collect_log_files():
+    """Walk the log directory and return metadata for each current .log file."""
+    log_dir = _log_dir()
+    files = []
+    for root, dirs, filenames in _os.walk(str(log_dir)):
+        dirs[:] = sorted(d for d in dirs if d not in ('pids', '__pycache__'))
+        for fname in sorted(filenames):
+            if not fname.endswith('.log'):
+                continue
+            fpath = _os.path.join(root, fname)
+            rel = _os.path.relpath(fpath, str(log_dir))
+            group = _os.path.relpath(root, str(log_dir))
+            try:
+                stat = _os.stat(fpath)
+                files.append({
+                    'name': fname,
+                    'rel_path': rel,
+                    'size': stat.st_size,
+                    'size_human': _human_log_size(stat.st_size),
+                    'modified': datetime.fromtimestamp(stat.st_mtime).strftime('%Y-%m-%d %H:%M'),
+                    'group': group,
+                })
+            except OSError:
+                continue
+    return files
+
+
+@login_required
+def log_viewer(request):
+    """Main log viewer page — lists all log files grouped by directory."""
+    log_files = _collect_log_files()
+    groups = {}
+    for f in log_files:
+        groups.setdefault(f['group'], []).append(f)
+    return render(request, 'core/logs/log_viewer.html', {
+        'log_groups': groups,
+        'log_files': log_files,
+    })
+
+
+@login_required
+def api_log_files(request):
+    """JSON: list all log files with metadata."""
+    return JsonResponse({'files': _collect_log_files()})
+
+
+@login_required
+def api_log_content(request):
+    """
+    JSON: return filtered log content.
+
+    GET params:
+        file    — relative path within LOG_DIR
+        lines   — max lines to return (default 200, max 2000)
+        level   — all | error | warning | info  (default all)
+        search  — text substring filter (case-insensitive)
+    """
+    file_rel = request.GET.get('file', '').strip()
+    try:
+        lines_limit = min(int(request.GET.get('lines', 200)), 2000)
+    except (ValueError, TypeError):
+        lines_limit = 200
+    level_filter = request.GET.get('level', 'all').lower()
+    search_text = request.GET.get('search', '').lower()
+
+    if not file_rel:
+        return JsonResponse({'error': 'No file specified'}, status=400)
+
+    abs_path = _validate_log_path(file_rel)
+    if not abs_path or not _os.path.exists(abs_path):
+        return JsonResponse({'error': 'File not found'}, status=404)
+
+    try:
+        with open(abs_path, 'r', encoding='utf-8', errors='replace') as fh:
+            all_lines = fh.readlines()
+
+        filtered = []
+        for raw in all_lines:
+            line = raw.rstrip('\n')
+            if not line:
+                continue
+            upper = line.upper()
+            # Level filter
+            if level_filter == 'error':
+                if '] ERROR' not in upper and '] CRITICAL' not in upper:
+                    continue
+            elif level_filter == 'warning':
+                if '] WARNING' not in upper:
+                    continue
+            elif level_filter == 'info':
+                if '] DEBUG' in upper:
+                    continue
+            # Text search
+            if search_text and search_text not in line.lower():
+                continue
+            filtered.append(line)
+
+        tail = filtered[-lines_limit:]
+
+        result_lines = []
+        for line in tail:
+            upper = line.upper()
+            if '] ERROR' in upper or '] CRITICAL' in upper:
+                lvl = 'error'
+            elif '] WARNING' in upper:
+                lvl = 'warning'
+            elif '] DEBUG' in upper:
+                lvl = 'debug'
+            else:
+                lvl = 'info'
+            result_lines.append({'text': line, 'level': lvl})
+
+        return JsonResponse({
+            'lines': result_lines,
+            'total_in_file': len(all_lines),
+            'filtered': len(filtered),
+            'showing': len(result_lines),
+            'file': file_rel,
+        })
+    except Exception as exc:
+        return JsonResponse({'error': str(exc)}, status=500)
+
+
+@login_required
+def api_log_clear(request):
+    """POST: truncate a log file (keeps the file, clears content)."""
+    if request.method != 'POST':
+        return JsonResponse({'error': 'POST required'}, status=405)
+    try:
+        data = _json.loads(request.body)
+        file_rel = data.get('file', '').strip()
+    except (_json.JSONDecodeError, AttributeError):
+        return JsonResponse({'error': 'Invalid JSON'}, status=400)
+
+    abs_path = _validate_log_path(file_rel)
+    if not abs_path or not _os.path.exists(abs_path):
+        return JsonResponse({'error': 'File not found'}, status=404)
+
+    try:
+        with open(abs_path, 'w'):
+            pass
+        logger.info('Log file cleared by %s: %s', request.user.username, file_rel)
+        return JsonResponse({'success': True, 'message': f'Cleared {file_rel}'})
+    except Exception as exc:
+        return JsonResponse({'error': str(exc)}, status=500)
+
+
+@login_required
+def api_log_download(request):
+    """Download a raw log file as plain text."""
+    from django.http import FileResponse, Http404
+
+    file_rel = request.GET.get('file', '').strip()
+    if not file_rel:
+        raise Http404
+
+    abs_path = _validate_log_path(file_rel)
+    if not abs_path or not _os.path.exists(abs_path):
+        raise Http404
+
+    fname = _os.path.basename(abs_path)
+    response = FileResponse(open(abs_path, 'rb'), content_type='text/plain; charset=utf-8')
+    response['Content-Disposition'] = f'attachment; filename="{fname}"'
+    return response

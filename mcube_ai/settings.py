@@ -288,46 +288,176 @@ PRE_MARKET_REFRESH_INTERVAL = 600  # 10 minutes
 # =============================================================================
 # LOGGING CONFIGURATION
 # =============================================================================
+import os as _os
+
+# Log directory layout:
+#   logs/
+#     errors.log          — ERROR+ from ALL modules (copy-paste to Claude)
+#     warnings.log        — WARNING from ALL modules
+#     celery_beat.log     — Celery beat process (written by celery process itself)
+#     celery_worker.log   — Celery worker process (written by celery process itself)
+#     app/                — Web/service layer (views, services, models)
+#       django.log        — Django framework (requests, ORM, migrations)
+#       brokers.log       — apps.brokers.*
+#       trading.log       — apps.trading.*
+#       strategies.log    — apps.strategies.*
+#       positions.log     — apps.positions.*
+#       analytics.log     — apps.analytics.*
+#       data.log          — apps.data.*
+#       alerts.log        — apps.alerts.*
+#       risk.log          — apps.risk.*
+#       llm.log           — apps.llm.*
+#       core.log          — apps.core.*
+#       accounts.log      — apps.accounts.*
+#       algo_test.log     — apps.algo_test.*
+#     tasks/              — Background task layer (Celery, TaskLogger)
+#       data.log          — data-category tasks (fetch_market_data, etc.)
+#       strategies.log    — strategy tasks (run_futures_algorithm, etc.)
+#       trading.log       — transaction tasks (start_options_trade, etc.)
+#       analytics.log     — analytics tasks (llm analysis, reports, etc.)
+#       risk.log          — risk-monitoring tasks
+#       monitoring.log    — system/health monitoring tasks
+#       llm.log           — LLM processing tasks
+#       other.log         — uncategorised tasks
+
+LOG_DIR = BASE_DIR / 'logs'
+LOG_APP_DIR = LOG_DIR / 'app'
+LOG_TASKS_DIR = LOG_DIR / 'tasks'
+LOG_RETENTION_DAYS = 7  # daily rotation, keep 7 days
+
+_os.makedirs(LOG_DIR, exist_ok=True)
+_os.makedirs(LOG_APP_DIR, exist_ok=True)
+_os.makedirs(LOG_TASKS_DIR, exist_ok=True)
+
+
+def _fh(filepath, level='DEBUG', filters=None):
+    """Build a TimedRotatingFileHandler config — daily rotation, 7-day retention."""
+    h = {
+        'class': 'logging.handlers.TimedRotatingFileHandler',
+        'filename': str(filepath),
+        'when': 'midnight',
+        'backupCount': LOG_RETENTION_DAYS,
+        'formatter': 'module',
+        'encoding': 'utf-8',
+        'level': level,
+    }
+    if filters:
+        h['filters'] = filters
+    return h
+
+
+def _app_logger(handler_name):
+    """Web/service layer logger: own module file + aggregated error/warning + console."""
+    return {
+        'handlers': ['console', handler_name, 'errors_agg', 'warnings_agg'],
+        'level': 'DEBUG',
+        'propagate': False,
+    }
+
+
+def _task_logger(handler_name):
+    """Background task logger: own task-category file + aggregated error/warning + console."""
+    return {
+        'handlers': ['console', handler_name, 'errors_agg', 'warnings_agg'],
+        'level': 'DEBUG',
+        'propagate': False,
+    }
+
 
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
     'formatters': {
-        'verbose': {
-            'format': '{levelname} {asctime} {module} {process:d} {thread:d} {message}',
-            'style': '{',
+        # Rich format for file logs — easy to read and paste to Claude
+        'module': {
+            'format': '[%(asctime)s] %(levelname)-8s | %(name)s | %(filename)s:%(lineno)d | %(funcName)s | %(message)s',
+            'datefmt': '%Y-%m-%d %H:%M:%S',
         },
-        'simple': {
-            'format': '{levelname} {asctime} {message}',
-            'style': '{',
+        # Compact format for console output
+        'console': {
+            'format': '[%(asctime)s] %(levelname)s %(module)s: %(message)s',
+            'datefmt': '%H:%M:%S',
+        },
+    },
+    'filters': {
+        'errors_only': {
+            '()': 'apps.core.utils.log_filters.ErrorOnlyFilter',
+        },
+        'warnings_only': {
+            '()': 'apps.core.utils.log_filters.WarningOnlyFilter',
         },
     },
     'handlers': {
         'console': {
             'class': 'logging.StreamHandler',
-            'formatter': 'simple',
+            'formatter': 'console',
+            'level': 'DEBUG',
         },
-        'file': {
-            'class': 'logging.FileHandler',
-            'filename': BASE_DIR / 'logs' / 'mcube_ai.log',
-            'formatter': 'verbose',
-        },
+        # Aggregated cross-module logs — start here when debugging
+        'errors_agg': _fh(LOG_DIR / 'errors.log', 'ERROR', ['errors_only']),
+        'warnings_agg': _fh(LOG_DIR / 'warnings.log', 'WARNING', ['warnings_only']),
+        # Framework
+        'django_fh': _fh(LOG_APP_DIR / 'django.log', 'INFO'),
+        # Per-module app handlers
+        'brokers_fh': _fh(LOG_APP_DIR / 'brokers.log'),
+        'trading_fh': _fh(LOG_APP_DIR / 'trading.log'),
+        'strategies_fh': _fh(LOG_APP_DIR / 'strategies.log'),
+        'positions_fh': _fh(LOG_APP_DIR / 'positions.log'),
+        'analytics_fh': _fh(LOG_APP_DIR / 'analytics.log'),
+        'data_fh': _fh(LOG_APP_DIR / 'data.log'),
+        'alerts_fh': _fh(LOG_APP_DIR / 'alerts.log'),
+        'risk_fh': _fh(LOG_APP_DIR / 'risk.log'),
+        'llm_fh': _fh(LOG_APP_DIR / 'llm.log'),
+        'core_fh': _fh(LOG_APP_DIR / 'core.log'),
+        'accounts_fh': _fh(LOG_APP_DIR / 'accounts.log'),
+        'algo_test_fh': _fh(LOG_APP_DIR / 'algo_test.log'),
+        # Per-category background task handlers (logs/tasks/)
+        'tasks_data_fh': _fh(LOG_TASKS_DIR / 'data.log'),
+        'tasks_strategies_fh': _fh(LOG_TASKS_DIR / 'strategies.log'),
+        'tasks_trading_fh': _fh(LOG_TASKS_DIR / 'trading.log'),
+        'tasks_analytics_fh': _fh(LOG_TASKS_DIR / 'analytics.log'),
+        'tasks_risk_fh': _fh(LOG_TASKS_DIR / 'risk.log'),
+        'tasks_monitoring_fh': _fh(LOG_TASKS_DIR / 'monitoring.log'),
+        'tasks_llm_fh': _fh(LOG_TASKS_DIR / 'llm.log'),
+        'tasks_other_fh': _fh(LOG_TASKS_DIR / 'other.log'),
     },
     'loggers': {
         'django': {
-            'handlers': ['console', 'file'],
+            'handlers': ['console', 'django_fh', 'errors_agg', 'warnings_agg'],
             'level': 'INFO',
-            'propagate': True,
+            'propagate': False,
         },
+        # Celery process writes its own log files via --logfile flag;
+        # we only capture WARNING+ here so errors surface in errors.log
         'celery': {
-            'handlers': ['console', 'file'],
-            'level': 'INFO',
-            'propagate': True,
+            'handlers': ['console', 'errors_agg', 'warnings_agg'],
+            'level': 'WARNING',
+            'propagate': False,
         },
-        'apps': {
-            'handlers': ['console', 'file'],
-            'level': 'DEBUG',
-            'propagate': True,
-        },
+        # Background task loggers — routed via TaskLogger using apps.tasks.{category}
+        # Each maps to logs/tasks/{category}.log + aggregated errors/warnings
+        'apps.tasks.data': _task_logger('tasks_data_fh'),
+        'apps.tasks.strategies': _task_logger('tasks_strategies_fh'),
+        'apps.tasks.strategy': _task_logger('tasks_strategies_fh'),   # variant used in codebase
+        'apps.tasks.transactions': _task_logger('tasks_trading_fh'),
+        'apps.tasks.transaction': _task_logger('tasks_trading_fh'),   # variant used in codebase
+        'apps.tasks.analytics': _task_logger('tasks_analytics_fh'),
+        'apps.tasks.risk': _task_logger('tasks_risk_fh'),
+        'apps.tasks.monitoring': _task_logger('tasks_monitoring_fh'),
+        'apps.tasks.llm': _task_logger('tasks_llm_fh'),
+        'apps.tasks': _task_logger('tasks_other_fh'),  # fallback for unknown categories
+        # Per-module app loggers
+        'apps.brokers': _app_logger('brokers_fh'),
+        'apps.trading': _app_logger('trading_fh'),
+        'apps.strategies': _app_logger('strategies_fh'),
+        'apps.positions': _app_logger('positions_fh'),
+        'apps.analytics': _app_logger('analytics_fh'),
+        'apps.data': _app_logger('data_fh'),
+        'apps.alerts': _app_logger('alerts_fh'),
+        'apps.risk': _app_logger('risk_fh'),
+        'apps.llm': _app_logger('llm_fh'),
+        'apps.core': _app_logger('core_fh'),
+        'apps.accounts': _app_logger('accounts_fh'),
+        'apps.algo_test': _app_logger('algo_test_fh'),
     },
 }

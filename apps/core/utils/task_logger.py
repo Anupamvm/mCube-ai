@@ -66,8 +66,9 @@ class TaskLogger:
         self.enable_console = enable_console
         self.enable_db = enable_db
 
-        # Console logger
-        self.console_logger = logging.getLogger(f"celery.task.{task_name}")
+        # Route through apps.tasks.{category} so logs land in logs/tasks/{category}.log
+        # and also flow into the aggregated errors.log / warnings.log
+        self.console_logger = logging.getLogger(f"apps.tasks.{task_category}")
 
         # Track execution time
         self.start_time = None
@@ -104,22 +105,23 @@ class TaskLogger:
         return msg
 
     def _log_to_console(self, level: str, message: str):
-        """Log to console"""
+        """Log to file handlers and console. stacklevel=3 makes filename:lineno
+        point to the task code that called TaskLogger, not to this wrapper."""
         if not self.enable_console:
             return
 
         if level == 'debug':
-            self.console_logger.debug(message)
+            self.console_logger.debug(message, stacklevel=3)
         elif level == 'info' or level == 'success':
-            self.console_logger.info(message)
+            self.console_logger.info(message, stacklevel=3)
         elif level == 'warning':
-            self.console_logger.warning(message)
+            self.console_logger.warning(message, stacklevel=3)
         elif level == 'error':
-            self.console_logger.error(message)
+            self.console_logger.error(message, stacklevel=3)
         elif level == 'critical':
-            self.console_logger.critical(message)
+            self.console_logger.critical(message, stacklevel=3)
         else:
-            self.console_logger.info(message)
+            self.console_logger.info(message, stacklevel=3)
 
     def _log_to_db(self, level: str, action: str, message: str,
                    execution_time_ms: Optional[int] = None,
