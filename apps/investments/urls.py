@@ -12,7 +12,10 @@ from .views.product_views import (
     ProductListView, ProductDetailView, ProductCreateView,
     ProductValuationHistoryView, update_product_value,
 )
-from .views.upload_views import cas_upload_list, cas_upload_detail, cas_reparse, equity_csv_upload
+from .views.upload_views import (
+    cas_upload_list, cas_upload_detail, cas_reparse, equity_csv_upload,
+    CASPasswordListCreateView, CASPasswordDetailView,
+)
 from .views.analytics_views import (
     consolidated_portfolio, trigger_price_update,
     overlap_analysis, health_score_view,
@@ -91,6 +94,8 @@ urlpatterns = [
     path('api/uploads/cas/<int:pk>/', cas_upload_detail, name='cas-upload-detail'),
     path('api/uploads/cas/<int:pk>/reparse/', cas_reparse, name='cas-reparse'),
     path('api/uploads/equity-csv/', equity_csv_upload, name='equity-csv-upload'),
+    path('api/uploads/passwords/', CASPasswordListCreateView.as_view(), name='cas-passwords'),
+    path('api/uploads/passwords/<int:pk>/', CASPasswordDetailView.as_view(), name='cas-password-detail'),
 
     # ── Portfolio Analytics ───────────────────────────────────────────────────
     path('api/portfolio/consolidated/', consolidated_portfolio, name='consolidated'),

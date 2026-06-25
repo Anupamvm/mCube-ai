@@ -2,7 +2,7 @@ from django.contrib import admin
 from .models import (
     FamilyMember, InvestmentAccount, InvestmentProduct, ProductValuationHistory,
     CASUpload, Transaction, MutualFundScheme, NAVHistory, EquityPrice,
-    PortfolioGroup, PortfolioSnapshot, PortfolioHealthScore,
+    PortfolioGroup, PortfolioSnapshot, PortfolioHealthScore, UserCASPassword,
 )
 
 
@@ -86,3 +86,10 @@ class PortfolioSnapshotAdmin(admin.ModelAdmin):
 admin.site.register(EquityPrice)
 admin.site.register(ProductValuationHistory)
 admin.site.register(PortfolioHealthScore)
+
+
+@admin.register(UserCASPassword)
+class UserCASPasswordAdmin(admin.ModelAdmin):
+    list_display = ['user', 'label', 'order', 'created_at']
+    list_filter = ['user']
+    search_fields = ['label', 'user__username']

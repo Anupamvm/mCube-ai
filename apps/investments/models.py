@@ -405,6 +405,24 @@ class PortfolioSnapshot(TimeStampedModel):
 # Portfolio Health Score
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Saved CAS Passwords (per user, tried sequentially on each upload)
+# ---------------------------------------------------------------------------
+
+class UserCASPassword(TimeStampedModel):
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='cas_passwords')
+    label = models.CharField(max_length=100, blank=True, help_text='e.g. Self PAN, Spouse PAN')
+    password = models.CharField(max_length=100, help_text='CAS PDF password (usually PAN)')
+    order = models.IntegerField(default=0, help_text='Try order — lower number tried first')
+
+    class Meta:
+        ordering = ['order', 'created_at']
+        unique_together = [('user', 'password')]
+
+    def __str__(self):
+        return f'{self.label or self.password[:4] + "…"} ({self.user.username})'
+
+
 class PortfolioHealthScore(TimeStampedModel):
     family_member = models.ForeignKey(FamilyMember, on_delete=models.CASCADE, null=True, blank=True,
                                       related_name='health_scores')

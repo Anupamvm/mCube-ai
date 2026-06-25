@@ -10,8 +10,11 @@ logger = logging.getLogger('apps.investments')
 
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=30)
-def parse_cas_upload_task(self, upload_id: int, password: str):
-    """Parse a CAS PDF file and create accounts/products/transactions."""
+def parse_cas_upload_task(self, upload_id: int, password: str, saved_passwords: list | None = None):
+    """Parse a CAS PDF file and create accounts/products/transactions.
+
+    Tries the explicit password first, then each saved password in order.
+    """
     from apps.investments.models import CASUpload, FamilyMember, InvestmentAccount, InvestmentProduct, Transaction
     from apps.investments.services.encryption import decrypt_bytes
     from apps.investments.services.cas_parser.nsdl_parser import parse_nsdl_cas
@@ -39,15 +42,38 @@ def parse_cas_upload_task(self, upload_id: int, password: str):
             tmp_path = tmp.name
 
         try:
-            # Parse based on CAS type
-            if upload.cas_type == 'NSDL':
-                cas_data = parse_nsdl_cas(tmp_path, password)
-            elif upload.cas_type == 'CAMS':
-                cas_data = parse_cams_cas(tmp_path, password)
-            elif upload.cas_type == 'KFINTECH':
-                cas_data = parse_kfintech_cas(tmp_path, password)
-            else:
-                cas_data = parse_nsdl_cas(tmp_path, password)
+            # Build ordered password list: explicit first, then saved (deduplicated)
+            passwords_to_try: list[str] = []
+            if password:
+                passwords_to_try.append(password)
+            for p in (saved_passwords or []):
+                if p and p not in passwords_to_try:
+                    passwords_to_try.append(p)
+            if not passwords_to_try:
+                passwords_to_try = ['']  # try empty password as last resort
+
+            def _parse(pwd: str):
+                if upload.cas_type == 'NSDL':
+                    return parse_nsdl_cas(tmp_path, pwd)
+                elif upload.cas_type == 'CAMS':
+                    return parse_cams_cas(tmp_path, pwd)
+                elif upload.cas_type == 'KFINTECH':
+                    return parse_kfintech_cas(tmp_path, pwd)
+                return parse_nsdl_cas(tmp_path, pwd)
+
+            cas_data = None
+            last_error: Exception | None = None
+            for pwd in passwords_to_try:
+                try:
+                    cas_data = _parse(pwd)
+                    logger.info('CAS upload %d parsed with password index %d', upload_id, passwords_to_try.index(pwd))
+                    break
+                except Exception as e:
+                    last_error = e
+                    logger.debug('Password attempt failed for upload %d: %s', upload_id, e)
+
+            if cas_data is None:
+                raise last_error or ValueError('All passwords failed — no data returned')
         finally:
             os.unlink(tmp_path)
 

@@ -2,7 +2,7 @@ from rest_framework import serializers
 from .models import (
     FamilyMember, InvestmentAccount, InvestmentProduct, ProductValuationHistory,
     CASUpload, Transaction, MutualFundScheme, NAVHistory,
-    PortfolioGroup, PortfolioSnapshot, PortfolioHealthScore,
+    PortfolioGroup, PortfolioSnapshot, PortfolioHealthScore, UserCASPassword,
 )
 
 
@@ -170,3 +170,10 @@ class PortfolioHealthScoreSerializer(serializers.ModelSerializer):
             'expense_score', 'risk_adjusted_score', 'allocation_score',
             'tax_efficiency_score', 'methodology', 'insights',
         ]
+
+
+class UserCASPasswordSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = UserCASPassword
+        fields = ['id', 'label', 'password', 'order', 'created_at']
+        read_only_fields = ['created_at']

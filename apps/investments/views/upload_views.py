@@ -1,11 +1,11 @@
 import logging
-from rest_framework import status
+from rest_framework import generics, status
 from rest_framework.decorators import api_view, permission_classes, parser_classes
 from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
-from ..models import CASUpload, FamilyMember, CASType
-from ..serializers import CASUploadSerializer
+from ..models import CASUpload, FamilyMember, CASType, UserCASPassword
+from ..serializers import CASUploadSerializer, UserCASPasswordSerializer
 from ..services.encryption import encrypt_bytes
 from ..tasks import parse_cas_upload_task, import_equity_csv_task
 
@@ -49,9 +49,14 @@ def cas_upload_list(request):
         parse_status='PENDING',
     )
 
-    # Fire async parse task — password is passed to task, not stored
+    # Collect saved passwords to try automatically (in order)
+    saved_passwords = list(
+        UserCASPassword.objects.filter(user=request.user).values_list('password', flat=True)
+    )
+
+    # Fire async parse task — passwords passed to task, not stored in upload record
     try:
-        parse_cas_upload_task.delay(upload.id, password)
+        parse_cas_upload_task.delay(upload.id, password, saved_passwords)
         logger.info('CAS parse task queued: upload=%d member=%s', upload.id, member.name)
     except Exception as e:
         logger.error('Failed to queue CAS parse task: %s', e)
@@ -84,11 +89,35 @@ def cas_reparse(request, pk):
         return Response({'error': 'Not found'}, status=status.HTTP_404_NOT_FOUND)
 
     password = request.data.get('password', '')
+    saved_passwords = list(
+        UserCASPassword.objects.filter(user=request.user).values_list('password', flat=True)
+    )
     upload.parse_status = 'PENDING'
     upload.parse_error = ''
     upload.save(update_fields=['parse_status', 'parse_error'])
-    parse_cas_upload_task.delay(upload.id, password)
+    parse_cas_upload_task.delay(upload.id, password, saved_passwords)
     return Response({'status': 'reparse queued'})
+
+
+class CASPasswordListCreateView(generics.ListCreateAPIView):
+    """Manage saved CAS PDF passwords for auto-try on upload."""
+    serializer_class = UserCASPasswordSerializer
+    permission_classes = [IsAuthenticated]
+    pagination_class = None
+
+    def get_queryset(self):
+        return UserCASPassword.objects.filter(user=self.request.user)
+
+    def perform_create(self, serializer):
+        serializer.save(user=self.request.user)
+
+
+class CASPasswordDetailView(generics.DestroyAPIView):
+    serializer_class = UserCASPasswordSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        return UserCASPassword.objects.filter(user=self.request.user)
 
 
 @api_view(['POST'])

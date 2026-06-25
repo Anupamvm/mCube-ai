@@ -19,6 +19,17 @@
     .badge-processing { background: #dbeafe; color: #1e40af; }
     .badge-done       { background: #d1fae5; color: #065f46; }
     .badge-error      { background: #fee2e2; color: #991b1b; }
+    .pwd-chip {
+        display: inline-flex; align-items: center; gap: .4rem;
+        background: #e0e7ff; color: #3730a3;
+        border-radius: 20px; padding: .2rem .75rem; font-size: .8rem; font-weight: 600;
+    }
+    .pwd-chip .del-btn {
+        background: none; border: none; color: #6b7280; cursor: pointer;
+        padding: 0; line-height: 1; font-size: .9rem;
+    }
+    .pwd-chip .del-btn:hover { color: #dc2626; }
+    .pwd-hint { font-size: .78rem; color: var(--gray); }
 </style>
 {% endblock %}
 
@@ -42,8 +53,9 @@
 </div>
 
 <div class="row g-4">
+    <!-- Left: upload form -->
     <div class="col-lg-6">
-        <div class="card border-0 shadow-sm">
+        <div class="card border-0 shadow-sm mb-3">
             <div class="card-body p-4">
                 <h5 class="fw-bold mb-3" style="color:var(--dark)">Upload Statement</h5>
                 <form id="cas-form">
@@ -63,7 +75,7 @@
                             <option value="KFINTECH">KFintech CAS</option>
                         </select>
                     </div>
-                    <!-- File Drop zone -->
+                    <!-- File Dropzone -->
                     <div class="mb-3">
                         <label class="form-label fw-semibold">PDF File</label>
                         <div class="dropzone" id="dropzone" onclick="document.getElementById('cas-file').click()">
@@ -73,10 +85,17 @@
                         </div>
                         <input type="file" id="cas-file" accept=".pdf" class="d-none">
                     </div>
-                    <!-- Password -->
+                    <!-- Password (optional when saved passwords exist) -->
                     <div class="mb-4">
-                        <label class="form-label fw-semibold">PDF Password <span class="text-muted fw-normal">(usually your PAN)</span></label>
-                        <input type="text" class="form-control" id="cas-password" placeholder="e.g. AAQHA1835B" autocomplete="off">
+                        <label class="form-label fw-semibold">
+                            PDF Password
+                            <span class="text-muted fw-normal" id="pwd-label-hint">(usually your PAN)</span>
+                        </label>
+                        <input type="text" class="form-control" id="cas-password"
+                               placeholder="e.g. AAQHA1835B" autocomplete="off">
+                        <div class="pwd-hint mt-1" id="saved-pwd-notice" style="display:none">
+                            🔑 <span id="saved-pwd-count">0</span> saved password(s) will be tried automatically — leave blank to use only those.
+                        </div>
                     </div>
                     <button type="submit" class="btn btn-primary w-100 fw-bold" id="btn-upload">
                         📤 Upload &amp; Parse
@@ -85,8 +104,30 @@
                 <div id="upload-status" class="mt-3" style="display:none"></div>
             </div>
         </div>
+
+        <!-- Saved Passwords Card -->
+        <div class="card border-0 shadow-sm">
+            <div class="card-body p-4">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h6 class="fw-bold mb-0" style="color:var(--dark)">🔑 Saved PDF Passwords</h6>
+                    <span class="text-muted small">Tried automatically on every upload</span>
+                </div>
+                <div id="saved-pwds-list" class="d-flex flex-wrap gap-2 mb-3">
+                    <span class="text-muted small">Loading…</span>
+                </div>
+                <form id="add-pwd-form" class="d-flex gap-2">
+                    <input type="text" class="form-control form-control-sm" id="new-pwd-value"
+                           placeholder="Password (e.g. PAN)" autocomplete="off" required style="max-width:160px">
+                    <input type="text" class="form-control form-control-sm" id="new-pwd-label"
+                           placeholder="Label (optional)" style="max-width:140px">
+                    <button type="submit" class="btn btn-outline-primary btn-sm">+ Add</button>
+                </form>
+                <div class="pwd-hint mt-2">Passwords are stored securely and only used to open CAS PDFs.</div>
+            </div>
+        </div>
     </div>
 
+    <!-- Right: past uploads -->
     <div class="col-lg-6">
         <div class="card border-0 shadow-sm">
             <div class="card-body p-4">
@@ -105,35 +146,31 @@
 const CSRF = '{{ csrf_token }}';
 const API  = '/investments/api';
 
-// Drag-and-drop
+// ── Drag-and-drop ──────────────────────────────────────────────────────────
 const dropzone = document.getElementById('dropzone');
 const fileInput = document.getElementById('cas-file');
 
-dropzone.addEventListener('dragover', function(e) { e.preventDefault(); dropzone.classList.add('drag-over'); });
-dropzone.addEventListener('dragleave', function() { dropzone.classList.remove('drag-over'); });
-dropzone.addEventListener('drop', function(e) {
+dropzone.addEventListener('dragover', e => { e.preventDefault(); dropzone.classList.add('drag-over'); });
+dropzone.addEventListener('dragleave', () => dropzone.classList.remove('drag-over'));
+dropzone.addEventListener('drop', e => {
     e.preventDefault(); dropzone.classList.remove('drag-over');
     if (e.dataTransfer.files.length) setFile(e.dataTransfer.files[0]);
 });
-fileInput.addEventListener('change', function() {
-    if (fileInput.files.length) setFile(fileInput.files[0]);
-});
+fileInput.addEventListener('change', () => { if (fileInput.files.length) setFile(fileInput.files[0]); });
 
 function setFile(f) {
     if (!f.name.endsWith('.pdf')) { alert('Please select a PDF file.'); return; }
     dropzone.classList.add('has-file');
     document.getElementById('dropzone-label').textContent = '📎 ' + f.name;
-    // Auto-detect CAS type from filename
     const name = f.name.toUpperCase();
     if (name.includes('NSDL')) document.getElementById('cas-type').value = 'NSDL';
     else if (name.includes('CAMS')) document.getElementById('cas-type').value = 'CAMS';
     else if (name.includes('KFIN') || name.includes('KARVY')) document.getElementById('cas-type').value = 'KFINTECH';
-    // Transfer file to input
     const dt = new DataTransfer(); dt.items.add(f);
     fileInput.files = dt.files;
 }
 
-// Load family members
+// ── Load family members ────────────────────────────────────────────────────
 fetch(API + '/family-members/').then(r => r.json()).then(members => {
     const sel = document.getElementById('member-select');
     if (!members.length) {
@@ -147,7 +184,85 @@ fetch(API + '/family-members/').then(r => r.json()).then(members => {
     document.getElementById('member-select').innerHTML = '<option value="">Failed to load members</option>';
 });
 
-// Upload form
+// ── Saved passwords ────────────────────────────────────────────────────────
+let savedPasswords = [];
+
+async function loadSavedPasswords() {
+    try {
+        const r = await fetch(API + '/uploads/passwords/');
+        savedPasswords = await r.json();
+    } catch(e) {
+        savedPasswords = [];
+    }
+    renderSavedPasswords();
+}
+
+function maskPwd(p) {
+    if (!p) return '(empty)';
+    if (p.length <= 4) return '*'.repeat(p.length);
+    return p.slice(0, 2) + '****' + p.slice(-2);
+}
+
+function renderSavedPasswords() {
+    const list = document.getElementById('saved-pwds-list');
+    const notice = document.getElementById('saved-pwd-notice');
+    const countEl = document.getElementById('saved-pwd-count');
+
+    if (!savedPasswords.length) {
+        list.innerHTML = '<span class="text-muted small">No saved passwords yet.</span>';
+        notice.style.display = 'none';
+        return;
+    }
+
+    notice.style.display = '';
+    countEl.textContent = savedPasswords.length;
+
+    list.innerHTML = savedPasswords.map(p =>
+        `<span class="pwd-chip">
+            ${p.label ? '<span>' + p.label + ':</span> ' : ''}${maskPwd(p.password)}
+            <button class="del-btn" onclick="deleteSavedPassword(${p.id})" title="Remove">✕</button>
+        </span>`
+    ).join('');
+}
+
+async function deleteSavedPassword(id) {
+    if (!confirm('Remove this saved password?')) return;
+    try {
+        await fetch(API + '/uploads/passwords/' + id + '/', {
+            method: 'DELETE',
+            headers: { 'X-CSRFToken': CSRF },
+        });
+        await loadSavedPasswords();
+    } catch(e) {
+        alert('Failed to remove password.');
+    }
+}
+
+document.getElementById('add-pwd-form').addEventListener('submit', async function(e) {
+    e.preventDefault();
+    const pwd   = document.getElementById('new-pwd-value').value.trim();
+    const label = document.getElementById('new-pwd-label').value.trim();
+    if (!pwd) return;
+    try {
+        const r = await fetch(API + '/uploads/passwords/', {
+            method: 'POST',
+            headers: { 'X-CSRFToken': CSRF, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ password: pwd, label: label }),
+        });
+        if (!r.ok) {
+            const d = await r.json();
+            alert(d.password?.[0] || d.detail || 'Could not save password.');
+            return;
+        }
+        document.getElementById('new-pwd-value').value = '';
+        document.getElementById('new-pwd-label').value = '';
+        await loadSavedPasswords();
+    } catch(e) {
+        alert('Failed to save password.');
+    }
+});
+
+// ── Upload form ────────────────────────────────────────────────────────────
 document.getElementById('cas-form').addEventListener('submit', async function(e) {
     e.preventDefault();
     const memberId = document.getElementById('member-select').value;
@@ -181,9 +296,8 @@ document.getElementById('cas-form').addEventListener('submit', async function(e)
         statusEl.innerHTML = '<div class="alert alert-success mb-0">' +
             '<strong>✓ Uploaded!</strong> ' +
             'Parse status: <strong>' + (d.parse_status || 'PENDING') + '</strong>. ' +
-            'Parsing runs in background — refresh past uploads below.</div>';
+            'Parsing runs in background — see status below.</div>';
 
-        // Poll parse status
         if (d.id) pollParseStatus(d.id);
         loadPastUploads();
     } catch(err) {
@@ -202,7 +316,7 @@ async function pollParseStatus(uploadId, attempts) {
         const statusEl = document.getElementById('upload-status');
         if (d.parse_status === 'DONE') {
             statusEl.innerHTML = '<div class="alert alert-success mb-0">✓ Parsed successfully! ' +
-                'Accounts created: <strong>' + (d.accounts_created||0) + '</strong>, ' +
+                'Accounts: <strong>' + (d.accounts_created||0) + '</strong>, ' +
                 'Products: <strong>' + (d.products_created||0) + '</strong>, ' +
                 'Transactions: <strong>' + (d.transactions_created||0) + '</strong>.' +
                 ' <a href="/investments/">View Dashboard →</a></div>';
@@ -219,8 +333,7 @@ async function pollParseStatus(uploadId, attempts) {
 
 function statusBadge(s) {
     const map = { PENDING: 'pending', PROCESSING: 'processing', DONE: 'done', ERROR: 'error' };
-    const cls  = map[s] || 'pending';
-    return '<span class="status-badge badge-' + cls + '">' + s + '</span>';
+    return '<span class="status-badge badge-' + (map[s] || 'pending') + '">' + s + '</span>';
 }
 
 async function loadPastUploads() {
@@ -253,6 +366,7 @@ async function loadPastUploads() {
     }
 }
 
+loadSavedPasswords();
 loadPastUploads();
 </script>
 {% endblock %}

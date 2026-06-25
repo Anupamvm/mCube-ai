@@ -324,6 +324,7 @@ echo "✓ Legacy packages cleaned up"
 echo ""
 echo "Step 5/10: Installing Python requirements..."
 echo "--------------------------------------------"
+
 python3 -m pip install --no-cache-dir -r requirements.txt
 
 # ============================================================================
