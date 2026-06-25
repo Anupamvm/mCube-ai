@@ -1,0 +1,285 @@
+{% extends "core/master_base.html" %}
+{% load static %}
+
+{% block title %}Member Portfolio — mCube Investments{% endblock %}
+
+{% block extra_css %}
+<style>
+    .inv-metric-card {
+        background: white; border-radius: var(--radius-md); padding: 1.25rem;
+        box-shadow: var(--shadow-md); border-left: 4px solid var(--primary);
+    }
+    .inv-metric-card .label { font-size: .78rem; color: var(--gray); text-transform: uppercase; letter-spacing: .05em; }
+    .inv-metric-card .value { font-size: 1.4rem; font-weight: 700; color: var(--dark); margin: .2rem 0; }
+    .inv-metric-card.success { border-left-color: var(--success); }
+    .inv-metric-card.danger  { border-left-color: var(--danger); }
+    .acct-card {
+        background: white; border-radius: var(--radius-md); box-shadow: var(--shadow-md);
+        padding: 1.1rem 1.25rem; text-decoration: none; color: inherit;
+        display: block; transition: transform .15s, box-shadow .15s;
+    }
+    .acct-card:hover { transform: translateY(-2px); box-shadow: var(--shadow-lg); color: inherit; }
+    .badge-type { font-size: .7rem; padding: .2rem .55rem; border-radius: 20px;
+                  background: #e0e7ff; color: #3730a3; }
+    .section-title { font-size: 1rem; font-weight: 700; color: var(--dark); margin: 1.5rem 0 .75rem; }
+    .gain-pos { color: var(--success); } .gain-neg { color: var(--danger); }
+    .insight-item { padding: .4rem 0; border-bottom: 1px solid #f1f5f9; font-size: .88rem; }
+    .insight-item:last-child { border-bottom: none; }
+    .skeleton { background: linear-gradient(90deg,#f1f5f9 25%,#e2e8f0 50%,#f1f5f9 75%);
+                background-size: 200% 100%; animation: shimmer 1.2s infinite; border-radius: 4px; display:inline-block; }
+    @keyframes shimmer { to { background-position: -200% 0; } }
+    .toast-container { position:fixed; bottom:1.5rem; right:1.5rem; z-index:9999; }
+    .inv-toast { padding: .75rem 1.25rem; border-radius: var(--radius-md); color:white; font-size:.9rem; box-shadow: var(--shadow-lg); }
+    .inv-toast.success { background: var(--success); } .inv-toast.error { background: var(--danger); }
+</style>
+{% endblock %}
+
+{% block breadcrumb %}
+<nav aria-label="breadcrumb">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="/">Home</a></li>
+        <li class="breadcrumb-item"><a href="{% url 'investments:home' %}">Investments</a></li>
+        <li class="breadcrumb-item active" id="bc-member">Member</li>
+    </ol>
+</nav>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h1 class="h3 fw-bold mb-1" id="page-title" style="color:var(--dark)">Portfolio</h1>
+        <p class="text-muted mb-0 small" id="page-sub">Loading…</p>
+    </div>
+    <div class="d-flex gap-2">
+        <a href="{% url 'investments:home' %}" class="btn btn-outline-secondary btn-sm">← Back</a>
+        <button class="btn btn-primary btn-sm" id="btn-report" onclick="generateReport()">📄 Generate Report</button>
+    </div>
+</div>
+
+<!-- Metric cards -->
+<div class="row g-3 mb-3">
+    <div class="col-6 col-md-3">
+        <div class="inv-metric-card">
+            <div class="label">Invested</div>
+            <div class="value" id="m-inv"><span class="skeleton" style="width:90px;height:1.4rem"></span></div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="inv-metric-card success">
+            <div class="label">Current Value</div>
+            <div class="value" id="m-cur"><span class="skeleton" style="width:90px;height:1.4rem"></span></div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="inv-metric-card" id="m-gain-card">
+            <div class="label">Gain / Loss</div>
+            <div class="value" id="m-gain"><span class="skeleton" style="width:100px;height:1.4rem"></span></div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="inv-metric-card">
+            <div class="label">XIRR</div>
+            <div class="value" id="m-xirr"><span class="skeleton" style="width:60px;height:1.4rem"></span></div>
+        </div>
+    </div>
+</div>
+
+<!-- Accounts -->
+<div class="section-title">Investment Accounts</div>
+<div class="row g-3" id="accounts-row">
+    <div class="col-12 text-muted small" id="accts-loading">Loading accounts…</div>
+</div>
+
+<!-- Products table -->
+<div class="section-title">Holdings</div>
+<div class="card border-0 shadow-sm">
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-hover mb-0 small" id="products-table">
+                <thead style="background:var(--lighter)">
+                    <tr>
+                        <th class="ps-3">Name</th>
+                        <th>Type</th>
+                        <th class="text-end">Invested</th>
+                        <th class="text-end">Current</th>
+                        <th class="text-end">Gain / Loss</th>
+                        <th class="text-end pe-3">G/L %</th>
+                    </tr>
+                </thead>
+                <tbody id="products-body">
+                    <tr><td colspan="6" class="text-center text-muted py-3" id="products-loading">Loading holdings…</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Insights -->
+<div class="section-title">Insights</div>
+<div id="insights-box" class="card border-0 shadow-sm p-3">
+    <div class="text-muted small" id="insights-loading">Loading insights…</div>
+</div>
+
+<div class="toast-container" id="toast-container"></div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+const MEMBER_ID = {{ member_id }};
+const CSRF = '{{ csrf_token }}';
+
+function fmt(n)  { n = parseFloat(n)||0; return '₹' + Math.abs(n).toLocaleString('en-IN',{maximumFractionDigits:0}); }
+function pct(n)  { return (parseFloat(n)||0).toFixed(2) + '%'; }
+function signed(n) { return parseFloat(n) >= 0 ? '+' : ''; }
+function gainClass(n) { return parseFloat(n) >= 0 ? 'gain-pos' : 'gain-neg'; }
+
+function toast(msg, type) {
+    const el = document.createElement('div');
+    el.className = 'inv-toast ' + type; el.textContent = msg;
+    document.getElementById('toast-container').appendChild(el);
+    setTimeout(() => el.remove(), 4000);
+}
+
+async function loadMember() {
+    try {
+        const r = await fetch(`/investments/api/family-members/${MEMBER_ID}/`);
+        const m = await r.json();
+        document.getElementById('page-title').textContent = m.name + ' — Portfolio';
+        document.getElementById('bc-member').textContent = m.name;
+        document.getElementById('page-sub').textContent = (m.relationship || 'Family Member') +
+            (m.pan_masked ? ' · PAN: ' + m.pan_masked : '');
+    } catch(e) {}
+}
+
+async function loadNetWorth() {
+    try {
+        const r = await fetch(`/investments/api/family-members/${MEMBER_ID}/net-worth/`);
+        const d = await r.json();
+        const gain = parseFloat(d.total_gain_loss) || 0;
+        document.getElementById('m-inv').textContent  = fmt(d.total_invested);
+        document.getElementById('m-cur').textContent  = fmt(d.total_current);
+        document.getElementById('m-gain').textContent = signed(gain) + fmt(gain) + ' (' + pct(d.gain_loss_pct) + ')';
+        document.getElementById('m-gain').className   = 'value ' + gainClass(gain);
+        document.getElementById('m-gain-card').style.borderLeftColor = gain >= 0 ? 'var(--success)' : 'var(--danger)';
+    } catch(e) { document.getElementById('m-inv').textContent = '—'; }
+}
+
+async function loadAnalytics() {
+    try {
+        const r = await fetch(`/investments/api/family-members/${MEMBER_ID}/analytics/`);
+        const d = await r.json();
+        const xirr = parseFloat(d.xirr);
+        document.getElementById('m-xirr').textContent = isNaN(xirr) ? '—' : pct(xirr * 100);
+        document.getElementById('m-xirr').className   = 'value ' + gainClass(xirr);
+    } catch(e) { document.getElementById('m-xirr').textContent = '—'; }
+}
+
+async function loadAccounts() {
+    const row = document.getElementById('accounts-row');
+    try {
+        const r = await fetch(`/investments/api/accounts/?member_id=${MEMBER_ID}`);
+        const accounts = await r.json();
+        if (!accounts.length) { row.innerHTML = '<div class="col-12 text-muted small">No accounts found.</div>'; return; }
+        row.innerHTML = accounts.map(a =>
+            `<div class="col-12 col-md-6 col-lg-4">
+                <a class="acct-card" href="/investments/account/${a.id}/">
+                    <div class="d-flex justify-content-between align-items-start">
+                        <div>
+                            <div class="fw-semibold" style="color:var(--dark);font-size:.95rem">${a.account_name}</div>
+                            <div class="text-muted small mt-1">${a.institution_name || ''}</div>
+                        </div>
+                        <span class="badge-type">${a.account_type || 'General'}</span>
+                    </div>
+                </a>
+            </div>`
+        ).join('');
+    } catch(e) { row.innerHTML = '<div class="col-12 text-muted small">Failed to load accounts.</div>'; }
+}
+
+async function loadProducts() {
+    const tbody = document.getElementById('products-body');
+    try {
+        const r = await fetch(`/investments/api/products/?member_id=${MEMBER_ID}`);
+        const products = await r.json();
+        if (!products.length) {
+            tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-3">No holdings found.</td></tr>';
+            return;
+        }
+        tbody.innerHTML = products.map(p => {
+            const gl = parseFloat(p.gain_loss) || 0;
+            const glPct = p.current_value && p.invested_value
+                ? ((gl / parseFloat(p.invested_value)) * 100).toFixed(2)
+                : '—';
+            const cls = gainClass(gl);
+            return `<tr>
+                <td class="ps-3 fw-medium" style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${p.name}">${p.name}</td>
+                <td><span class="badge-type">${p.product_type || '—'}</span></td>
+                <td class="text-end">${fmt(p.invested_value)}</td>
+                <td class="text-end">${fmt(p.current_value)}</td>
+                <td class="text-end ${cls}">${signed(gl)}${fmt(gl)}</td>
+                <td class="text-end pe-3 ${cls}">${glPct !== '—' ? (gl>=0?'+':'') + glPct + '%' : '—'}</td>
+            </tr>`;
+        }).join('');
+    } catch(e) {
+        tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-3">Failed to load holdings.</td></tr>';
+    }
+}
+
+async function loadInsights() {
+    const box = document.getElementById('insights-box');
+    try {
+        const r = await fetch(`/investments/api/family-members/${MEMBER_ID}/insights/`);
+        const d = await r.json();
+        const insights = d.insights || [];
+        if (!insights.length) { box.innerHTML = '<p class="text-muted small mb-0">No insights available.</p>'; return; }
+        box.innerHTML = insights.map(i => `<div class="insight-item">💡 ${i}</div>`).join('');
+    } catch(e) { box.innerHTML = '<p class="text-muted small mb-0">Could not load insights.</p>'; }
+}
+
+async function generateReport() {
+    const btn = document.getElementById('btn-report');
+    btn.disabled = true; btn.textContent = '⏳ Generating…';
+    try {
+        const r = await fetch('/investments/api/reports/generate/', {
+            method: 'POST',
+            headers: {'X-CSRFToken': CSRF, 'Content-Type': 'application/json'},
+            body: JSON.stringify({member_id: MEMBER_ID, report_format: 'excel'})
+        });
+        const d = await r.json();
+        if (d.download_url) {
+            window.location.href = d.download_url;
+            toast('Report downloading…', 'success');
+        } else if (d.token) {
+            toast('Report generation started. It will download shortly.', 'success');
+            pollReport(d.token);
+        } else {
+            toast(d.error || 'Report generation failed.', 'error');
+        }
+    } catch(e) {
+        toast('Failed to generate report.', 'error');
+    } finally {
+        btn.disabled = false; btn.textContent = '📄 Generate Report';
+    }
+}
+
+async function pollReport(token, attempts) {
+    attempts = attempts || 0;
+    if (attempts > 30) return;
+    try {
+        const r = await fetch(`/investments/api/reports/download/${token}/`);
+        if (r.ok && r.headers.get('content-type') && !r.headers.get('content-type').includes('json')) {
+            window.location.href = `/investments/api/reports/download/${token}/`;
+            return;
+        }
+    } catch(e) {}
+    setTimeout(() => pollReport(token, attempts + 1), 2000);
+}
+
+loadMember();
+loadNetWorth();
+loadAnalytics();
+loadAccounts();
+loadProducts();
+loadInsights();
+</script>
+{% endblock %}

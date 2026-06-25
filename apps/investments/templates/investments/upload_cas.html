@@ -1,0 +1,258 @@
+{% extends "core/master_base.html" %}
+{% load static %}
+
+{% block title %}Upload CAS Statement — mCube Investments{% endblock %}
+
+{% block extra_css %}
+<style>
+    .dropzone {
+        border: 2px dashed var(--gray-light); border-radius: var(--radius-lg);
+        padding: 2.5rem; text-align: center; cursor: pointer;
+        transition: border-color .2s, background .2s;
+        background: var(--lighter);
+    }
+    .dropzone:hover, .dropzone.drag-over { border-color: var(--primary); background: #eff6ff; }
+    .dropzone.has-file { border-color: var(--success); background: #f0fdf4; }
+    .dropzone-icon { font-size: 3rem; margin-bottom: .75rem; }
+    .status-badge { font-size: .75rem; padding: .25rem .65rem; border-radius: 20px; font-weight: 600; }
+    .badge-pending    { background: #fef3c7; color: #92400e; }
+    .badge-processing { background: #dbeafe; color: #1e40af; }
+    .badge-done       { background: #d1fae5; color: #065f46; }
+    .badge-error      { background: #fee2e2; color: #991b1b; }
+</style>
+{% endblock %}
+
+{% block breadcrumb %}
+<nav aria-label="breadcrumb">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="/">Home</a></li>
+        <li class="breadcrumb-item"><a href="{% url 'investments:home' %}">Investments</a></li>
+        <li class="breadcrumb-item active">Upload CAS</li>
+    </ol>
+</nav>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h1 class="h3 fw-bold mb-1" style="color:var(--dark)">📤 Upload CAS Statement</h1>
+        <p class="text-muted mb-0 small">Import holdings from NSDL, CAMS, or KFintech Consolidated Account Statements</p>
+    </div>
+    <a href="{% url 'investments:home' %}" class="btn btn-outline-secondary btn-sm">← Dashboard</a>
+</div>
+
+<div class="row g-4">
+    <div class="col-lg-6">
+        <div class="card border-0 shadow-sm">
+            <div class="card-body p-4">
+                <h5 class="fw-bold mb-3" style="color:var(--dark)">Upload Statement</h5>
+                <form id="cas-form">
+                    <!-- Family Member -->
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Family Member</label>
+                        <select class="form-select" id="member-select" required>
+                            <option value="">Loading members…</option>
+                        </select>
+                    </div>
+                    <!-- CAS Type -->
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">CAS Type</label>
+                        <select class="form-select" id="cas-type">
+                            <option value="NSDL">NSDL e-CAS</option>
+                            <option value="CAMS">CAMS CAS</option>
+                            <option value="KFINTECH">KFintech CAS</option>
+                        </select>
+                    </div>
+                    <!-- File Drop zone -->
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">PDF File</label>
+                        <div class="dropzone" id="dropzone" onclick="document.getElementById('cas-file').click()">
+                            <div class="dropzone-icon">📄</div>
+                            <div id="dropzone-label" class="fw-semibold">Click or drag &amp; drop PDF here</div>
+                            <div class="text-muted small mt-1">Supports password-protected NSDL, CAMS, KFintech CAS files</div>
+                        </div>
+                        <input type="file" id="cas-file" accept=".pdf" class="d-none">
+                    </div>
+                    <!-- Password -->
+                    <div class="mb-4">
+                        <label class="form-label fw-semibold">PDF Password <span class="text-muted fw-normal">(usually your PAN)</span></label>
+                        <input type="text" class="form-control" id="cas-password" placeholder="e.g. AAQHA1835B" autocomplete="off">
+                    </div>
+                    <button type="submit" class="btn btn-primary w-100 fw-bold" id="btn-upload">
+                        📤 Upload &amp; Parse
+                    </button>
+                </form>
+                <div id="upload-status" class="mt-3" style="display:none"></div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-lg-6">
+        <div class="card border-0 shadow-sm">
+            <div class="card-body p-4">
+                <h5 class="fw-bold mb-3" style="color:var(--dark)">Past Uploads</h5>
+                <div id="uploads-table-wrap">
+                    <div class="text-muted small">Loading…</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+const CSRF = '{{ csrf_token }}';
+const API  = '/investments/api';
+
+// Drag-and-drop
+const dropzone = document.getElementById('dropzone');
+const fileInput = document.getElementById('cas-file');
+
+dropzone.addEventListener('dragover', function(e) { e.preventDefault(); dropzone.classList.add('drag-over'); });
+dropzone.addEventListener('dragleave', function() { dropzone.classList.remove('drag-over'); });
+dropzone.addEventListener('drop', function(e) {
+    e.preventDefault(); dropzone.classList.remove('drag-over');
+    if (e.dataTransfer.files.length) setFile(e.dataTransfer.files[0]);
+});
+fileInput.addEventListener('change', function() {
+    if (fileInput.files.length) setFile(fileInput.files[0]);
+});
+
+function setFile(f) {
+    if (!f.name.endsWith('.pdf')) { alert('Please select a PDF file.'); return; }
+    dropzone.classList.add('has-file');
+    document.getElementById('dropzone-label').textContent = '📎 ' + f.name;
+    // Auto-detect CAS type from filename
+    const name = f.name.toUpperCase();
+    if (name.includes('NSDL')) document.getElementById('cas-type').value = 'NSDL';
+    else if (name.includes('CAMS')) document.getElementById('cas-type').value = 'CAMS';
+    else if (name.includes('KFIN') || name.includes('KARVY')) document.getElementById('cas-type').value = 'KFINTECH';
+    // Transfer file to input
+    const dt = new DataTransfer(); dt.items.add(f);
+    fileInput.files = dt.files;
+}
+
+// Load family members
+fetch(API + '/family-members/').then(r => r.json()).then(members => {
+    const sel = document.getElementById('member-select');
+    if (!members.length) {
+        sel.innerHTML = '<option value="">No family members — add one first</option>';
+        return;
+    }
+    sel.innerHTML = members.map(m =>
+        `<option value="${m.id}">${m.name}${m.relationship ? ' (' + m.relationship + ')' : ''}</option>`
+    ).join('');
+}).catch(() => {
+    document.getElementById('member-select').innerHTML = '<option value="">Failed to load members</option>';
+});
+
+// Upload form
+document.getElementById('cas-form').addEventListener('submit', async function(e) {
+    e.preventDefault();
+    const memberId = document.getElementById('member-select').value;
+    const casType  = document.getElementById('cas-type').value;
+    const password = document.getElementById('cas-password').value;
+    const file     = document.getElementById('cas-file').files[0];
+    if (!memberId) { alert('Please select a family member.'); return; }
+    if (!file) { alert('Please select a PDF file.'); return; }
+
+    const btn = document.getElementById('btn-upload');
+    btn.disabled = true; btn.textContent = '⏳ Uploading…';
+    const statusEl = document.getElementById('upload-status');
+    statusEl.style.display = 'block';
+    statusEl.innerHTML = '<div class="alert alert-info mb-0">Uploading and parsing… this may take a moment.</div>';
+
+    const fd = new FormData();
+    fd.append('file', file);
+    fd.append('member_id', memberId);
+    fd.append('cas_type', casType);
+    if (password) fd.append('password', password);
+
+    try {
+        const r = await fetch(API + '/uploads/cas/', {
+            method: 'POST',
+            headers: { 'X-CSRFToken': CSRF },
+            body: fd
+        });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.detail || d.error || 'Upload failed');
+
+        statusEl.innerHTML = '<div class="alert alert-success mb-0">' +
+            '<strong>✓ Uploaded!</strong> ' +
+            'Parse status: <strong>' + (d.parse_status || 'PENDING') + '</strong>. ' +
+            'Parsing runs in background — refresh past uploads below.</div>';
+
+        // Poll parse status
+        if (d.id) pollParseStatus(d.id);
+        loadPastUploads();
+    } catch(err) {
+        statusEl.innerHTML = '<div class="alert alert-danger mb-0">❌ ' + err.message + '</div>';
+    } finally {
+        btn.disabled = false; btn.textContent = '📤 Upload & Parse';
+    }
+});
+
+async function pollParseStatus(uploadId, attempts) {
+    attempts = attempts || 0;
+    if (attempts > 30) return;
+    try {
+        const r = await fetch(API + '/uploads/cas/' + uploadId + '/');
+        const d = await r.json();
+        const statusEl = document.getElementById('upload-status');
+        if (d.parse_status === 'DONE') {
+            statusEl.innerHTML = '<div class="alert alert-success mb-0">✓ Parsed successfully! ' +
+                'Accounts created: <strong>' + (d.accounts_created||0) + '</strong>, ' +
+                'Products: <strong>' + (d.products_created||0) + '</strong>, ' +
+                'Transactions: <strong>' + (d.transactions_created||0) + '</strong>.' +
+                ' <a href="/investments/">View Dashboard →</a></div>';
+            loadPastUploads();
+            return;
+        }
+        if (d.parse_status === 'ERROR') {
+            statusEl.innerHTML = '<div class="alert alert-danger mb-0">❌ Parse error: ' + (d.parse_error || 'Unknown error') + '</div>';
+            return;
+        }
+    } catch(e) {}
+    setTimeout(() => pollParseStatus(uploadId, attempts + 1), 2000);
+}
+
+function statusBadge(s) {
+    const map = { PENDING: 'pending', PROCESSING: 'processing', DONE: 'done', ERROR: 'error' };
+    const cls  = map[s] || 'pending';
+    return '<span class="status-badge badge-' + cls + '">' + s + '</span>';
+}
+
+async function loadPastUploads() {
+    const wrap = document.getElementById('uploads-table-wrap');
+    try {
+        const r = await fetch(API + '/uploads/cas/');
+        const uploads = await r.json();
+        if (!uploads.length) {
+            wrap.innerHTML = '<p class="text-muted small mb-0">No uploads yet.</p>';
+            return;
+        }
+        wrap.innerHTML = '<div class="table-responsive"><table class="table table-sm small mb-0">' +
+            '<thead style="background:var(--lighter)"><tr>' +
+            '<th>File</th><th>Date</th><th>Status</th><th class="text-end">Accounts</th><th class="text-end">Products</th>' +
+            '</tr></thead><tbody>' +
+            uploads.slice().reverse().slice(0, 20).map(u => {
+                const d = new Date(u.created_at || '');
+                const date = isNaN(d) ? '—' : d.toLocaleDateString('en-IN');
+                return '<tr>' +
+                    '<td style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + u.original_filename + '">' + u.original_filename + '</td>' +
+                    '<td>' + date + '</td>' +
+                    '<td>' + statusBadge(u.parse_status) + '</td>' +
+                    '<td class="text-end">' + (u.accounts_created||0) + '</td>' +
+                    '<td class="text-end">' + (u.products_created||0) + '</td>' +
+                    '</tr>';
+            }).join('') +
+            '</tbody></table></div>';
+    } catch(e) {
+        wrap.innerHTML = '<p class="text-muted small mb-0">Could not load upload history.</p>';
+    }
+}
+
+loadPastUploads();
+</script>
+{% endblock %}

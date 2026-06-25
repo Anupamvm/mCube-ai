@@ -63,23 +63,6 @@ else
     echo "  (Background tasks were not running)"
 fi
 
-# Stop Next.js portfolio frontend
-echo "Stopping portfolio frontend (Next.js)..."
-pkill -f "next.*start" 2>/dev/null
-pkill -f "next-server" 2>/dev/null
-RESULT=$?
-# Also free port 3001 in case the process name doesn't match
-if command -v fuser &>/dev/null; then
-    fuser -k 3001/tcp 2>/dev/null || true
-elif command -v lsof &>/dev/null; then
-    lsof -ti tcp:3001 | xargs -r kill -9 2>/dev/null || true
-fi
-if [ $RESULT -eq 0 ]; then
-    echo "✓ Portfolio frontend stopped"
-else
-    echo "  (Portfolio frontend was not running)"
-fi
-
 # Clean up PID files
 rm -f .pids/*.pid 2>/dev/null
 

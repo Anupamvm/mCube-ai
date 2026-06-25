@@ -1,0 +1,137 @@
+{% extends "core/master_base.html" %}
+{% load static %}
+
+{% block title %}Account Holdings — mCube Investments{% endblock %}
+
+{% block extra_css %}
+<style>
+    .gain-pos { color: var(--success); font-weight: 600; }
+    .gain-neg { color: var(--danger); font-weight: 600; }
+    .badge-type { font-size: .7rem; padding: .2rem .55rem; border-radius: 20px; background: #e0e7ff; color: #3730a3; }
+    .summary-pill { background: var(--lighter); border-radius: var(--radius-md); padding: .5rem .9rem; font-size: .85rem; }
+</style>
+{% endblock %}
+
+{% block breadcrumb %}
+<nav aria-label="breadcrumb">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="/">Home</a></li>
+        <li class="breadcrumb-item"><a href="{% url 'investments:home' %}">Investments</a></li>
+        <li class="breadcrumb-item active" id="bc-account">Account</li>
+    </ol>
+</nav>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h1 class="h3 fw-bold mb-1" id="page-title" style="color:var(--dark)">Account Holdings</h1>
+        <p class="text-muted mb-0 small" id="page-sub">Loading…</p>
+    </div>
+    <a href="javascript:history.back()" class="btn btn-outline-secondary btn-sm">← Back</a>
+</div>
+
+<!-- Summary row -->
+<div class="d-flex flex-wrap gap-3 mb-4" id="summary-row">
+    <div class="summary-pill">Invested: <strong id="s-inv">—</strong></div>
+    <div class="summary-pill">Current: <strong id="s-cur">—</strong></div>
+    <div class="summary-pill">Gain/Loss: <strong id="s-gain">—</strong></div>
+    <div class="summary-pill">Holdings: <strong id="s-count">—</strong></div>
+</div>
+
+<!-- Holdings table -->
+<div class="card border-0 shadow-sm">
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-hover mb-0 small" id="products-table">
+                <thead style="background:var(--lighter)">
+                    <tr>
+                        <th class="ps-3">Name</th>
+                        <th>ISIN</th>
+                        <th>Type</th>
+                        <th class="text-end">Units / Qty</th>
+                        <th class="text-end">NAV / Price</th>
+                        <th class="text-end">Invested</th>
+                        <th class="text-end">Current</th>
+                        <th class="text-end">Gain / Loss</th>
+                        <th class="text-end pe-3">G/L %</th>
+                    </tr>
+                </thead>
+                <tbody id="products-body">
+                    <tr><td colspan="9" class="text-center text-muted py-4">Loading holdings…</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+const ACCOUNT_ID = {{ account_id }};
+
+function fmt(n)  { n = parseFloat(n)||0; return '₹' + Math.abs(n).toLocaleString('en-IN',{maximumFractionDigits:0}); }
+function pct(n)  { return (parseFloat(n)||0).toFixed(2) + '%'; }
+function signed(n) { return parseFloat(n) >= 0 ? '+' : ''; }
+function gainClass(n) { return parseFloat(n) >= 0 ? 'gain-pos' : 'gain-neg'; }
+function extra(d, key) { return d && d[key] != null ? parseFloat(d[key]) : null; }
+
+async function loadAccount() {
+    try {
+        const r = await fetch(`/investments/api/accounts/${ACCOUNT_ID}/`);
+        const a = await r.json();
+        document.getElementById('page-title').textContent = a.account_name || 'Account Holdings';
+        document.getElementById('bc-account').textContent = a.account_name || 'Account';
+        document.getElementById('page-sub').textContent =
+            [a.institution_name, a.account_type].filter(Boolean).join(' · ');
+    } catch(e) {}
+}
+
+async function loadProducts() {
+    const tbody = document.getElementById('products-body');
+    try {
+        const r = await fetch(`/investments/api/accounts/${ACCOUNT_ID}/products/`);
+        const products = await r.json();
+        if (!products.length) {
+            tbody.innerHTML = '<tr><td colspan="9" class="text-center text-muted py-4">No holdings in this account.</td></tr>';
+            return;
+        }
+
+        let totInv = 0, totCur = 0, totGl = 0;
+        tbody.innerHTML = products.map(p => {
+            const gl = parseFloat(p.gain_loss) || 0;
+            const inv = parseFloat(p.invested_value) || 0;
+            const cur = parseFloat(p.current_value) || 0;
+            totInv += inv; totCur += cur; totGl += gl;
+            const glPct = inv > 0 ? ((gl / inv) * 100).toFixed(2) : null;
+            const cls = gainClass(gl);
+            const units = extra(p.extra_data, 'units') ?? extra(p.extra_data, 'quantity');
+            const nav   = extra(p.extra_data, 'nav') ?? extra(p.extra_data, 'price') ?? extra(p.extra_data, 'ltp');
+            return `<tr>
+                <td class="ps-3 fw-medium" style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${p.name}">${p.name}</td>
+                <td class="text-muted" style="font-size:.75rem">${p.isin || '—'}</td>
+                <td><span class="badge-type">${p.product_type || '—'}</span></td>
+                <td class="text-end">${units != null ? units.toLocaleString('en-IN',{maximumFractionDigits:4}) : '—'}</td>
+                <td class="text-end">${nav != null ? '₹' + nav.toLocaleString('en-IN',{maximumFractionDigits:2}) : '—'}</td>
+                <td class="text-end">${fmt(inv)}</td>
+                <td class="text-end">${fmt(cur)}</td>
+                <td class="text-end ${cls}">${signed(gl)}${fmt(gl)}</td>
+                <td class="text-end pe-3 ${cls}">${glPct != null ? (gl>=0?'+':'') + glPct + '%' : '—'}</td>
+            </tr>`;
+        }).join('');
+
+        document.getElementById('s-inv').textContent   = fmt(totInv);
+        document.getElementById('s-cur').textContent   = fmt(totCur);
+        const gEl = document.getElementById('s-gain');
+        gEl.textContent = signed(totGl) + fmt(totGl);
+        gEl.className = gainClass(totGl);
+        document.getElementById('s-count').textContent = products.length;
+    } catch(e) {
+        tbody.innerHTML = '<tr><td colspan="9" class="text-center text-muted py-4">Failed to load holdings.</td></tr>';
+    }
+}
+
+loadAccount();
+loadProducts();
+</script>
+{% endblock %}

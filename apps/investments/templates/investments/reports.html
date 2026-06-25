@@ -1,0 +1,164 @@
+{% extends "core/master_base.html" %}
+{% load static %}
+
+{% block title %}Investment Reports — mCube{% endblock %}
+
+{% block extra_css %}
+<style>
+    .report-card { background: white; border-radius: var(--radius-md); box-shadow: var(--shadow-md); padding: 2rem; }
+    .format-option { cursor: pointer; }
+    .format-option input[type=radio] { display:none; }
+    .format-option label {
+        display: block; padding: 1rem 1.25rem; border: 2px solid #e2e8f0;
+        border-radius: var(--radius-md); cursor: pointer; transition: border-color .15s, background .15s;
+    }
+    .format-option input[type=radio]:checked + label { border-color: var(--primary); background: #eff6ff; }
+    .format-option label:hover { border-color: var(--primary-light); }
+    .format-icon { font-size: 1.8rem; margin-bottom: .4rem; }
+</style>
+{% endblock %}
+
+{% block breadcrumb %}
+<nav aria-label="breadcrumb">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="/">Home</a></li>
+        <li class="breadcrumb-item"><a href="{% url 'investments:home' %}">Investments</a></li>
+        <li class="breadcrumb-item active">Reports</li>
+    </ol>
+</nav>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h1 class="h3 fw-bold mb-1" style="color:var(--dark)">📊 Investment Reports</h1>
+        <p class="text-muted mb-0 small">Generate PDF or Excel reports for any family member</p>
+    </div>
+    <a href="{% url 'investments:home' %}" class="btn btn-outline-secondary btn-sm">← Dashboard</a>
+</div>
+
+<div class="row justify-content-center">
+    <div class="col-lg-7">
+        <div class="report-card">
+            <h5 class="fw-bold mb-4" style="color:var(--dark)">Generate Report</h5>
+
+            <!-- Family Member -->
+            <div class="mb-4">
+                <label class="form-label fw-semibold">Family Member</label>
+                <select class="form-select" id="member-select" required>
+                    <option value="">Loading members…</option>
+                </select>
+            </div>
+
+            <!-- Format -->
+            <div class="mb-4">
+                <label class="form-label fw-semibold d-block mb-2">Report Format</label>
+                <div class="row g-3">
+                    <div class="col-6">
+                        <div class="format-option">
+                            <input type="radio" name="fmt" id="fmt-excel" value="excel" checked>
+                            <label for="fmt-excel" class="text-center">
+                                <div class="format-icon">📊</div>
+                                <div class="fw-semibold">Excel</div>
+                                <div class="text-muted small">Multi-sheet workbook with all holdings</div>
+                            </label>
+                        </div>
+                    </div>
+                    <div class="col-6">
+                        <div class="format-option">
+                            <input type="radio" name="fmt" id="fmt-pdf" value="pdf">
+                            <label for="fmt-pdf" class="text-center">
+                                <div class="format-icon">📄</div>
+                                <div class="fw-semibold">PDF</div>
+                                <div class="text-muted small">Printable net-worth &amp; holdings summary</div>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Generate Button -->
+            <button class="btn btn-primary w-100 fw-bold py-2" id="btn-generate" onclick="generateReport()">
+                📊 Generate &amp; Download
+            </button>
+
+            <div id="report-status" class="mt-3" style="display:none"></div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+const CSRF = '{{ csrf_token }}';
+const API  = '/investments/api';
+
+fetch(API + '/family-members/').then(r => r.json()).then(members => {
+    const sel = document.getElementById('member-select');
+    if (!members.length) {
+        sel.innerHTML = '<option value="">No family members found</option>';
+        return;
+    }
+    sel.innerHTML = members.map(m =>
+        `<option value="${m.id}">${m.name}${m.relationship ? ' (' + m.relationship + ')' : ''}</option>`
+    ).join('');
+}).catch(() => {
+    document.getElementById('member-select').innerHTML = '<option value="">Failed to load</option>';
+});
+
+async function generateReport() {
+    const memberId = document.getElementById('member-select').value;
+    if (!memberId) { alert('Please select a family member.'); return; }
+    const fmt = document.querySelector('input[name=fmt]:checked').value;
+    const btn = document.getElementById('btn-generate');
+    const statusEl = document.getElementById('report-status');
+
+    btn.disabled = true; btn.textContent = '⏳ Generating…';
+    statusEl.style.display = 'block';
+    statusEl.innerHTML = '<div class="alert alert-info mb-0">Generating your report — this may take a few seconds…</div>';
+
+    try {
+        const r = await fetch(API + '/reports/generate/', {
+            method: 'POST',
+            headers: { 'X-CSRFToken': CSRF, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ member_id: parseInt(memberId), report_format: fmt })
+        });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.detail || d.error || 'Generation failed');
+
+        if (d.download_url) {
+            window.location.href = d.download_url;
+            statusEl.innerHTML = '<div class="alert alert-success mb-0">✓ Downloading your report…</div>';
+        } else if (d.token) {
+            statusEl.innerHTML = '<div class="alert alert-info mb-0">⏳ Report is being prepared. It will download automatically…</div>';
+            pollDownload(d.token, statusEl);
+        } else {
+            throw new Error(d.error || 'No download URL received');
+        }
+    } catch(err) {
+        statusEl.innerHTML = '<div class="alert alert-danger mb-0">❌ ' + err.message + '</div>';
+    } finally {
+        btn.disabled = false; btn.textContent = '📊 Generate & Download';
+    }
+}
+
+async function pollDownload(token, statusEl, attempts) {
+    attempts = attempts || 0;
+    if (attempts > 30) {
+        statusEl.innerHTML = '<div class="alert alert-warning mb-0">Report is taking longer than expected. ' +
+            '<a href="/investments/api/reports/download/' + token + '/" target="_blank">Try downloading manually →</a></div>';
+        return;
+    }
+    try {
+        const r = await fetch(API + '/reports/download/' + token + '/', { method: 'HEAD' });
+        const ct = r.headers.get('content-type') || '';
+        if (r.ok && !ct.includes('application/json')) {
+            window.location.href = API + '/reports/download/' + token + '/';
+            statusEl.innerHTML = '<div class="alert alert-success mb-0">✓ Downloading your report…</div>';
+            return;
+        }
+    } catch(e) {}
+    setTimeout(() => pollDownload(token, statusEl, attempts + 1), 2000);
+}
+</script>
+{% endblock %}

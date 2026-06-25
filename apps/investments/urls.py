@@ -27,16 +27,45 @@ def investments_home(request):
     return render(request, 'investments/index.html')
 
 
+@login_required
+def member_page(request, pk):
+    return render(request, 'investments/member_detail.html', {'member_id': pk})
+
+
+@login_required
+def account_page(request, pk):
+    return render(request, 'investments/account_detail.html', {'account_id': pk})
+
+
+@login_required
+def upload_page(request):
+    return render(request, 'investments/upload_cas.html')
+
+
+@login_required
+def consolidated_page(request):
+    return render(request, 'investments/consolidated.html')
+
+
+@login_required
+def reports_page(request):
+    return render(request, 'investments/reports.html')
+
+
 def csrf_token_view(request):
-    """Returns the CSRF token so the Next.js SPA can bootstrap its cookie."""
     return JsonResponse({'csrfToken': get_token(request)})
 
 
 app_name = 'investments'
 
 urlpatterns = [
-    # Dashboard shell (Django renders the page; Next.js app mounts inside)
+    # ── Django template pages ─────────────────────────────────────────────────
     path('', investments_home, name='home'),
+    path('member/<int:pk>/', member_page, name='member-page'),
+    path('account/<int:pk>/', account_page, name='account-page'),
+    path('upload/', upload_page, name='upload-page'),
+    path('consolidated/', consolidated_page, name='consolidated-page'),
+    path('reports/', reports_page, name='reports-page'),
 
     # ── Family Members ────────────────────────────────────────────────────────
     path('api/family-members/', FamilyMemberListCreateView.as_view(), name='family-list'),

@@ -153,62 +153,6 @@ if [[ "$OSTYPE" != "darwin"* ]]; then
     fi
 fi
 
-# Check for Node.js >= 18 (required for Next.js 16)
-# Ubuntu's system 'nodejs' package can be v10/v12 — too old.
-# The old 'curl | bash' nodesource method conflicts with existing system nodejs.
-# Use the current NodeSource GPG-key method which handles upgrades cleanly.
-_install_node() {
-    if [[ "$OSTYPE" == "darwin"* ]]; then
-        brew install node
-    elif command -v apt-get &> /dev/null; then
-        echo "  Removing old Node.js packages (if any)..."
-        sudo apt-get remove -y nodejs npm libnode-dev libnode72 2>/dev/null || true
-        sudo apt-get autoremove -y 2>/dev/null || true
-        # Remove ALL nodesource apt sources and keys — search by content, not just filename,
-        # so leftover entries from previous installs (which may use different key paths) don't
-        # conflict with our new entry and cause "Conflicting values set for Signed-By" errors.
-        sudo grep -rl "nodesource" /etc/apt/sources.list.d/ 2>/dev/null | xargs -r sudo rm -f 2>/dev/null || true
-        sudo sed -i '/nodesource/d' /etc/apt/sources.list 2>/dev/null || true
-        sudo rm -f /etc/apt/keyrings/nodesource*.gpg \
-                   /usr/share/keyrings/nodesource*.gpg 2>/dev/null || true
-        echo "  Adding NodeSource repository for Node.js 20..."
-        sudo apt-get install -y ca-certificates curl gnupg 2>/dev/null
-        sudo mkdir -p /etc/apt/keyrings
-        curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
-            | sudo gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg
-        echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" \
-            | sudo tee /etc/apt/sources.list.d/nodesource.list > /dev/null
-        sudo apt-get update -qq
-        sudo apt-get install -y nodejs
-        # Refresh shell's command cache so the new node binary is found immediately
-        hash -r 2>/dev/null || true
-    elif command -v yum &> /dev/null; then
-        sudo yum remove -y nodejs npm 2>/dev/null || true
-        curl -fsSL https://rpm.nodesource.com/setup_20.x | sudo bash -
-        sudo yum install -y nodejs
-        hash -r 2>/dev/null || true
-    else
-        echo "❌ Could not install Node.js automatically. Please install Node.js 18+ manually."
-        exit 1
-    fi
-}
-
-if ! command -v node &> /dev/null; then
-    echo "Node.js not found. Installing Node.js 20..."
-    _install_node
-    echo "✓ Node.js $(node --version) installed"
-else
-    _NODE_MAJOR=$(node --version 2>/dev/null | sed 's/v\([0-9]*\).*/\1/')
-    if [ -z "$_NODE_MAJOR" ] || [ "$_NODE_MAJOR" -lt 18 ]; then
-        echo "Node.js $(node --version) is too old (need >= 18). Upgrading to Node.js 20..."
-        _install_node
-        hash -r 2>/dev/null || true
-        echo "✓ Node.js $(node --version) installed"
-    else
-        echo "✓ Node.js $(node --version) is installed"
-    fi
-fi
-
 # Check for Redis
 if ! command -v redis-server &> /dev/null; then
     echo "Redis not found. Installing Redis..."
@@ -249,12 +193,11 @@ else
     echo "✓ Redis is running"
 fi
 
-# Open ports in UFW if it is active — port 8001 (Django) and 3001 (Next.js frontend).
+# Open port 8001 in UFW if active (Django server).
 # On a fresh Ubuntu server UFW is often enabled and blocks all non-SSH ports by default.
 if command -v ufw &>/dev/null && sudo ufw status 2>/dev/null | grep -q "Status: active"; then
     sudo ufw allow 8001/tcp > /dev/null 2>&1 || true
-    sudo ufw allow 3001/tcp > /dev/null 2>&1 || true
-    echo "✓ UFW: ports 8001 and 3001 allowed"
+    echo "✓ UFW: port 8001 allowed"
 fi
 
 echo ""
@@ -390,39 +333,6 @@ echo ""
 echo "Step 6/10: Installing kotak-neo-api..."
 echo "--------------------------------------------"
 python3 -m pip install -e ./kotak-neo-api
-
-# ============================================================================
-# STEP 6.5: Build Next.js portfolio frontend
-# ============================================================================
-echo ""
-echo "Step 6.5/10: Building Next.js portfolio frontend..."
-echo "--------------------------------------------"
-
-# Bake the correct API base URL into the Next.js bundle.
-# NEXT_PUBLIC_ env vars are resolved at build time, not runtime.
-# Use the detected server IP so browser requests reach Django from any machine.
-_FRONTEND_API_BASE="http://localhost:8001/investments/api"
-if [ -n "$SERVER_IP" ]; then
-    _FRONTEND_API_BASE="http://$SERVER_IP:8001/investments/api"
-fi
-
-cat > "$SCRIPT_DIR/portfolio_frontend/.env.local" << FRONTENDENV
-NEXT_PUBLIC_API_BASE=${_FRONTEND_API_BASE}
-FRONTENDENV
-
-echo "  API base baked into bundle: ${_FRONTEND_API_BASE}"
-
-cd "$SCRIPT_DIR/portfolio_frontend"
-echo "  Installing npm packages..."
-# Use a temp file so set -e can see npm's exit code (pipe would hide it)
-_npm_log=$(mktemp)
-npm install 2>&1 | tee "$_npm_log" | tail -3
-[ "${PIPESTATUS[0]}" -eq 0 ] || { echo "❌ npm install failed. See: $_npm_log"; exit 1; }
-rm -f "$_npm_log"
-echo "  Running production build..."
-npm run build
-cd "$SCRIPT_DIR"
-echo "✓ Next.js portfolio frontend built (serves on port 3001)"
 
 # ============================================================================
 # STEP 7: Create necessary directories
@@ -811,18 +721,10 @@ echo "   Only ONE polling bot instance can run at a time (across ALL machines)."
 echo "   If the bot is running on another machine (office/home), it will conflict!"
 echo ""
 
-# Kill existing Next.js frontend
-pkill -f "next.*start" 2>/dev/null || true
-if command -v fuser &>/dev/null; then
-    fuser -k 3001/tcp 2>/dev/null || true
-elif command -v lsof &>/dev/null; then
-    lsof -ti tcp:3001 | xargs -r kill -9 2>/dev/null || true
-fi
-
 # Kill existing tmux sessions — prevents silent "duplicate session" failure on restart
 # Without this, tmux new-session fails quietly and the service never starts.
 if command -v tmux &>/dev/null; then
-    for _s in mcube-django mcube-bot mcube-worker mcube-beat mcube-frontend; do
+    for _s in mcube-django mcube-bot mcube-worker mcube-beat; do
         tmux kill-session -t "$_s" 2>/dev/null || true
     done
 fi
@@ -853,26 +755,6 @@ for _i in $(seq 1 10); do
     echo "  Still waiting for port 8001... ($_i/10)"
     sleep 1
 done
-
-# ============================================================================
-# Ensure the Next.js frontend is built before starting it
-# (handles --run-only on a fresh clone where build was never run)
-# ============================================================================
-if [ ! -d "$SCRIPT_DIR/portfolio_frontend/.next" ]; then
-    echo ""
-    echo "Portfolio frontend not yet built — building now..."
-    _RUN_SERVER_IP=$(hostname -I 2>/dev/null | awk '{print $1}' || echo "")
-    _RUN_API_BASE="http://localhost:8001/investments/api"
-    [ -n "$_RUN_SERVER_IP" ] && _RUN_API_BASE="http://$_RUN_SERVER_IP:8001/investments/api"
-    cat > "$SCRIPT_DIR/portfolio_frontend/.env.local" << RUNENV
-NEXT_PUBLIC_API_BASE=${_RUN_API_BASE}
-RUNENV
-    cd "$SCRIPT_DIR/portfolio_frontend"
-    npm install
-    npm run build
-    cd "$SCRIPT_DIR"
-    echo "✓ Portfolio frontend built"
-fi
 
 # ============================================================================
 # Open Terminal windows for each service (macOS)
@@ -942,22 +824,6 @@ APPLESCRIPT
     echo "  Scheduled tasks enabled"
     echo "  Log file: logs/celery_beat.log"
 
-    sleep 1
-
-    # Terminal 5: Next.js Portfolio Frontend
-    osascript <<APPLESCRIPT
-    tell application "Terminal"
-        activate
-        do script "cd '$SCRIPT_DIR/portfolio_frontend' && echo '============================================' && echo 'mCube Portfolio Frontend (Next.js)' && echo '============================================' && echo '' && npm start"
-        set custom title of front window to "mCube - Portfolio Frontend"
-    end tell
-APPLESCRIPT
-
-    echo "✓ Portfolio frontend starting in new terminal..."
-    echo "  URL: http://localhost:3001"
-
-    sleep 1
-
 else
     # Linux - Use gnome-terminal, konsole, xterm, or run in background
 
@@ -1021,10 +887,6 @@ else
 
         # Celery Beat (with tee to log file)
         _gt --title="mCube - Celery Beat" -- bash -c "cd '$SCRIPT_DIR' && rm -f celerybeat-schedule.db && ./venv/bin/python -m celery -A mcube_ai beat --scheduler=mcube_ai.celery:DBReloadScheduler -l info 2>&1 | tee -a logs/celery_beat.log; exec bash"
-        sleep 1
-
-        # Portfolio Frontend (Next.js)
-        _gt --title="mCube - Portfolio Frontend" -- bash -c "cd '$SCRIPT_DIR/portfolio_frontend' && npm start; exec bash"
 
         echo "✓ All services started in gnome-terminal windows"
 
@@ -1038,8 +900,6 @@ else
         konsole --new-tab -e bash -c "cd '$SCRIPT_DIR' && ./venv/bin/python -m celery -A mcube_ai worker -l info -Q data,strategies,monitoring,risk,reports,celery --concurrency=$CELERY_CONCURRENCY 2>&1 | tee -a logs/celery_worker.log" &
         sleep 1
         konsole --new-tab -e bash -c "cd '$SCRIPT_DIR' && rm -f celerybeat-schedule.db && ./venv/bin/python -m celery -A mcube_ai beat --scheduler=mcube_ai.celery:DBReloadScheduler -l info 2>&1 | tee -a logs/celery_beat.log" &
-        sleep 1
-        konsole --new-tab -e bash -c "cd '$SCRIPT_DIR/portfolio_frontend' && npm start" &
 
         echo "✓ All services started in konsole windows"
 
@@ -1053,8 +913,6 @@ else
         xterm -title "mCube - Celery Worker" -e bash -c "cd '$SCRIPT_DIR' && ./venv/bin/python -m celery -A mcube_ai worker -l info -Q data,strategies,monitoring,risk,reports,celery --concurrency=$CELERY_CONCURRENCY 2>&1 | tee -a logs/celery_worker.log" &
         sleep 1
         xterm -title "mCube - Celery Beat" -e bash -c "cd '$SCRIPT_DIR' && rm -f celerybeat-schedule.db && ./venv/bin/python -m celery -A mcube_ai beat --scheduler=mcube_ai.celery:DBReloadScheduler -l info 2>&1 | tee -a logs/celery_beat.log" &
-        sleep 1
-        xterm -title "mCube - Portfolio Frontend" -e bash -c "cd '$SCRIPT_DIR/portfolio_frontend' && npm start" &
 
         echo "✓ All services started in xterm windows"
 
@@ -1066,7 +924,6 @@ else
         tmux new-session  -d -s mcube-worker   "cd '$SCRIPT_DIR' && ./venv/bin/python -m celery -A mcube_ai worker -l info -Q data,strategies,monitoring,risk,reports,celery --concurrency=$CELERY_CONCURRENCY 2>&1 | tee -a logs/celery_worker.log"
         rm -f celerybeat-schedule.db
         tmux new-session  -d -s mcube-beat     "cd '$SCRIPT_DIR' && ./venv/bin/python -m celery -A mcube_ai beat --scheduler=mcube_ai.celery:DBReloadScheduler -l info 2>&1 | tee -a logs/celery_beat.log"
-        tmux new-session  -d -s mcube-frontend "cd '$SCRIPT_DIR/portfolio_frontend' && npm start 2>&1 | tee -a '$SCRIPT_DIR/logs/portfolio_frontend.log'"
 
         echo "✓ All services started in tmux sessions"
         echo ""
@@ -1075,7 +932,6 @@ else
         echo "  tmux attach -t mcube-bot"
         echo "  tmux attach -t mcube-worker"
         echo "  tmux attach -t mcube-beat"
-        echo "  tmux attach -t mcube-frontend"
 
     else
         echo "No GUI terminal or tmux found. Starting services in background (headless mode)..."
@@ -1096,18 +952,12 @@ else
         nohup ./venv/bin/python -m celery -A mcube_ai beat --scheduler=mcube_ai.celery:DBReloadScheduler -l info > logs/celery_beat.log 2>&1 &
         echo "  ✓ Celery beat started (PID: $!) - log: logs/celery_beat.log"
 
-        cd "$SCRIPT_DIR/portfolio_frontend"
-        nohup npm start > "$SCRIPT_DIR/logs/portfolio_frontend.log" 2>&1 &
-        echo "  ✓ Portfolio frontend started (PID: $!) - log: logs/portfolio_frontend.log"
-        cd "$SCRIPT_DIR"
-
         echo ""
         echo "To view logs in real-time:"
         echo "  tail -f logs/django_server.log"
         echo "  tail -f logs/telegram_bot.log"
         echo "  tail -f logs/celery_worker.log"
         echo "  tail -f logs/celery_beat.log"
-        echo "  tail -f logs/portfolio_frontend.log"
     fi
 fi
 
@@ -1120,15 +970,13 @@ echo "All Services Started! ✓"
 echo "============================================"
 echo ""
 echo "Running Services (in separate terminals):"
-echo "  1. Django Server:      http://localhost:8001"
-echo "  2. Telegram Bot:       @dmcube_bot"
-echo "  3. Celery Worker:      Processing async tasks"
-echo "  4. Celery Beat:        Scheduling periodic tasks"
-echo "  5. Portfolio Frontend: http://localhost:3001"
+echo "  1. Django Server:  http://localhost:8001"
+echo "  2. Telegram Bot:   @dmcube_bot"
+echo "  3. Celery Worker:  Processing async tasks"
+echo "  4. Celery Beat:    Scheduling periodic tasks"
 echo ""
-echo "Admin Panel:        http://localhost:8001/admin/"
-echo "Investments (Django): http://localhost:8001/investments/"
-echo "Investments (Next.js): http://localhost:3001/"
+echo "Admin Panel:   http://localhost:8001/admin/"
+echo "Investments:   http://localhost:8001/investments/"
 echo ""
 echo "Login Credentials:"
 echo "  Username: anupamvm"
