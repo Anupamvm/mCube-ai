@@ -172,12 +172,16 @@ def is_trader_user(user):
 @user_passes_test(is_admin_user, login_url='/brokers/login/')
 def kotakneo_login(request):
     """
-    Handle Kotak Neo v2 credential setup (Admin only).
+    Handle Kotak Neo v2 credential setup and immediate fresh login.
 
-    Neo v2 uses TOTP + MPIN authentication. This view saves all required
-    credentials for auto-login: consumer_key, UCC, TOTP secret, mobile number, MPIN.
+    Neo v2 uses TOTP + MPIN authentication. This view saves credentials,
+    clears any stale session, then performs a fresh TOTP+MPIN login so
+    the new credentials take effect immediately without waiting for the
+    old JWT to expire (which could take hours — Kotak tokens are valid
+    until midnight IST by their exp claim but can be server-invalidated
+    much earlier, producing [100008] unauthorized on all API calls).
     """
-    from apps.brokers.utils.auth_manager import reset_auto_login_status
+    from apps.brokers.utils.auth_manager import reset_auto_login_status, clear_neo_session
 
     if request.method == 'POST':
         mpin = request.POST.get('mpin')
@@ -210,11 +214,48 @@ def kotakneo_login(request):
                     fields_to_update.append('api_key')
 
                 creds.save(update_fields=fields_to_update)
-                # Reset auto-login status so it can be attempted again
-                reset_auto_login_status('kotakneo')
 
-                messages.success(request, "Credentials saved successfully!")
-                return redirect('brokers:kotakneo_data')
+                # Clear stale session + in-process cache so the fresh credentials
+                # take effect immediately. Without this, try_restore_session() would
+                # reload the old JWT (which is clock-valid until midnight but already
+                # server-rejected) and produce [100008] unauthorized on every order.
+                clear_neo_session()
+                reset_auto_login_status('kotakneo')
+                try:
+                    from tools.neo import _cache_lock
+                    import tools.neo as neo_module
+                    with _cache_lock:
+                        if neo_module._cached_instance:
+                            neo_module._cached_instance.session_active = False
+                            neo_module._cached_instance = None
+                except Exception:
+                    pass
+
+                # Perform fresh TOTP+MPIN login now so the user sees success/failure
+                # immediately rather than discovering a broken session during trading.
+                login_ok = False
+                try:
+                    from tools.neo import NeoAPI as NeoAPIClass, _cache_lock
+                    import tools.neo as neo_module
+                    api = NeoAPIClass()
+                    login_ok = api.login(force_fresh=True, manual=True)
+                    if login_ok and api.session_active:
+                        with _cache_lock:
+                            neo_module._cached_instance = api
+                        messages.success(request, "Credentials saved and Kotak Neo login successful!")
+                    else:
+                        messages.error(
+                            request,
+                            f"Credentials saved, but TOTP+MPIN login failed: {api.get_last_error() or 'unknown error'}. "
+                            "Check your TOTP secret, UCC and MPIN, then try again."
+                        )
+                except Exception as login_err:
+                    logger.exception(f"Neo login after credential save failed: {login_err}")
+                    messages.error(request, f"Credentials saved, but login attempt failed: {login_err}")
+
+                if login_ok:
+                    return redirect('brokers:kotakneo_data')
+                return redirect('brokers:kotakneo_login')
 
             except Exception as e:
                 logger.exception(f"Error saving Kotak Neo credentials: {e}")
