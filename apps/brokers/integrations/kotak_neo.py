@@ -119,44 +119,55 @@ def _get_authenticated_client():
 
 def force_fresh_neo_login() -> bool:
     """
-    Force a complete fresh Neo login, bypassing the cached session and daily limit.
+    Force a complete fresh Neo login, bypassing cached session AND try_restore_session().
 
     Used to recover from [100008] unauthorized errors during order placement — this
-    happens when the restored DB session token has expired intraday. Steps:
+    happens when the restored DB session token is accepted by validate_jwt_token()
+    (JWT not clock-expired) but Kotak's server has invalidated it. Steps:
       1. Invalidate process-level cached client
       2. Clear the stale session from DB
       3. Reset the daily auto-login counter so the limit doesn't block us
-      4. Perform fresh TOTP + MPIN login
+      4. Perform fresh TOTP + MPIN login with force_fresh=True (skips try_restore_session)
+
+    Using force_fresh=True is critical: without it, login() would read the DB token
+    again (even after clear_neo_session()) because validate_jwt_token() checks only
+    the JWT exp claim, not whether Kotak's server has invalidated the session.
 
     Returns:
         True if re-login succeeded and a valid session is cached.
     """
     try:
-        from tools.neo import get_neo_api, _cache_lock
+        from tools.neo import NeoAPI as NeoAPIClass, _cache_lock
         import tools.neo as neo_module
         from apps.brokers.utils.auth_manager import reset_auto_login_status, clear_neo_session
 
-        logger.info("force_fresh_neo_login: invalidating stale session")
+        logger.info("force_fresh_neo_login: clearing stale session and forcing fresh TOTP+MPIN login")
 
-        # 1. Drop process-level cache so get_neo_api() creates a fresh instance
+        # 1. Drop process-level cache
         with _cache_lock:
             if neo_module._cached_instance:
                 neo_module._cached_instance.session_active = False
                 neo_module._cached_instance = None
 
-        # 2. Remove the stale token from DB so try_restore_session() finds nothing
+        # 2. Remove the stale token from DB
         clear_neo_session()
 
-        # 3. Reset daily auto-login counter so login() is not blocked today
+        # 3. Reset daily auto-login counter
         reset_auto_login_status('kotakneo')
 
-        # 4. Fresh TOTP + MPIN login
-        neo_wrapper = get_neo_api()
-        if neo_wrapper.session_active:
-            logger.info("✅ Neo re-login succeeded after [100008] unauthorized")
+        # 4. Fresh TOTP + MPIN login — force_fresh=True skips try_restore_session()
+        #    so the JWT-but-server-invalidated token is never restored.
+        #    manual=True bypasses trading window and daily limit checks.
+        api = NeoAPIClass()
+        success = api.login(force_fresh=True, manual=True)
+
+        if success and api.session_active:
+            with _cache_lock:
+                neo_module._cached_instance = api
+            logger.info("✅ Neo re-login succeeded after [100008] unauthorized — fresh session cached")
             return True
 
-        logger.error(f"❌ Neo re-login failed: {neo_wrapper.get_last_error()}")
+        logger.error(f"❌ Neo re-login failed: {api.get_last_error()}")
         return False
 
     except Exception as e:
@@ -868,7 +879,7 @@ def place_option_order(
             else:
                 full_error = 'No response from API'
 
-            logger.error(f"❌ Order placement failed: {full_error}")
+            logger.error(f"❌ Order placement failed: {full_error} | full response: {response}")
 
             return {
                 'success': False,

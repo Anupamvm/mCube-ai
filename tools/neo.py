@@ -190,7 +190,7 @@ class NeoAPI(BrokerInterface if isinstance(BrokerInterface, type) else object):
             return 'No response'
         return response.get('error', response.get('Error', 'Unknown'))
 
-    def login(self, manual: bool = False) -> bool:
+    def login(self, manual: bool = False, force_fresh: bool = False) -> bool:
         """
         Login to Kotak Neo v2 with auto-login using TOTP + MPIN.
 
@@ -199,7 +199,7 @@ class NeoAPI(BrokerInterface if isinstance(BrokerInterface, type) else object):
         edge cases and transient network issues.
 
         Flow:
-        1. Try restoring saved session (no login needed)
+        1. Try restoring saved session (no login needed) — skipped if force_fresh=True
         2. Check daily auto-login limit
         3. Retry up to 3 times:
            a. Generate fresh TOTP from stored secret
@@ -209,16 +209,22 @@ class NeoAPI(BrokerInterface if isinstance(BrokerInterface, type) else object):
 
         Args:
             manual: If True, bypass trading window and daily limit (UI-triggered)
+            force_fresh: If True, skip try_restore_session() and force full TOTP+MPIN login.
+                         Use this when a restored session is known to be API-unauthorized.
 
         Returns:
             bool: True if login successful
         """
         import time
 
-        # Try restoring a saved session first (avoids login+2FA entirely)
-        if self.try_restore_session():
+        # Try restoring a saved session first (avoids login+2FA entirely).
+        # Skipped when force_fresh=True — the caller knows the restored token is stale.
+        if not force_fresh and self.try_restore_session():
             logger.info("Session restored from database — skipping login/2FA")
             return True
+
+        if force_fresh:
+            logger.info("force_fresh=True — skipping session restore, doing fresh TOTP+MPIN login")
 
         from apps.brokers.utils.auth_manager import (
             can_attempt_auto_login, mark_auto_login_started,
