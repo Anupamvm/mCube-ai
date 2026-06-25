@@ -1,0 +1,271 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Log Viewer - mCube Trading</title>
+    <link rel="stylesheet" href="{% static 'core/css/main.css' %}">
+    <style>
+        :root {
+            --primary: #3B82F6;
+            --success: #10B981;
+            --warning: #F59E0B;
+            --danger: #EF4444;
+            --dark: #1F2937;
+            --darker: #111827;
+            --gray: #6B7280;
+            --border: #E5E7EB;
+        }
+        * { box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
+            margin: 0; padding: 0;
+            background: #F3F4F6;
+            color: #1F2937;
+        }
+        .page-header {
+            background: linear-gradient(135deg, #1F2937 0%, #111827 100%);
+            color: white;
+            padding: 20px 32px;
+            display: flex; align-items: center; gap: 12px;
+        }
+        .page-header h1 { margin: 0; font-size: 1.4rem; font-weight: 600; }
+        .back-link { color: #9CA3AF; text-decoration: none; font-size: 14px; }
+        .back-link:hover { color: white; }
+        .layout { display: flex; height: calc(100vh - 72px); }
+        /* File list sidebar */
+        .sidebar {
+            width: 280px; min-width: 220px;
+            background: white;
+            border-right: 1px solid var(--border);
+            overflow-y: auto;
+            flex-shrink: 0;
+        }
+        .sidebar-header {
+            padding: 12px 16px;
+            font-size: 11px; font-weight: 600; text-transform: uppercase;
+            letter-spacing: 0.05em; color: var(--gray);
+            border-bottom: 1px solid var(--border);
+            background: #F9FAFB;
+            position: sticky; top: 0; z-index: 1;
+        }
+        .group-label {
+            padding: 8px 16px 4px;
+            font-size: 11px; font-weight: 600; text-transform: uppercase;
+            letter-spacing: 0.05em; color: #9CA3AF;
+        }
+        .file-item {
+            padding: 8px 16px;
+            cursor: pointer;
+            border-left: 3px solid transparent;
+            transition: background 0.15s, border-color 0.15s;
+        }
+        .file-item:hover { background: #F3F4F6; }
+        .file-item.active { background: #EFF6FF; border-left-color: var(--primary); }
+        .file-name { font-size: 13px; font-weight: 500; color: #1F2937; word-break: break-all; }
+        .file-meta { font-size: 11px; color: #9CA3AF; margin-top: 2px; }
+        /* Log panel */
+        .log-panel { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+        .log-toolbar {
+            padding: 10px 16px;
+            background: white;
+            border-bottom: 1px solid var(--border);
+            display: flex; gap: 8px; flex-wrap: wrap; align-items: center;
+        }
+        .log-toolbar select, .log-toolbar input {
+            padding: 6px 10px; border: 1px solid var(--border);
+            border-radius: 6px; font-size: 13px; background: white;
+        }
+        .log-toolbar select:focus, .log-toolbar input:focus { outline: none; border-color: var(--primary); }
+        .btn {
+            padding: 6px 12px; border-radius: 6px; border: none; cursor: pointer;
+            font-size: 13px; font-weight: 500; transition: opacity 0.15s;
+        }
+        .btn:hover { opacity: 0.85; }
+        .btn-primary { background: var(--primary); color: white; }
+        .btn-danger { background: var(--danger); color: white; }
+        .btn-secondary { background: #6B7280; color: white; }
+        .log-filename {
+            font-size: 13px; font-weight: 600; color: #374151; margin-left: auto;
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 300px;
+        }
+        .log-stats {
+            font-size: 12px; color: var(--gray); white-space: nowrap;
+        }
+        .log-content {
+            flex: 1; overflow-y: auto;
+            background: #0F172A;
+            font-family: 'SF Mono', 'Fira Code', Consolas, 'Courier New', monospace;
+            font-size: 12px;
+            padding: 12px 16px;
+        }
+        .log-line { line-height: 1.6; white-space: pre-wrap; word-break: break-all; padding: 1px 0; }
+        .log-line.error { color: #F87171; }
+        .log-line.warning { color: #FCD34D; }
+        .log-line.debug { color: #6B7280; }
+        .log-line.info { color: #D1FAE5; }
+        .empty-state {
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            height: 100%; color: #4B5563; gap: 8px;
+        }
+        .empty-state svg { opacity: 0.3; }
+        .empty-state p { margin: 0; font-size: 14px; }
+        .loading { color: #9CA3AF; text-align: center; padding: 32px; }
+        .no-files { padding: 16px; color: #9CA3AF; font-size: 13px; font-style: italic; }
+    </style>
+</head>
+<body>
+<div class="page-header">
+    <a href="/system/" class="back-link">← System</a>
+    <h1>Log Viewer</h1>
+</div>
+
+<div class="layout">
+    <!-- Sidebar: file list -->
+    <div class="sidebar">
+        <div class="sidebar-header">Log Files</div>
+        {% if log_groups %}
+            {% for group, files in log_groups.items %}
+                {% if group != '.' %}
+                    <div class="group-label">{{ group }}</div>
+                {% endif %}
+                {% for f in files %}
+                <div class="file-item" data-rel="{{ f.rel_path }}" data-name="{{ f.name }}"
+                     onclick="selectFile('{{ f.rel_path }}', '{{ f.name }}')">
+                    <div class="file-name">{{ f.name }}</div>
+                    <div class="file-meta">{{ f.size_human }} &nbsp;·&nbsp; {{ f.modified }}</div>
+                </div>
+                {% endfor %}
+            {% endfor %}
+        {% else %}
+            <div class="no-files">No log files found.</div>
+        {% endif %}
+    </div>
+
+    <!-- Log content panel -->
+    <div class="log-panel">
+        <div class="log-toolbar">
+            <select id="level-filter" onchange="loadLog()">
+                <option value="all">All levels</option>
+                <option value="error">Errors only</option>
+                <option value="warning">Warnings+</option>
+                <option value="info">Info+</option>
+            </select>
+            <select id="lines-limit" onchange="loadLog()">
+                <option value="200">Last 200 lines</option>
+                <option value="500">Last 500 lines</option>
+                <option value="1000">Last 1000 lines</option>
+                <option value="2000">Last 2000 lines</option>
+            </select>
+            <input type="text" id="search-input" placeholder="Search..." oninput="debounceLoad()"
+                   style="width:160px;" />
+            <button class="btn btn-primary" onclick="loadLog()">Refresh</button>
+            <button class="btn btn-secondary" onclick="scrollToBottom()">↓ Bottom</button>
+            <button class="btn btn-danger" onclick="clearLog()" id="clear-btn" style="display:none">
+                Clear File
+            </button>
+            <span class="log-filename" id="current-filename">Select a log file</span>
+            <span class="log-stats" id="log-stats"></span>
+        </div>
+        <div class="log-content" id="log-content">
+            <div class="empty-state">
+                <svg width="48" height="48" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1"
+                          d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+                <p>Select a log file from the sidebar</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+let currentFile = null;
+let debounceTimer = null;
+
+function selectFile(relPath, name) {
+    currentFile = relPath;
+    document.getElementById('current-filename').textContent = name;
+    document.getElementById('clear-btn').style.display = 'inline-block';
+    document.querySelectorAll('.file-item').forEach(el => el.classList.remove('active'));
+    const el = document.querySelector(`.file-item[data-rel="${relPath}"]`);
+    if (el) el.classList.add('active');
+    loadLog();
+}
+
+function loadLog() {
+    if (!currentFile) return;
+    const level = document.getElementById('level-filter').value;
+    const lines = document.getElementById('lines-limit').value;
+    const search = document.getElementById('search-input').value;
+    const content = document.getElementById('log-content');
+    content.innerHTML = '<div class="loading">Loading...</div>';
+
+    const params = new URLSearchParams({ file: currentFile, level, lines, search });
+    fetch(`/system/api/logs/content/?${params}`)
+        .then(r => r.json())
+        .then(data => {
+            if (data.error) {
+                content.innerHTML = `<div class="loading" style="color:#F87171;">Error: ${data.error}</div>`;
+                return;
+            }
+            const stats = `Showing ${data.showing} of ${data.filtered} filtered (${data.total_in_file} total)`;
+            document.getElementById('log-stats').textContent = stats;
+
+            if (!data.lines || data.lines.length === 0) {
+                content.innerHTML = '<div class="loading">No matching lines.</div>';
+                return;
+            }
+            content.innerHTML = data.lines.map(l =>
+                `<div class="log-line ${l.level}">${escHtml(l.text)}</div>`
+            ).join('');
+            scrollToBottom();
+        })
+        .catch(err => {
+            content.innerHTML = `<div class="loading" style="color:#F87171;">Request failed: ${err}</div>`;
+        });
+}
+
+function scrollToBottom() {
+    const c = document.getElementById('log-content');
+    c.scrollTop = c.scrollHeight;
+}
+
+function debounceLoad() {
+    clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(loadLog, 400);
+}
+
+function clearLog() {
+    if (!currentFile) return;
+    if (!confirm(`Clear ${currentFile}? This cannot be undone.`)) return;
+    fetch('/system/api/logs/clear/', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': getCookie('csrftoken'),
+        },
+        body: JSON.stringify({ file: currentFile }),
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.ok) {
+            loadLog();
+        } else {
+            alert('Clear failed: ' + (data.error || 'unknown error'));
+        }
+    });
+}
+
+function getCookie(name) {
+    const v = document.cookie.match('(^|;)\\s*' + name + '\\s*=\\s*([^;]+)');
+    return v ? v.pop() : '';
+}
+
+function escHtml(str) {
+    return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+</script>
+</body>
+</html>

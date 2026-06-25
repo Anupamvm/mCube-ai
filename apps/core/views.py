@@ -612,6 +612,16 @@ def verify_kotak_login(request):
         success = neo.login(manual=True)
 
         if success:
+            # Update process-level cache so subsequent API calls in this worker
+            # (including order placement) use this same fresh session instead of a stale one
+            try:
+                from tools.neo import _cache_lock
+                import tools.neo as neo_module
+                with _cache_lock:
+                    neo_module._cached_instance = neo
+            except Exception:
+                pass
+
             # Fetch account data to verify connection
             try:
                 margin = neo.get_margin()

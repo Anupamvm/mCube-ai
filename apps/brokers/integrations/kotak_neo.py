@@ -48,11 +48,20 @@ class NeoAuthenticationError(Exception):
 
 def _get_authenticated_client():
     """
-    Get authenticated Kotak Neo API client using the process-level cached wrapper.
+    Get authenticated Kotak Neo API client.
 
-    Uses tools.neo.get_neo_api() which caches the NeoAPI instance per-process.
-    First call creates the client and logs in (session restore or full login).
-    Subsequent calls return the same cached client — no repeated API calls.
+    Uses the same pattern as verify_kotak_login (apps/core/views.py) — creates a fresh
+    NeoAPI instance and calls login() on every invocation. login() calls try_restore_session()
+    first (fast DB read, no network), so there is no repeated TOTP+MPIN overhead when a
+    valid session is in the database.
+
+    Why NOT use the process-level _cached_instance:
+    - _cached_instance.session_active can be True even when Kotak's server has invalidated
+      the JWT (validate_jwt_token checks only the clock exp claim, not server state).
+    - With multiple gunicorn workers, _cached_instance is per-process, so a fresh session
+      saved by verify_kotak_login (or force_fresh_neo_login) in one worker is invisible
+      to other workers.
+    - Always reading from DB ensures all workers see the latest valid session.
 
     Returns:
         neo_api_client.NeoAPI: Authenticated client instance
@@ -61,13 +70,23 @@ def _get_authenticated_client():
         NeoAuthenticationError: If authentication fails
     """
     try:
-        from tools.neo import get_neo_api
+        from tools.neo import NeoAPI as NeoAPIWrapper, _cache_lock
+        import tools.neo as neo_module
+        from apps.brokers.utils.auth_manager import reset_auto_login_status
 
-        neo_wrapper = get_neo_api()
-        if neo_wrapper.session_active:
+        # Match verify_kotak_login exactly: reset any stale auto-login state, then
+        # create a fresh wrapper and login. login() restores DB session if valid (fast);
+        # only falls through to TOTP+MPIN when no valid session is in DB.
+        reset_auto_login_status('kotakneo')
+        neo_wrapper = NeoAPIWrapper()
+        success = neo_wrapper.login(manual=True)
+
+        if success and neo_wrapper.session_active:
+            # Update process cache so other paths (get_neo_api callers) benefit too
+            with _cache_lock:
+                neo_module._cached_instance = neo_wrapper
             return neo_wrapper.neo
 
-        # Login failed — categorize the error for UI messaging
         last_error = neo_wrapper.get_last_error() or "Unknown authentication error"
         logger.error(f"Neo API login failed: {last_error}")
 
