@@ -4,54 +4,158 @@
 
 {% block content %}
 <div class="card">
-    <h2>Kotak Neo v2 - Credential Setup</h2>
-    <p>Enter your Kotak Neo v2 API credentials for TOTP-based auto-login.</p>
+    <h2>Kotak Neo — Session &amp; Credentials</h2>
+
+    <div style="background:#e8f5e9;border-left:4px solid #4caf50;padding:12px;margin-bottom:16px;border-radius:4px;">
+        <strong>No manual OTP entry ever required.</strong>
+        The system generates TOTP codes automatically using <code>pyotp</code> — exactly like Google Authenticator,
+        but fully automated. You configure credentials once below, and every subsequent login happens silently
+        in the background. When Kotak invalidates the session (e.g., you logged in from another device),
+        the system re-authenticates automatically.
+    </div>
+
+    {% if all_configured %}
+    <div style="background:#fff3e0;border-left:4px solid #ff9800;padding:12px;margin-bottom:16px;border-radius:4px;">
+        <strong>All credentials are configured.</strong>
+        If you're seeing <code>[100008] unauthorized</code> errors, Kotak has invalidated the cached session.
+        Click below to force a fresh automated login — no manual input needed.
+    </div>
+
+    <div style="margin-bottom:20px;">
+        <button id="force-login-btn" class="btn btn-primary" onclick="forceReLogin()">
+            &#8635; Force Re-Login (auto TOTP+MPIN — no manual entry)
+        </button>
+        <div id="force-login-result" style="margin-top:10px;font-size:14px;"></div>
+    </div>
+    <hr style="margin-bottom:20px;">
+    {% endif %}
+
+    <h3>Update Credentials</h3>
+    <p style="color:#555;font-size:14px;">Only fill in fields you want to change. MPIN is always required to submit.</p>
 
     <form method="post">
         {% csrf_token %}
 
         <div class="form-group">
             <label for="consumer_key">Consumer Key (API Key):</label>
-            <input type="text" id="consumer_key" name="consumer_key" placeholder="Enter Consumer Key">
-            {% if has_consumer_key %}<small style="color: green;">Already configured</small>{% endif %}
+            <input type="text" id="consumer_key" name="consumer_key" placeholder="Leave blank to keep existing">
+            {% if has_consumer_key %}<small style="color:green;">&#10003; Configured</small>
+            {% else %}<small style="color:red;">&#10007; Not set</small>{% endif %}
         </div>
 
         <div class="form-group">
             <label for="ucc">UCC (Unique Client Code):</label>
-            <input type="text" id="ucc" name="ucc" placeholder="Enter UCC from profile section">
-            {% if has_ucc %}<small style="color: green;">Already configured</small>{% endif %}
+            <input type="text" id="ucc" name="ucc" placeholder="Found in Kotak Neo profile section">
+            {% if has_ucc %}<small style="color:green;">&#10003; Configured</small>
+            {% else %}<small style="color:red;">&#10007; Not set</small>{% endif %}
         </div>
 
         <div class="form-group">
-            <label for="mobile_number">Mobile Number:</label>
+            <label for="mobile_number">Mobile Number (+91...):</label>
             <input type="text" id="mobile_number" name="mobile_number" placeholder="+919999999999">
-            {% if has_mobile %}<small style="color: green;">Already configured</small>{% endif %}
+            {% if has_mobile %}<small style="color:green;">&#10003; Configured</small>
+            {% else %}<small style="color:red;">&#10007; Not set</small>{% endif %}
         </div>
 
         <div class="form-group">
-            <label for="totp_secret">TOTP Secret Key:</label>
-            <input type="password" id="totp_secret" name="totp_secret" placeholder="Enter TOTP secret from authenticator setup">
-            {% if has_totp %}<small style="color: green;">Already configured</small>{% endif %}
+            <label for="totp_secret">TOTP Secret Key <em>(base32 string, NOT a 6-digit code)</em>:</label>
+            <input type="password" id="totp_secret" name="totp_secret"
+                   placeholder="e.g. JBSWY3DPEHPK3PXP — from Kotak Neo developer portal">
+            {% if has_totp %}<small style="color:green;">&#10003; Configured — system generates codes automatically</small>
+            {% else %}<small style="color:red;">&#10007; Not set — see instructions below</small>{% endif %}
         </div>
 
         <div class="form-group">
-            <label for="mpin">MPIN (6-digit):</label>
-            <input type="password" id="mpin" name="mpin" required placeholder="Enter 6-digit MPIN">
-            {% if has_mpin %}<small style="color: green;">Already configured</small>{% endif %}
+            <label for="mpin">MPIN (6-digit PIN — never changes unless you reset it):</label>
+            <input type="password" id="mpin" name="mpin" required placeholder="Your 6-digit MPIN">
+            {% if has_mpin %}<small style="color:green;">&#10003; Configured</small>
+            {% else %}<small style="color:red;">&#10007; Not set</small>{% endif %}
         </div>
 
-        <button type="submit" class="btn btn-success">Save Credentials</button>
+        <button type="submit" class="btn btn-success">Save &amp; Login Now</button>
     </form>
 </div>
 
 <div class="card">
-    <h3>How v2 auto-login works</h3>
-    <ol>
-        <li>Register for TOTP on the Kotak Neo mobile app or web portal</li>
-        <li>Copy the TOTP secret key shown during registration</li>
-        <li>Enter all credentials above (only MPIN is required; others only if changing)</li>
-        <li>When a task needs Neo access, auto-login generates TOTP automatically and logs in with MPIN</li>
-        <li>One auto-login attempt per day; session is cached and reused</li>
+    <h3>What each credential does</h3>
+    <table style="width:100%;border-collapse:collapse;font-size:14px;">
+        <tr style="background:#f5f5f5;">
+            <th style="padding:8px;text-align:left;border:1px solid #ddd;">Credential</th>
+            <th style="padding:8px;text-align:left;border:1px solid #ddd;">Where to find it</th>
+            <th style="padding:8px;text-align:left;border:1px solid #ddd;">Changes?</th>
+        </tr>
+        <tr>
+            <td style="padding:8px;border:1px solid #ddd;"><strong>Consumer Key</strong></td>
+            <td style="padding:8px;border:1px solid #ddd;">Kotak Neo Developer Portal → My Apps</td>
+            <td style="padding:8px;border:1px solid #ddd;">Rarely (only if you rotate keys)</td>
+        </tr>
+        <tr>
+            <td style="padding:8px;border:1px solid #ddd;"><strong>UCC</strong></td>
+            <td style="padding:8px;border:1px solid #ddd;">Kotak Neo app → Profile → Client Code</td>
+            <td style="padding:8px;border:1px solid #ddd;">Never</td>
+        </tr>
+        <tr>
+            <td style="padding:8px;border:1px solid #ddd;"><strong>Mobile Number</strong></td>
+            <td style="padding:8px;border:1px solid #ddd;">Your registered mobile with +91 prefix</td>
+            <td style="padding:8px;border:1px solid #ddd;">Never</td>
+        </tr>
+        <tr>
+            <td style="padding:8px;border:1px solid #ddd;"><strong>TOTP Secret</strong></td>
+            <td style="padding:8px;border:1px solid #ddd;">Kotak Neo Developer Portal → TOTP Registration (separate from app TOTP)</td>
+            <td style="padding:8px;border:1px solid #ddd;">Only if you re-register</td>
+        </tr>
+        <tr>
+            <td style="padding:8px;border:1px solid #ddd;"><strong>MPIN</strong></td>
+            <td style="padding:8px;border:1px solid #ddd;">Your 6-digit Kotak Neo trading PIN</td>
+            <td style="padding:8px;border:1px solid #ddd;">Only if you reset it</td>
+        </tr>
+    </table>
+
+    <h4 style="margin-top:16px;">Getting the TOTP Secret (one-time setup)</h4>
+    <ol style="font-size:14px;">
+        <li>Go to <strong>Kotak Neo Developer Portal</strong> and log in</li>
+        <li>Navigate to <strong>TOTP Registration</strong></li>
+        <li>A QR code is shown along with a <strong>base32 secret string</strong> (like <code>JBSWY3DPEHPK3PXP</code>)</li>
+        <li>Optionally scan the QR with Google Authenticator to verify — but for our system, you only need the text secret</li>
+        <li>Paste the base32 string in the <em>TOTP Secret Key</em> field above</li>
     </ol>
+    <p style="font-size:13px;color:#777;">
+        This is a static key that never expires unless you re-register. The system uses it to generate
+        time-based codes automatically — identical to what Google Authenticator would show, just without you having to look at your phone.
+    </p>
 </div>
+
+<script>
+function forceReLogin() {
+    const btn = document.getElementById('force-login-btn');
+    const result = document.getElementById('force-login-result');
+    btn.disabled = true;
+    btn.textContent = 'Logging in (generating TOTP + MPIN automatically)...';
+    result.innerHTML = '';
+
+    fetch('/brokers/kotakneo/force-login/', {
+        method: 'POST',
+        headers: {
+            'X-CSRFToken': '{{ csrf_token }}',
+            'Content-Type': 'application/json'
+        }
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.success) {
+            result.innerHTML = '<span style="color:green;font-weight:bold;">&#10003; ' + data.message + '</span>';
+        } else {
+            result.innerHTML = '<span style="color:red;font-weight:bold;">&#10007; ' + data.error + '</span>'
+                + (data.hint ? '<br><span style="color:#666;font-size:13px;">' + data.hint + '</span>' : '');
+        }
+        btn.disabled = false;
+        btn.textContent = '&#8635; Force Re-Login (auto TOTP+MPIN — no manual entry)';
+    })
+    .catch(err => {
+        result.innerHTML = '<span style="color:red;">Request failed: ' + err + '</span>';
+        btn.disabled = false;
+        btn.textContent = '&#8635; Force Re-Login (auto TOTP+MPIN — no manual entry)';
+    });
+}
+</script>
 {% endblock %}

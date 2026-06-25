@@ -18,6 +18,7 @@ urlpatterns = [
     # Kotak Neo URLs
     path('kotakneo/login/', views.kotakneo_login, name='kotakneo_login'),
     path('kotakneo/data/', views.kotakneo_data, name='kotakneo_data'),
+    path('kotakneo/force-login/', views.neo_force_login, name='neo_force_login'),
 
     # Breeze URLs
     path('breeze/login/', views.breeze_login, name='breeze_login'),

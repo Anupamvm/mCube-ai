@@ -22,7 +22,8 @@ from apps.brokers.exceptions import BreezeAuthenticationError
 from apps.data.models import OptionChain
 from apps.brokers.integrations.kotak_neo import (
     fetch_and_save_kotakneo_data,
-    is_open_position
+    is_open_position,
+    force_fresh_neo_login,
 )
 from apps.brokers.integrations.breeze import (
     get_or_prompt_breeze_token,
@@ -266,11 +267,19 @@ def kotakneo_login(request):
     try:
         creds = CredentialStore.objects.filter(service='kotakneo').first()
         if creds:
-            context['has_ucc'] = bool(creds.ucc)
-            context['has_totp'] = bool(creds.totp_secret)
-            context['has_mobile'] = bool(creds.mobile_number)
-            context['has_consumer_key'] = bool(creds.api_key)
-            context['has_mpin'] = bool(creds.neo_password)
+            has_ucc = bool(creds.ucc)
+            has_totp = bool(creds.totp_secret)
+            has_mobile = bool(creds.mobile_number)
+            has_consumer_key = bool(creds.api_key)
+            has_mpin = bool(creds.neo_password)
+            context.update({
+                'has_ucc': has_ucc,
+                'has_totp': has_totp,
+                'has_mobile': has_mobile,
+                'has_consumer_key': has_consumer_key,
+                'has_mpin': has_mpin,
+                'all_configured': all([has_ucc, has_totp, has_mobile, has_consumer_key, has_mpin]),
+            })
     except Exception:
         pass
 
@@ -300,6 +309,54 @@ def kotakneo_data(request):
         logger.exception(f"Error fetching Kotak Neo data: {e}")
         messages.error(request, f"Error: {str(e)}")
         return redirect('brokers:kotakneo_login')
+
+
+@login_required
+@require_http_methods(["POST"])
+def neo_force_login(request):
+    """
+    API: Force a fresh Kotak Neo TOTP+MPIN login, bypassing cached/stale session.
+
+    Called from the broker dashboard "Force Re-Login" button. Clears the stored
+    session, generates a fresh TOTP code via pyotp (fully automated — no manual
+    OTP entry), and logs back in. Returns JSON with success/error details.
+    """
+    try:
+        ok = force_fresh_neo_login()
+        if ok:
+            return JsonResponse({'success': True, 'message': 'Kotak Neo re-login successful. Session is active.'})
+
+        # Find out WHY it failed
+        from tools.neo import NeoAPI as NeoAPIClass
+        api = NeoAPIClass()
+        missing = []
+        if not api.consumer_key:
+            missing.append('consumer_key (API key)')
+        if not api.ucc:
+            missing.append('UCC')
+        if not getattr(api, 'totp_secret', None):
+            missing.append('TOTP secret (get this from Kotak Neo developer portal → TOTP registration)')
+        if not getattr(api, 'mobile_number', None):
+            missing.append('mobile number')
+        if not api.mpin:
+            missing.append('MPIN')
+
+        if missing:
+            return JsonResponse({
+                'success': False,
+                'error': f'Re-login failed — missing credentials: {", ".join(missing)}',
+                'hint': 'Go to /brokers/kotakneo/login/ and fill in the missing values.'
+            }, status=400)
+
+        return JsonResponse({
+            'success': False,
+            'error': 'Re-login failed. Check server logs for the exact error from Kotak API.',
+            'hint': 'If TOTP codes keep failing, re-register your API TOTP at the Kotak Neo developer portal.'
+        }, status=400)
+
+    except Exception as e:
+        logger.exception(f"Error during Neo force re-login endpoint: {e}")
+        return JsonResponse({'success': False, 'error': str(e)}, status=500)
 
 
 # =============================================================================
