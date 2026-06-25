@@ -611,6 +611,24 @@ def execute_strangle_orders(request):
             lot_size=lot_size  # Pass lot size from symbol mapping (already validated)
         )
 
+        # Collect failure reasons for frontend display so users see the actual API error.
+        # Without this, the UI only shows "Failed to execute strangle" with no detail.
+        if not batch_result['success']:
+            failure_reasons = []
+            for order in batch_result.get('call_orders', []):
+                if not order.get('result', {}).get('success'):
+                    err = order.get('result', {}).get('error', 'Unknown error')
+                    failure_reasons.append(f"CALL batch {order['batch']}: {err}")
+            for order in batch_result.get('put_orders', []):
+                if not order.get('result', {}).get('success'):
+                    err = order.get('result', {}).get('error', 'Unknown error')
+                    failure_reasons.append(f"PUT batch {order['batch']}: {err}")
+            batch_result['failure_reasons'] = failure_reasons
+            logger.error(
+                f"Strangle execution failed. Neo symbols: {neo_call_symbol} / {neo_put_symbol}. "
+                f"Failures: {failure_reasons}"
+            )
+
         # Create Position and Order records if successful
         if batch_result['success']:
             with transaction.atomic():

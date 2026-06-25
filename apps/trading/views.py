@@ -2768,7 +2768,11 @@ def execute_strangle_orders(request):
     from decimal import Decimal
     from django.db import transaction
     from apps.trading.models import TradeSuggestion
-    from apps.brokers.integrations.kotak_neo import place_strangle_orders_in_batches
+    from apps.brokers.integrations.kotak_neo import (
+        place_strangle_orders_in_batches,
+        lookup_neo_option_symbol,
+        get_kotak_neo_client,
+    )
     from apps.positions.models import Position
     from apps.accounts.models import BrokerAccount
 
@@ -2838,19 +2842,54 @@ def execute_strangle_orders(request):
                 'error': 'No active Kotak broker account found'
             })
 
-        # Build call and put symbols from suggestion
-        # Format: NIFTY<YY><MMM><STRIKE><CE/PE>
-        # Example: NIFTY25NOV24500CE
         expiry_date = suggestion.expiry_date
-        expiry_str = expiry_date.strftime('%y%b').upper()  # e.g., 25NOV
-
         call_strike = int(suggestion.call_strike)
         put_strike = int(suggestion.put_strike)
 
-        call_symbol = f"NIFTY{expiry_str}{call_strike}CE"
-        put_symbol = f"NIFTY{expiry_str}{put_strike}PE"
+        # Resolve the exact Kotak Neo trading symbols via search_scrip.
+        # strftime('%y%b') only produces the monthly format (e.g. NIFTY26JUL…)
+        # which is wrong for weekly expiries. search_scrip returns the correct
+        # pTrdSymbol regardless of weekly vs monthly.
+        try:
+            neo_client = get_kotak_neo_client()
+        except Exception as auth_err:
+            return JsonResponse({
+                'success': False,
+                'error': f'Kotak Neo authentication failed: {auth_err}'
+            })
 
-        logger.info(f"Executing strangle orders: {call_symbol} + {put_symbol}, {total_lots} lots")
+        call_scrip = lookup_neo_option_symbol(
+            'NIFTY', expiry_date, call_strike, 'CE', client=neo_client
+        )
+        put_scrip = lookup_neo_option_symbol(
+            'NIFTY', expiry_date, put_strike, 'PE', client=neo_client
+        )
+
+        if not call_scrip or not call_scrip.get('trading_symbol'):
+            return JsonResponse({
+                'success': False,
+                'error': (
+                    f'Could not find Kotak Neo symbol for NIFTY CE {call_strike} '
+                    f'expiry {expiry_date}. Check that the contract exists.'
+                )
+            })
+        if not put_scrip or not put_scrip.get('trading_symbol'):
+            return JsonResponse({
+                'success': False,
+                'error': (
+                    f'Could not find Kotak Neo symbol for NIFTY PE {put_strike} '
+                    f'expiry {expiry_date}. Check that the contract exists.'
+                )
+            })
+
+        call_symbol = call_scrip['trading_symbol']
+        put_symbol = put_scrip['trading_symbol']
+        resolved_lot_size = call_scrip['lot_size']
+
+        logger.info(
+            f"Executing strangle orders: {call_symbol} + {put_symbol}, "
+            f"{total_lots} lots (lot_size={resolved_lot_size})"
+        )
 
         # Place orders in batches (max 20 lots per order, user-configurable delay)
         batch_result = place_strangle_orders_in_batches(
@@ -2859,15 +2898,28 @@ def execute_strangle_orders(request):
             total_lots=total_lots,
             batch_size=20,
             delay_seconds=batch_delay_seconds,
-            product='NRML'
+            product='NRML',
+            lot_size=resolved_lot_size,
         )
+
+        # Collect failure reasons for frontend display
+        if not batch_result['success']:
+            failure_reasons = []
+            for order in batch_result.get('call_orders', []):
+                if not order.get('result', {}).get('success'):
+                    err = order.get('result', {}).get('error', 'Unknown error')
+                    failure_reasons.append(f"CALL batch {order['batch']}: {err}")
+            for order in batch_result.get('put_orders', []):
+                if not order.get('result', {}).get('success'):
+                    err = order.get('result', {}).get('error', 'Unknown error')
+                    failure_reasons.append(f"PUT batch {order['batch']}: {err}")
+            batch_result['failure_reasons'] = failure_reasons
 
         # Create Position and Order records if successful
         if batch_result['success']:
             with transaction.atomic():
-                # Create position
-                lot_size = 50  # NIFTY lot size
-                total_quantity = total_lots * lot_size
+                # Create position using resolved lot size
+                total_quantity = total_lots * resolved_lot_size
 
                 position = Position.objects.create(
                     account=broker_account,

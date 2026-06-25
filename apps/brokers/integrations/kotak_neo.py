@@ -962,6 +962,33 @@ def get_lot_size_from_neo(trading_symbol: str, client=None) -> int:
                 logger.warning(f"No scrip found for {trading_symbol}, using default lot size 25")
                 return 25  # Default for NIFTY options
 
+        # Weekly compact format: {SYMBOL}{YY}{M}{DD}{STRIKE}{CE/PE}
+        # Month codes: 1-9 = Jan-Sep, O = Oct, N = Nov, D = Dec
+        # Examples: NIFTY2670224500CE (Jul 02), NIFTY26N0224500CE (Nov 02)
+        weekly_options_pattern = r'^([A-Z]+)(\d{2})([1-9OND])(\d{2})(\d+)(CE|PE)$'
+        weekly_match = re.match(weekly_options_pattern, trading_symbol)
+
+        if weekly_match:
+            base_symbol = weekly_match.group(1)  # NIFTY
+
+            logger.info(f"Detected WEEKLY OPTIONS symbol: {trading_symbol}")
+
+            # Search by base symbol and match pTrdSymbol exactly
+            result = client.search_scrip(
+                exchange_segment='nse_fo',
+                symbol=base_symbol
+            )
+
+            if result and isinstance(result, list):
+                for scrip in result:
+                    if scrip.get('pTrdSymbol') == trading_symbol:
+                        lot_size = scrip.get('lLotSize', scrip.get('iLotSize', 25))
+                        logger.info(f"✅ Found lot size for weekly {trading_symbol}: {lot_size}")
+                        return int(lot_size)
+
+            logger.warning(f"No scrip found for weekly {trading_symbol}, using default lot size 25")
+            return 25
+
         # Unknown format
         logger.warning(f"Unable to parse trading symbol: {trading_symbol}, using default lot size 50")
         return 50  # Default fallback
@@ -970,6 +997,81 @@ def get_lot_size_from_neo(trading_symbol: str, client=None) -> int:
         logger.error(f"Error fetching lot size for {trading_symbol}: {e}")
         logger.warning(f"Using default lot size 50")
         return 50  # Default fallback
+
+
+def lookup_neo_option_symbol(
+    symbol_name: str,
+    expiry_date,
+    strike: int,
+    option_type: str,
+    client=None
+) -> dict:
+    """
+    Resolve the exact Kotak Neo trading symbol for an options contract.
+
+    The constructed format (NIFTY26JULSTRIKE CE) only works for monthly expiries.
+    For weekly expiries Kotak Neo uses a compact date format (NIFTY267224500CE).
+    This function uses search_scrip to get the correct pTrdSymbol regardless of
+    whether the expiry is weekly or monthly.
+
+    Args:
+        symbol_name: Base symbol (e.g. 'NIFTY')
+        expiry_date: Exact expiry date as a date object (e.g. date(2026, 7, 2))
+        strike: Strike price as int (e.g. 24500)
+        option_type: 'CE' or 'PE'
+        client: Optional authenticated Neo client to reuse
+
+    Returns:
+        dict with 'trading_symbol', 'lot_size', 'p_symbol' keys, or None if not found
+    """
+    try:
+        import re
+        from datetime import date as _date
+
+        if client is None:
+            client = _get_authenticated_client()
+
+        if isinstance(expiry_date, _date):
+            expiry_full = expiry_date.strftime('%d%b%Y').upper()  # e.g., 02JUL2026
+        else:
+            expiry_full = str(expiry_date)
+
+        logger.info(
+            f"Searching Neo scrip: {symbol_name} expiry={expiry_full} "
+            f"strike={strike} type={option_type}"
+        )
+
+        result = client.search_scrip(
+            exchange_segment='nse_fo',
+            symbol=symbol_name,
+            expiry=expiry_full,
+            option_type=option_type,
+            strike_price=str(strike)
+        )
+
+        if result and isinstance(result, list) and len(result) > 0:
+            scrip = result[0]
+            trading_symbol = scrip.get('pTrdSymbol')
+            lot_size = int(scrip.get('lLotSize') or scrip.get('iLotSize') or 25)
+            p_symbol = scrip.get('pSymbol')
+            logger.info(
+                f"✅ Resolved Neo option: {trading_symbol} "
+                f"(lot_size={lot_size}, pSymbol={p_symbol})"
+            )
+            return {
+                'trading_symbol': trading_symbol,
+                'lot_size': lot_size,
+                'p_symbol': p_symbol,
+            }
+
+        logger.warning(
+            f"No scrip found for {symbol_name} {expiry_full} {strike} {option_type}"
+        )
+        return None
+
+    except Exception as e:
+        logger.error(f"Error looking up Neo option symbol: {e}")
+        return None
 
 
 def map_neo_symbol_to_breeze(neo_symbol: str) -> dict:
@@ -2316,7 +2418,8 @@ def close_strangle_positions_in_batches(
     total_lots: int,
     batch_size: int = 20,
     delay_seconds: int = 20,
-    product: str = 'NRML'
+    product: str = 'NRML',
+    lot_size: int = None,  # Pass to skip API lookup (required for weekly compact symbols)
 ):
     """
     Close strangle positions (Call BUY + Put BUY) in batches with delays.
@@ -2325,12 +2428,13 @@ def close_strangle_positions_in_batches(
     Since strangles are typically sold, closing them requires buying back both legs.
 
     Args:
-        call_symbol (str): Call option trading symbol (e.g., 'NIFTY25NOV24500CE')
-        put_symbol (str): Put option trading symbol (e.g., 'NIFTY25NOV24000PE')
+        call_symbol (str): Call option Neo trading symbol
+        put_symbol (str): Put option Neo trading symbol
         total_lots (int): Total number of lots to close
         batch_size (int): Maximum lots per order (default: 20, Neo API limit)
         delay_seconds (int): Delay between orders in seconds (default: 20)
         product (str): Product type - 'NRML', 'MIS' (default: 'NRML')
+        lot_size (int): Lot size if already known; fetched from Neo API if None
 
     Returns:
         dict: Batch execution results
@@ -2367,8 +2471,9 @@ def close_strangle_positions_in_batches(
             'put_orders': []
         }
 
-    # Get lot size dynamically from Neo API
-    lot_size = get_lot_size_from_neo(call_symbol, client=client)
+    # Use provided lot size or fetch from Neo API (handles both monthly and weekly formats)
+    if lot_size is None:
+        lot_size = get_lot_size_from_neo(call_symbol, client=client)
     logger.info(f"Using lot size: {lot_size} for {call_symbol}")
 
     call_orders = []

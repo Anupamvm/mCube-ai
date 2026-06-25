@@ -524,18 +524,20 @@ def close_strangle_positions_in_batches(
     total_lots: int,
     batch_size: int = 20,
     delay_seconds: int = 20,
-    product: str = 'NRML'
+    product: str = 'NRML',
+    lot_size: int = None,  # Pass to skip API lookup (required for weekly compact symbols)
 ):
     """
     Close strangle positions (Call BUY + Put BUY) in batches with delays.
 
     Args:
-        call_symbol (str): Call option trading symbol (e.g., 'NIFTY25NOV24500CE')
-        put_symbol (str): Put option trading symbol (e.g., 'NIFTY25NOV24000PE')
+        call_symbol (str): Call option Neo trading symbol
+        put_symbol (str): Put option Neo trading symbol
         total_lots (int): Total number of lots to close
         batch_size (int): Maximum lots per order (default: 20, Neo API limit)
         delay_seconds (int): Delay between orders in seconds (default: 20)
         product (str): Product type - 'NRML', 'MIS' (default: 'NRML')
+        lot_size (int): Lot size if already known; fetched from Neo API if None
 
     Returns:
         dict: Batch execution results
@@ -555,8 +557,9 @@ def close_strangle_positions_in_batches(
             'put_orders': []
         }
 
-    # Get lot size dynamically from Neo API
-    lot_size = get_lot_size_from_neo(call_symbol, client=client)
+    # Use provided lot size or fetch from Neo API (handles both monthly and weekly formats)
+    if lot_size is None:
+        lot_size = get_lot_size_from_neo(call_symbol, client=client)
     logger.info(f"Using lot size: {lot_size} for {call_symbol}")
 
     call_orders = []

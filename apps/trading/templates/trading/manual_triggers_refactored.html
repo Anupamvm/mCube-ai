@@ -2862,10 +2862,12 @@ const NiftyStrangle = {
                 // Add batch result details if available
                 if (response?.batch_result) {
                     const batch = response.batch_result;
+                    const summary = batch.summary || {};
                     errorDetails += `\n\n📊 Batch Results:\n`;
                     errorDetails += `• Total Batches: ${batch.total_batches || 0}\n`;
                     errorDetails += `• Completed: ${batch.batches_completed || 0}\n`;
-                    errorDetails += `• Failed: ${batch.batches_failed || 0}`;
+                    errorDetails += `• Call Orders Failed: ${summary.call_failed_count || 0}\n`;
+                    errorDetails += `• Put Orders Failed: ${summary.put_failed_count || 0}`;
 
                     // Show specific failure reasons from batch results
                     if (batch.failure_reasons && batch.failure_reasons.length > 0) {

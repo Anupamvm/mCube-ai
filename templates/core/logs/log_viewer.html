@@ -1,0 +1,630 @@
+{% extends "core/master_base.html" %}
+{% load static %}
+
+{% block title %}System Logs — mCube AI{% endblock %}
+{% block page_background %}standard-background{% endblock %}
+
+{% block extra_css %}
+<style>
+/* ============================================================
+   LOG VIEWER STYLES
+   ============================================================ */
+.logs-layout {
+    display: grid;
+    grid-template-columns: 260px 1fr;
+    gap: 0;
+    height: calc(100vh - 140px);
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: 0 4px 24px rgba(0,0,0,0.12);
+    margin: 16px 0;
+}
+
+/* ---- Sidebar ---- */
+.logs-sidebar {
+    background: #0f172a;
+    border-right: 1px solid #1e293b;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.sidebar-header {
+    padding: 14px 16px;
+    border-bottom: 1px solid #1e293b;
+    background: #0a0f1e;
+}
+
+.sidebar-header h3 {
+    margin: 0;
+    font-size: 13px;
+    font-weight: 700;
+    color: #94a3b8;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+.sidebar-header .refresh-btn {
+    background: none;
+    border: none;
+    color: #475569;
+    cursor: pointer;
+    font-size: 13px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    float: right;
+    margin-top: -2px;
+}
+
+.sidebar-header .refresh-btn:hover { color: #94a3b8; background: #1e293b; }
+
+.logs-file-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px 0;
+}
+
+.logs-file-list::-webkit-scrollbar { width: 4px; }
+.logs-file-list::-webkit-scrollbar-track { background: #0f172a; }
+.logs-file-list::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
+
+.log-group-label {
+    padding: 8px 16px 4px;
+    font-size: 10px;
+    font-weight: 700;
+    color: #475569;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+.log-file-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 16px;
+    cursor: pointer;
+    transition: background 0.15s;
+    border-left: 3px solid transparent;
+}
+
+.log-file-item:hover { background: #1e293b; }
+
+.log-file-item.active {
+    background: #1e3a5f;
+    border-left-color: #3b82f6;
+}
+
+.log-file-icon { font-size: 14px; flex-shrink: 0; }
+
+.log-file-info { flex: 1; min-width: 0; }
+
+.log-file-name {
+    font-size: 13px;
+    font-weight: 500;
+    color: #e2e8f0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.log-file-item.active .log-file-name { color: #60a5fa; }
+
+.log-file-meta {
+    font-size: 10px;
+    color: #475569;
+    margin-top: 2px;
+}
+
+/* ---- Main Viewer ---- */
+.logs-main {
+    background: #0d1117;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.viewer-toolbar {
+    background: #161b22;
+    border-bottom: 1px solid #21262d;
+    padding: 10px 16px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    flex-shrink: 0;
+}
+
+.viewer-filename {
+    font-size: 13px;
+    font-weight: 600;
+    color: #58a6ff;
+    flex: 1;
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.viewer-filename .path-prefix { color: #484f58; }
+
+.tb-select {
+    background: #21262d;
+    border: 1px solid #30363d;
+    color: #e6edf3;
+    border-radius: 6px;
+    padding: 5px 8px;
+    font-size: 12px;
+    cursor: pointer;
+}
+
+.tb-select:focus { outline: none; border-color: #388bfd; }
+
+.tb-search {
+    background: #21262d;
+    border: 1px solid #30363d;
+    color: #e6edf3;
+    border-radius: 6px;
+    padding: 5px 10px;
+    font-size: 12px;
+    width: 160px;
+}
+
+.tb-search:focus { outline: none; border-color: #388bfd; }
+.tb-search::placeholder { color: #484f58; }
+
+.tb-btn {
+    background: #21262d;
+    border: 1px solid #30363d;
+    color: #8b949e;
+    border-radius: 6px;
+    padding: 5px 10px;
+    font-size: 12px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: all 0.15s;
+}
+
+.tb-btn:hover { background: #30363d; color: #e6edf3; border-color: #484f58; }
+.tb-btn.danger:hover { background: #3d1f1f; border-color: #6e2828; color: #f87171; }
+.tb-btn.primary { background: #1f4e8c; border-color: #388bfd; color: #58a6ff; }
+.tb-btn.primary:hover { background: #388bfd; color: #fff; }
+
+.viewer-stats {
+    font-size: 11px;
+    color: #484f58;
+    white-space: nowrap;
+}
+
+/* ---- Terminal Output ---- */
+.log-terminal {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px 0;
+    font-family: 'Menlo', 'Monaco', 'Cascadia Code', 'Consolas', monospace;
+    font-size: 12px;
+    line-height: 1.55;
+}
+
+.log-terminal::-webkit-scrollbar { width: 6px; }
+.log-terminal::-webkit-scrollbar-track { background: #0d1117; }
+.log-terminal::-webkit-scrollbar-thumb { background: #30363d; border-radius: 3px; }
+.log-terminal::-webkit-scrollbar-thumb:hover { background: #484f58; }
+
+.log-line {
+    display: block;
+    padding: 1px 16px;
+    white-space: pre-wrap;
+    word-break: break-all;
+    color: #c9d1d9;
+    transition: background 0.1s;
+}
+
+.log-line:hover { background: rgba(255,255,255,0.04); }
+
+.log-line.level-error {
+    color: #ff7b72;
+    background: rgba(248, 81, 73, 0.07);
+    border-left: 2px solid rgba(248,81,73,0.4);
+}
+
+.log-line.level-critical {
+    color: #ff7b72;
+    background: rgba(248, 81, 73, 0.12);
+    border-left: 2px solid rgba(248,81,73,0.7);
+    font-weight: 600;
+}
+
+.log-line.level-warning {
+    color: #e3b341;
+    background: rgba(210, 153, 34, 0.07);
+    border-left: 2px solid rgba(210,153,34,0.35);
+}
+
+.log-line.level-debug { color: #484f58; }
+
+/* Empty / loading states */
+.log-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: #484f58;
+    text-align: center;
+    gap: 12px;
+}
+
+.log-empty .empty-icon { font-size: 40px; opacity: 0.4; }
+.log-empty p { font-size: 13px; margin: 0; }
+
+.loading-indicator {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 40px;
+    color: #484f58;
+    font-size: 13px;
+}
+
+.spinner {
+    width: 18px;
+    height: 18px;
+    border: 2px solid #21262d;
+    border-top-color: #388bfd;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Auto-refresh toggle */
+.refresh-toggle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: #8b949e;
+    cursor: pointer;
+    user-select: none;
+}
+
+.refresh-toggle input { cursor: pointer; }
+
+/* Copy toast */
+.copy-toast {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    background: #1f6feb;
+    color: #fff;
+    padding: 10px 18px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 500;
+    opacity: 0;
+    transform: translateY(10px);
+    transition: all 0.25s;
+    z-index: 9999;
+    pointer-events: none;
+}
+
+.copy-toast.show { opacity: 1; transform: translateY(0); }
+
+/* Responsive */
+@media (max-width: 768px) {
+    .logs-layout { grid-template-columns: 1fr; height: auto; }
+    .logs-sidebar { height: 200px; }
+    .viewer-toolbar { gap: 6px; }
+    .tb-search { width: 120px; }
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div style="padding: 0 8px;">
+    <div style="display:flex; align-items:center; justify-content:space-between; padding: 12px 0 4px;">
+        <div>
+            <h1 style="margin:0; font-size:22px; font-weight:700; color:#1e293b;">System Logs</h1>
+            <p style="margin:4px 0 0; font-size:13px; color:#64748b;">Module-wise log files — copy errors and paste directly to Claude for debugging</p>
+        </div>
+        <div style="display:flex; gap:8px;">
+            <a href="{% url 'core:celery_task_control' %}" class="tb-btn" style="text-decoration:none; color:#8b949e;">
+                ← Tasks
+            </a>
+        </div>
+    </div>
+
+    <div class="logs-layout">
+        <!-- Sidebar: file list -->
+        <div class="logs-sidebar">
+            <div class="sidebar-header">
+                <button class="refresh-btn" onclick="refreshFileList()" title="Refresh file list">&#8635;</button>
+                <h3>Log Files</h3>
+            </div>
+            <div class="logs-file-list" id="fileList">
+                {% for group, files in log_groups.items %}
+                <div class="log-group-label">
+                    {% if group == '.' %}ROOT{% else %}{{ group|upper }}{% endif %}
+                </div>
+                {% for f in files %}
+                <div class="log-file-item"
+                     data-file="{{ f.rel_path }}"
+                     data-name="{{ f.name }}"
+                     onclick="selectFile(this, '{{ f.rel_path }}', '{{ f.name }}')"
+                     title="{{ f.rel_path }} — {{ f.size_human }} — {{ f.modified }}">
+                    <span class="log-file-icon">
+                        {% if 'error' in f.name %}🔴
+                        {% elif 'warning' in f.name %}🟡
+                        {% elif 'celery' in f.name %}⚡
+                        {% elif 'django' in f.name %}🌐
+                        {% elif 'trading' in f.name %}📊
+                        {% elif 'brokers' in f.name %}🏦
+                        {% elif 'strategies' in f.name %}🎯
+                        {% elif 'alerts' in f.name %}🔔
+                        {% else %}📄{% endif %}
+                    </span>
+                    <div class="log-file-info">
+                        <div class="log-file-name">{{ f.name }}</div>
+                        <div class="log-file-meta">{{ f.size_human }} &middot; {{ f.modified }}</div>
+                    </div>
+                </div>
+                {% endfor %}
+                {% endfor %}
+            </div>
+        </div>
+
+        <!-- Main viewer -->
+        <div class="logs-main">
+            <!-- Toolbar -->
+            <div class="viewer-toolbar">
+                <div class="viewer-filename" id="viewerFilename">
+                    <span class="path-prefix">logs/</span><span id="currentFileName">Select a file →</span>
+                </div>
+
+                <select class="tb-select" id="levelFilter" onchange="loadFile()">
+                    <option value="all">All Levels</option>
+                    <option value="error">Errors Only</option>
+                    <option value="warning">Warnings Only</option>
+                    <option value="info">Info+</option>
+                </select>
+
+                <input type="text" class="tb-search" id="searchInput"
+                       placeholder="Search..." oninput="debounceLoad()">
+
+                <select class="tb-select" id="linesLimit" onchange="loadFile()">
+                    <option value="100">100 lines</option>
+                    <option value="200" selected>200 lines</option>
+                    <option value="500">500 lines</option>
+                    <option value="1000">1000 lines</option>
+                    <option value="2000">2000 lines</option>
+                </select>
+
+                <label class="refresh-toggle" title="Auto-refresh every 15s">
+                    <input type="checkbox" id="autoRefresh" onchange="toggleAutoRefresh()">
+                    Auto-refresh
+                </label>
+
+                <div class="viewer-stats" id="viewerStats"></div>
+
+                <button class="tb-btn primary" onclick="copyForClaude()" title="Copy filtered output formatted for Claude">
+                    📋 Copy for Claude
+                </button>
+                <button class="tb-btn" onclick="downloadFile()" title="Download raw log file">
+                    ⬇ Download
+                </button>
+                <button class="tb-btn danger" onclick="clearFile()" title="Truncate log file">
+                    🗑 Clear
+                </button>
+            </div>
+
+            <!-- Terminal output -->
+            <div class="log-terminal" id="logTerminal">
+                <div class="log-empty">
+                    <div class="empty-icon">📂</div>
+                    <p>Select a log file from the sidebar to view its contents.</p>
+                    <p style="font-size:11px;">Start with <strong style="color:#e3b341;">errors.log</strong> or <strong style="color:#e3b341;">warnings.log</strong> for a quick issue summary.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="copy-toast" id="copyToast">Copied to clipboard!</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function() {
+    'use strict';
+
+    let currentFile = null;
+    let currentLines = [];
+    let autoRefreshTimer = null;
+    let searchDebounce = null;
+
+    const API_CONTENT  = '{% url "core:api_log_content" %}';
+    const API_CLEAR    = '{% url "core:api_log_clear" %}';
+    const API_DOWNLOAD = '{% url "core:api_log_download" %}';
+    const CSRF_TOKEN   = '{{ request.META.CSRF_COOKIE|default:"" }}';
+
+    function getCsrf() {
+        return document.cookie.split(';')
+            .map(c => c.trim())
+            .find(c => c.startsWith('csrftoken='))
+            ?.split('=')[1] || '';
+    }
+
+    // ---- File selection ----
+    window.selectFile = function(el, relPath, name) {
+        document.querySelectorAll('.log-file-item').forEach(i => i.classList.remove('active'));
+        el.classList.add('active');
+        currentFile = relPath;
+        document.getElementById('currentFileName').textContent = name;
+        document.getElementById('viewerFilename').title = relPath;
+        loadFile();
+    };
+
+    window.loadFile = function() {
+        if (!currentFile) return;
+        const level  = document.getElementById('levelFilter').value;
+        const lines  = document.getElementById('linesLimit').value;
+        const search = document.getElementById('searchInput').value;
+        const terminal = document.getElementById('logTerminal');
+
+        terminal.innerHTML = '<div class="loading-indicator"><div class="spinner"></div>Loading…</div>';
+
+        const params = new URLSearchParams({ file: currentFile, level, lines, search });
+        fetch(`${API_CONTENT}?${params}`)
+            .then(r => r.json())
+            .then(data => {
+                if (data.error) {
+                    terminal.innerHTML = `<div class="log-empty"><div class="empty-icon">⚠️</div><p>${data.error}</p></div>`;
+                    return;
+                }
+                renderLines(data);
+            })
+            .catch(err => {
+                terminal.innerHTML = `<div class="log-empty"><div class="empty-icon">❌</div><p>Failed to load: ${err}</p></div>`;
+            });
+    };
+
+    function renderLines(data) {
+        const terminal = document.getElementById('logTerminal');
+        currentLines = data.lines || [];
+
+        if (currentLines.length === 0) {
+            terminal.innerHTML = '<div class="log-empty"><div class="empty-icon">✅</div><p>No log entries match the current filter.</p></div>';
+            document.getElementById('viewerStats').textContent = '';
+            return;
+        }
+
+        const frag = document.createDocumentFragment();
+        currentLines.forEach(line => {
+            const span = document.createElement('span');
+            span.className = `log-line level-${line.level}`;
+            span.textContent = line.text;
+            frag.appendChild(span);
+        });
+
+        terminal.innerHTML = '';
+        terminal.appendChild(frag);
+        terminal.scrollTop = terminal.scrollHeight;
+
+        const errCount  = currentLines.filter(l => l.level === 'error').length;
+        const warnCount = currentLines.filter(l => l.level === 'warning').length;
+        let stats = `Showing ${data.showing} / ${data.filtered} lines`;
+        if (data.filtered !== data.total_in_file)
+            stats += ` (${data.total_in_file} total)`;
+        if (errCount)  stats += ` · 🔴 ${errCount} errors`;
+        if (warnCount) stats += ` · 🟡 ${warnCount} warnings`;
+        document.getElementById('viewerStats').textContent = stats;
+    }
+
+    // ---- Debounced search ----
+    window.debounceLoad = function() {
+        clearTimeout(searchDebounce);
+        searchDebounce = setTimeout(loadFile, 350);
+    };
+
+    // ---- Copy for Claude ----
+    window.copyForClaude = function() {
+        if (!currentFile || currentLines.length === 0) {
+            showToast('No content to copy');
+            return;
+        }
+        const level = document.getElementById('levelFilter').value;
+        const search = document.getElementById('searchInput').value;
+        const now = new Date().toISOString().slice(0, 16).replace('T', ' ');
+
+        let header = `=== mCube AI — System Logs ===\n`;
+        header += `File    : logs/${currentFile}\n`;
+        header += `Date    : ${now} IST\n`;
+        header += `Filter  : level=${level}`;
+        if (search) header += `, search="${search}"`;
+        header += `\nShowing : ${currentLines.length} lines\n`;
+        header += `${'='.repeat(50)}\n\n`;
+
+        const body = currentLines.map(l => l.text).join('\n');
+        navigator.clipboard.writeText(header + body)
+            .then(() => showToast('Copied to clipboard — paste directly into Claude!'))
+            .catch(() => {
+                // Fallback for older browsers
+                const ta = document.createElement('textarea');
+                ta.value = header + body;
+                document.body.appendChild(ta);
+                ta.select();
+                document.execCommand('copy');
+                document.body.removeChild(ta);
+                showToast('Copied!');
+            });
+    };
+
+    // ---- Download ----
+    window.downloadFile = function() {
+        if (!currentFile) return;
+        window.location.href = `${API_DOWNLOAD}?file=${encodeURIComponent(currentFile)}`;
+    };
+
+    // ---- Clear file ----
+    window.clearFile = function() {
+        if (!currentFile) return;
+        if (!confirm(`Clear all content from logs/${currentFile}?\n\nThis cannot be undone.`)) return;
+        fetch(API_CLEAR, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCsrf(),
+            },
+            body: JSON.stringify({ file: currentFile }),
+        })
+        .then(r => r.json())
+        .then(data => {
+            if (data.success) {
+                showToast('Log file cleared');
+                loadFile();
+            } else {
+                showToast(`Error: ${data.error}`);
+            }
+        });
+    };
+
+    // ---- Auto-refresh ----
+    window.toggleAutoRefresh = function() {
+        const checked = document.getElementById('autoRefresh').checked;
+        if (checked) {
+            autoRefreshTimer = setInterval(() => { if (currentFile) loadFile(); }, 15000);
+        } else {
+            clearInterval(autoRefreshTimer);
+            autoRefreshTimer = null;
+        }
+    };
+
+    // ---- Sidebar file list refresh ----
+    window.refreshFileList = function() {
+        fetch('{% url "core:api_log_files" %}')
+            .then(r => r.json())
+            .then(data => {
+                // Reload page to refresh sidebar (simple approach)
+                window.location.reload();
+            });
+    };
+
+    // ---- Toast ----
+    function showToast(msg) {
+        const toast = document.getElementById('copyToast');
+        toast.textContent = msg;
+        toast.classList.add('show');
+        setTimeout(() => toast.classList.remove('show'), 2500);
+    }
+
+    // Auto-open errors.log if present on first load
+    document.addEventListener('DOMContentLoaded', function() {
+        const errItem = document.querySelector('[data-name="errors.log"]');
+        if (errItem) {
+            selectFile(errItem, errItem.dataset.file, errItem.dataset.name);
+        }
+    });
+})();
+</script>
+{% endblock %}
