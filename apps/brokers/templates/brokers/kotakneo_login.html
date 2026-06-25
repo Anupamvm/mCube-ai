@@ -72,6 +72,14 @@
             {% else %}<small style="color:red;">&#10007; Not set</small>{% endif %}
         </div>
 
+        <div class="form-group">
+            <label for="neo_fin_key">Neo Fin Key <em>(optional — alphabetical only, e.g. neotradeapi)</em>:</label>
+            <input type="text" id="neo_fin_key" name="neo_fin_key" placeholder="Leave blank to use default: neotradeapi">
+            {% if has_neo_fin_key %}<small style="color:green;">&#10003; Custom key configured: {{ neo_fin_key_preview }}</small>
+            {% else %}<small style="color:#888;">Using default: neotradeapi</small>{% endif %}
+            <small style="color:#999;display:block;margin-top:4px;">Only change this if Kotak support provides a specific key to enable API order placement.</small>
+        </div>
+
         <button type="submit" class="btn btn-success">Save &amp; Login Now</button>
     </form>
 </div>

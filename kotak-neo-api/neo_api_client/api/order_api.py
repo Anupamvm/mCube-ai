@@ -36,6 +36,7 @@ class OrderAPI(object):
     ):
         try:
             header_params = {
+                "accept": "application/json",
                 "Sid": self.api_client.configuration.edit_sid,
                 "Auth": self.api_client.configuration.edit_token,
                 "neo-fin-key": self.api_client.configuration.get_neo_fin_key(),
@@ -62,10 +63,8 @@ class OrderAPI(object):
                 "slt": stop_loss_type,
                 "slv": stop_loss_value,
                 "sov": square_off_value,
-                "lat": last_traded_price,
                 "tlt": trailing_stop_loss,
                 "tsv": trailing_sl_value,
-                "os": self.order_source,
             }
 
             query_params = {"sId": self.api_client.configuration.serverId}

@@ -939,141 +939,38 @@ def get_kotak_neo_client():
 
 def get_lot_size_from_neo(trading_symbol: str, client=None) -> int:
     """
-    Get lot size for a trading symbol using Neo API search_scrip.
+    Get lot size for a trading symbol by looking up the Neo scrip master CSV.
 
-    Handles both OPTIONS and FUTURES symbols.
+    Uses direct pTrdSymbol lookup in the scrip master, which is more reliable
+    than search_scrip (which has expiry date format inconsistencies).
 
     Args:
-        trading_symbol (str): Trading symbol
-            - Options: 'NIFTY25NOV27050CE', 'BANKNIFTY25DEC48000PE'
-            - Futures: 'NIFTY26JANFUT', 'JIOFIN25DECFUT'
-        client: Optional authenticated client to reuse
+        trading_symbol (str): Kotak Neo trading symbol, e.g. 'NIFTY26JUN25200CE'
+        client: Optional authenticated Neo client to reuse
 
     Returns:
-        int: Lot size for the symbol
-
-    Example:
-        >>> lot_size = get_lot_size_from_neo('NIFTY25NOV27050CE')  # 25 (options)
-        >>> lot_size = get_lot_size_from_neo('JIOFIN25DECFUT')  # 2350 (futures)
+        int: Lot size (lLotSize from scrip master, fallback 25)
     """
     try:
-        # Use provided client or get new one
         if client is None:
             client = _get_authenticated_client()
 
-        import re
-        from datetime import datetime
+        from apps.brokers.integrations.neo.symbol_mapper import _get_neo_scrip_master
+        scrip_list = _get_neo_scrip_master(client)
 
-        # Check if it's a FUTURES symbol: SYMBOL + YYMMMFUT
-        # Pattern: (SYMBOL)(YY)(MMM)FUT
-        futures_pattern = r'^([A-Z]+)(\d{2})([A-Z]{3})FUT$'
-        futures_match = re.match(futures_pattern, trading_symbol)
+        # Direct pTrdSymbol match — handles monthly, weekly, and futures uniformly
+        match = next((s for s in scrip_list if s.get('pTrdSymbol') == trading_symbol), None)
+        if match:
+            lot_size = match.get('lLotSize') or match.get('iLotSize') or 25
+            logger.info(f"✅ Lot size for {trading_symbol}: {lot_size}")
+            return int(lot_size)
 
-        if futures_match:
-            # It's a futures contract
-            symbol_name = futures_match.group(1)  # JIOFIN, NIFTY, BANKNIFTY
-            year_suffix = futures_match.group(2)  # 25, 26
-            month_name = futures_match.group(3)  # DEC, JAN
-
-            logger.info(f"Detected FUTURES symbol: {trading_symbol}")
-
-            # Search using Neo API (for futures, no strike or option_type needed)
-            result = client.search_scrip(
-                exchange_segment='nse_fo',
-                symbol=symbol_name
-            )
-
-            if result and isinstance(result, list):
-                # Find the matching futures contract
-                # Match by trading symbol directly
-                for scrip in result:
-                    if scrip.get('pTrdSymbol') == trading_symbol:
-                        lot_size = scrip.get('lLotSize', scrip.get('iLotSize', 50))
-                        logger.info(f"✅ Found lot size for {trading_symbol}: {lot_size}")
-                        return int(lot_size)
-
-                logger.warning(f"No exact match found for {trading_symbol}, using first {symbol_name} contract")
-                # Fallback: use first contract's lot size (usually same for all expiries)
-                if len(result) > 0:
-                    lot_size = result[0].get('lLotSize', result[0].get('iLotSize', 50))
-                    logger.info(f"✅ Found lot size for {symbol_name} futures: {lot_size}")
-                    return int(lot_size)
-
-            logger.warning(f"No scrip found for {trading_symbol}, using default lot size 50")
-            return 50  # Default for futures
-
-        # Check if it's an OPTIONS symbol: SYMBOL + DDMMM + STRIKE + CE/PE
-        # Pattern: (SYMBOL)(DDMMM)(STRIKE)(CE|PE)
-        options_pattern = r'^([A-Z]+)(\d{2}[A-Z]{3})(\d+)(CE|PE)$'
-        options_match = re.match(options_pattern, trading_symbol)
-
-        if options_match:
-            # It's an options contract
-            symbol_name = options_match.group(1)  # NIFTY
-            expiry_date = options_match.group(2)  # 25NOV
-            strike_price = options_match.group(3)  # 27050
-            option_type = options_match.group(4)  # CE or PE
-
-            # Convert expiry to Neo format: 25NOV → 25NOV2025
-            current_year = datetime.now().year
-            expiry_full = f"{expiry_date}{current_year}"  # 25NOV2025
-
-            logger.info(f"Detected OPTIONS symbol: {trading_symbol}")
-            logger.info(f"Searching scrip: symbol={symbol_name}, expiry={expiry_full}, strike={strike_price}, type={option_type}")
-
-            # Search using Neo API
-            result = client.search_scrip(
-                exchange_segment='nse_fo',
-                symbol=symbol_name,
-                expiry=expiry_full,
-                option_type=option_type,
-                strike_price=strike_price
-            )
-
-            if result and isinstance(result, list) and len(result) > 0:
-                scrip = result[0]
-                lot_size = scrip.get('lLotSize', scrip.get('iLotSize', 25))
-                logger.info(f"✅ Found lot size for {trading_symbol}: {lot_size}")
-                return int(lot_size)
-            else:
-                logger.warning(f"No scrip found for {trading_symbol}, using default lot size 25")
-                return 25  # Default for NIFTY options
-
-        # Weekly compact format: {SYMBOL}{YY}{M}{DD}{STRIKE}{CE/PE}
-        # Month codes: 1-9 = Jan-Sep, O = Oct, N = Nov, D = Dec
-        # Examples: NIFTY2670224500CE (Jul 02), NIFTY26N0224500CE (Nov 02)
-        weekly_options_pattern = r'^([A-Z]+)(\d{2})([1-9OND])(\d{2})(\d+)(CE|PE)$'
-        weekly_match = re.match(weekly_options_pattern, trading_symbol)
-
-        if weekly_match:
-            base_symbol = weekly_match.group(1)  # NIFTY
-
-            logger.info(f"Detected WEEKLY OPTIONS symbol: {trading_symbol}")
-
-            # Search by base symbol and match pTrdSymbol exactly
-            result = client.search_scrip(
-                exchange_segment='nse_fo',
-                symbol=base_symbol
-            )
-
-            if result and isinstance(result, list):
-                for scrip in result:
-                    if scrip.get('pTrdSymbol') == trading_symbol:
-                        lot_size = scrip.get('lLotSize', scrip.get('iLotSize', 25))
-                        logger.info(f"✅ Found lot size for weekly {trading_symbol}: {lot_size}")
-                        return int(lot_size)
-
-            logger.warning(f"No scrip found for weekly {trading_symbol}, using default lot size 25")
-            return 25
-
-        # Unknown format
-        logger.warning(f"Unable to parse trading symbol: {trading_symbol}, using default lot size 50")
-        return 50  # Default fallback
+        logger.warning(f"No scrip found for {trading_symbol} in scrip master, using default 25")
+        return 25
 
     except Exception as e:
         logger.error(f"Error fetching lot size for {trading_symbol}: {e}")
-        logger.warning(f"Using default lot size 50")
-        return 50  # Default fallback
+        return 25
 
 
 def lookup_neo_option_symbol(

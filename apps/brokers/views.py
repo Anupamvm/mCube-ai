@@ -190,6 +190,7 @@ def kotakneo_login(request):
         totp_secret = request.POST.get('totp_secret')
         mobile_number = request.POST.get('mobile_number')
         consumer_key = request.POST.get('consumer_key')
+        neo_fin_key = request.POST.get('neo_fin_key', '').strip() or None
 
         if mpin:
             try:
@@ -213,6 +214,9 @@ def kotakneo_login(request):
                 if consumer_key:
                     creds.api_key = consumer_key
                     fields_to_update.append('api_key')
+                # Always save neo_fin_key (None clears it, falling back to default)
+                creds.neo_fin_key = neo_fin_key
+                fields_to_update.append('neo_fin_key')
 
                 creds.save(update_fields=fields_to_update)
 
@@ -272,12 +276,15 @@ def kotakneo_login(request):
             has_mobile = bool(creds.mobile_number)
             has_consumer_key = bool(creds.api_key)
             has_mpin = bool(creds.neo_password)
+            has_neo_fin_key = bool(creds.neo_fin_key)
             context.update({
                 'has_ucc': has_ucc,
                 'has_totp': has_totp,
                 'has_mobile': has_mobile,
                 'has_consumer_key': has_consumer_key,
                 'has_mpin': has_mpin,
+                'has_neo_fin_key': has_neo_fin_key,
+                'neo_fin_key_preview': creds.neo_fin_key if has_neo_fin_key else '',
                 'all_configured': all([has_ucc, has_totp, has_mobile, has_consumer_key, has_mpin]),
             })
     except Exception:

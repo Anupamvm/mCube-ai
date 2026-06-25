@@ -119,6 +119,8 @@ class NeoAPI(BrokerInterface if isinstance(BrokerInterface, type) else object):
             self.mpin = creds.neo_password  # MPIN stored in neo_password field
             self.ucc = creds.ucc
             self.totp_secret = creds.totp_secret
+            # neo_fin_key: must be purely alphabetical. Defaults to "neotradeapi" if not configured.
+            self.neo_fin_key = creds.neo_fin_key or None
 
         except Exception as e:
             logger.error(f"Error loading Neo credentials: {e}")
@@ -148,6 +150,7 @@ class NeoAPI(BrokerInterface if isinstance(BrokerInterface, type) else object):
             # v2: no consumer_secret, no session_init() — zero network calls
             self.neo = KotakNeoAPI(
                 consumer_key=self.consumer_key,
+                neo_fin_key=self.neo_fin_key,  # None → falls back to "neotradeapi"
                 environment='prod'
             )
 
@@ -268,6 +271,7 @@ class NeoAPI(BrokerInterface if isinstance(BrokerInterface, type) else object):
                 # Fresh client each attempt to avoid stale state
                 self.neo = KotakNeoAPI(
                     consumer_key=self.consumer_key,
+                    neo_fin_key=self.neo_fin_key,  # None → falls back to "neotradeapi"
                     environment='prod'
                 )
 

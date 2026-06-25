@@ -87,6 +87,7 @@ class CredentialStore(models.Model):
     ucc = models.CharField(max_length=50, null=True, blank=True, help_text="Unique Client Code for Kotak Neo v2")
     totp_secret = models.CharField(max_length=256, null=True, blank=True, help_text="TOTP secret key for automated login")
     mobile_number = models.CharField(max_length=20, null=True, blank=True, help_text="Mobile number with country code (e.g., +919999999999)")
+    neo_fin_key = models.CharField(max_length=100, null=True, blank=True, help_text="Kotak Neo fin key (alphabetical only, e.g. neotradeapi). Leave blank to use default.")
 
     # Kotak Neo persisted session fields (for session reuse without re-login)
     neo_edit_token = models.TextField(null=True, blank=True)
