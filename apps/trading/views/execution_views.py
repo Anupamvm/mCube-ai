@@ -467,7 +467,7 @@ def execute_strangle_orders(request):
     import json
     from django.db import transaction
     from apps.trading.models import TradeSuggestion
-    from apps.brokers.integrations.kotak_neo import place_strangle_orders_in_batches
+    from apps.brokers.integrations.kotak_neo import place_strangle_orders_in_batches, force_fresh_neo_login
     from apps.positions.models import Position
     from apps.accounts.models import BrokerAccount
 
@@ -600,16 +600,36 @@ def execute_strangle_orders(request):
 
         logger.info(f"[NEO SYMBOLS] Call: {neo_call_symbol}, Put: {neo_put_symbol}, Lot Size: {lot_size}")
 
+        def _run_batch_orders():
+            return place_strangle_orders_in_batches(
+                call_symbol=neo_call_symbol,
+                put_symbol=neo_put_symbol,
+                total_lots=total_lots,
+                batch_size=20,
+                delay_seconds=20,
+                product='NRML',
+                lot_size=lot_size,
+            )
+
         # Place orders in batches (max 20 lots per order, 20 sec delays - Neo API limits)
-        batch_result = place_strangle_orders_in_batches(
-            call_symbol=neo_call_symbol,
-            put_symbol=neo_put_symbol,
-            total_lots=total_lots,
-            batch_size=20,
-            delay_seconds=20,
-            product='NRML',
-            lot_size=lot_size  # Pass lot size from symbol mapping (already validated)
-        )
+        batch_result = _run_batch_orders()
+
+        # Auto-recover from expired session ([100008] unauthorized).
+        # try_restore_session() marks the token valid without probing the API, so a
+        # stale DB token only reveals itself when the first order is rejected.
+        # The batch loop aborts immediately on 100008, so we get here quickly.
+        if not batch_result['success'] and batch_result.get('auth_error'):
+            logger.warning(
+                "Neo session expired during order placement — attempting forced re-login"
+            )
+            if force_fresh_neo_login():
+                logger.info("Re-login succeeded — retrying strangle order placement")
+                batch_result = _run_batch_orders()
+            else:
+                batch_result['error'] = (
+                    'Neo session expired and auto re-login failed. '
+                    'Please log in manually at /brokers/login/ and try again.'
+                )
 
         # Collect failure reasons for frontend display so users see the actual API error.
         # Without this, the UI only shows "Failed to execute strangle" with no detail.

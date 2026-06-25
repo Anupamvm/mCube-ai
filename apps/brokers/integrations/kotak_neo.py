@@ -117,6 +117,53 @@ def _get_authenticated_client():
         )
 
 
+def force_fresh_neo_login() -> bool:
+    """
+    Force a complete fresh Neo login, bypassing the cached session and daily limit.
+
+    Used to recover from [100008] unauthorized errors during order placement — this
+    happens when the restored DB session token has expired intraday. Steps:
+      1. Invalidate process-level cached client
+      2. Clear the stale session from DB
+      3. Reset the daily auto-login counter so the limit doesn't block us
+      4. Perform fresh TOTP + MPIN login
+
+    Returns:
+        True if re-login succeeded and a valid session is cached.
+    """
+    try:
+        from tools.neo import get_neo_api, _cache_lock
+        import tools.neo as neo_module
+        from apps.brokers.utils.auth_manager import reset_auto_login_status, clear_neo_session
+
+        logger.info("force_fresh_neo_login: invalidating stale session")
+
+        # 1. Drop process-level cache so get_neo_api() creates a fresh instance
+        with _cache_lock:
+            if neo_module._cached_instance:
+                neo_module._cached_instance.session_active = False
+                neo_module._cached_instance = None
+
+        # 2. Remove the stale token from DB so try_restore_session() finds nothing
+        clear_neo_session()
+
+        # 3. Reset daily auto-login counter so login() is not blocked today
+        reset_auto_login_status('kotakneo')
+
+        # 4. Fresh TOTP + MPIN login
+        neo_wrapper = get_neo_api()
+        if neo_wrapper.session_active:
+            logger.info("✅ Neo re-login succeeded after [100008] unauthorized")
+            return True
+
+        logger.error(f"❌ Neo re-login failed: {neo_wrapper.get_last_error()}")
+        return False
+
+    except Exception as e:
+        logger.error(f"Error during Neo force re-login: {e}", exc_info=True)
+        return False
+
+
 def fetch_and_save_kotakneo_data():
     """
     Fetch limits and positions from Kotak Neo API and save to database.
@@ -2020,6 +2067,35 @@ def place_strangle_orders_in_batches(
                 logger.error(f"❌ PUT SELL batch {batch_num} failed: {put_result.get('error', 'Unknown error')}")
 
             batches_completed += 1
+
+            # Detect expired session — abort immediately rather than burning through
+            # all remaining batches and their delays (saves 60+ seconds of futile waiting).
+            call_unauth = not call_result.get('success') and '[100008]' in (call_result.get('error') or '')
+            put_unauth = not put_result.get('success') and '[100008]' in (put_result.get('error') or '')
+            if call_unauth or put_unauth:
+                logger.error(
+                    f"[100008] unauthorized on batch {batch_num} — aborting remaining "
+                    f"{num_batches - batch_num} batches. Neo session token expired."
+                )
+                call_success_count = sum(1 for o in call_orders if o['result'].get('success'))
+                put_success_count = sum(1 for o in put_orders if o['result'].get('success'))
+                return {
+                    'success': False,
+                    'auth_error': True,
+                    'error': 'Neo session expired ([100008] unauthorized)',
+                    'total_lots': total_lots,
+                    'batches_completed': batches_completed,
+                    'total_batches': num_batches,
+                    'call_orders': call_orders,
+                    'put_orders': put_orders,
+                    'summary': {
+                        'call_success_count': call_success_count,
+                        'put_success_count': put_success_count,
+                        'call_failed_count': len(call_orders) - call_success_count,
+                        'put_failed_count': len(put_orders) - put_success_count,
+                        'total_orders_placed': len(call_orders) + len(put_orders),
+                    },
+                }
 
             # Delay before next batch (except for last batch)
             # We only wait between batches, not between CALL and PUT
