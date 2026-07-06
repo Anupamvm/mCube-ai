@@ -1829,7 +1829,7 @@ async function stopOrderPlacement() {
             },
             body: JSON.stringify({
                 broker: broker,
-                symbol: pos.symbol
+                symbol: currentPosition.symbol
             })
         });
 
@@ -1883,12 +1883,12 @@ async function confirmClosePosition() {
     // Switch to progress view
     showProgressSection();
     addLogEntry('🚀 Starting position closure...', 'info');
-    addLogEntry(`Closing ${pos.symbol} on ${broker === 'breeze' ? 'ICICI Breeze' : 'Kotak Neo'}`, 'info');
+    addLogEntry(`Closing ${currentPosition.symbol} on ${broker === 'breeze' ? 'ICICI Breeze' : 'Kotak Neo'}`, 'info');
 
     // Start progress polling
     closeExecutionState.isRunning = true;
     closeExecutionState.broker = broker;
-    closeExecutionState.symbol = pos.symbol;
+    closeExecutionState.symbol = currentPosition.symbol;
     startProgressPolling();
 
     try {
@@ -1901,7 +1901,7 @@ async function confirmClosePosition() {
             },
             body: JSON.stringify({
                 broker: broker,
-                symbol: pos.symbol,
+                symbol: currentPosition.symbol,
                 quantity: pos.net_quantity_shares,  // Use shares for closing
                 exchange: pos.exchange,
                 product: pos.product,
