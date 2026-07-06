@@ -68,6 +68,7 @@ from .template_views import (
     manual_triggers,
     manual_triggers_refactored,
     view_trades,
+    analysis_detail_page,
 )
 
 from .trade_tracking_views import (
@@ -120,6 +121,7 @@ __all__ = [
     'manual_triggers',
     'manual_triggers_refactored',
     'view_trades',
+    'analysis_detail_page',
 
     # Trade tracking views
     'trade_history',

@@ -422,3 +422,12 @@ def view_trades(request):
         'market_open': market_open,
         'market_close': market_close,
     })
+
+
+@login_required
+def analysis_detail_page(request, symbol, expiry):
+    """Full-page analysis view for a single futures contract, opened in a new tab."""
+    return render(request, 'trading/analysis_detail.html', {
+        'symbol': symbol,
+        'expiry': expiry,
+    })

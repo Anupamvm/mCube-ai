@@ -18,6 +18,7 @@ urlpatterns = [
     path('trigger/futures/status/<str:task_id>/', views.futures_task_status, name='futures_task_status'),
     path('trigger/strangle/', views.trigger_nifty_strangle, name='trigger_strangle'),
     path('trigger/iron-condor/', views.trigger_broken_iron_condor, name='trigger_iron_condor'),
+    path('trigger/analysis/<str:symbol>/<str:expiry>/', views.analysis_detail_page, name='analysis_detail'),
     path('trigger/verify/', views.verify_future_trade, name='verify_trade'),
     path('trigger/get-contracts/', views.get_contracts, name='get_contracts'),
     path('trigger/start-trendlyne-fetch/', views.start_trendlyne_fetch, name='start_trendlyne_fetch'),

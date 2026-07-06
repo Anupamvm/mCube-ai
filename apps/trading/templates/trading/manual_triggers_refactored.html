@@ -7957,9 +7957,9 @@ function buildUnifiedContractCard(contract, index, options = {}) {
                 <div><div style="font-size: 0.7rem; color: #9ca3af; text-transform: uppercase;">Max Loss</div><div style="font-weight: 600; color: #ef4444;">₹${((contract.max_loss || 0) / 1000).toFixed(1)}K</div></div>
             </div>
             <div style="padding: 12px 20px; background: #f9fafb; border-top: 1px solid #e5e7eb;">
-                <button onclick="FuturesAlgorithm.showDetailModal(FuturesAlgorithm.analyzedContracts.find(c => c.symbol === '${contract.symbol}'))"
+                <button onclick="openAnalysisTab('${contract.symbol}', '${contract.expiry_date}')"
                         style="width: 100%; background: #3b82f6; color: white; border: none; padding: 10px; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 0.875rem;">
-                    View Full Analysis
+                    View Full Analysis ↗
                 </button>
             </div>
         </div>`;
@@ -8072,9 +8072,9 @@ function buildOpportunityCard(opportunity, index, options = {}) {
 
             <!-- View Details Button -->
             <div style="padding: 10px 18px; border-top: 1px solid #f3f4f6;">
-                <button onclick="FuturesAlgorithm.showDetailModal(FuturesAlgorithm.analyzedContracts.find(c => c.symbol === '${opportunity.symbol}'))"
+                <button onclick="openAnalysisTab('${opportunity.symbol}', '${opportunity.expiry_date}')"
                         style="width: 100%; background: #3b82f6; color: white; border: none; padding: 9px; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 0.85rem;">
-                    View Full Analysis
+                    View Full Analysis ↗
                 </button>
             </div>
         </div>
@@ -8442,6 +8442,14 @@ function mergeManualResults(results) {
 // Backward-compatible wrapper for existing callers
 function displayLatestProcessed(results) {
     mergeManualResults(results);
+}
+
+function openAnalysisTab(symbol, expiry) {
+    if (!expiry || expiry === 'null' || expiry === 'undefined') {
+        alert('Expiry date not available for ' + symbol + '. Please re-run the algorithm.');
+        return;
+    }
+    window.open('/trading/trigger/analysis/' + symbol + '/' + expiry + '/', '_blank');
 }
 
 // Initialize on page load

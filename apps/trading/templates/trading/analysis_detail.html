@@ -1,0 +1,590 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Analysis: {{ symbol }} {{ expiry }}</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f3f4f6;
+            line-height: 1.6;
+            color: #1f2937;
+        }
+        .container { max-width: 1100px; margin: 0 auto; padding: 1.5rem; }
+
+        /* Loading */
+        #loading-state {
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            min-height: 80vh; gap: 1.5rem;
+        }
+        .spinner {
+            width: 52px; height: 52px;
+            border: 4px solid #e5e7eb; border-top-color: #3b82f6;
+            border-radius: 50%; animation: spin 0.8s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        #loading-symbol { font-size: 1.5rem; font-weight: 700; color: #1f2937; }
+        #loading-msg { color: #6b7280; font-size: 0.95rem; }
+        #loading-elapsed { color: #9ca3af; font-size: 0.85rem; margin-top: 0.25rem; }
+
+        /* Error */
+        #error-state { display: none; }
+        .error-box {
+            background: white; border: 1px solid #fca5a5; border-radius: 0.75rem;
+            padding: 2rem; text-align: center; margin-top: 4rem;
+        }
+        .error-box h2 { color: #dc2626; margin-bottom: 0.75rem; }
+        .error-box p { color: #6b7280; margin-bottom: 1.5rem; }
+        .retry-btn {
+            background: #3b82f6; color: white; border: none; padding: 0.6rem 1.5rem;
+            border-radius: 0.5rem; font-size: 0.95rem; font-weight: 600; cursor: pointer;
+        }
+        .retry-btn:hover { background: #2563eb; }
+
+        /* Result */
+        #result-state { display: none; }
+
+        /* Header */
+        .page-header {
+            border-radius: 0.75rem; padding: 1.75rem 2rem; margin-bottom: 1.5rem;
+            color: white;
+        }
+        .page-header.pass { background: linear-gradient(135deg, #10b981 0%, #059669 100%); }
+        .page-header.fail { background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); }
+        .page-header.blocked { background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); }
+        .page-header.unknown { background: linear-gradient(135deg, #6b7280 0%, #4b5563 100%); }
+        .header-top { display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 1rem; }
+        .header-symbol { font-size: 2rem; font-weight: 800; }
+        .header-expiry { font-size: 0.95rem; opacity: 0.85; margin-top: 0.2rem; }
+        .verdict-badge {
+            background: rgba(255,255,255,0.25); padding: 0.4rem 1rem;
+            border-radius: 2rem; font-weight: 700; font-size: 0.9rem;
+            border: 1px solid rgba(255,255,255,0.4);
+        }
+        .header-score { text-align: right; }
+        .header-score .score-num { font-size: 2.5rem; font-weight: 800; }
+        .header-score .score-label { font-size: 0.8rem; opacity: 0.8; }
+        .header-meta { display: flex; gap: 1.5rem; margin-top: 1rem; flex-wrap: wrap; }
+        .header-meta-item { font-size: 0.9rem; }
+        .header-meta-item strong { font-weight: 700; }
+
+        /* Sections */
+        .section {
+            background: white; border-radius: 0.75rem; padding: 1.5rem;
+            margin-bottom: 1.25rem; box-shadow: 0 1px 3px rgba(0,0,0,0.07);
+        }
+        .section-title {
+            font-size: 1rem; font-weight: 700; color: #374151;
+            margin-bottom: 1rem; padding-bottom: 0.75rem;
+            border-bottom: 2px solid #f3f4f6;
+            display: flex; align-items: center; gap: 0.5rem;
+        }
+
+        /* Metrics grid */
+        .metrics-grid {
+            display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 0.75rem;
+        }
+        .metric-item {
+            background: #f9fafb; border-radius: 0.5rem; padding: 0.875rem 1rem;
+        }
+        .metric-label { font-size: 0.7rem; color: #9ca3af; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 0.3rem; }
+        .metric-value { font-size: 1.1rem; font-weight: 700; color: #1f2937; }
+        .metric-value.green { color: #10b981; }
+        .metric-value.red { color: #ef4444; }
+        .metric-value.blue { color: #3b82f6; }
+
+        /* Score bars */
+        .score-row {
+            display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.6rem;
+        }
+        .score-label-col { width: 150px; font-size: 0.85rem; color: #374151; flex-shrink: 0; }
+        .score-bar-wrap { flex: 1; background: #f3f4f6; border-radius: 999px; height: 8px; overflow: hidden; }
+        .score-bar-fill { height: 100%; border-radius: 999px; background: #3b82f6; transition: width 0.6s ease; }
+        .score-bar-fill.high { background: #10b981; }
+        .score-bar-fill.mid { background: #f59e0b; }
+        .score-bar-fill.low { background: #ef4444; }
+        .score-val { width: 50px; text-align: right; font-size: 0.85rem; font-weight: 600; color: #374151; flex-shrink: 0; }
+
+        /* Execution log */
+        .log-item {
+            display: flex; align-items: flex-start; gap: 0.75rem;
+            padding: 0.75rem 0; border-bottom: 1px solid #f3f4f6;
+        }
+        .log-item:last-child { border-bottom: none; }
+        .log-step {
+            flex-shrink: 0; width: 28px; height: 28px; border-radius: 50%;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 0.7rem; font-weight: 700; color: white;
+        }
+        .log-step.success { background: #10b981; }
+        .log-step.warning { background: #f59e0b; }
+        .log-step.fail { background: #ef4444; }
+        .log-step.info { background: #3b82f6; }
+        .log-body { flex: 1; min-width: 0; }
+        .log-action { font-weight: 600; color: #1f2937; font-size: 0.9rem; }
+        .log-message { font-size: 0.85rem; color: #6b7280; margin-top: 0.15rem; }
+        .log-details {
+            margin-top: 0.5rem; padding: 0.5rem 0.75rem;
+            background: #f9fafb; border-radius: 0.375rem;
+            font-family: monospace; font-size: 0.75rem; color: #6b7280;
+        }
+        .log-status-icon { flex-shrink: 0; font-size: 1.1rem; padding-top: 0.15rem; }
+
+        /* News articles */
+        .article-card {
+            border-left: 4px solid #ef4444; padding: 0.75rem 1rem;
+            background: #fef2f2; border-radius: 0.375rem; margin-bottom: 0.75rem;
+        }
+        .article-card.warning { border-left-color: #f59e0b; background: #fffbeb; }
+        .article-card.positive { border-left-color: #10b981; background: #f0fdf4; }
+        .article-title { font-weight: 600; font-size: 0.9rem; color: #1f2937; }
+        .article-meta { font-size: 0.75rem; color: #6b7280; margin-top: 0.2rem; }
+
+        /* Risk check rows */
+        .risk-row {
+            display: flex; align-items: center; gap: 0.75rem;
+            padding: 0.6rem 0; border-bottom: 1px solid #f3f4f6; font-size: 0.875rem;
+        }
+        .risk-row:last-child { border-bottom: none; }
+        .risk-icon { font-size: 1rem; flex-shrink: 0; }
+        .risk-label { flex: 1; color: #374151; }
+        .risk-status { font-weight: 600; font-size: 0.8rem; }
+        .risk-status.pass { color: #10b981; }
+        .risk-status.fail { color: #ef4444; }
+        .risk-status.warn { color: #f59e0b; }
+
+        /* Two-col layout for some sections */
+        .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem; }
+        @media (max-width: 700px) { .two-col { grid-template-columns: 1fr; } }
+
+        /* Summary pill */
+        .pill {
+            display: inline-block; padding: 0.2rem 0.6rem; border-radius: 999px;
+            font-size: 0.75rem; font-weight: 600;
+        }
+        .pill.green { background: #d1fae5; color: #065f46; }
+        .pill.red { background: #fee2e2; color: #991b1b; }
+        .pill.yellow { background: #fef3c7; color: #92400e; }
+        .pill.blue { background: #dbeafe; color: #1e40af; }
+        .pill.gray { background: #f3f4f6; color: #374151; }
+
+        .reason-box {
+            background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 0.5rem;
+            padding: 0.875rem 1rem; font-size: 0.875rem; color: #1e40af;
+        }
+
+        @media print { body { background: white; } .spinner, .retry-btn { display: none; } }
+    </style>
+</head>
+<body>
+
+<!-- Loading state -->
+<div id="loading-state" class="container">
+    <div class="spinner"></div>
+    <div>
+        <div id="loading-symbol">{{ symbol }} &mdash; {{ expiry }}</div>
+        <div id="loading-msg">Running full analysis... This takes 30&ndash;90 seconds.</div>
+        <div id="loading-elapsed">Elapsed: 0s</div>
+    </div>
+</div>
+
+<!-- Error state -->
+<div id="error-state" class="container">
+    <div class="error-box">
+        <h2>Analysis Failed</h2>
+        <p id="error-msg">An unexpected error occurred.</p>
+        <button class="retry-btn" onclick="runAnalysis()">Retry</button>
+    </div>
+</div>
+
+<!-- Result state -->
+<div id="result-state" class="container"></div>
+
+<script>
+const SYMBOL = '{{ symbol }}';
+const EXPIRY = '{{ expiry }}';  // YYYY-MM-DD
+const VERIFY_URL = '/trading/trigger/verify/';
+
+function getCookie(name) {
+    const v = document.cookie.match('(^|;)\\s*' + name + '\\s*=\\s*([^;]+)');
+    return v ? v.pop() : '';
+}
+
+function fmt(val, decimals = 2) {
+    if (val == null || val === '' || isNaN(val)) return '—';
+    return Number(val).toFixed(decimals);
+}
+
+function fmtCurrency(val) {
+    if (val == null || isNaN(val)) return '—';
+    const n = Number(val);
+    if (Math.abs(n) >= 100000) return '₹' + (n / 100000).toFixed(2) + 'L';
+    if (Math.abs(n) >= 1000) return '₹' + (n / 1000).toFixed(1) + 'K';
+    return '₹' + n.toFixed(2);
+}
+
+function renderHeader(data) {
+    const verdict = (data.verdict || '').toUpperCase();
+    let cls = 'unknown';
+    if (verdict.startsWith('PASS')) cls = 'pass';
+    else if (verdict.startsWith('FAIL')) cls = 'fail';
+    else if (verdict.startsWith('BLOCK')) cls = 'blocked';
+
+    const analysis = data.analysis || {};
+    const pos = analysis.position_details || {};
+    const enhanced = data.enhanced_analysis || {};
+    const score = enhanced.composite_score || analysis.composite_score || 0;
+    const direction = (enhanced.recommendation || analysis.direction || 'N/A').toUpperCase();
+    const dirIcon = direction === 'LONG' ? '▲' : direction === 'SHORT' ? '▼' : '●';
+
+    return `
+        <div class="page-header ${cls}">
+            <div class="header-top">
+                <div>
+                    <div class="header-symbol">${data.symbol || SYMBOL}</div>
+                    <div class="header-expiry">Expiry: ${data.expiry || EXPIRY}</div>
+                </div>
+                <div class="header-score">
+                    <div class="score-num">${score}</div>
+                    <div class="score-label">/ 100 score</div>
+                </div>
+            </div>
+            <div class="header-meta">
+                <div class="header-meta-item"><strong>${verdict || 'N/A'}</strong></div>
+                <div class="header-meta-item">${dirIcon} ${direction}</div>
+                ${pos.recommended_lots ? `<div class="header-meta-item">Lots: <strong>${pos.recommended_lots}</strong></div>` : ''}
+                ${pos.margin_required ? `<div class="header-meta-item">Margin: <strong>${fmtCurrency(pos.margin_required)}</strong></div>` : ''}
+            </div>
+        </div>`;
+}
+
+function renderKeyMetrics(data) {
+    const a = data.analysis || {};
+    const pos = a.position_details || {};
+    const sizingPos = (data.position_sizing || {}).position || {};
+    const sizingMar = (data.position_sizing || {}).margin_data || {};
+    const enhanced = data.enhanced_analysis || {};
+
+    const items = [
+        { label: 'Spot Price', value: a.spot_price ? '₹' + fmt(a.spot_price) : '—' },
+        { label: 'Futures Price', value: a.contract_price ? '₹' + fmt(a.contract_price) : '—' },
+        { label: 'Entry Price', value: a.entry_price ? '₹' + fmt(a.entry_price) : '—' },
+        { label: 'Stop Loss', value: pos.stop_loss ? '₹' + fmt(pos.stop_loss) : '—', cls: 'red' },
+        { label: 'Target', value: pos.target ? '₹' + fmt(pos.target) : '—', cls: 'green' },
+        { label: 'Basis', value: a.basis != null ? `₹${fmt(a.basis)} (${fmt(a.basis_pct)}%)` : '—' },
+        { label: 'Lot Size', value: a.lot_size || pos.lot_size || '—' },
+        { label: 'Rec. Lots', value: pos.recommended_lots || sizingPos.recommended_lots || '—', cls: 'blue' },
+        { label: 'Margin / Lot', value: sizingMar.margin_per_lot ? fmtCurrency(sizingMar.margin_per_lot) : (pos.margin_per_lot ? fmtCurrency(pos.margin_per_lot) : '—') },
+        { label: 'Margin Req.', value: pos.margin_required ? fmtCurrency(pos.margin_required) : '—' },
+        { label: 'Avail. Margin', value: pos.available_margin ? fmtCurrency(pos.available_margin) : (sizingMar.available_margin ? fmtCurrency(sizingMar.available_margin) : '—') },
+        { label: 'Risk / Reward', value: pos.risk_reward_ratio ? fmt(pos.risk_reward_ratio) + ':1' : '—' },
+        { label: 'Volume', value: a.traded_volume ? Number(a.traded_volume).toLocaleString('en-IN') : '—' },
+        { label: 'Days to Expiry', value: a.position_details ? (a.days_to_expiry != null ? a.days_to_expiry + 'd' : '—') : '—' },
+    ];
+
+    const cells = items.map(it => `
+        <div class="metric-item">
+            <div class="metric-label">${it.label}</div>
+            <div class="metric-value ${it.cls || ''}">${it.value}</div>
+        </div>`).join('');
+
+    return `<div class="section">
+        <div class="section-title">📊 Key Metrics</div>
+        <div class="metrics-grid">${cells}</div>
+    </div>`;
+}
+
+function renderScores(data) {
+    const enhanced = data.enhanced_analysis || {};
+    // Prefer component_scores if non-empty, else fall back to scores
+    const rawScores = enhanced.component_scores || {};
+    const scores = Object.keys(rawScores).length > 0 ? rawScores : (enhanced.scores || {});
+    if (!Object.keys(scores).length) return '';
+
+    // Max weights from EnhancedFuturesAnalyzer.WEIGHTS (total = 315, normalized to 100)
+    const maxMap = {
+        oi_fno: 45, technical_momentum: 35, trend_confirmation: 30,
+        volume_quality: 25, institutional_flow: 25, fundamental_quality: 20,
+        risk_adjustment: 30, news_sentiment: 25, analyst_consensus: 20,
+        research_reports: 15, investor_calls: 10,
+        momentum_acceleration: 20, mtf_confluence: 15,
+    };
+    const labelMap = {
+        oi_fno: 'OI & F&O', technical_momentum: 'Technical Momentum',
+        trend_confirmation: 'Trend Confirmation', volume_quality: 'Volume Quality',
+        institutional_flow: 'Institutional Flow', fundamental_quality: 'Fundamental Quality',
+        risk_adjustment: 'Risk Adjustment', news_sentiment: 'News Sentiment',
+        analyst_consensus: 'Analyst Consensus', research_reports: 'Research Reports',
+        investor_calls: 'Investor Calls', momentum_acceleration: 'Momentum Accel.',
+        mtf_confluence: 'Multi-TF Confluence',
+    };
+
+    const rows = Object.entries(scores).map(([key, val]) => {
+        const max = maxMap[key] || 10;
+        const pct = Math.min(100, Math.round((val / max) * 100));
+        let barClass = pct >= 70 ? 'high' : pct >= 40 ? 'mid' : 'low';
+        const label = labelMap[key] || key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+        return `<div class="score-row">
+            <div class="score-label-col">${label}</div>
+            <div class="score-bar-wrap"><div class="score-bar-fill ${barClass}" style="width:${pct}%"></div></div>
+            <div class="score-val">${val}/${max}</div>
+        </div>`;
+    }).join('');
+
+    return `<div class="section">
+        <div class="section-title">🎯 Score Breakdown</div>
+        ${rows}
+    </div>`;
+}
+
+function renderExecutionLog(data) {
+    const log = data.execution_log || [];
+    if (!log.length) return '';
+
+    const items = log.map(entry => {
+        const s = (entry.status || '').toLowerCase();
+        let stepCls = 'info', icon = '●', iconChar = '●';
+        if (s === 'success' || s === 'pass') { stepCls = 'success'; icon = '✓'; iconChar = '✓'; }
+        else if (s === 'fail') { stepCls = 'fail'; icon = '✗'; iconChar = '✗'; }
+        else if (s === 'warning' || s === 'skip') { stepCls = 'warning'; icon = '⚠'; iconChar = '⚠'; }
+
+        let detailsHtml = '';
+        if (entry.details && Object.keys(entry.details).length) {
+            const dLines = Object.entries(entry.details)
+                .filter(([, v]) => typeof v !== 'object')
+                .map(([k, v]) => `<div><strong>${k}:</strong> ${v}</div>`)
+                .join('');
+            if (dLines) detailsHtml = `<div class="log-details">${dLines}</div>`;
+        }
+
+        return `<div class="log-item">
+            <div class="log-step ${stepCls}">${entry.step}</div>
+            <div class="log-body">
+                <div class="log-action">${entry.action || ''}</div>
+                <div class="log-message">${entry.message || ''}</div>
+                ${detailsHtml}
+            </div>
+            <div class="log-status-icon">${iconChar}</div>
+        </div>`;
+    }).join('');
+
+    return `<div class="section">
+        <div class="section-title">📋 Step-by-Step Analysis</div>
+        ${items}
+    </div>`;
+}
+
+function renderNews(data) {
+    const nv = data.news_verification || {};
+    const blocking = nv.blocking_articles || [];
+    const warning = nv.warning_articles || [];
+    const hn = data.historical_news || {};
+    const histArticles = hn.articles || [];
+
+    if (!blocking.length && !warning.length && !histArticles.length) return '';
+
+    let html = `<div class="section"><div class="section-title">📰 News Analysis</div>`;
+
+    const nvSummary = nv.summary || {};
+    if (nvSummary.overall_sentiment) {
+        const sentColor = nvSummary.overall_sentiment === 'POSITIVE' ? 'green' :
+                          nvSummary.overall_sentiment === 'NEGATIVE' ? 'red' : 'yellow';
+        html += `<div style="margin-bottom:1rem;">
+            <span class="pill ${sentColor}">${nvSummary.overall_sentiment}</span>
+            ${nvSummary.summary ? `<span style="margin-left:0.5rem;font-size:0.875rem;color:#374151;">${nvSummary.summary}</span>` : ''}
+        </div>`;
+    }
+
+    if (blocking.length) {
+        html += `<div style="margin-bottom:0.5rem;font-weight:600;color:#dc2626;font-size:0.85rem;">⛔ Blocking Articles (${blocking.length})</div>`;
+        blocking.forEach(a => {
+            html += `<div class="article-card">
+                <div class="article-title">${a.title || a.headline || ''}</div>
+                <div class="article-meta">${a.published_at || a.date || ''} ${a.sentiment_score != null ? '• Score: ' + a.sentiment_score : ''}</div>
+            </div>`;
+        });
+    }
+
+    if (warning.length) {
+        html += `<div style="margin:0.75rem 0 0.5rem;font-weight:600;color:#d97706;font-size:0.85rem;">⚠ Warning Articles (${warning.length})</div>`;
+        warning.forEach(a => {
+            html += `<div class="article-card warning">
+                <div class="article-title">${a.title || a.headline || ''}</div>
+                <div class="article-meta">${a.published_at || a.date || ''} ${a.sentiment_score != null ? '• Score: ' + a.sentiment_score : ''}</div>
+            </div>`;
+        });
+    }
+
+    if (histArticles.length) {
+        html += `<div style="margin:0.75rem 0 0.5rem;font-weight:600;color:#374151;font-size:0.85rem;">📚 Historical News (${histArticles.length})</div>`;
+        histArticles.slice(0, 5).forEach(a => {
+            const sentiment = a.sentiment_score >= 0 ? 'positive' : '';
+            html += `<div class="article-card ${sentiment}">
+                <div class="article-title">${a.title || a.headline || ''}</div>
+                <div class="article-meta">${a.published_at || a.date || ''} ${a.sentiment_score != null ? '• Score: ' + a.sentiment_score : ''}</div>
+            </div>`;
+        });
+        if (histArticles.length > 5) {
+            html += `<div style="font-size:0.8rem;color:#9ca3af;">+ ${histArticles.length - 5} more articles</div>`;
+        }
+    }
+
+    return html + '</div>';
+}
+
+function renderAnalyst(data) {
+    const av = data.analyst_verification || {};
+    if (!av.success && !av.price_target && !av.reports_summary) return '';
+
+    let html = `<div class="section"><div class="section-title">📈 Analyst Data</div>`;
+
+    const rec = av.recommendation || 'N/A';
+    const recColor = rec === 'PROCEED' ? 'green' : rec === 'CAUTION' ? 'yellow' : 'red';
+    html += `<div style="margin-bottom:1rem;"><span class="pill ${recColor}">${rec}</span>`;
+
+    if (av.price_target) {
+        html += ` &nbsp; Price Target: <strong>₹${fmt(av.price_target)}</strong>`;
+    }
+    html += '</div>';
+
+    if (av.reports_summary) {
+        html += `<div style="font-size:0.875rem;color:#374151;margin-bottom:0.75rem;">${av.reports_summary}</div>`;
+    }
+
+    const summaries = av.report_quick_summaries || [];
+    if (summaries.length) {
+        html += `<div style="font-weight:600;font-size:0.85rem;color:#374151;margin-bottom:0.5rem;">Recent Report Summaries</div>`;
+        summaries.forEach(s => {
+            html += `<div style="background:#f9fafb;border-radius:0.5rem;padding:0.75rem;margin-bottom:0.5rem;font-size:0.85rem;">
+                <div style="font-weight:600;color:#1f2937;margin-bottom:0.25rem;">${s.report_name || s.file_name || ''}</div>
+                <div style="color:#374151;">${s.summary || ''}</div>
+            </div>`;
+        });
+    }
+
+    const warnings = av.warnings || [];
+    if (warnings.length) {
+        html += `<div style="margin-top:0.75rem;">`;
+        warnings.forEach(w => { html += `<div class="article-card warning"><div class="article-title">${w}</div></div>`; });
+        html += `</div>`;
+    }
+
+    return html + '</div>';
+}
+
+function renderHistorical(data) {
+    const hv = data.historical_verification || {};
+    const checks = hv.risk_checks || [];
+    if (!checks.length) return '';
+
+    const tradeAllowed = hv.trade_allowed !== false;
+    let html = `<div class="section"><div class="section-title">📅 Historical Risk Checks</div>`;
+
+    if (hv.verdict) {
+        const cls = tradeAllowed ? 'green' : 'red';
+        html += `<div style="margin-bottom:0.75rem;">
+            <span class="pill ${cls}">${hv.verdict}</span>
+            ${hv.verdict_message ? `<span style="margin-left:0.5rem;font-size:0.85rem;color:#6b7280;">${hv.verdict_message}</span>` : ''}
+        </div>`;
+    }
+
+    checks.forEach(c => {
+        const passed = c.passed !== false;
+        const icon = passed ? '✅' : '❌';
+        const statusCls = passed ? 'pass' : 'fail';
+        html += `<div class="risk-row">
+            <div class="risk-icon">${icon}</div>
+            <div class="risk-label">${c.check_name || c.name || c.description || ''}</div>
+            <div class="risk-status ${statusCls}">${passed ? 'PASS' : 'FAIL'}</div>
+        </div>`;
+    });
+
+    return html + '</div>';
+}
+
+function renderReason(data) {
+    if (!data.reason) return '';
+    return `<div class="section">
+        <div class="section-title">💡 Verdict Reasoning</div>
+        <div class="reason-box">${data.reason}</div>
+    </div>`;
+}
+
+function render(data) {
+    const container = document.getElementById('result-state');
+    container.innerHTML = [
+        renderHeader(data),
+        renderReason(data),
+        renderKeyMetrics(data),
+        renderScores(data),
+        renderExecutionLog(data),
+        renderNews(data),
+        renderAnalyst(data),
+        renderHistorical(data),
+    ].join('');
+
+    document.title = `${data.symbol || SYMBOL} ${data.verdict || ''} — Analysis`;
+}
+
+let elapsedTimer = null;
+
+async function runAnalysis() {
+    document.getElementById('loading-state').style.display = 'flex';
+    document.getElementById('error-state').style.display = 'none';
+    document.getElementById('result-state').style.display = 'none';
+
+    let elapsed = 0;
+    const elapsedEl = document.getElementById('loading-elapsed');
+    elapsedTimer = setInterval(() => {
+        elapsed++;
+        elapsedEl.textContent = `Elapsed: ${elapsed}s`;
+    }, 1000);
+
+    try {
+        const formData = new FormData();
+        formData.append('contract', `${SYMBOL}|${EXPIRY}`);
+
+        const resp = await fetch(VERIFY_URL, {
+            method: 'POST',
+            headers: { 'X-CSRFToken': getCookie('csrftoken') },
+            body: formData,
+        });
+
+        clearInterval(elapsedTimer);
+
+        if (!resp.headers.get('content-type')?.includes('application/json')) {
+            if (resp.status === 403) throw new Error('Session expired — please close this tab, refresh the main page, and try again.');
+            throw new Error(`Server error (HTTP ${resp.status})`);
+        }
+
+        const data = await resp.json();
+
+        if (data.auth_required || data.authenticated === false) {
+            throw new Error('Session expired — please close this tab and log in again.');
+        }
+
+        document.getElementById('loading-state').style.display = 'none';
+
+        if (data.success === false && !data.execution_log) {
+            document.getElementById('error-msg').textContent = data.error || 'Analysis failed — no details available.';
+            document.getElementById('error-state').style.display = 'block';
+            return;
+        }
+
+        render(data);
+        document.getElementById('result-state').style.display = 'block';
+
+    } catch (err) {
+        clearInterval(elapsedTimer);
+        document.getElementById('loading-state').style.display = 'none';
+        document.getElementById('error-msg').textContent = err.message || 'Unexpected error.';
+        document.getElementById('error-state').style.display = 'block';
+    }
+}
+
+document.addEventListener('DOMContentLoaded', runAnalysis);
+</script>
+</body>
+</html>
