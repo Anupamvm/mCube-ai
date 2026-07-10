@@ -662,6 +662,35 @@ def verify_future_trade(request):
                 'error': 'Invalid contract format'
             })
 
+        # ===== RESULT CACHE & IN-PROGRESS LOCK =====
+        # Caching prevents duplicate simultaneous analyses for the same contract
+        # (parallel tabs, concurrent API calls, SQLite write contention).
+        from django.core.cache import cache as _ac
+        _result_key = f'analysis_result_{stock_symbol}_{expiry_date}'
+        _lock_key = f'analysis_in_progress_{stock_symbol}_{expiry_date}'
+
+        _cached = _ac.get(_result_key)
+        if _cached:
+            logger.info(f"Returning cached analysis for {stock_symbol} {expiry_date}")
+            return JsonResponse({**_cached, 'from_cache': True})
+
+        # atomic add() — succeeds only once; prevents second identical request from
+        # spawning a duplicate 90-second analysis while the first is still running
+        if not _ac.add(_lock_key, '1', timeout=180):
+            logger.info(f"Analysis in progress for {stock_symbol} {expiry_date}, polling for result...")
+            import time as _sleep_mod
+            for _ in range(18):
+                _sleep_mod.sleep(5)
+                _cached = _ac.get(_result_key)
+                if _cached:
+                    return JsonResponse({**_cached, 'from_cache': True})
+            return JsonResponse({
+                'success': False,
+                'error': 'Analysis already in progress for this contract. Please retry in a moment.',
+                'symbol': stock_symbol,
+                'expiry_date': expiry_date,
+            })
+
         logger.info(f"Manual verification: {stock_symbol} expiry {expiry_date}")
 
         # Get contract details from Trendlyne
@@ -1803,10 +1832,28 @@ def verify_future_trade(request):
             # Add suggestion_id to response
             response_data['suggestion_id'] = suggestion.id
 
+        # Cache the complete result for 5 minutes so parallel/repeat requests
+        # return instantly without re-running the 90-second analysis.
+        response_data['from_cache'] = False
+        try:
+            _ac.set(_result_key, response_data, timeout=300)
+            _ac.delete(_lock_key)
+        except Exception as _cache_err:
+            logger.warning(f"Failed to cache analysis result: {_cache_err}")
+
         return JsonResponse(response_data)
 
     except Exception as e:
         logger.error(f"Error in verify_future_trade: {e}", exc_info=True)
+        # Release in-progress lock on error (TTL of 180s is the backstop if this fails)
+        try:
+            from django.core.cache import cache as _ac_exc
+            contract_v = request.POST.get('contract', '').strip()
+            if '|' in contract_v:
+                _s, _e = contract_v.split('|', 1)
+                _ac_exc.delete(f'analysis_in_progress_{_s.upper()}_{_e}')
+        except Exception:
+            pass
         return JsonResponse({
             'success': False,
             'error': str(e)

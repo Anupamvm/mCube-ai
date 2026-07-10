@@ -171,11 +171,81 @@
         .pill.gray { background: #f3f4f6; color: #374151; }
 
         .reason-box {
-            background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 0.5rem;
-            padding: 0.875rem 1rem; font-size: 0.875rem; color: #1e40af;
+            border-radius: 0.5rem; padding: 0.875rem 1rem; font-size: 0.875rem; border: 1px solid;
         }
 
-        @media print { body { background: white; } .spinner, .retry-btn { display: none; } }
+        .action-bar {
+            display: flex; gap: 0.75rem; flex-wrap: wrap;
+        }
+        .action-btn {
+            background: white; border: 1px solid #d1d5db; color: #374151;
+            padding: 0.5rem 1.1rem; border-radius: 0.5rem; font-size: 0.875rem;
+            font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 0.4rem;
+        }
+        .action-btn:hover { background: #f9fafb; border-color: #9ca3af; }
+
+        .cache-badge {
+            display: inline-block; padding: 0.15rem 0.5rem; border-radius: 999px;
+            font-size: 0.68rem; font-weight: 600; background: #f3f4f6; color: #6b7280;
+            vertical-align: middle; margin-left: 0.5rem;
+        }
+
+        /* ── Professional analysis cards ── */
+        .card-title-row {
+            display: flex; align-items: center; justify-content: space-between;
+            flex-wrap: wrap; gap: 0.5rem;
+            margin-bottom: 0.9rem; padding-bottom: 0.75rem; border-bottom: 2px solid #f3f4f6;
+        }
+        .card-title-left { display: flex; align-items: center; gap: 0.6rem; }
+        .card-title-text { font-size: 1rem; font-weight: 700; color: #374151; }
+        .score-badge {
+            background: #e0e7ff; color: #3730a3; border-radius: 999px;
+            padding: 0.2rem 0.7rem; font-size: 0.78rem; font-weight: 700; white-space: nowrap;
+        }
+        .sig-pill {
+            display: inline-block; border-radius: 999px; padding: 0.2rem 0.65rem;
+            font-size: 0.75rem; font-weight: 700; white-space: nowrap;
+        }
+        .sig-pill.bullish  { background: #d1fae5; color: #065f46; }
+        .sig-pill.bearish  { background: #fee2e2; color: #991b1b; }
+        .sig-pill.neutral  { background: #fef3c7; color: #92400e; }
+        .sig-pill.info     { background: #dbeafe; color: #1e40af; }
+
+        .data-table { width: 100%; border-collapse: collapse; font-size: 0.83rem; margin: 0.6rem 0 0.85rem; }
+        .data-table td { padding: 0.3rem 0.5rem; border-bottom: 1px solid #f3f4f6; vertical-align: top; }
+        .data-table td:first-child { color: #9ca3af; width: 45%; white-space: nowrap; }
+        .data-table td:last-child  { font-weight: 600; color: #1f2937; }
+        .data-table .bv { color: #10b981; }
+        .data-table .rv { color: #ef4444; }
+        .data-table .yv { color: #f59e0b; }
+        .data-table .hl { background: #fefce8; font-weight: 700; }
+
+        .interp { font-size: 0.855rem; color: #374151; line-height: 1.65; margin: 0.5rem 0; }
+        .interp strong { color: #1f2937; }
+
+        .concl {
+            border-radius: 0.5rem; padding: 0.65rem 0.9rem;
+            font-size: 0.84rem; font-weight: 500; margin-top: 0.7rem; line-height: 1.5;
+        }
+        .concl.bullish { background: #f0fdf4; border: 1px solid #bbf7d0; color: #166534; }
+        .concl.bearish { background: #fef2f2; border: 1px solid #fca5a5; color: #991b1b; }
+        .concl.neutral { background: #fffbeb; border: 1px solid #fde68a; color: #92400e; }
+        .concl.info    { background: #eff6ff; border: 1px solid #bfdbfe; color: #1e40af; }
+
+        .exec-grid {
+            display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem 1.5rem;
+            font-size: 0.855rem; margin: 0.75rem 0;
+        }
+        .exec-grid .eg-label { color: #9ca3af; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.4px; margin-bottom: 0.15rem; }
+        .exec-grid .eg-value { font-weight: 700; color: #1f2937; }
+        @media (max-width: 600px) { .exec-grid { grid-template-columns: 1fr; } }
+
+        @media print {
+            body { background: white; }
+            .spinner, .retry-btn, .action-bar, #error-state { display: none !important; }
+            .page-header { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+            .section { box-shadow: none; border: 1px solid #e5e7eb; }
+        }
     </style>
 </head>
 <body>
@@ -226,11 +296,12 @@ function fmtCurrency(val) {
 }
 
 function renderHeader(data) {
-    const verdict = (data.verdict || '').toUpperCase();
+    const verdict = data.verdict || '';
+    const verdictUpper = verdict.toUpperCase();
     let cls = 'unknown';
-    if (verdict.startsWith('PASS')) cls = 'pass';
-    else if (verdict.startsWith('FAIL')) cls = 'fail';
-    else if (verdict.startsWith('BLOCK')) cls = 'blocked';
+    if (verdictUpper.startsWith('PASS')) cls = 'pass';
+    else if (verdictUpper.startsWith('FAIL') || verdictUpper.startsWith('HARD')) cls = 'fail';
+    else if (verdictUpper.startsWith('BLOCK')) cls = 'blocked';
 
     const analysis = data.analysis || {};
     const pos = analysis.position_details || {};
@@ -238,21 +309,22 @@ function renderHeader(data) {
     const score = enhanced.composite_score || analysis.composite_score || 0;
     const direction = (enhanced.recommendation || analysis.direction || 'N/A').toUpperCase();
     const dirIcon = direction === 'LONG' ? '▲' : direction === 'SHORT' ? '▼' : '●';
+    const cacheBadge = data.from_cache ? '<span class="cache-badge">Cached</span>' : '';
 
     return `
         <div class="page-header ${cls}">
             <div class="header-top">
                 <div>
-                    <div class="header-symbol">${data.symbol || SYMBOL}</div>
+                    <div class="header-symbol">${data.symbol || SYMBOL}${cacheBadge}</div>
                     <div class="header-expiry">Expiry: ${data.expiry || EXPIRY}</div>
                 </div>
                 <div class="header-score">
                     <div class="score-num">${score}</div>
                     <div class="score-label">/ 100 score</div>
+                    <div class="verdict-badge" style="margin-top:0.6rem;display:inline-block;">${verdict || 'N/A'}</div>
                 </div>
             </div>
             <div class="header-meta">
-                <div class="header-meta-item"><strong>${verdict || 'N/A'}</strong></div>
                 <div class="header-meta-item">${dirIcon} ${direction}</div>
                 ${pos.recommended_lots ? `<div class="header-meta-item">Lots: <strong>${pos.recommended_lots}</strong></div>` : ''}
                 ${pos.margin_required ? `<div class="header-meta-item">Margin: <strong>${fmtCurrency(pos.margin_required)}</strong></div>` : ''}
@@ -491,13 +563,20 @@ function renderHistorical(data) {
     }
 
     checks.forEach(c => {
-        const passed = c.passed !== false;
-        const icon = passed ? '✅' : '❌';
-        const statusCls = passed ? 'pass' : 'fail';
+        // Support both {status:'FAIL'} and {passed:false} field formats
+        const statusStr = (c.status || '').toUpperCase();
+        const passed = statusStr === 'PASS' || statusStr === 'WARNING' || statusStr === 'SKIP'
+            || (statusStr === '' && c.passed !== false);
+        const isFail = statusStr === 'FAIL' || (!statusStr && c.passed === false);
+        const isWarn = statusStr === 'WARNING';
+        const icon = isFail ? '❌' : isWarn ? '⚠️' : '✅';
+        const statusCls = isFail ? 'fail' : isWarn ? 'warn' : 'pass';
+        const statusLabel = isFail ? 'FAIL' : isWarn ? 'WARN' : 'PASS';
+        const detail = c.message || c.value || '';
         html += `<div class="risk-row">
             <div class="risk-icon">${icon}</div>
-            <div class="risk-label">${c.check_name || c.name || c.description || ''}</div>
-            <div class="risk-status ${statusCls}">${passed ? 'PASS' : 'FAIL'}</div>
+            <div class="risk-label">${c.check_name || c.name || c.description || ''}${detail ? `<span style="color:#9ca3af;font-size:0.78rem;margin-left:0.5rem;">${detail}</span>` : ''}</div>
+            <div class="risk-status ${statusCls}">${statusLabel}</div>
         </div>`;
     });
 
@@ -506,23 +585,641 @@ function renderHistorical(data) {
 
 function renderReason(data) {
     if (!data.reason) return '';
+    const v = (data.verdict || '').toUpperCase();
+    let reasonStyle, icon;
+    if (v.startsWith('BLOCK')) {
+        reasonStyle = 'background:#fff7ed;border-color:#fed7aa;color:#92400e;';
+        icon = '⛔';
+    } else if (v.startsWith('FAIL') || v.startsWith('HARD')) {
+        reasonStyle = 'background:#fef2f2;border-color:#fca5a5;color:#991b1b;';
+        icon = '✗';
+    } else {
+        reasonStyle = 'background:#eff6ff;border-color:#bfdbfe;color:#1e40af;';
+        icon = '💡';
+    }
     return `<div class="section">
-        <div class="section-title">💡 Verdict Reasoning</div>
-        <div class="reason-box">${data.reason}</div>
+        <div class="section-title">${icon} Verdict Reasoning</div>
+        <div class="reason-box" style="${reasonStyle}">${data.reason}</div>
+    </div>`;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PROFESSIONAL ANALYSIS CARDS
+// ═══════════════════════════════════════════════════════════════════════════
+
+function findStep(log, keyword) {
+    if (!log) return null;
+    const kw = keyword.toLowerCase();
+    return log.find(s => (s.action || '').toLowerCase().includes(kw)) || null;
+}
+
+function dr(label, value, cls) {
+    return `<tr><td>${label}</td><td class="${cls||''}">${value != null && value !== '' ? value : '—'}</td></tr>`;
+}
+
+function sigPill(text, type) {
+    return `<span class="sig-pill ${type||'neutral'}">${text}</span>`;
+}
+
+function concl(icon, text, type) {
+    return `<div class="concl ${type||'neutral'}">${icon} ${text}</div>`;
+}
+
+function fmtOI(n) {
+    if (!n && n !== 0) return '—';
+    n = Number(n);
+    if (n >= 10000000) return (n/10000000).toFixed(2) + 'Cr';
+    if (n >= 100000)   return (n/100000).toFixed(2) + 'L';
+    if (n >= 1000)     return (n/1000).toFixed(1) + 'K';
+    return n.toLocaleString('en-IN');
+}
+
+function fmtPct(v, decimals) {
+    if (v == null) return '—';
+    const n = Number(v);
+    const d = decimals != null ? decimals : 2;
+    return (n >= 0 ? '+' : '') + n.toFixed(d) + '%';
+}
+
+function dmaArrow(price, dma) {
+    if (!dma || !price) return '';
+    const pct = ((price - dma) / dma * 100);
+    const arrow = pct >= 0 ? '↑' : '↓';
+    return `${fmtPct(pct, 1)} ${arrow}`;
+}
+
+function buildupLabel(type) {
+    switch ((type||'').toUpperCase()) {
+        case 'LONG_BUILDUP':   return ['Long Build-up',   'bullish'];
+        case 'SHORT_BUILDUP':  return ['Short Build-up',  'bearish'];
+        case 'SHORT_COVERING': return ['Short Covering',  'bullish'];
+        case 'LONG_UNWINDING': return ['Long Unwinding',  'bearish'];
+        default:               return [type || 'Neutral', 'neutral'];
+    }
+}
+
+// ─── Card 1: Basis Analysis ───────────────────────────────────────────────
+function cardBasis(data) {
+    const s2 = findStep(data.execution_log, 'Basis');
+    const a  = data.analysis || {};
+    if (!s2) return '';
+    const d = s2.details || {};
+    const signal = (d.basis_signal || 'NEUTRAL').toUpperCase();
+    const isContango = signal === 'CONTANGO';
+    const signalType = isContango ? 'neutral' : signal === 'BACKWARDATION' ? 'bearish' : 'neutral';
+
+    const cocOk = d.cost_of_carry_annualized != null && d.cost_of_carry_annualized >= 5 && d.cost_of_carry_annualized <= 15;
+
+    let interp = '';
+    if (isContango) {
+        interp = `Basis is in <strong>CONTANGO</strong> (₹${fmt(d.basis || a.basis)}, ${fmtPct(d.basis_pct || a.basis_pct)}), meaning futures trade at a premium to spot. `;
+        interp += cocOk
+            ? `Annualised cost of carry of <strong>${fmt(d.cost_of_carry_annualized)}% p.a.</strong> falls within the healthy range (5–15%), suggesting normal arbitrage dynamics.`
+            : `Cost of carry of <strong>${fmt(d.cost_of_carry_annualized)}% p.a.</strong> is ${d.cost_of_carry_annualized > 15 ? 'elevated, signalling speculative froth' : 'below normal, hinting at muted interest'}.`;
+    } else if (signal === 'BACKWARDATION') {
+        interp = `Basis is in <strong>BACKWARDATION</strong> (₹${fmt(d.basis || a.basis)}). Futures trade below spot, suggesting near-term supply pressure or forced unwinding.`;
+    } else {
+        interp = `Basis is near <strong>NEUTRAL</strong> (₹${fmt(d.basis || a.basis)}). Futures are fairly priced relative to spot with minimal carry premium.`;
+    }
+
+    if (d.interpretation) interp += ` ${d.interpretation}`;
+
+    const conclType = (isContango && cocOk) ? 'bullish' : signal === 'BACKWARDATION' ? 'bearish' : 'neutral';
+    const conclText = isContango && cocOk
+        ? 'Normal premium — basis supports directional entries without elevated carry risk.'
+        : signal === 'BACKWARDATION'
+        ? 'Backwardation detected — exercise caution; near-term selling pressure likely.'
+        : 'Neutral basis — monitor for expansion or contraction as a leading signal.';
+
+    const scoreMax = 10;
+    return `<div class="section">
+        <div class="card-title-row">
+            <div class="card-title-left">
+                <span class="card-title-text">📐 Basis &amp; Cost of Carry</span>
+                <span class="score-badge">${d.score ?? '—'}/${scoreMax}</span>
+                ${sigPill(signal, signalType)}
+            </div>
+        </div>
+        <table class="data-table">
+            ${dr('Futures Price', a.contract_price ? '₹' + fmt(a.contract_price) : '—')}
+            ${dr('Spot Price',    a.spot_price    ? '₹' + fmt(a.spot_price)    : '—')}
+            ${dr('Basis',        d.basis != null  ? '₹' + fmt(d.basis) + ' (' + fmtPct(d.basis_pct) + ')' : '—', d.basis >= 0 ? 'bv' : 'rv')}
+            ${dr('Cost of Carry', d.cost_of_carry_annualized != null ? fmt(d.cost_of_carry_annualized) + '% p.a.' : '—', cocOk ? 'bv' : 'rv')}
+            ${dr('Days to Expiry', d.days_to_expiry != null ? d.days_to_expiry + ' days' : '—')}
+        </table>
+        <div class="interp">${interp}</div>
+        ${concl(isContango && cocOk ? '✅' : signal === 'BACKWARDATION' ? '⚠️' : 'ℹ️', conclText, conclType)}
+    </div>`;
+}
+
+// ─── Card 2: Open Interest ────────────────────────────────────────────────
+function cardOI(data) {
+    const s3 = findStep(data.execution_log, 'Open Interest');
+    const s6 = findStep(data.execution_log, 'Volume & Liquidity');
+    if (!s3 || !s3.details || s3.status === 'SKIP') return '';
+
+    const d3 = s3.details;
+    const d6 = (s6 && s6.details) || {};
+    const ea  = (data.enhanced_analysis || {}).details || {};
+    const oiFno = ea.oi_fno || {};
+    const buildup = oiFno.buildup || {};
+    const pcr = oiFno.pcr || {};
+    const mwpl = oiFno.mwpl || {};
+
+    const [bdLabel, bdType] = buildupLabel(d3.buildup_type || buildup.type);
+    const currentOI = d6.futures_oi || 0;
+    const changePct = d3.oi_change_pct || 0;
+    const previousOI = changePct !== 0 ? Math.round(currentOI / (1 + changePct / 100)) : null;
+    const priceChg = buildup.price_change || 0;
+
+    let interpretation = '';
+    const bt = (d3.buildup_type || '').toUpperCase();
+    if (bt === 'SHORT_BUILDUP') {
+        interpretation = `OI rose <strong>${fmtPct(changePct)}</strong> while price moved <strong class="rv">${fmtPct(priceChg)}</strong> — a textbook <strong>Short Build-up</strong>. ` +
+            `Fresh short positions are being added, reflecting directional selling conviction rather than profit-booking by longs.`;
+    } else if (bt === 'LONG_BUILDUP') {
+        interpretation = `OI rose <strong>${fmtPct(changePct)}</strong> alongside price rising <strong class="bv">${fmtPct(priceChg)}</strong> — a <strong>Long Build-up</strong>. ` +
+            `New longs are entering the market, a bullish confirmation signal.`;
+    } else if (bt === 'SHORT_COVERING') {
+        interpretation = `OI fell <strong>${fmtPct(changePct)}</strong> as price rose <strong class="bv">${fmtPct(priceChg)}</strong> — <strong>Short Covering</strong>. ` +
+            `Existing shorts are closing positions; this rally may be short-lived unless fresh longs replace them.`;
+    } else if (bt === 'LONG_UNWINDING') {
+        interpretation = `OI fell <strong>${fmtPct(changePct)}</strong> as price dropped <strong class="rv">${fmtPct(priceChg)}</strong> — <strong>Long Unwinding</strong>. ` +
+            `Longs are exiting; the decline may be orderly rather than a new bearish trend.`;
+    } else {
+        interpretation = `OI change: <strong>${fmtPct(changePct)}</strong>. Market positioning is neutral with no dominant directional conviction.`;
+    }
+
+    if (pcr.value) {
+        const pcrV = pcr.value;
+        const pcrDesc = pcrV > 1.2 ? 'elevated (bearish sentiment, contrarian bullish)' : pcrV < 0.8 ? 'low (call-heavy, contrarian bearish)' : 'balanced';
+        interpretation += ` PCR of <strong>${fmt(pcrV, 2)}</strong> is ${pcrDesc}.`;
+    }
+
+    if (mwpl.value) {
+        const mv = mwpl.value;
+        const mwplWarn = mv > 50 ? ' ⚠️ MWPL above 50% — F&O activity is heavy; approach with caution.' : '';
+        interpretation += ` MWPL at <strong>${fmt(mv, 1)}%</strong> (ban threshold: 95%).${mwplWarn}`;
+    }
+
+    const conclType = bt === 'LONG_BUILDUP' || bt === 'SHORT_COVERING' ? 'bullish' : bt === 'SHORT_BUILDUP' || bt === 'LONG_UNWINDING' ? 'bearish' : 'neutral';
+    const conclTexts = {
+        LONG_BUILDUP: 'Fresh long build-up confirmed. Bullish participation supports continuation.',
+        SHORT_BUILDUP: 'Fresh short build-up. Avoid new longs until OI starts declining or price recovers above resistance.',
+        SHORT_COVERING: 'Short covering rally — validate with fresh long build-up before adding aggressive positions.',
+        LONG_UNWINDING: 'Long unwinding in progress. Wait for stabilisation before re-entering longs.',
+    };
+    const conclText = conclTexts[bt] || 'OI signal neutral — watch for directional confirmation.';
+
+    return `<div class="section">
+        <div class="card-title-row">
+            <div class="card-title-left">
+                <span class="card-title-text">📊 Open Interest Analysis</span>
+                <span class="score-badge">${d3.score ?? '—'}/15</span>
+                ${sigPill(bdLabel, bdType)}
+            </div>
+        </div>
+        <table class="data-table">
+            ${dr('Current OI',        fmtOI(currentOI))}
+            ${previousOI ? dr('Previous OI', fmtOI(previousOI)) : ''}
+            ${dr('OI Change',         fmtPct(changePct), changePct >= 0 ? 'bv' : 'rv')}
+            ${dr('Price Change',      fmtPct(priceChg),  priceChg >= 0 ? 'bv' : 'rv')}
+            ${pcr.value ? dr('PCR (OI)',   fmt(pcr.value, 2))    : ''}
+            ${mwpl.value ? dr('MWPL',     fmt(mwpl.value, 1) + '%') : ''}
+            ${oiFno.rollover && oiFno.rollover.pct ? dr('Rollover',  fmt(oiFno.rollover.pct, 1) + '%') : ''}
+        </table>
+        <div class="interp">${interpretation}</div>
+        ${concl(conclType === 'bullish' ? '✅' : conclType === 'bearish' ? '⚠️' : 'ℹ️', conclText, conclType)}
+    </div>`;
+}
+
+// ─── Card 3: Trend & DMA ─────────────────────────────────────────────────
+function cardDMA(data) {
+    const s4 = findStep(data.execution_log, 'DMA Analysis');
+    const s7 = findStep(data.execution_log, 'Multi-Factor Technical');
+    const s8 = findStep(data.execution_log, 'Support');
+    if (!s4) return '';
+
+    const d4 = s4.details || {};
+    const ma  = (s8 && s8.details && s8.details.moving_averages) || {};
+    const tlr = (s7 && s7.details && s7.details.tl_raw) || {};
+    const ea  = (data.enhanced_analysis || {}).details || {};
+    const tc  = ea.trend_confirmation || {};
+    const price = (data.analysis || {}).spot_price || 0;
+
+    const dma20  = ma.dma_20  || null;
+    const dma50  = ma.dma_50  || tlr.dma50  || null;
+    const dma100 = ma.dma_100 || tlr.dma100 || null;
+    const dma200 = tlr.dma200 || null;
+
+    const trend = d4.trend || 'UNKNOWN';
+    const aboveCount = d4.above_dma_count || 0;
+    const totalDMAs  = d4.total_dmas || 4;
+    const trendType = (trend.includes('UP') || d4.golden_cross) ? 'bullish' : (trend.includes('DOWN') || d4.death_cross) ? 'bearish' : 'neutral';
+
+    let interpretation = `Price (₹${fmt(price)}) trades above <strong>${aboveCount} of ${totalDMAs}</strong> key moving averages. `;
+    interpretation += trend.includes('GOLDEN') ? 'A <strong>Golden Cross</strong> (20-DMA > 50-DMA) is active — a structurally bullish signal. ' :
+                      trend.includes('DEATH')  ? 'A <strong>Death Cross</strong> (20-DMA < 50-DMA) is active — a bearish structural warning. ' : '';
+    interpretation += d4.above_sma_200 ? 'Price is above the 200 DMA, confirming the long-term uptrend is intact. ' : 'Price is <strong>below the 200 DMA</strong> — the long-term primary trend is bearish. ';
+
+    if (tc['52w_high'] && tc['52w_high_distance_pct'] != null) {
+        interpretation += `Stock is <strong>${fmt(Math.abs(tc['52w_high_distance_pct']), 1)}%</strong> ${tc['52w_high_distance_pct'] < 0 ? 'below' : 'above'} its 52-week high (₹${fmt(tc['52w_high'])}).`;
+    }
+
+    const conclTexts = {
+        bullish: 'Multi-timeframe uptrend intact. Dips toward DMA support offer lower-risk entry points.',
+        bearish: 'Downtrend in progress. Short positions or avoidance of longs is advisable.',
+        neutral: 'Mixed trend signals — await a clear directional break before committing.',
+    };
+
+    return `<div class="section">
+        <div class="card-title-row">
+            <div class="card-title-left">
+                <span class="card-title-text">📈 Trend &amp; Moving Averages</span>
+                <span class="score-badge">${d4.score ?? '—'}/15</span>
+                ${sigPill(trend.replace(/_/g, ' '), trendType)}
+            </div>
+        </div>
+        <table class="data-table">
+            <tr class="hl"><td><strong>► Current Price</strong></td><td><strong>₹${fmt(price)}</strong></td></tr>
+            ${dma20  ? dr('20 DMA',  '₹' + fmt(dma20)  + '  ' + dmaArrow(price, dma20),  price >= dma20  ? 'bv' : 'rv') : ''}
+            ${dma50  ? dr('50 DMA',  '₹' + fmt(dma50)  + '  ' + dmaArrow(price, dma50),  price >= dma50  ? 'bv' : 'rv') : ''}
+            ${dma100 ? dr('100 DMA', '₹' + fmt(dma100) + '  ' + dmaArrow(price, dma100), price >= dma100 ? 'bv' : 'rv') : ''}
+            ${dma200 ? dr('200 DMA', '₹' + fmt(dma200) + '  ' + dmaArrow(price, dma200), price >= dma200 ? 'bv' : 'rv') : dr('200 DMA', d4.above_sma_200 ? 'Above (value N/A)' : 'Below (value N/A)', d4.above_sma_200 ? 'bv' : 'rv')}
+            ${tc['52w_high'] ? dr('52-Week High', '₹' + fmt(tc['52w_high']) + (tc['52w_high_distance_pct'] != null ? '  (' + fmtPct(tc['52w_high_distance_pct'], 1) + ')' : ''), tc['52w_high_distance_pct'] >= 0 ? 'bv' : 'rv') : ''}
+            ${tc['52w_low']  ? dr('52-Week Low',  '₹' + fmt(tc['52w_low'])  + (tc['52w_low_distance_pct']  != null ? '  (' + fmtPct(tc['52w_low_distance_pct'], 1)  + ')' : ''), 'bv') : ''}
+            ${d4.golden_cross ? dr('Signal', '✨ Golden Cross', 'bv') : d4.death_cross ? dr('Signal', '💀 Death Cross', 'rv') : ''}
+        </table>
+        <div class="interp">${interpretation}</div>
+        ${concl(trendType === 'bullish' ? '✅' : trendType === 'bearish' ? '⚠️' : 'ℹ️', conclTexts[trendType] || conclTexts.neutral, trendType)}
+    </div>`;
+}
+
+// ─── Card 4: Sector Strength ──────────────────────────────────────────────
+function cardSector(data) {
+    const s5 = findStep(data.execution_log, 'Sector');
+    if (!s5) return '';
+    const d5 = s5.details || {};
+    const verdict = d5.verdict || 'MIXED';
+    const vType = verdict.includes('BULL') ? 'bullish' : verdict.includes('BEAR') ? 'bearish' : 'neutral';
+    const perf = d5.performance || {};
+
+    let interp = `The sector is classified as <strong>${verdict.replace(/_/g, ' ')}</strong>. `;
+    interp += d5.allow_long  ? 'Long positions are <strong>permitted</strong>. ' : 'Long positions are <strong>restricted</strong> by sector filter. ';
+    interp += d5.allow_short ? 'Short positions are <strong>permitted</strong>.' : 'Short positions are <strong>restricted</strong>.';
+    interp += ` When individual stock signals align with sector momentum, win rates improve materially. A bullish stock in a bearish sector is a key divergence risk.`;
+
+    const rows = [];
+    if (perf.sector_name)          rows.push(dr('Sector', perf.sector_name));
+    if (perf.sector_return != null) rows.push(dr('Sector Return', fmtPct(perf.sector_return, 2), perf.sector_return >= 0 ? 'bv' : 'rv'));
+    if (perf.relative_strength != null) rows.push(dr('vs Nifty', fmtPct(perf.relative_strength, 2), perf.relative_strength >= 0 ? 'bv' : 'rv'));
+    if (perf.advancing != null)    rows.push(dr('Advancing / Declining', `${perf.advancing} / ${perf.declining || '—'}`, perf.advancing > (perf.declining || 0) ? 'bv' : 'rv'));
+    rows.push(dr('Allow Long',  d5.allow_long  ? '✓ Yes' : '✗ No', d5.allow_long  ? 'bv' : 'rv'));
+    rows.push(dr('Allow Short', d5.allow_short ? '✓ Yes' : '✗ No', d5.allow_short ? 'bv' : 'rv'));
+
+    return `<div class="section">
+        <div class="card-title-row">
+            <div class="card-title-left">
+                <span class="card-title-text">🏭 Sector Strength</span>
+                <span class="score-badge">${d5.score ?? '—'}/20</span>
+                ${sigPill(verdict.replace(/_/g, ' '), vType)}
+            </div>
+        </div>
+        <table class="data-table">${rows.join('')}</table>
+        <div class="interp">${interp}</div>
+        ${concl(
+            vType === 'bullish' ? '✅' : vType === 'bearish' ? '⚠️' : 'ℹ️',
+            vType === 'bullish' ? 'Sector tailwind aligned. Macro supports the directional bias.' :
+            vType === 'bearish' ? 'Sector headwind — a long position fights macro momentum.' :
+            'Sector signals are mixed. Individual stock analysis carries more weight.',
+            vType
+        )}
+    </div>`;
+}
+
+// ─── Card 5: Volume & Liquidity ───────────────────────────────────────────
+function cardVolume(data) {
+    const s6 = findStep(data.execution_log, 'Volume & Liquidity');
+    const s7 = findStep(data.execution_log, 'Multi-Factor Technical');
+    if (!s6) return '';
+
+    const d6  = s6.details || {};
+    const tlr = (s7 && s7.details && s7.details.tl_raw)    || {};
+    const vp  = (s7 && s7.details && (s7.details.components || s7.details).volume_pattern) || {};
+    const ea  = (data.enhanced_analysis || {}).details || {};
+    const vq  = ea.volume_quality || {};
+    const vwap = (vq.vwap || {});
+
+    const todayVol = vp.current || d6.futures_volume || 0;
+    const prevVol  = vp.previous || 0;
+    const volRatio = todayVol && prevVol ? todayVol / prevVol : null;
+    const volSignal = vp.signal || (volRatio ? (volRatio > 2 ? 'SURGE' : volRatio > 1.3 ? 'ELEVATED' : volRatio > 0.7 ? 'NORMAL' : 'LOW') : 'UNKNOWN');
+    const vType = ['SURGE','ELEVATED','HIGH'].includes(volSignal) ? 'bullish' : volSignal === 'LOW' ? 'bearish' : 'neutral';
+
+    const deliveryPct = (vq.delivery && vq.delivery.pct) || tlr.delivery_pct;
+    const priceDir = (ea.technical_momentum && ea.technical_momentum.roc21 && ea.technical_momentum.roc21.value);
+
+    let interp = todayVol > 0
+        ? `Today's futures volume is <strong>${fmtOI(todayVol)} contracts</strong>`
+        : 'Volume data not available.';
+    if (prevVol > 0 && volRatio) {
+        interp += `, which is <strong>${fmt(volRatio, 2)}× yesterday's</strong> volume (${fmtOI(prevVol)}).`;
+        interp += volRatio > 1.5 ? ' Elevated participation confirms the price move is genuine.' :
+                  volRatio < 0.7 ? ' Low volume reduces conviction — price moves may be unreliable.' :
+                  ' Volume is normal.';
+    }
+    if (deliveryPct) {
+        interp += ` Delivery percentage of <strong>${fmt(deliveryPct, 1)}%</strong> reflects actual transfer of shares; higher values suggest stronger conviction.`;
+    }
+    if (vwap.vwap && (data.analysis || {}).spot_price) {
+        const sp = (data.analysis || {}).spot_price;
+        interp += sp < vwap.vwap
+            ? ` Price (₹${fmt(sp)}) is trading <strong class="rv">below VWAP</strong> (₹${fmt(vwap.vwap)}) — intraday bears are in control.`
+            : ` Price (₹${fmt(sp)}) is trading <strong class="bv">above VWAP</strong> (₹${fmt(vwap.vwap)}) — intraday bulls dominating.`;
+    }
+
+    return `<div class="section">
+        <div class="card-title-row">
+            <div class="card-title-left">
+                <span class="card-title-text">📦 Volume &amp; Liquidity</span>
+                <span class="score-badge">${d6.score ?? '—'}/10</span>
+                ${sigPill(volSignal, vType)}
+            </div>
+        </div>
+        <table class="data-table">
+            ${dr("Today's Volume",     todayVol > 0 ? fmtOI(todayVol) + ' contracts' : '—')}
+            ${prevVol > 0 ? dr('Prev Day Volume',   fmtOI(prevVol) + ' contracts') : ''}
+            ${volRatio    ? dr('Volume Ratio',      fmt(volRatio, 2) + '× prev', volRatio >= 1.3 ? 'bv' : volRatio < 0.7 ? 'rv' : '') : ''}
+            ${dr('Futures OI',        fmtOI(d6.futures_oi))}
+            ${deliveryPct ? dr('Delivery %',        fmt(deliveryPct, 1) + '%', deliveryPct >= 35 ? 'bv' : '') : ''}
+            ${vwap.vwap   ? dr('VWAP',              '₹' + fmt(vwap.vwap), (data.analysis||{}).spot_price >= vwap.vwap ? 'bv' : 'rv') : ''}
+            ${d6.volume_rank ? dr('Volume Rank',   d6.volume_rank + '/10') : ''}
+        </table>
+        <div class="interp">${interp}</div>
+        ${concl(
+            vType === 'bullish' ? '✅' : vType === 'bearish' ? '⚠️' : 'ℹ️',
+            vType === 'bullish' ? 'Volume-backed move — elevated participation lends conviction to the direction.' :
+            vType === 'bearish' ? 'Low-volume move — treat price action with caution; conviction is absent.' :
+            'Normal volume — neither particularly confirming nor negating the price move.',
+            vType
+        )}
+    </div>`;
+}
+
+// ─── Card 6: Technical Indicators ─────────────────────────────────────────
+function cardTechnical(data) {
+    const s7 = findStep(data.execution_log, 'Multi-Factor Technical');
+    if (!s7) return '';
+    const d7  = s7.details || {};
+    const comp = d7.components || d7;
+    const tlr  = d7.tl_raw || {};
+    const ea   = (data.enhanced_analysis || {}).details || {};
+    const tm   = ea.technical_momentum || {};
+    const tl   = comp.trendlyne || {};
+
+    // RSI: prefer enhanced analyzer raw value (from TLStockData), fall back to tl_raw
+    const rsiVal = (tm.rsi && tm.rsi.value) || tlr.rsi;
+    const macdVal = tm.macd ? tm.macd.value : null;
+    const macdSig = tm.macd ? tm.macd.signal : null;
+    const adxVal  = (tm.adx && tm.adx.value) || null;
+    const mfiVal  = (tm.mfi && tm.mfi.value) || null;
+    const atrVal  = tlr.atr || ((data.enhanced_analysis || {}).entry_params || {}).atr;
+
+    const pcr = (comp.pcr && comp.pcr.pcr_oi) || null;
+    const priceMom = comp.price_momentum || {};
+    const volatility = comp.volatility || {};
+
+    const signal = d7.signal || (d7.score >= 12 ? 'VERY_STRONG' : d7.score >= 9 ? 'STRONG' : d7.score >= 6 ? 'MODERATE' : 'WEAK');
+    const sType = ['VERY_STRONG','STRONG'].includes(signal) ? 'bullish' : signal === 'WEAK' ? 'bearish' : 'neutral';
+
+    // RSI interpretation
+    let interp = '';
+    if (rsiVal != null) {
+        const rsiOb = rsiVal > 75, rsiOs = rsiVal < 30;
+        interp += `RSI at <strong>${fmt(rsiVal, 1)}</strong> is ${rsiOb ? '<span class="rv">overbought</span> — momentum may be extended' : rsiOs ? '<span class="bv">oversold</span> — potential reversal zone' : 'neutral territory'}. `;
+    }
+    if (macdVal != null) {
+        interp += `MACD (<strong>${macdVal >= 0 ? '+' : ''}${fmt(macdVal, 2)}</strong>) is ${macdVal > 0 ? 'above zero, confirming bullish momentum' : 'below zero, reflecting bearish bias'}. `;
+    }
+    if (adxVal != null) {
+        interp += `ADX at <strong>${fmt(adxVal, 1)}</strong> ${adxVal >= 25 ? 'confirms a trending market — directional strategies viable' : 'is low, suggesting a ranging/consolidating market'}. `;
+    }
+    if (atrVal != null) {
+        interp += `ATR of <strong>₹${fmt(atrVal, 0)}</strong> reflects the average daily range — use as a reference for stop-loss sizing.`;
+    }
+    if (!interp) interp = `Technical composite score: <strong>${d7.score || '—'}/15</strong> (${signal.replace(/_/g,' ')}). ` + (tl.composite ? `Trendlyne composite: ${fmt(tl.composite, 1)}/100 (${tl.rating || ''}).` : '');
+
+    return `<div class="section">
+        <div class="card-title-row">
+            <div class="card-title-left">
+                <span class="card-title-text">⚡ Technical Indicators</span>
+                <span class="score-badge">${d7.score ?? '—'}/15</span>
+                ${sigPill(signal.replace(/_/g,' '), sType)}
+            </div>
+        </div>
+        <table class="data-table">
+            ${rsiVal  != null ? dr('RSI (14)',       fmt(rsiVal, 1)  + (rsiVal > 75 ? ' — Overbought' : rsiVal < 30 ? ' — Oversold' : ' — Neutral'),  rsiVal > 75 ? 'yv' : rsiVal < 30 ? 'bv' : '') : ''}
+            ${macdVal != null ? dr('MACD',           (macdVal >= 0 ? '+' : '') + fmt(macdVal, 2),    macdVal > 0 ? 'bv' : 'rv') : ''}
+            ${macdSig != null ? dr('MACD Signal',    (macdSig >= 0 ? '+' : '') + fmt(macdSig, 2),    macdVal != null && macdVal > macdSig ? 'bv' : 'rv') : ''}
+            ${adxVal  != null ? dr('ADX',            fmt(adxVal, 1)  + (adxVal >= 25 ? ' — Trending' : ' — Ranging'),  adxVal >= 25 ? 'bv' : '') : ''}
+            ${mfiVal  != null ? dr('MFI',            fmt(mfiVal, 1)) : ''}
+            ${atrVal  != null ? dr('ATR (14)',        '₹' + fmt(atrVal, 0) + ' per share') : ''}
+            ${tl.composite != null ? dr('Trendlyne Score', fmt(tl.composite, 1) + '/100 (' + (tl.rating || '') + ')', tl.composite >= 60 ? 'bv' : 'rv') : ''}
+            ${priceMom.day_change_pct != null ? dr('Day Change', fmtPct(priceMom.day_change_pct), priceMom.day_change_pct >= 0 ? 'bv' : 'rv') : ''}
+            ${pcr != null ? dr('PCR (OI)', fmt(pcr, 2) + (pcr > 1.2 ? ' — Contrarian Bullish' : pcr < 0.8 ? ' — Contrarian Bearish' : ' — Neutral')) : ''}
+            ${volatility.day_range_pct != null ? dr('Day Range', fmt(volatility.day_range_pct, 2) + '%, @ ' + fmt(volatility.position_in_range * 100, 0) + '% of range') : ''}
+        </table>
+        <div class="interp">${interp}</div>
+        ${concl(
+            sType === 'bullish' ? '✅' : sType === 'bearish' ? '⚠️' : 'ℹ️',
+            sType === 'bullish' ? 'Technical signals are aligned bullish. Momentum supports directional entries.' :
+            sType === 'bearish' ? 'Weak technical readings — directional entries carry higher risk.' :
+            'Mixed technical picture — wait for indicator convergence before committing.',
+            sType
+        )}
+    </div>`;
+}
+
+// ─── Card 7: Support & Resistance ─────────────────────────────────────────
+function cardSR(data) {
+    const s8 = findStep(data.execution_log, 'Support');
+    if (!s8 || !s8.details || s8.status === 'SKIP') return '';
+    const d8 = s8.details || {};
+    const pos  = (data.analysis || {}).position_details || {};
+    const price = (data.analysis || {}).spot_price || (data.analysis || {}).contract_price || 0;
+
+    const posSignal = d8.position_signal || '—';
+    const psType = posSignal.includes('SUPPORT') ? 'bullish' : posSignal.includes('RESISTANCE') ? 'bearish' : 'neutral';
+
+    let interp = '';
+    if (d8.support && d8.resistance && price) {
+        const distToR = d8.resistance_distance_pct || ((d8.resistance - price) / price * 100);
+        const distToS = d8.support_distance_pct    || ((price - d8.support) / price * 100);
+        interp = `Current price (₹${fmt(price)}) is positioned <strong>${fmt(distToS, 1)}%</strong> above Support 1 (₹${fmt(d8.support)}) and <strong>${fmt(distToR, 1)}%</strong> below Resistance 1 (₹${fmt(d8.resistance)}). `;
+        if (distToR < distToS) {
+            interp += `Price is <strong>closer to resistance</strong> — risk/reward for fresh longs is less favourable. Consider waiting for a pullback.`;
+        } else {
+            interp += `Price is <strong>closer to support</strong> — buying near support with a stop below S1 offers a better risk/reward setup.`;
+        }
+    }
+    if (d8.breach_risks) {
+        const br = d8.breach_risks;
+        const longBreach  = br.long  && br.long.s1_breach;
+        const shortBreach = br.short && br.short.r1_breach;
+        if (longBreach  && longBreach.potential_loss)  interp += ` LONG @ S1 breach risk: ₹${Math.abs(longBreach.potential_loss).toLocaleString('en-IN')} loss.`;
+        if (shortBreach && shortBreach.potential_loss) interp += ` SHORT @ R1 breach risk: ₹${Math.abs(shortBreach.potential_loss).toLocaleString('en-IN')} loss.`;
+    }
+    if (pos.stop_loss && pos.target) {
+        const riskPct   = price ? Math.abs((pos.stop_loss - price) / price * 100) : 0;
+        const rewardPct = price ? Math.abs((pos.target    - price) / price * 100) : 0;
+        interp += ` Algo-calculated entry: SL ₹${fmt(pos.stop_loss)} (−${fmt(riskPct, 1)}%), Target ₹${fmt(pos.target)} (+${fmt(rewardPct, 1)}%), R:R = <strong>1:${fmt(rewardPct / (riskPct || 1), 1)}</strong>.`;
+    }
+
+    return `<div class="section">
+        <div class="card-title-row">
+            <div class="card-title-left">
+                <span class="card-title-text">🎯 Support &amp; Resistance</span>
+                <span class="score-badge">${d8.score ?? '—'}/5</span>
+                ${sigPill(posSignal.replace(/_/g,' '), psType)}
+            </div>
+        </div>
+        <table class="data-table">
+            ${d8.resistance_2 ? dr('Resistance 2', '₹' + fmt(d8.resistance_2), 'rv') : ''}
+            ${d8.resistance   ? dr('Resistance 1', '₹' + fmt(d8.resistance) + (d8.resistance_distance_pct ? '  (+' + fmt(d8.resistance_distance_pct, 1) + '%)' : ''), 'rv') : ''}
+            ${price           ? '<tr class="hl"><td><strong>► Current Price</strong></td><td><strong>₹' + fmt(price) + '</strong></td></tr>' : ''}
+            ${d8.support      ? dr('Support 1', '₹' + fmt(d8.support) + (d8.support_distance_pct ? '  (−' + fmt(d8.support_distance_pct, 1) + '%)' : ''), 'bv') : ''}
+            ${d8.support_2    ? dr('Support 2', '₹' + fmt(d8.support_2), 'bv') : ''}
+            ${pos.stop_loss   ? dr('Stop Loss (Algo)', '₹' + fmt(pos.stop_loss), 'rv') : ''}
+            ${pos.target      ? dr('Target (Algo)',    '₹' + fmt(pos.target),    'bv') : ''}
+        </table>
+        <div class="interp">${interp}</div>
+        ${concl(
+            psType === 'bullish' ? '✅' : psType === 'bearish' ? '⚠️' : 'ℹ️',
+            posSignal.includes('SUPPORT')    ? 'Near support — favourable zone for longs with stop below S1.' :
+            posSignal.includes('RESISTANCE') ? 'Near resistance — wait for breakout or look for short entry.' :
+            'Mid-range positioning — no immediate level edge.',
+            psType
+        )}
+    </div>`;
+}
+
+// ─── Executive Summary ────────────────────────────────────────────────────
+function cardExecutiveSummary(data) {
+    const ea = data.enhanced_analysis || {};
+    const analysis = data.analysis || {};
+    const pos = analysis.position_details || {};
+    const direction = (ea.recommendation || analysis.direction || 'N/A').toUpperCase();
+    const dirType = direction === 'LONG' || direction === 'STRONG_ENTRY' ? 'bullish'
+                  : direction === 'SHORT' ? 'bearish' : 'neutral';
+
+    const s3 = findStep(data.execution_log, 'Open Interest');
+    const s4 = findStep(data.execution_log, 'DMA Analysis');
+    const s7 = findStep(data.execution_log, 'Multi-Factor Technical');
+    const ea_d = ea.details || {};
+    const tm = ea_d.technical_momentum || {};
+    const rsiVal = (tm.rsi && tm.rsi.value) || ((s7 && s7.details && s7.details.tl_raw) || {}).rsi;
+
+    const rows = [
+        { label: 'Overall Score',   value: (ea.composite_score || analysis.composite_score || 0) + '/100' },
+        { label: 'Directional Bias', value: direction.replace(/_/g,' ') },
+        { label: 'OI Positioning',  value: s3 ? (s3.details.buildup_type || '—').replace(/_/g,' ') : '—' },
+        { label: 'Trend Structure', value: s4 ? (s4.details.trend || '—').replace(/_/g,' ') : '—' },
+        { label: 'RSI Momentum',    value: rsiVal != null ? fmt(rsiVal,1) + (rsiVal > 75 ? ' — Extended' : rsiVal < 30 ? ' — Oversold' : ' — Normal') : '—' },
+        { label: 'Recommendation',  value: (ea.recommendation || '—').replace(/_/g,' ') },
+    ];
+
+    let suggestedAction = '';
+    const score = ea.composite_score || analysis.composite_score || 0;
+    if (score >= 65 && data.passed) {
+        suggestedAction = `Analysis passed with score ${score}/100. Consider entering ${direction === 'LONG' ? 'long' : 'short'} with SL at ₹${fmt(pos.stop_loss)} and target ₹${fmt(pos.target)}.`;
+    } else if (score >= 50) {
+        suggestedAction = `Borderline score (${score}/100). Wait for a stronger setup or confirm with additional technical confluences before entering.`;
+    } else {
+        suggestedAction = `Score of ${score}/100 is below threshold. Avoid trading this contract — unfavourable risk/reward.`;
+    }
+
+    if (data.verdict && data.verdict.includes('BLOCK')) {
+        suggestedAction = `Trade is BLOCKED: ${data.reason || 'See blocking reasons above.'}`;
+    }
+
+    const gridHTML = rows.map(r => `<div><div class="eg-label">${r.label}</div><div class="eg-value">${r.value}</div></div>`).join('');
+
+    return `<div class="section">
+        <div class="card-title-row">
+            <div class="card-title-left">
+                <span class="card-title-text">📋 Executive Summary</span>
+                ${sigPill(direction, dirType)}
+            </div>
+        </div>
+        <div class="exec-grid">${gridHTML}</div>
+        <div class="interp"><strong>Suggested Action:</strong> ${suggestedAction}</div>
+        ${concl(
+            data.passed ? '✅' : '⚠️',
+            data.passed ? 'All criteria met — proceed with position sizing discipline.' : 'Trade not recommended at this time.',
+            data.passed ? 'bullish' : 'neutral'
+        )}
+    </div>`;
+}
+
+// ─── Master: renderDetailedAnalysis ───────────────────────────────────────
+function renderDetailedAnalysis(data) {
+    const sections = [
+        cardBasis(data),
+        cardOI(data),
+        cardDMA(data),
+        cardSector(data),
+        cardVolume(data),
+        cardTechnical(data),
+        cardSR(data),
+        cardExecutiveSummary(data),
+    ].filter(Boolean);
+
+    if (!sections.length) return '';
+
+    return `<div>
+        <div style="font-size:0.8rem;color:#9ca3af;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;margin:1.25rem 0 0.25rem;padding-left:0.25rem;">
+            Detailed Factor Analysis
+        </div>
+        ${sections.join('')}
+    </div>`;
+}
+
+let _analysisData = null;  // module-level ref for download button
+
+function downloadJSON() {
+    if (!_analysisData) return;
+    const sym = _analysisData.symbol || SYMBOL;
+    const exp = _analysisData.expiry || EXPIRY;
+    const blob = new Blob([JSON.stringify(_analysisData, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `analysis_${sym}_${exp.replace(/[^a-zA-Z0-9]/g, '_')}.json`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+}
+
+function renderActions() {
+    return `<div class="section">
+        <div class="action-bar">
+            <button class="action-btn" onclick="window.print()">🖨 Print / Save PDF</button>
+            <button class="action-btn" onclick="downloadJSON()">⬇ Download JSON</button>
+        </div>
     </div>`;
 }
 
 function render(data) {
+    _analysisData = data;
     const container = document.getElementById('result-state');
     container.innerHTML = [
         renderHeader(data),
         renderReason(data),
         renderKeyMetrics(data),
-        renderScores(data),
+        renderDetailedAnalysis(data),
         renderExecutionLog(data),
         renderNews(data),
         renderAnalyst(data),
         renderHistorical(data),
+        renderActions(),
     ].join('');
 
     document.title = `${data.symbol || SYMBOL} ${data.verdict || ''} — Analysis`;
@@ -563,6 +1260,10 @@ async function runAnalysis() {
 
         if (data.auth_required || data.authenticated === false) {
             throw new Error('Session expired — please close this tab and log in again.');
+        }
+
+        if (data.from_cache) {
+            document.getElementById('loading-msg').textContent = 'Returning cached result (< 5 min old)...';
         }
 
         document.getElementById('loading-state').style.display = 'none';

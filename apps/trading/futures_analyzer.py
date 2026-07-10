@@ -859,6 +859,16 @@ def comprehensive_futures_analysis(
                         'rating': tl_rating
                     }
                     logger.info(f"  Trendlyne: {tl_composite:.1f}/100 ({tl_rating}) → +{tech_score}")
+
+                    # Raw indicator snapshot for the detail page — no extra DB query
+                    tech_details['tl_raw'] = {
+                        'rsi':          float(tl_stock.day_rsi)                    if tl_stock.day_rsi                    else None,
+                        'atr':          float(tl_stock.day_atr)                    if tl_stock.day_atr                    else None,
+                        'dma50':        float(tl_stock.day50_sma)                  if tl_stock.day50_sma                  else None,
+                        'dma100':       float(tl_stock.day100_sma)                 if tl_stock.day100_sma                 else None,
+                        'dma200':       float(tl_stock.day200_sma)                 if tl_stock.day200_sma                 else None,
+                        'delivery_pct': float(tl_stock.delivery_volume_pct_eod)    if tl_stock.delivery_volume_pct_eod    else None,
+                    }
             except Exception as e:
                 logger.warning(f"  Trendlyne scores unavailable: {e}")
 
