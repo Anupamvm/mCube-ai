@@ -62,6 +62,9 @@ urlpatterns = [
     # Option Chain Data
     path('api/get-option-premiums/', api_views.get_option_premiums, name='api_get_option_premiums'),
 
+    # OI Intelligence API
+    path('api/oi-intelligence/<str:symbol>/', views.get_oi_intelligence, name='api_oi_intelligence'),
+
     # Chart Data API
     path('api/chart-data/<int:suggestion_id>/', chart_views.get_chart_data, name='api_chart_data'),
     path('api/chart-data/contract/', chart_views.get_contract_chart_data, name='api_contract_chart_data'),

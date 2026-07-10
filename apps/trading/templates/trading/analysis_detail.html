@@ -876,6 +876,7 @@ function cardOI(data) {
     const buildup = oiFno.buildup || {};
     const pcr = oiFno.pcr || {};
     const mwpl = oiFno.mwpl || {};
+    const intel = oiFno.oi_intelligence || null;
 
     const [bdLabel, bdType] = buildupLabel(d3.buildup_type || buildup.type);
     const currentOI = d6.futures_oi || 0;
@@ -922,6 +923,74 @@ function cardOI(data) {
     };
     const conclText = conclTexts[bt] || 'OI signal neutral — watch for directional confirmation.';
 
+    // ── OI Intelligence section (if available from enhanced analysis) ──────
+    let intelSection = '';
+    if (intel) {
+        const momentumScore = intel.momentum_score || 0;
+        const momentumColor = momentumScore >= 70 ? '#10b981' : momentumScore >= 50 ? '#3b82f6' : momentumScore >= 35 ? '#f59e0b' : '#ef4444';
+        const momentumLabel = momentumScore >= 75 ? 'Strong Bullish' : momentumScore >= 60 ? 'Moderately Bullish' : momentumScore >= 45 ? 'Neutral' : momentumScore >= 30 ? 'Moderately Bearish' : 'Strong Bearish';
+        const [, consecBdType] = buildupLabel(intel.consecutive_type || bt);
+        const consecutiveText = intel.consecutive_days > 1
+            ? `${intel.consecutive_days}-day ${buildupLabel(intel.consecutive_type || bt)[0]}`
+            : buildupLabel(intel.consecutive_type || bt)[0];
+
+        const patternColors = {
+            ACCUMULATION: '#10b981', DISTRIBUTION: '#ef4444', CAPITULATION: '#8b5cf6',
+            SHORT_SQUEEZE: '#f59e0b', HIGH_CONVICTION: '#10b981', TREND_EXHAUSTION: '#f97316',
+            WEAK_RALLY: '#6b7280', TREND_REVERSAL: '#3b82f6', LONG_UNWINDING: '#ef4444',
+        };
+        const patternBadge = (intel.pattern && intel.pattern !== 'NONE')
+            ? `<span style="background:${patternColors[intel.pattern]||'#6b7280'};color:white;font-size:0.72rem;padding:2px 8px;border-radius:12px;font-weight:600;margin-left:6px;">${intel.pattern.replace(/_/g,' ')}</span>`
+            : '';
+
+        intelSection = `
+        <div style="margin-top:1.25rem;border-top:1px solid #e5e7eb;padding-top:1rem;">
+            <div style="font-size:0.75rem;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:0.75rem;">OI Intelligence Engine</div>
+
+            <!-- Summary Cards Row -->
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:0.6rem;margin-bottom:1rem;">
+                <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:0.6rem 0.75rem;text-align:center;">
+                    <div style="font-size:0.7rem;color:#6b7280;font-weight:600;text-transform:uppercase;">Verdict</div>
+                    <div style="font-size:0.9rem;font-weight:700;color:${consecBdType==='bullish'?'#10b981':consecBdType==='bearish'?'#ef4444':'#6b7280'};margin-top:2px;">${intel.buildup_label||bdLabel}</div>
+                </div>
+                <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:0.6rem 0.75rem;text-align:center;">
+                    <div style="font-size:0.7rem;color:#6b7280;font-weight:600;text-transform:uppercase;">OI Momentum</div>
+                    <div style="font-size:0.9rem;font-weight:700;color:${momentumColor};margin-top:2px;">${momentumScore.toFixed(0)}/100</div>
+                    <div style="font-size:0.65rem;color:#9ca3af;">${momentumLabel}</div>
+                </div>
+                <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:0.6rem 0.75rem;text-align:center;">
+                    <div style="font-size:0.7rem;color:#6b7280;font-weight:600;text-transform:uppercase;">Consecutive</div>
+                    <div style="font-size:0.85rem;font-weight:700;color:#1f2937;margin-top:2px;">${consecutiveText}</div>
+                </div>
+                <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:0.6rem 0.75rem;text-align:center;">
+                    <div style="font-size:0.7rem;color:#6b7280;font-weight:600;text-transform:uppercase;">Confidence</div>
+                    <div style="font-size:0.9rem;font-weight:700;color:#3b82f6;margin-top:2px;">${intel.confidence_level ? intel.confidence_level.toFixed(0) : '—'}%</div>
+                </div>
+            </div>
+
+            ${patternBadge ? `<div style="margin-bottom:0.75rem;">Pattern: ${patternBadge}</div>` : ''}
+            ${intel.pattern_description ? `<div style="font-size:0.82rem;color:#374151;background:#fef9c3;border-left:3px solid #f59e0b;padding:0.5rem 0.75rem;border-radius:0 6px 6px 0;margin-bottom:0.75rem;">${intel.pattern_description}</div>` : ''}
+
+            <!-- Weekly/Monthly summaries -->
+            ${intel.weekly_summary ? `<div style="margin-bottom:0.5rem;"><span style="font-size:0.7rem;font-weight:700;color:#6b7280;text-transform:uppercase;margin-right:4px;">Weekly:</span><span style="font-size:0.82rem;color:#374151;">${intel.weekly_summary}</span></div>` : ''}
+            ${intel.monthly_summary ? `<div style="margin-bottom:0.75rem;"><span style="font-size:0.7rem;font-weight:700;color:#6b7280;text-transform:uppercase;margin-right:4px;">Monthly:</span><span style="font-size:0.82rem;color:#374151;">${intel.monthly_summary}</span></div>` : ''}
+
+            <!-- Interpretation text -->
+            ${intel.interpretation_text ? `<div style="font-size:0.82rem;color:#374151;line-height:1.55;background:#f0fdf4;border-left:3px solid #10b981;padding:0.5rem 0.75rem;border-radius:0 6px 6px 0;margin-bottom:0.75rem;">${intel.interpretation_text}</div>` : ''}
+
+            <!-- Calendar placeholder — populated by loadOICalendar() -->
+            <div id="oi-calendar-section" style="margin-top:0.5rem;">
+                <div style="font-size:0.75rem;color:#9ca3af;text-align:center;padding:0.5rem;">Loading 4-week calendar...</div>
+            </div>
+        </div>`;
+    } else {
+        // No intelligence yet — show placeholder with explanation
+        intelSection = `
+        <div style="margin-top:1rem;padding:0.75rem;background:#f9fafb;border:1px dashed #d1d5db;border-radius:8px;text-align:center;">
+            <div style="font-size:0.8rem;color:#6b7280;">📊 OI Intelligence — Historical pattern analysis will appear here after the OI Intelligence Engine processes today's data (runs at 9:15 AM on trading days).</div>
+        </div>`;
+    }
+
     return `<div class="section">
         <div class="card-title-row">
             <div class="card-title-left">
@@ -941,7 +1010,231 @@ function cardOI(data) {
         </table>
         <div class="interp">${interpretation}</div>
         ${concl(conclType === 'bullish' ? '✅' : conclType === 'bearish' ? '⚠️' : 'ℹ️', conclText, conclType)}
+        ${intelSection}
     </div>`;
+}
+
+// ─── OI Intelligence: 4-Week Calendar ─────────────────────────────────────
+
+function _oiCellColor(buildupType) {
+    switch ((buildupType || '').toUpperCase()) {
+        case 'LONG_BUILDUP':   return '#bbf7d0'; // green
+        case 'SHORT_BUILDUP':  return '#fecaca'; // red
+        case 'LONG_UNWINDING': return '#fed7aa'; // orange
+        case 'SHORT_COVERING': return '#bfdbfe'; // blue
+        default:               return '#f3f4f6'; // grey
+    }
+}
+function _oiCellBorder(buildupType) {
+    switch ((buildupType || '').toUpperCase()) {
+        case 'LONG_BUILDUP':   return '#16a34a';
+        case 'SHORT_BUILDUP':  return '#dc2626';
+        case 'LONG_UNWINDING': return '#ea580c';
+        case 'SHORT_COVERING': return '#2563eb';
+        default:               return '#d1d5db';
+    }
+}
+function _oiCellTextColor(buildupType) {
+    switch ((buildupType || '').toUpperCase()) {
+        case 'LONG_BUILDUP':   return '#14532d';
+        case 'SHORT_BUILDUP':  return '#7f1d1d';
+        case 'LONG_UNWINDING': return '#7c2d12';
+        case 'SHORT_COVERING': return '#1e3a5f';
+        default:               return '#6b7280';
+    }
+}
+
+function loadOICalendar(symbol) {
+    const el = document.getElementById('oi-calendar-section');
+    if (!el) return;
+
+    fetch(`/trading/api/oi-intelligence/${symbol}/`)
+        .then(r => r.json())
+        .then(resp => {
+            if (!resp.success || !resp.history || !resp.history.length) {
+                el.innerHTML = '<div style="font-size:0.78rem;color:#9ca3af;text-align:center;padding:0.5rem;">No OI history data yet.</div>';
+                return;
+            }
+
+            const history = resp.history; // most-recent first
+            // Build a date→snap lookup
+            const snapByDate = {};
+            history.forEach(s => { snapByDate[s.trading_date] = s; });
+
+            // Generate last 20 trading-day slots working back from today
+            const today = new Date();
+            const tradingDates = [];
+            let d = new Date(today);
+            while (tradingDates.length < 20) {
+                const dow = d.getDay();
+                if (dow !== 0 && dow !== 6) tradingDates.push(d.toISOString().slice(0,10));
+                d.setDate(d.getDate() - 1);
+            }
+            tradingDates.reverse(); // oldest first for display
+
+            // Build 4-week grid rows (5 columns per row)
+            const weeks = [];
+            for (let i = 0; i < tradingDates.length; i += 5) {
+                weeks.push(tradingDates.slice(i, i + 5));
+            }
+
+            // Week header labels
+            const weekLabels = [];
+            for (let i = 0; i < weeks.length; i++) {
+                weekLabels.push(`W${weeks.length - i}`);
+            }
+
+            let calHtml = `
+            <style>
+            .oi-cal-cell { position:relative; display:inline-block; }
+            .oi-cal-cell .oi-tooltip {
+                display:none; position:absolute; z-index:999; bottom:calc(100% + 6px); left:50%;
+                transform:translateX(-50%); background:#1f2937; color:#fff;
+                padding:8px 10px; border-radius:6px; font-size:0.72rem; line-height:1.5;
+                width:200px; pointer-events:none; white-space:normal; box-shadow:0 4px 12px rgba(0,0,0,0.3);
+            }
+            .oi-cal-cell:hover .oi-tooltip { display:block; }
+            .oi-cal-detail { display:none; }
+            .oi-cal-detail.open { display:block; }
+            </style>
+            <div style="margin-top:0.75rem;">
+                <div style="font-size:0.7rem;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:0.5rem;">4-Week OI Calendar</div>
+                <div style="display:flex;gap:4px;margin-bottom:4px;padding-left:28px;">
+                    ${['Mon','Tue','Wed','Thu','Fri'].map(d=>`<div style="flex:1;text-align:center;font-size:0.65rem;color:#9ca3af;font-weight:600;">${d}</div>`).join('')}
+                </div>`;
+
+            weeks.forEach((week, wi) => {
+                calHtml += `<div style="display:flex;align-items:center;gap:4px;margin-bottom:4px;">
+                    <div style="font-size:0.65rem;color:#9ca3af;width:24px;text-align:right;flex-shrink:0;">${weekLabels[wi]}</div>`;
+                week.forEach(dateStr => {
+                    const snap = snapByDate[dateStr];
+                    const dayNum = new Date(dateStr).getDate();
+                    const monthAbbr = new Date(dateStr).toLocaleString('default',{month:'short'});
+                    const bg = snap ? _oiCellColor(snap.buildup_type) : '#f9fafb';
+                    const border = snap ? _oiCellBorder(snap.buildup_type) : '#e5e7eb';
+                    const tc = snap ? _oiCellTextColor(snap.buildup_type) : '#9ca3af';
+
+                    let tooltip = '';
+                    if (snap) {
+                        const [lbl] = buildupLabel(snap.buildup_type);
+                        tooltip = `<div class="oi-tooltip">
+                            <div style="font-weight:700;margin-bottom:4px;">${monthAbbr} ${dayNum}</div>
+                            <div>Price: ${snap.price_change_pct != null ? (snap.price_change_pct >= 0 ? '+' : '') + snap.price_change_pct.toFixed(2) + '%' : '—'}</div>
+                            <div>OI Δ: ${snap.oi_change_pct != null ? (snap.oi_change_pct >= 0 ? '+' : '') + snap.oi_change_pct.toFixed(2) + '%' : '—'}</div>
+                            ${snap.traded_contracts ? `<div>Contracts: ${Number(snap.traded_contracts).toLocaleString('en-IN')}</div>` : ''}
+                            <div style="margin-top:4px;font-weight:600;color:${bg};">${lbl}</div>
+                            ${snap.confidence_score ? `<div style="color:#9ca3af;">Confidence: ${snap.confidence_score.toFixed(0)}%</div>` : ''}
+                        </div>`;
+                    }
+
+                    calHtml += `<div class="oi-cal-cell" style="flex:1;" onclick="toggleOIDay('${dateStr}')">
+                        <div style="background:${bg};border:1.5px solid ${border};border-radius:6px;padding:4px 2px;text-align:center;cursor:pointer;transition:opacity 0.15s;" onmouseover="this.style.opacity=0.8" onmouseout="this.style.opacity=1">
+                            <div style="font-size:0.65rem;color:${tc};font-weight:600;">${dayNum}</div>
+                            <div style="font-size:0.58rem;color:${tc};opacity:0.8;">${snap ? (snap.price_change_pct != null ? (snap.price_change_pct >= 0 ? '+' : '') + snap.price_change_pct.toFixed(1) + '%' : '—') : '—'}</div>
+                        </div>
+                        ${tooltip}
+                    </div>`;
+                });
+                calHtml += `</div>`;
+            });
+
+            // Calendar legend
+            calHtml += `
+            <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:6px;padding-left:28px;">
+                ${[['#bbf7d0','#16a34a','#14532d','Long Build-up'],['#fecaca','#dc2626','#7f1d1d','Short Build-up'],['#fed7aa','#ea580c','#7c2d12','Long Unwinding'],['#bfdbfe','#2563eb','#1e3a5f','Short Covering']].map(
+                    ([bg,bd,tc,label]) => `<div style="display:flex;align-items:center;gap:4px;font-size:0.68rem;">
+                        <div style="width:12px;height:12px;background:${bg};border:1.5px solid ${bd};border-radius:2px;"></div>
+                        <span style="color:${tc}">${label}</span>
+                    </div>`
+                ).join('')}
+            </div>`;
+
+            // Expanded day detail panel
+            calHtml += `<div id="oi-day-detail" class="oi-cal-detail" style="margin-top:0.75rem;padding:0.75rem;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;font-size:0.82rem;"></div>`;
+
+            // Historical timeline (last 10 sessions)
+            const recent10 = history.slice(0, 10);
+            if (recent10.length) {
+                calHtml += `<div style="margin-top:1rem;border-top:1px solid #e5e7eb;padding-top:0.75rem;">
+                    <div style="font-size:0.7rem;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:0.5rem;">Historical Timeline</div>`;
+                recent10.forEach((snap, i) => {
+                    const dt = new Date(snap.trading_date);
+                    const [lbl,ltype] = buildupLabel(snap.buildup_type);
+                    const arrowColor = ltype === 'bullish' ? '#10b981' : ltype === 'bearish' ? '#ef4444' : '#6b7280';
+                    calHtml += `<div style="display:flex;align-items:flex-start;gap:0.5rem;margin-bottom:0.35rem;">
+                        <div style="font-size:0.7rem;color:#6b7280;white-space:nowrap;min-width:54px;">${dt.getDate()} ${dt.toLocaleString('default',{month:'short'})}</div>
+                        <div style="width:10px;height:10px;border-radius:50%;background:${arrowColor};margin-top:3px;flex-shrink:0;"></div>
+                        <div style="font-size:0.78rem;color:#374151;font-weight:600;">${lbl}</div>
+                        <div style="font-size:0.72rem;color:#9ca3af;">
+                            ${snap.price_change_pct != null ? (snap.price_change_pct>=0?'+':'')+snap.price_change_pct.toFixed(1)+'% price' : ''}
+                            ${snap.oi_change_pct != null ? ' · '+(snap.oi_change_pct>=0?'+':'')+snap.oi_change_pct.toFixed(1)+'% OI' : ''}
+                        </div>
+                    </div>`;
+                    if (i < recent10.length - 1) {
+                        calHtml += `<div style="margin-left:62px;color:#d1d5db;font-size:0.75rem;">↓</div>`;
+                    }
+                });
+                calHtml += `</div>`;
+            }
+
+            // AI narrative
+            if (resp.intelligence && resp.intelligence.ai_narrative) {
+                calHtml += `<div style="margin-top:0.75rem;border-top:1px solid #e5e7eb;padding-top:0.75rem;">
+                    <div style="font-size:0.7rem;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:0.4rem;">AI Positioning Narrative</div>
+                    <div style="font-size:0.83rem;color:#374151;line-height:1.6;font-style:italic;">${resp.intelligence.ai_narrative}</div>
+                </div>`;
+            }
+
+            calHtml += `</div>`;
+            el.innerHTML = calHtml;
+
+            // Store snap data for day-detail panel
+            el._snapByDate = snapByDate;
+        })
+        .catch(() => {
+            const el2 = document.getElementById('oi-calendar-section');
+            if (el2) el2.innerHTML = '<div style="font-size:0.78rem;color:#9ca3af;text-align:center;padding:0.5rem;">Unable to load OI calendar.</div>';
+        });
+}
+
+function toggleOIDay(dateStr) {
+    const el = document.getElementById('oi-day-detail');
+    const calEl = document.getElementById('oi-calendar-section');
+    if (!el) return;
+    const snapByDate = calEl && calEl._snapByDate;
+    const snap = snapByDate && snapByDate[dateStr];
+    if (!snap) { el.classList.remove('open'); return; }
+
+    // If clicking same day, toggle off
+    if (el._currentDate === dateStr && el.classList.contains('open')) {
+        el.classList.remove('open');
+        el._currentDate = null;
+        return;
+    }
+    el._currentDate = dateStr;
+
+    const dt = new Date(dateStr);
+    const [lbl, ltype] = buildupLabel(snap.buildup_type);
+    const accentColor = ltype === 'bullish' ? '#10b981' : ltype === 'bearish' ? '#ef4444' : '#6b7280';
+    el.innerHTML = `
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:0.5rem;">
+            <div>
+                <div style="font-weight:700;font-size:0.88rem;">${dt.toLocaleDateString('en-IN',{weekday:'short',day:'numeric',month:'long',year:'numeric'})}</div>
+                <div style="color:${accentColor};font-weight:600;font-size:0.85rem;margin-top:2px;">${lbl}</div>
+            </div>
+            <button onclick="document.getElementById('oi-day-detail').classList.remove('open')" style="background:none;border:none;cursor:pointer;color:#9ca3af;font-size:1.1rem;line-height:1;">✕</button>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:0.4rem;margin-top:0.6rem;">
+            ${snap.close_price ? `<div style="background:white;border-radius:6px;padding:0.4rem 0.6rem;"><div style="font-size:0.65rem;color:#6b7280;">Close Price</div><div style="font-weight:600;">₹${snap.close_price.toFixed(2)}</div></div>` : ''}
+            ${snap.price_change_pct != null ? `<div style="background:white;border-radius:6px;padding:0.4rem 0.6rem;"><div style="font-size:0.65rem;color:#6b7280;">Price Change</div><div style="font-weight:600;color:${snap.price_change_pct>=0?'#10b981':'#ef4444'};">${(snap.price_change_pct>=0?'+':'')+snap.price_change_pct.toFixed(2)}%</div></div>` : ''}
+            ${snap.oi_change_pct != null ? `<div style="background:white;border-radius:6px;padding:0.4rem 0.6rem;"><div style="font-size:0.65rem;color:#6b7280;">OI Change</div><div style="font-weight:600;color:${snap.oi_change_pct>=0?'#10b981':'#ef4444'};">${(snap.oi_change_pct>=0?'+':'')+snap.oi_change_pct.toFixed(2)}%</div></div>` : ''}
+            ${snap.traded_contracts ? `<div style="background:white;border-radius:6px;padding:0.4rem 0.6rem;"><div style="font-size:0.65rem;color:#6b7280;">Contracts</div><div style="font-weight:600;">${Number(snap.traded_contracts).toLocaleString('en-IN')}</div></div>` : ''}
+            ${snap.pcr_oi ? `<div style="background:white;border-radius:6px;padding:0.4rem 0.6rem;"><div style="font-size:0.65rem;color:#6b7280;">PCR (OI)</div><div style="font-weight:600;">${snap.pcr_oi.toFixed(2)}</div></div>` : ''}
+            ${snap.mwpl_pct ? `<div style="background:white;border-radius:6px;padding:0.4rem 0.6rem;"><div style="font-size:0.65rem;color:#6b7280;">MWPL</div><div style="font-weight:600;">${snap.mwpl_pct.toFixed(1)}%</div></div>` : ''}
+            ${snap.oi_momentum_score != null ? `<div style="background:white;border-radius:6px;padding:0.4rem 0.6rem;"><div style="font-size:0.65rem;color:#6b7280;">OI Momentum</div><div style="font-weight:600;">${snap.oi_momentum_score.toFixed(0)}/100</div></div>` : ''}
+            ${snap.confidence_score ? `<div style="background:white;border-radius:6px;padding:0.4rem 0.6rem;"><div style="font-size:0.65rem;color:#6b7280;">Confidence</div><div style="font-weight:600;">${snap.confidence_score.toFixed(0)}%</div></div>` : ''}
+        </div>`;
+    el.classList.add('open');
 }
 
 // ─── Card 3: Trend & DMA ─────────────────────────────────────────────────
@@ -1356,6 +1649,9 @@ function renderDetailedAnalysis(data) {
     ].filter(Boolean);
 
     if (!sections.length) return '';
+
+    // Trigger OI calendar load after the DOM is updated (setTimeout 0 defers to next tick)
+    setTimeout(() => loadOICalendar(SYMBOL), 0);
 
     return `<div>
         <div style="font-size:0.8rem;color:#9ca3af;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;margin:1.25rem 0 0.25rem;padding-left:0.25rem;">

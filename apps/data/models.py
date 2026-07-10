@@ -1009,3 +1009,134 @@ class AnalystReport(TimeStampedModel):
     def is_bullish(self):
         """Check if report has bullish recommendation"""
         return self.recommendation_type in ['BUY', 'STRONG_BUY']
+
+
+class OIHistorySnapshot(TimeStampedModel):
+    """
+    Daily OI snapshot per stock, preserved before ContractData is overwritten.
+
+    Retains 65 trading days of history (~3 calendar months) to support
+    near-month and next-month contract analysis.
+    """
+
+    BUILDUP_CHOICES = [
+        ('LONG_BUILDUP', 'Long Build-up'),
+        ('SHORT_BUILDUP', 'Short Build-up'),
+        ('LONG_UNWINDING', 'Long Unwinding'),
+        ('SHORT_COVERING', 'Short Covering'),
+        ('NEUTRAL', 'Neutral'),
+    ]
+
+    symbol = models.CharField(max_length=50, db_index=True)
+    trading_date = models.DateField(db_index=True)
+
+    # Price
+    close_price = models.FloatField(null=True, blank=True)
+    price_change_pct = models.FloatField(null=True, blank=True)
+    futures_price = models.FloatField(null=True, blank=True)
+
+    # OI
+    oi = models.BigIntegerField(null=True, blank=True)
+    oi_change_pct = models.FloatField(null=True, blank=True)
+    total_fno_oi = models.BigIntegerField(null=True, blank=True)
+    pcr_oi = models.FloatField(null=True, blank=True)
+    mwpl_pct = models.FloatField(null=True, blank=True)
+    rollover_pct = models.FloatField(null=True, blank=True)
+
+    # Volume
+    volume = models.BigIntegerField(null=True, blank=True)
+    traded_contracts = models.BigIntegerField(null=True, blank=True)
+    delivery_pct = models.FloatField(null=True, blank=True)
+
+    # Derived
+    buildup_type = models.CharField(max_length=20, choices=BUILDUP_CHOICES, default='NEUTRAL')
+    oi_momentum_score = models.FloatField(null=True, blank=True, help_text="0-100 OI momentum score at this snapshot")
+    confidence_score = models.FloatField(null=True, blank=True, help_text="0-100 confidence in buildup classification")
+
+    class Meta:
+        db_table = 'oi_history_snapshot'
+        unique_together = [('symbol', 'trading_date')]
+        ordering = ['symbol', '-trading_date']
+        indexes = [
+            models.Index(fields=['symbol', '-trading_date']),
+        ]
+
+    def __str__(self):
+        return f"{self.symbol} {self.trading_date} — {self.buildup_type}"
+
+
+class OIIntelligence(TimeStampedModel):
+    """
+    Generated OI interpretation per stock per trading day.
+
+    Stores multi-day pattern analysis, momentum scores, and narrative
+    summaries derived from OIHistorySnapshot records.
+    Extensible via raw_data JSONField for future analytics.
+    """
+
+    BUILDUP_CHOICES = [
+        ('LONG_BUILDUP', 'Long Build-up'),
+        ('SHORT_BUILDUP', 'Short Build-up'),
+        ('LONG_UNWINDING', 'Long Unwinding'),
+        ('SHORT_COVERING', 'Short Covering'),
+        ('NEUTRAL', 'Neutral'),
+    ]
+
+    PATTERN_CHOICES = [
+        ('ACCUMULATION', 'Institutional Accumulation'),
+        ('DISTRIBUTION', 'Distribution'),
+        ('CAPITULATION', 'Capitulation'),
+        ('SHORT_SQUEEZE', 'Short Squeeze Setup'),
+        ('LONG_UNWINDING', 'Long Unwinding'),
+        ('TREND_REVERSAL', 'Trend Reversal'),
+        ('HIGH_CONVICTION', 'High Conviction Trend'),
+        ('WEAK_RALLY', 'Weak Conviction Rally'),
+        ('TREND_EXHAUSTION', 'Trend Exhaustion'),
+        ('NONE', 'No Special Pattern'),
+    ]
+
+    symbol = models.CharField(max_length=50, db_index=True)
+    trading_date = models.DateField(db_index=True)
+
+    # Today's classification
+    buildup_type = models.CharField(max_length=20, choices=BUILDUP_CHOICES, default='NEUTRAL')
+    buildup_label = models.CharField(max_length=60, blank=True)
+    interpretation_text = models.TextField(blank=True)
+
+    # Consecutive pattern
+    consecutive_days = models.IntegerField(default=1)
+    consecutive_type = models.CharField(max_length=20, choices=BUILDUP_CHOICES, default='NEUTRAL')
+
+    # Advanced pattern
+    pattern_detected = models.CharField(max_length=30, choices=PATTERN_CHOICES, default='NONE')
+    pattern_description = models.TextField(blank=True)
+
+    # Scores
+    oi_momentum_score = models.FloatField(default=50.0, help_text="0-100, higher = stronger bullish OI positioning")
+    confidence_level = models.FloatField(default=50.0, help_text="0-100 confidence in the interpretation")
+
+    # Summaries
+    weekly_summary = models.TextField(blank=True)
+    monthly_summary = models.TextField(blank=True)
+
+    # AI Narrative (rule-based)
+    ai_narrative = models.TextField(blank=True)
+
+    # Stats (for display)
+    last_20_bullish_count = models.IntegerField(default=0)
+    last_20_bearish_count = models.IntegerField(default=0)
+    last_5_buildup_types = models.JSONField(default=list)
+
+    # Extensible storage for future analytics
+    raw_data = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        db_table = 'oi_intelligence'
+        unique_together = [('symbol', 'trading_date')]
+        ordering = ['symbol', '-trading_date']
+        indexes = [
+            models.Index(fields=['symbol', '-trading_date']),
+        ]
+
+    def __str__(self):
+        return f"{self.symbol} {self.trading_date} — {self.buildup_label} (score={self.oi_momentum_score:.0f})"

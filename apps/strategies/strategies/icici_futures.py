@@ -785,56 +785,140 @@ def analyze_oi_for_stock(symbol: str) -> Tuple[int, Dict]:
     """
     Analyze Open Interest for a stock.
 
+    When OIIntelligence data is available (runs at 9:15 AM daily after Trendlyne
+    import), the score uses multi-day momentum and pattern analysis for a max of
+    50 pts. Falls back to single-day ContractStockData analysis (40 pts max) when
+    OI Intelligence has not yet been processed for today.
+
     Returns:
-        tuple: (oi_score: int (0-40), oi_data: dict)
+        tuple: (oi_score: int, oi_data: dict)
     """
-    oi_analyzer = OpenInterestAnalyzer()
+    from apps.data.models import ContractStockData, OIIntelligence
+    from django.utils import timezone
 
-    # Get current expiry (placeholder)
-    expiry = '2024-11-28'
+    # ── Try OI Intelligence path first ────────────────────────────────────
+    try:
+        intel = OIIntelligence.objects.filter(
+            symbol=symbol,
+            trading_date=timezone.localdate()
+        ).first()
+    except Exception:
+        intel = None
 
-    # Analyze OI buildup
-    oi_buildup = oi_analyzer.analyze_oi_buildup(symbol, expiry)
+    csd = ContractStockData.objects.filter(nse_code=symbol).first()
 
-    if 'error' in oi_buildup:
-        return 0, {'signal': 'NEUTRAL', 'buildup_type': 'UNKNOWN'}
+    if intel:
+        # ── Intelligence-led scoring (max 50 pts) ─────────────────────────
+        # Signal determined by momentum score direction
+        momentum = intel.oi_momentum_score
+        bullish_momentum = momentum >= 50
 
-    # Get PCR ratio
-    pcr_data = oi_analyzer.get_pcr_ratio(symbol)
+        # Buildup type determines direction signal
+        buildup_type = intel.buildup_type
+        if buildup_type in ('LONG_BUILDUP', 'SHORT_COVERING'):
+            signal = 'BULLISH'
+        elif buildup_type in ('SHORT_BUILDUP', 'LONG_UNWINDING'):
+            signal = 'BEARISH'
+        else:
+            # Fall back to momentum when buildup is NEUTRAL
+            signal = 'BULLISH' if bullish_momentum else 'BEARISH' if momentum < 45 else 'NEUTRAL'
 
-    # Determine signal from buildup + PCR
+        # OI Momentum (0-25 pts)
+        if momentum >= 80:   momentum_pts = 25
+        elif momentum >= 65: momentum_pts = 20
+        elif momentum >= 50: momentum_pts = 12
+        elif momentum >= 35: momentum_pts = 5
+        else:                momentum_pts = 0
+
+        # Consecutive streak bonus (0-10 pts)
+        consec_days = intel.consecutive_days
+        consec_type = intel.consecutive_type
+        if consec_type in ('LONG_BUILDUP', 'SHORT_COVERING') and signal == 'BULLISH':
+            consec_pts = min(consec_days * 2, 10)
+        elif consec_type in ('SHORT_BUILDUP', 'LONG_UNWINDING') and signal == 'BEARISH':
+            consec_pts = min(consec_days * 2, 10)
+        else:
+            consec_pts = 0
+
+        # Advanced pattern bonus (0-10 pts, can be negative)
+        pattern = intel.pattern_detected
+        if signal == 'BULLISH':
+            if pattern in ('ACCUMULATION', 'HIGH_CONVICTION'): pattern_pts = 10
+            elif pattern == 'SHORT_SQUEEZE':                    pattern_pts = 7
+            elif pattern == 'TREND_REVERSAL':                   pattern_pts = 4
+            elif pattern == 'TREND_EXHAUSTION':                 pattern_pts = -4
+            elif pattern == 'DISTRIBUTION':                     pattern_pts = -10
+            else:                                               pattern_pts = 0
+        else:
+            if pattern in ('DISTRIBUTION', 'TREND_EXHAUSTION'): pattern_pts = 10
+            elif pattern == 'LONG_UNWINDING':                    pattern_pts = 7
+            elif pattern == 'TREND_REVERSAL':                    pattern_pts = 4
+            elif pattern in ('ACCUMULATION', 'HIGH_CONVICTION'): pattern_pts = -10
+            else:                                                pattern_pts = 0
+
+        # PCR alignment (0-5 pts)
+        pcr = (csd.fno_pcr_oi if csd else None) or 1.0
+        if signal == 'BULLISH' and pcr > 1.2:    pcr_pts = 5
+        elif signal == 'BULLISH' and pcr > 1.0:  pcr_pts = 3
+        elif signal == 'BEARISH' and pcr < 0.8:  pcr_pts = 5
+        elif signal == 'BEARISH' and pcr < 1.0:  pcr_pts = 3
+        else:                                     pcr_pts = 1
+
+        score = max(0, min(momentum_pts + consec_pts + pattern_pts + pcr_pts, 50))
+
+        return score, {
+            'signal': signal,
+            'buildup_type': buildup_type,
+            'buildup_sentiment': 'BULLISH' if signal == 'BULLISH' else 'BEARISH',
+            'oi_momentum_score': momentum,
+            'consecutive_days': consec_days,
+            'consecutive_type': consec_type,
+            'pattern': pattern,
+            'pattern_description': intel.pattern_description,
+            'price_change_pct': None,
+            'oi_change_pct': None,
+            'pcr': pcr,
+            'pcr_signal': 'BULLISH' if pcr > 1.2 else 'BEARISH' if pcr < 0.8 else 'NEUTRAL',
+            'weekly_summary': intel.weekly_summary,
+            'source': 'oi_intelligence',
+        }
+
+    # ── Fallback: single-day ContractStockData scoring (max 40 pts) ───────
+    if not csd:
+        return 0, {'signal': 'NEUTRAL', 'buildup_type': 'UNKNOWN', 'source': 'no_data'}
+
+    # Get the nearest futures expiry instead of hardcoded date
+    from apps.data.models import ContractData
+    from datetime import date
+    nearest_future = ContractData.objects.filter(
+        symbol=symbol,
+        option_type__in=['FUT', 'FUTURES', 'FUTURE'],
+        expiry__gte=str(date.today()),
+    ).order_by('expiry').first()
+
+    oi_buildup = {'buildup_type': 'NEUTRAL', 'sentiment': 'NEUTRAL', 'oi_change_pct': 0, 'price_change_pct': 0}
+    if nearest_future:
+        result = OpenInterestAnalyzer.analyze_oi_buildup(symbol, nearest_future.expiry)
+        if 'error' not in result:
+            oi_buildup = result
+
+    pcr_data = OpenInterestAnalyzer.get_pcr_ratio(symbol)
+    pcr_signal = pcr_data['interpretation'] if pcr_data else 'NEUTRAL'
     buildup_type = oi_buildup['buildup_type']
     buildup_sentiment = oi_buildup['sentiment']
 
-    # PCR interpretation
-    if pcr_data:
-        pcr_signal = pcr_data['interpretation']
-    else:
-        pcr_signal = 'NEUTRAL'
+    signal = buildup_sentiment if buildup_sentiment in ('BULLISH', 'BEARISH') else (
+        pcr_signal if pcr_signal != 'NEUTRAL' else 'NEUTRAL'
+    )
 
-    # Combined signal (buildup takes priority)
-    if buildup_sentiment in ['BULLISH', 'BEARISH']:
-        signal = buildup_sentiment
-    else:
-        signal = pcr_signal if pcr_signal != 'NEUTRAL' else 'NEUTRAL'
-
-    # Calculate score (0-40)
     score = 0
+    oi_change = abs(oi_buildup.get('oi_change_pct', 0) or 0)
+    if oi_change > 10:   score += 25
+    elif oi_change > 5:  score += 15
+    elif oi_change > 0:  score += 5
 
-    # OI buildup strength (0-25)
-    oi_change = abs(oi_buildup.get('oi_change_pct', 0))
-    if oi_change > 10:
-        score += 25
-    elif oi_change > 5:
-        score += 15
-    elif oi_change > 0:
-        score += 5
-
-    # PCR alignment (0-15)
-    if pcr_signal == buildup_sentiment:
-        score += 15  # Both agree
-    elif pcr_signal != 'NEUTRAL':
-        score += 5   # PCR has opinion but doesn't agree
+    if pcr_signal == buildup_sentiment: score += 15
+    elif pcr_signal != 'NEUTRAL':       score += 5
 
     return score, {
         'signal': signal,
@@ -843,7 +927,8 @@ def analyze_oi_for_stock(symbol: str) -> Tuple[int, Dict]:
         'price_change_pct': oi_buildup.get('price_change_pct', 0),
         'oi_change_pct': oi_buildup.get('oi_change_pct', 0),
         'pcr': pcr_data.get('pcr_oi', 0) if pcr_data else 0,
-        'pcr_signal': pcr_signal
+        'pcr_signal': pcr_signal,
+        'source': 'fallback_single_day',
     }
 
 

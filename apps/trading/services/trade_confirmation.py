@@ -354,6 +354,29 @@ class TradeConfirmationService:
             f"  OI: {oi_signal} | DMA: {dma_signal} | Sector: {sector_signal}"
         )
 
+        # OI Intelligence section (from today's OIIntelligence record)
+        try:
+            from django.utils import timezone as _tz
+            from apps.data.models import OIIntelligence
+            from apps.data.services.oi_intelligence_engine import BUILDUP_LABELS
+            oi_intel = OIIntelligence.objects.filter(
+                symbol=symbol,
+                trading_date=_tz.localdate()
+            ).first()
+            if oi_intel:
+                momentum = oi_intel.oi_momentum_score
+                consec = oi_intel.consecutive_days
+                consec_type = BUILDUP_LABELS.get(oi_intel.consecutive_type, oi_intel.consecutive_type)
+                weekly_short = oi_intel.weekly_summary[:80] + '…' if len(oi_intel.weekly_summary) > 80 else oi_intel.weekly_summary
+                momentum_emoji = '📈' if momentum >= 60 else '📉' if momentum <= 40 else '➖'
+                consec_str = f"{consec}× {consec_type}" if consec > 1 else consec_type
+                message += f"\n\n📊 <b>OI Intelligence</b>\n"
+                message += f"  {momentum_emoji} Momentum: {momentum:.0f}/100 | Pattern: {consec_str}\n"
+                if weekly_short:
+                    message += f"  Weekly: {weekly_short}"
+        except Exception:
+            pass
+
         # News attribution section (from algorithm_reasoning saved in suggestion)
         try:
             news_attr = suggestion.algorithm_reasoning.get('news_attribution', {})

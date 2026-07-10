@@ -69,9 +69,12 @@ class EnhancedFuturesAnalyzer:
     MIN_FII_CHANGE_PCT = -2.0
     MIN_ANALYST_UPSIDE_PCT = 8.0
 
-    # Scoring weights (total 315 pts) - Phase 3 Enhanced
+    # Scoring weights (total 330 pts) - Phase 4: OI Intelligence
+    # OI raised from 45→60 pts: when OIIntelligence is available, multi-day
+    # momentum and pattern data drive 35 of 60 pts, making OI the single
+    # highest-weighted component at 18.2% of the total score.
     WEIGHTS = {
-        'oi_fno': 45,
+        'oi_fno': 60,                    # ↑ was 45 — OI Intelligence drives 35 of 60 pts
         'technical_momentum': 35,
         'trend_confirmation': 30,        # +5 for 52W breakout detection
         'volume_quality': 25,            # +5 for delivery trend
@@ -85,7 +88,7 @@ class EnhancedFuturesAnalyzer:
         'momentum_acceleration': 20,     # Phase 2
         'mtf_confluence': 15,            # Phase 3: Multi-Timeframe Confluence
     }
-    TOTAL_WEIGHT = sum(WEIGHTS.values())  # 315
+    TOTAL_WEIGHT = sum(WEIGHTS.values())  # 330
 
     # Position sizing adjustments based on beta
     BETA_POSITION_ADJUSTMENTS = {
@@ -608,11 +611,27 @@ class EnhancedFuturesAnalyzer:
 
     def _score_oi_fno(self) -> int:
         """
-        Score OI & F&O Analysis (max 45 pts)
-        - OI Buildup: 20 pts
-        - PCR Analysis: 10 pts
-        - MWPL Position: 5 pts
-        - Rollover: 10 pts
+        Score OI & F&O Analysis (max 60 pts when OI Intelligence is available,
+        max 45 pts fallback when it is not).
+
+        WITH OI Intelligence (preferred path):
+          OI Momentum Score  : 20 pts  — 20-day weighted momentum (0-100→0-20)
+          Today's Buildup    : 10 pts  — aligned direction confirmation
+          Consecutive Pattern:  5 pts  — streak of same buildup type
+          Advanced Pattern   :  5 pts  — institutional signals (bonus/penalty)
+          PCR Analysis       : 10 pts  — put-call ratio sentiment
+          MWPL Position      :  5 pts  — position limit safety
+          Rollover           :  5 pts  — continuation signal
+          ─────────────────────────────
+          Total              : 60 pts
+
+        WITHOUT OI Intelligence (fallback):
+          OI Buildup         : 20 pts
+          PCR Analysis       : 10 pts
+          MWPL Position      :  5 pts
+          Rollover           : 10 pts
+          ─────────────────────────────
+          Total              : 45 pts
         """
         score = 0
         details = {}
@@ -622,97 +641,207 @@ class EnhancedFuturesAnalyzer:
             return 0
 
         csd = self._contract_stock_data
-
-        # OI Buildup Analysis (20 pts)
         oi_change = csd.fno_total_oi_change_pct or 0
         price_change = self._tl_stock_data.day_change_pct if self._tl_stock_data else 0
 
-        # Determine buildup type
+        # ── Determine today's buildup ──────────────────────────────────────
         if price_change > 0 and oi_change > 0:
             buildup = 'LONG_BUILDUP'
-            buildup_score = 20 if self.direction == 'LONG' else 5
         elif price_change < 0 and oi_change > 0:
             buildup = 'SHORT_BUILDUP'
-            buildup_score = 20 if self.direction == 'SHORT' else 5
         elif price_change > 0 and oi_change < 0:
             buildup = 'SHORT_COVERING'
-            buildup_score = 10 if self.direction == 'LONG' else 10
         elif price_change < 0 and oi_change < 0:
             buildup = 'LONG_UNWINDING'
-            buildup_score = 10 if self.direction == 'SHORT' else 5
         else:
             buildup = 'NEUTRAL'
-            buildup_score = 5
 
-        score += buildup_score
-        details['buildup'] = {'type': buildup, 'oi_change': oi_change, 'price_change': price_change, 'score': buildup_score}
-
-        # PCR Analysis (10 pts)
+        # ── PCR scoring (10 pts, direction-aware) — same for both paths ───
         pcr = csd.fno_pcr_oi or 1.0
         if self.direction == 'LONG':
-            # High PCR = bearish, actually bullish for LONG (put sellers)
-            if pcr > 1.2:
-                pcr_score = 10
-            elif pcr > 1.0:
-                pcr_score = 7
-            elif pcr > 0.8:
-                pcr_score = 5
-            else:
-                pcr_score = 2
-        else:  # SHORT
-            # Low PCR = bullish, bad for SHORT
-            if pcr < 0.8:
-                pcr_score = 10
-            elif pcr < 1.0:
-                pcr_score = 7
-            elif pcr < 1.2:
-                pcr_score = 5
-            else:
-                pcr_score = 2
-
-        score += pcr_score
+            if pcr > 1.2:    pcr_score = 10
+            elif pcr > 1.0:  pcr_score = 7
+            elif pcr > 0.8:  pcr_score = 5
+            else:            pcr_score = 2
+        else:
+            if pcr < 0.8:    pcr_score = 10
+            elif pcr < 1.0:  pcr_score = 7
+            elif pcr < 1.2:  pcr_score = 5
+            else:            pcr_score = 2
         details['pcr'] = {'value': pcr, 'score': pcr_score}
 
-        # MWPL Position (5 pts) - Lower is better
+        # ── MWPL scoring (5 pts) — same for both paths ─────────────────────
         mwpl_pct = csd.fno_mwpl_pct or 0
-        if mwpl_pct < 30:
-            mwpl_score = 5
-        elif mwpl_pct < 50:
-            mwpl_score = 4
-        elif mwpl_pct < 70:
-            mwpl_score = 2
-        else:
-            mwpl_score = 0
-
-        score += mwpl_score
+        if mwpl_pct < 30:    mwpl_score = 5
+        elif mwpl_pct < 50:  mwpl_score = 4
+        elif mwpl_pct < 70:  mwpl_score = 2
+        else:                mwpl_score = 0
         details['mwpl'] = {'value': mwpl_pct, 'score': mwpl_score}
 
-        # Rollover Analysis (10 pts)
-        rollover_pct = csd.fno_rollover_pct or 0
-        rollover_cost = csd.fno_rollover_cost_pct or 0
+        # ── Try OI Intelligence path (60 pts max) ─────────────────────────
+        intel = None
+        try:
+            from django.utils import timezone as _tz
+            from apps.data.models import OIIntelligence
+            intel = OIIntelligence.objects.filter(
+                symbol=self.symbol,
+                trading_date=_tz.localdate()
+            ).first()
+        except Exception as _e:
+            logger.debug(f"  OI Intelligence lookup skipped: {_e}")
 
-        # High rollover = position continuation
-        if rollover_pct > 70:
-            rollover_score = 7
-        elif rollover_pct > 50:
-            rollover_score = 5
+        if intel:
+            # ── 1. OI Momentum Score (20 pts) — direction-aware ──────────
+            momentum = intel.oi_momentum_score  # 0-100
+            if self.direction == 'LONG':
+                if momentum >= 80:   momentum_score = 20
+                elif momentum >= 65: momentum_score = 16
+                elif momentum >= 50: momentum_score = 10
+                elif momentum >= 35: momentum_score = 4
+                else:                momentum_score = 0
+            else:  # SHORT — bearish OI positioning is good
+                inverted = 100 - momentum
+                if inverted >= 80:   momentum_score = 20
+                elif inverted >= 65: momentum_score = 16
+                elif inverted >= 50: momentum_score = 10
+                elif inverted >= 35: momentum_score = 4
+                else:                momentum_score = 0
+
+            # ── 2. Today's buildup (10 pts) ───────────────────────────────
+            aligned_bullish = {'LONG_BUILDUP'}
+            aligned_bearish = {'SHORT_BUILDUP'}
+            weak_bullish    = {'SHORT_COVERING'}
+            weak_bearish    = {'LONG_UNWINDING'}
+
+            if self.direction == 'LONG':
+                if buildup in aligned_bullish:  today_score = 10
+                elif buildup in weak_bullish:   today_score = 6
+                elif buildup == 'NEUTRAL':      today_score = 3
+                elif buildup in weak_bearish:   today_score = 1
+                else:                           today_score = 0  # SHORT_BUILDUP is bad for LONG
+            else:
+                if buildup in aligned_bearish:  today_score = 10
+                elif buildup in weak_bearish:   today_score = 6
+                elif buildup == 'NEUTRAL':      today_score = 3
+                elif buildup in weak_bullish:   today_score = 1
+                else:                           today_score = 0  # LONG_BUILDUP is bad for SHORT
+
+            # ── 3. Consecutive pattern (5 pts) ────────────────────────────
+            consec_days = intel.consecutive_days
+            consec_type = intel.consecutive_type
+            is_aligned_streak = (
+                (self.direction == 'LONG' and consec_type in ('LONG_BUILDUP', 'SHORT_COVERING')) or
+                (self.direction == 'SHORT' and consec_type in ('SHORT_BUILDUP', 'LONG_UNWINDING'))
+            )
+            if is_aligned_streak:
+                if consec_days >= 5:   consecutive_score = 5
+                elif consec_days >= 3: consecutive_score = 3
+                elif consec_days >= 2: consecutive_score = 1
+                else:                  consecutive_score = 0
+            else:
+                consecutive_score = 0
+
+            # ── 4. Advanced pattern (5 pts, can be negative) ──────────────
+            pattern = intel.pattern_detected
+            BULLISH_PATTERNS = {'ACCUMULATION', 'HIGH_CONVICTION', 'SHORT_SQUEEZE', 'CAPITULATION', 'TREND_REVERSAL'}
+            BEARISH_PATTERNS  = {'DISTRIBUTION', 'LONG_UNWINDING', 'TREND_EXHAUSTION'}
+
+            if self.direction == 'LONG':
+                if pattern in ('ACCUMULATION', 'HIGH_CONVICTION'):  pattern_score = 5
+                elif pattern == 'SHORT_SQUEEZE':                     pattern_score = 4
+                elif pattern in ('CAPITULATION', 'TREND_REVERSAL'): pattern_score = 2
+                elif pattern == 'TREND_EXHAUSTION':                  pattern_score = -2
+                elif pattern == 'DISTRIBUTION':                      pattern_score = -5
+                else:                                                pattern_score = 0
+            else:
+                if pattern in ('DISTRIBUTION', 'TREND_EXHAUSTION'): pattern_score = 5
+                elif pattern == 'LONG_UNWINDING':                    pattern_score = 3
+                elif pattern == 'TREND_REVERSAL':                    pattern_score = 2
+                elif pattern == 'CAPITULATION':                      pattern_score = -2
+                elif pattern in ('ACCUMULATION', 'HIGH_CONVICTION'): pattern_score = -5
+                else:                                                pattern_score = 0
+
+            # ── 5. Rollover (5 pts) ───────────────────────────────────────
+            rollover_pct = csd.fno_rollover_pct or 0
+            rollover_cost = csd.fno_rollover_cost_pct or 0
+            if rollover_pct > 70:   rollover_score = 3
+            elif rollover_pct > 50: rollover_score = 2
+            else:                   rollover_score = 1
+            if self.direction == 'LONG' and rollover_cost > 0:    rollover_score += 2
+            elif self.direction == 'SHORT' and rollover_cost < 0: rollover_score += 2
+            rollover_score = min(rollover_score, 5)
+
+            # ── Assemble intelligence-led score ───────────────────────────
+            score = (momentum_score + today_score + consecutive_score +
+                     pattern_score + pcr_score + mwpl_score + rollover_score)
+            score = max(0, min(score, 60))
+
+            details['buildup'] = {
+                'type': buildup, 'oi_change': oi_change, 'price_change': price_change,
+                'score': today_score,
+            }
+            details['rollover'] = {'pct': rollover_pct, 'cost': rollover_cost, 'score': rollover_score}
+            details['oi_intelligence'] = {
+                'momentum_score': momentum,
+                'momentum_pts': momentum_score,
+                'consecutive_days': consec_days,
+                'consecutive_type': consec_type,
+                'consecutive_pts': consecutive_score,
+                'pattern': pattern,
+                'pattern_pts': pattern_score,
+                'pattern_description': intel.pattern_description,
+                'weekly_summary': intel.weekly_summary,
+                'monthly_summary': intel.monthly_summary,
+                'confidence_level': intel.confidence_level,
+                'buildup_label': intel.buildup_label,
+                'interpretation_text': intel.interpretation_text,
+                'ai_narrative': intel.ai_narrative,
+                'last_20_bullish_count': intel.last_20_bullish_count,
+                'last_20_bearish_count': intel.last_20_bearish_count,
+                'last_5_buildup_types': intel.last_5_buildup_types,
+            }
+
+            logger.info(
+                f"  OI & F&O [Intelligence]: {score}/60 "
+                f"(momentum={momentum:.0f}→{momentum_score}pts, buildup={buildup}→{today_score}pts, "
+                f"streak={consec_days}×{consec_type}→{consecutive_score}pts, "
+                f"pattern={pattern}→{pattern_score:+d}pts, PCR={pcr:.2f}→{pcr_score}pts)"
+            )
+
         else:
-            rollover_score = 2
+            # ── Fallback path: no OI Intelligence (max 45 pts) ────────────
+            if buildup == 'LONG_BUILDUP':
+                buildup_score = 20 if self.direction == 'LONG' else 5
+            elif buildup == 'SHORT_BUILDUP':
+                buildup_score = 20 if self.direction == 'SHORT' else 5
+            elif buildup in ('SHORT_COVERING', 'LONG_UNWINDING'):
+                buildup_score = 10
+            else:
+                buildup_score = 5
 
-        # Rollover cost indicates sentiment
-        if self.direction == 'LONG' and rollover_cost > 0:
-            rollover_score += 3  # Premium = bullish
-        elif self.direction == 'SHORT' and rollover_cost < 0:
-            rollover_score += 3  # Discount = bearish
+            rollover_pct = csd.fno_rollover_pct or 0
+            rollover_cost = csd.fno_rollover_cost_pct or 0
+            if rollover_pct > 70:    rollover_score = 7
+            elif rollover_pct > 50:  rollover_score = 5
+            else:                    rollover_score = 2
+            if self.direction == 'LONG' and rollover_cost > 0:    rollover_score += 3
+            elif self.direction == 'SHORT' and rollover_cost < 0: rollover_score += 3
+            rollover_score = min(rollover_score, 10)
 
-        rollover_score = min(rollover_score, 10)
-        score += rollover_score
-        details['rollover'] = {'pct': rollover_pct, 'cost': rollover_cost, 'score': rollover_score}
+            score = min(buildup_score + pcr_score + mwpl_score + rollover_score, 45)
+            details['buildup'] = {
+                'type': buildup, 'oi_change': oi_change, 'price_change': price_change,
+                'score': buildup_score,
+            }
+            details['rollover'] = {'pct': rollover_pct, 'cost': rollover_cost, 'score': rollover_score}
+
+            logger.info(
+                f"  OI & F&O [Fallback]: {score}/45 "
+                f"(buildup={buildup}, PCR={pcr:.2f}, no OI Intelligence data)"
+            )
 
         self.details['oi_fno'] = details
-        logger.info(f"  OI & F&O: {score}/45 (buildup={buildup}, PCR={pcr:.2f})")
-
-        return min(score, 45)
+        return score
 
     def _score_technical_momentum(self) -> int:
         """

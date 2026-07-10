@@ -108,6 +108,14 @@ def get_static_schedule():
         'options': {'queue': 'data'},
     },
 
+    # OI Intelligence Engine — runs after import_trendlyne_data (9:00 AM) to
+    # capture daily OI snapshots and generate multi-day pattern analysis.
+    'process-oi-intelligence': {
+        'task': 'process_oi_intelligence',
+        'schedule': crontab(hour=9, minute=15, day_of_week='1-5'),  # Mon-Fri 9:15 AM
+        'options': {'queue': 'data'},
+    },
+
     # Exchange filings — NSE/BSE corporate announcements (3× daily)
     # Disabled by default via TASK_DEFAULT_CONFIG is_enabled=False
     # Enable via Task Control UI after staging validation.

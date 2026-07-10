@@ -131,6 +131,50 @@ def import_trendlyne_data(self):
         return {"status": "error", "error": str(e)}
 
 
+@shared_task(name='process_oi_intelligence', bind=True)
+@task_enabled_guard('process-oi-intelligence')
+def process_oi_intelligence_task(self):
+    """
+    Process OI Intelligence for all F&O stocks (Daily ~9:15 AM, after import_trendlyne_data)
+
+    Captures daily OI snapshots, computes momentum scores and pattern analysis,
+    and saves OIIntelligence records used by the futures analysis engine.
+    """
+    task_logger = TaskLogger(
+        task_name='process_oi_intelligence',
+        task_category='data',
+        task_id=self.request.id
+    )
+
+    task_logger.start("Starting OI Intelligence processing")
+
+    try:
+        from apps.data.services.oi_intelligence_engine import run_daily_oi_intelligence
+
+        task_logger.step('processing', "Running OI intelligence engine for all F&O stocks")
+        result = run_daily_oi_intelligence()
+
+        msg = (
+            f"OI Intelligence complete — "
+            f"Processed: {result['processed']} | Skipped: {result['errors']} | "
+            f"Total: {result['total']}"
+        )
+        task_logger.success(msg, context=result)
+
+        send_telegram_notification(
+            f"📊 *OI Intelligence Engine*\n"
+            f"✅ Processed: {result['processed']} stocks\n"
+            f"⚠️ Skipped: {result['errors']} stocks\n"
+            f"📅 Date: {timezone.localdate()}"
+        )
+
+        return {"status": "success", **result}
+
+    except Exception as e:
+        task_logger.failure("OI Intelligence processing failed", error=e)
+        return {"status": "error", "error": str(e)}
+
+
 @shared_task(name='update_live_market_data', bind=True, max_retries=3)
 @task_enabled_guard('update-live-market-data')
 def update_live_market_data(self):

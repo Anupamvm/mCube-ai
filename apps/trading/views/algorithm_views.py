@@ -10,8 +10,9 @@ Both algorithms integrate with Breeze API for real-time market data and margin c
 
 import logging
 from django.contrib.auth.decorators import login_required
-from django.views.decorators.http import require_POST
+from django.views.decorators.http import require_POST, require_GET
 from django.http import JsonResponse
+from django.utils import timezone
 from apps.core.utils import json_serial
 
 logger = logging.getLogger(__name__)
@@ -239,6 +240,80 @@ def _build_suggestions_response(task_result):
         'total_errors': 0,
         'volume_filters': {},
         'batch_time': now.strftime('%Y-%m-%d %H:%M:%S'),
+    })
+
+
+@login_required
+@require_GET
+def get_oi_intelligence(request, symbol):
+    """
+    Return OI Intelligence data for a symbol.
+
+    Response includes today's OIIntelligence record and the last 20
+    OIHistorySnapshot records (most-recent first) for the calendar view.
+    """
+    from apps.data.models import OIIntelligence, OIHistorySnapshot
+
+    today = timezone.localdate()
+
+    intel = OIIntelligence.objects.filter(symbol=symbol, trading_date=today).first()
+    history = list(
+        OIHistorySnapshot.objects.filter(symbol=symbol)
+        .order_by('-trading_date')[:20]
+    )
+
+    if not intel and not history:
+        return JsonResponse({'success': False, 'error': f'No OI intelligence data found for {symbol}'}, status=404)
+
+    intel_data = None
+    if intel:
+        intel_data = {
+            'symbol': intel.symbol,
+            'trading_date': str(intel.trading_date),
+            'buildup_type': intel.buildup_type,
+            'buildup_label': intel.buildup_label,
+            'interpretation_text': intel.interpretation_text,
+            'consecutive_days': intel.consecutive_days,
+            'consecutive_type': intel.consecutive_type,
+            'pattern_detected': intel.pattern_detected,
+            'pattern_description': intel.pattern_description,
+            'oi_momentum_score': intel.oi_momentum_score,
+            'confidence_level': intel.confidence_level,
+            'weekly_summary': intel.weekly_summary,
+            'monthly_summary': intel.monthly_summary,
+            'ai_narrative': intel.ai_narrative,
+            'last_20_bullish_count': intel.last_20_bullish_count,
+            'last_20_bearish_count': intel.last_20_bearish_count,
+            'last_5_buildup_types': intel.last_5_buildup_types,
+        }
+
+    history_data = [
+        {
+            'trading_date': str(snap.trading_date),
+            'close_price': snap.close_price,
+            'price_change_pct': snap.price_change_pct,
+            'futures_price': snap.futures_price,
+            'oi': snap.oi,
+            'oi_change_pct': snap.oi_change_pct,
+            'total_fno_oi': snap.total_fno_oi,
+            'pcr_oi': snap.pcr_oi,
+            'mwpl_pct': snap.mwpl_pct,
+            'volume': snap.volume,
+            'traded_contracts': snap.traded_contracts,
+            'delivery_pct': snap.delivery_pct,
+            'buildup_type': snap.buildup_type,
+            'oi_momentum_score': snap.oi_momentum_score,
+            'confidence_score': snap.confidence_score,
+        }
+        for snap in history
+    ]
+
+    return JsonResponse({
+        'success': True,
+        'symbol': symbol,
+        'today': str(today),
+        'intelligence': intel_data,
+        'history': history_data,
     })
 
 

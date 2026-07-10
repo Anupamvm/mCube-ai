@@ -85,6 +85,16 @@ TASK_DEFAULT_CONFIG = {
         'is_enabled': False,
     },
 
+    'process-oi-intelligence': {
+        'display_name': 'OI Intelligence Engine',
+        'description': 'Processes daily OI snapshots and generates institutional-grade OI interpretation for all F&O stocks',
+        'schedule_type': 'crontab',
+        'category': 'data',
+        'default_hour': 9,
+        'default_minute': 15,
+        'default_days': [0, 1, 2, 3, 4],
+    },
+
     # =========================================================================
     # STRATEGY EXECUTION TASKS
     # =========================================================================

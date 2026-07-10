@@ -36,6 +36,7 @@ from .algorithm_views import (
     futures_task_status,
     trigger_nifty_strangle,
     trigger_broken_iron_condor,
+    get_oi_intelligence,
 )
 
 from .verification_views import (
