@@ -215,9 +215,9 @@
         .data-table td { padding: 0.3rem 0.5rem; border-bottom: 1px solid #f3f4f6; vertical-align: top; }
         .data-table td:first-child { color: #9ca3af; width: 45%; white-space: nowrap; }
         .data-table td:last-child  { font-weight: 600; color: #1f2937; }
-        .data-table .bv { color: #10b981; }
-        .data-table .rv { color: #ef4444; }
-        .data-table .yv { color: #f59e0b; }
+        .data-table .bv, .bv { color: #10b981; }
+        .data-table .rv, .rv { color: #ef4444; }
+        .data-table .yv, .yv { color: #f59e0b; }
         .data-table .hl { background: #fefce8; font-weight: 700; }
 
         .interp { font-size: 0.855rem; color: #374151; line-height: 1.65; margin: 0.5rem 0; }
@@ -508,38 +508,114 @@ function renderNews(data) {
 
 function renderAnalyst(data) {
     const av = data.analyst_verification || {};
-    if (!av.success && !av.price_target && !av.reports_summary) return '';
+
+    // price_target may be a dict {avg_target_price, upside_pct, analyst_count, ...} or null
+    const pt = av.price_target;
+    const targetPrice   = pt ? (typeof pt === 'object' ? pt.avg_target_price   : Number(pt))   : null;
+    const upsidePct     = pt && typeof pt === 'object' ? pt.upside_pct     : null;
+    const analystCount  = pt && typeof pt === 'object' ? pt.analyst_count  : null;
+    const strongBuy     = pt && typeof pt === 'object' ? (pt.strong_buy_count || 0) : 0;
+    const buy           = pt && typeof pt === 'object' ? (pt.buy_count      || 0) : 0;
+    const hold          = pt && typeof pt === 'object' ? (pt.hold_count     || 0) : 0;
+    const sell          = (pt && typeof pt === 'object' ? (pt.sell_count || 0) : 0)
+                        + (pt && typeof pt === 'object' ? (pt.strong_sell_count || 0) : 0);
+
+    // reports_summary may be a dict {total_reports, bullish_count, bearish_count, ...} or null
+    const rs = av.reports_summary;
+    let reportsSummaryText = '';
+    if (rs && typeof rs === 'object') {
+        reportsSummaryText = `${rs.total_reports || 0} analyst reports — `
+            + `${rs.bullish_count || 0} Bullish, ${rs.hold_count || 0} Hold, ${rs.bearish_count || 0} Bearish`
+            + (rs.avg_sentiment_score != null ? `. Avg sentiment: ${rs.avg_sentiment_score.toFixed(2)}/1.0` : '');
+    } else if (typeof rs === 'string' && rs) {
+        reportsSummaryText = rs;
+    }
+
+    const hasData = av.success || targetPrice || reportsSummaryText || (av.report_quick_summaries || []).length;
+    if (!hasData) return '';
 
     let html = `<div class="section"><div class="section-title">📈 Analyst Data</div>`;
 
     const rec = av.recommendation || 'N/A';
     const recColor = rec === 'PROCEED' ? 'green' : rec === 'CAUTION' ? 'yellow' : 'red';
-    html += `<div style="margin-bottom:1rem;"><span class="pill ${recColor}">${rec}</span>`;
+    html += `<div style="margin-bottom:0.75rem;display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap;">
+        <span class="pill ${recColor}">${rec}</span>`;
 
-    if (av.price_target) {
-        html += ` &nbsp; Price Target: <strong>₹${fmt(av.price_target)}</strong>`;
+    if (targetPrice) {
+        const upArrow = upsidePct != null ? (upsidePct >= 0 ? `<span class="bv"> +${fmt(upsidePct,1)}% upside</span>` : `<span class="rv"> ${fmt(upsidePct,1)}% downside</span>`) : '';
+        html += `<span style="font-size:0.9rem;color:#374151;">Price Target: <strong>₹${fmt(targetPrice)}</strong>${upArrow}</span>`;
     }
-    html += '</div>';
+    if (analystCount) {
+        html += `<span style="font-size:0.85rem;color:#6b7280;">${analystCount} analyst${analystCount !== 1 ? 's' : ''}</span>`;
+    }
+    html += `</div>`;
 
-    if (av.reports_summary) {
-        html += `<div style="font-size:0.875rem;color:#374151;margin-bottom:0.75rem;">${av.reports_summary}</div>`;
+    // Analyst consensus bar
+    if (analystCount && (strongBuy + buy + hold + sell) > 0) {
+        const total = strongBuy + buy + hold + sell;
+        html += `<div style="margin-bottom:0.75rem;">
+            <div style="font-size:0.78rem;color:#6b7280;margin-bottom:0.3rem;text-transform:uppercase;letter-spacing:0.4px;">Analyst Consensus</div>
+            <div style="display:flex;gap:0.25rem;height:8px;border-radius:4px;overflow:hidden;">
+                ${strongBuy > 0 ? `<div style="flex:${strongBuy};background:#059669;" title="Strong Buy: ${strongBuy}"></div>` : ''}
+                ${buy > 0       ? `<div style="flex:${buy};background:#10b981;" title="Buy: ${buy}"></div>` : ''}
+                ${hold > 0      ? `<div style="flex:${hold};background:#f59e0b;" title="Hold: ${hold}"></div>` : ''}
+                ${sell > 0      ? `<div style="flex:${sell};background:#ef4444;" title="Sell/Strong Sell: ${sell}"></div>` : ''}
+            </div>
+            <div style="display:flex;gap:1rem;margin-top:0.35rem;font-size:0.78rem;">
+                ${strongBuy > 0 ? `<span style="color:#059669;">● Strong Buy: ${strongBuy}</span>` : ''}
+                ${buy > 0       ? `<span style="color:#10b981;">● Buy: ${buy}</span>` : ''}
+                ${hold > 0      ? `<span style="color:#f59e0b;">● Hold: ${hold}</span>` : ''}
+                ${sell > 0      ? `<span style="color:#ef4444;">● Sell: ${sell}</span>` : ''}
+            </div>
+        </div>`;
     }
 
+    if (reportsSummaryText) {
+        html += `<div style="font-size:0.855rem;color:#374151;margin-bottom:0.75rem;padding:0.6rem 0.75rem;background:#f9fafb;border-radius:0.4rem;">${reportsSummaryText}</div>`;
+    }
+
+    // LLM quick summaries of latest reports
     const summaries = av.report_quick_summaries || [];
     if (summaries.length) {
-        html += `<div style="font-weight:600;font-size:0.85rem;color:#374151;margin-bottom:0.5rem;">Recent Report Summaries</div>`;
+        html += `<div style="font-weight:600;font-size:0.82rem;color:#6b7280;text-transform:uppercase;letter-spacing:0.4px;margin-bottom:0.4rem;">Recent Report Summaries</div>`;
         summaries.forEach(s => {
-            html += `<div style="background:#f9fafb;border-radius:0.5rem;padding:0.75rem;margin-bottom:0.5rem;font-size:0.85rem;">
-                <div style="font-weight:600;color:#1f2937;margin-bottom:0.25rem;">${s.report_name || s.file_name || ''}</div>
-                <div style="color:#374151;">${s.summary || ''}</div>
+            const name = s.report_name || s.file_name || s.title || 'Report';
+            const summary = typeof s.summary === 'string' ? s.summary
+                          : typeof s.summary === 'object' ? (s.summary && s.summary.summary || JSON.stringify(s.summary)) : '';
+            const recText = s.recommendation_type || s.recommendation || '';
+            const sentScore = s.sentiment_score;
+            const sentColor = sentScore != null ? (sentScore > 0.3 ? '#059669' : sentScore < -0.3 ? '#ef4444' : '#f59e0b') : '#6b7280';
+            html += `<div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:0.5rem;padding:0.75rem;margin-bottom:0.5rem;font-size:0.85rem;">
+                <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:0.35rem;">
+                    <div style="font-weight:600;color:#1f2937;">${name}</div>
+                    <div style="display:flex;gap:0.5rem;flex-shrink:0;margin-left:0.5rem;">
+                        ${recText ? `<span style="background:#e0e7ff;color:#3730a3;border-radius:99px;padding:0.1rem 0.5rem;font-size:0.75rem;font-weight:600;">${recText}</span>` : ''}
+                        ${sentScore != null ? `<span style="color:${sentColor};font-weight:700;font-size:0.78rem;">${sentScore > 0 ? '+' : ''}${sentScore.toFixed(2)}</span>` : ''}
+                    </div>
+                </div>
+                ${s.report_date ? `<div style="font-size:0.78rem;color:#9ca3af;margin-bottom:0.35rem;">${s.report_date}</div>` : ''}
+                <div style="color:#374151;line-height:1.55;">${summary || '<em style="color:#9ca3af;">No summary available</em>'}</div>
             </div>`;
         });
     }
 
     const warnings = av.warnings || [];
     if (warnings.length) {
-        html += `<div style="margin-top:0.75rem;">`;
-        warnings.forEach(w => { html += `<div class="article-card warning"><div class="article-title">${w}</div></div>`; });
+        html += `<div style="margin-top:0.5rem;">`;
+        warnings.forEach(w => {
+            const wText = typeof w === 'string' ? w : (w && w.message) || JSON.stringify(w);
+            html += `<div style="font-size:0.82rem;color:#92400e;background:#fffbeb;border:1px solid #fde68a;border-radius:0.4rem;padding:0.5rem 0.75rem;margin-bottom:0.3rem;">⚠️ ${wText}</div>`;
+        });
+        html += `</div>`;
+    }
+
+    const blocking = av.blocking_reasons || [];
+    if (blocking.length) {
+        html += `<div style="margin-top:0.5rem;">`;
+        blocking.forEach(r => {
+            const rText = typeof r === 'string' ? r : JSON.stringify(r);
+            html += `<div style="font-size:0.82rem;color:#991b1b;background:#fef2f2;border:1px solid #fca5a5;border-radius:0.4rem;padding:0.5rem 0.75rem;margin-bottom:0.3rem;">🚫 ${rText}</div>`;
+        });
         html += `</div>`;
     }
 
@@ -584,23 +660,98 @@ function renderHistorical(data) {
 }
 
 function renderReason(data) {
-    if (!data.reason) return '';
     const v = (data.verdict || '').toUpperCase();
-    let reasonStyle, icon;
-    if (v.startsWith('BLOCK')) {
-        reasonStyle = 'background:#fff7ed;border-color:#fed7aa;color:#92400e;';
+    const isBlocked = v.startsWith('BLOCK');
+    const isFail = v.startsWith('FAIL') || v.startsWith('HARD');
+    const isPass = v.startsWith('PASS');
+
+    // ── Build rich blocking detail from structured data ──────────────────────
+    let richBlocks = [];
+
+    if (isBlocked || isFail) {
+        // 1) Historical risk check failures
+        const hv = data.historical_verification || {};
+        const failedChecks = (hv.risk_checks || []).filter(c => (c.status || '').toUpperCase() === 'FAIL');
+        failedChecks.forEach(c => {
+            let detail = '';
+            const d = c.details || {};
+            if (c.id === 'single_day_drop' && d.worst_day && d.worst_day.date) {
+                const pct = Math.abs(d.worst_day.change || 0).toFixed(2);
+                const dt  = d.worst_day.date;
+                detail = `On <strong>${dt}</strong>, the stock fell <strong style="color:#ef4444;">${pct}%</strong> in a single session — exceeding the 2% single-day loss threshold.`;
+                if (d.daily_changes && d.daily_changes.length) {
+                    detail += `<table class="data-table" style="margin-top:0.5rem;"><tr style="font-weight:600;"><td>Date</td><td>Daily Change</td><td>Close</td></tr>`;
+                    d.daily_changes.forEach(row => {
+                        const cls = row.change_pct < 0 ? 'rv' : 'bv';
+                        detail += `<tr><td>${row.date}</td><td class="${cls}">${row.change_pct >= 0 ? '+' : ''}${row.change_pct}%</td><td>₹${fmt(row.close)}</td></tr>`;
+                    });
+                    detail += `</table>`;
+                }
+            } else if (c.id === 'price_trend' && d.changes) {
+                const totalPct = (d.total_change_pct || 0).toFixed(2);
+                detail = `Stock fell <strong style="color:#ef4444;">${Math.abs(totalPct)}%</strong> over the lookback period. ${c.message || ''}`;
+            } else if (c.id === 'volatility_regime' && d.avg_daily_range_pct) {
+                detail = `Average daily range of <strong>${d.avg_daily_range_pct}%</strong> (annualised volatility: ${d.annualized_volatility_pct || '?'}%) places this in a high-volatility regime. ${c.message || ''}`;
+            } else if (c.id === 'volume_trend' && d.recent_5d_avg_volume) {
+                detail = `Recent volume (${fmtOI(d.recent_5d_avg_volume)}) is below the 20-day average (${fmtOI(d.longer_20d_avg_volume)}). ${c.message || ''}`;
+            } else {
+                detail = c.message || c.description || '';
+            }
+            richBlocks.push({ icon: '❌', name: c.name || c.id, detail, severity: c.severity });
+        });
+
+        // 2) News blocking articles
+        const nv = data.news_verification || {};
+        (nv.blocking_articles || []).forEach(a => {
+            richBlocks.push({
+                icon: '📰',
+                name: 'Negative News',
+                detail: `<strong>${a.title || 'Article'}</strong>${a.published_at ? ' — ' + a.published_at : ''}${a.sentiment_score != null ? ` (sentiment: ${a.sentiment_score.toFixed(2)})` : ''}`,
+                severity: 'HIGH'
+            });
+        });
+
+        // 3) Analyst blocking reasons
+        const av = data.analyst_verification || {};
+        (av.blocking_reasons || []).forEach(r => {
+            richBlocks.push({ icon: '📊', name: 'Analyst Block', detail: r, severity: 'MEDIUM' });
+        });
+    }
+
+    const score = (data.enhanced_analysis || {}).composite_score || (data.analysis || {}).composite_score || 0;
+
+    if (!isBlocked && !isFail && !data.reason) return '';
+
+    let boxStyle, icon;
+    if (isBlocked) {
+        boxStyle = 'background:#fff7ed;border:1px solid #fed7aa;color:#92400e;border-radius:0.6rem;padding:1rem;';
         icon = '⛔';
-    } else if (v.startsWith('FAIL') || v.startsWith('HARD')) {
-        reasonStyle = 'background:#fef2f2;border-color:#fca5a5;color:#991b1b;';
+    } else if (isFail) {
+        boxStyle = 'background:#fef2f2;border:1px solid #fca5a5;color:#991b1b;border-radius:0.6rem;padding:1rem;';
         icon = '✗';
     } else {
-        reasonStyle = 'background:#eff6ff;border-color:#bfdbfe;color:#1e40af;';
+        boxStyle = 'background:#eff6ff;border:1px solid #bfdbfe;color:#1e40af;border-radius:0.6rem;padding:1rem;';
         icon = '💡';
     }
-    return `<div class="section">
-        <div class="section-title">${icon} Verdict Reasoning</div>
-        <div class="reason-box" style="${reasonStyle}">${data.reason}</div>
-    </div>`;
+
+    let html = `<div class="section"><div class="section-title">${icon} Verdict Reasoning</div>`;
+
+    if (richBlocks.length) {
+        html += `<div style="${boxStyle}margin-bottom:0.75rem;">`;
+        html += `<div style="font-weight:700;margin-bottom:0.25rem;">${icon} ${data.verdict || ''}</div>`;
+        html += `<div style="font-size:0.85rem;opacity:0.85;">Technical analysis ${isPass ? 'passed' : 'completed'} (score: ${score}/100) but blocked by the following:</div>`;
+        html += `</div>`;
+        richBlocks.forEach(b => {
+            html += `<div style="background:#fafafa;border:1px solid #e5e7eb;border-radius:0.5rem;padding:0.75rem;margin-bottom:0.6rem;">
+                <div style="font-weight:700;color:#1f2937;margin-bottom:0.35rem;">${b.icon} ${b.name}</div>
+                <div style="font-size:0.855rem;color:#374151;line-height:1.6;">${b.detail}</div>
+            </div>`;
+        });
+    } else if (data.reason) {
+        html += `<div class="reason-box" style="${boxStyle}">${data.reason}</div>`;
+    }
+
+    return html + '</div>';
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -802,7 +953,7 @@ function cardDMA(data) {
 
     const d4 = s4.details || {};
     const ma  = (s8 && s8.details && s8.details.moving_averages) || {};
-    const tlr = (s7 && s7.details && s7.details.tl_raw) || {};
+    const tlr = (s7 && s7.details && s7.details.components && s7.details.components.tl_raw) || {};
     const ea  = (data.enhanced_analysis || {}).details || {};
     const tc  = ea.trend_confirmation || {};
     const price = (data.analysis || {}).spot_price || 0;
@@ -904,7 +1055,7 @@ function cardVolume(data) {
     if (!s6) return '';
 
     const d6  = s6.details || {};
-    const tlr = (s7 && s7.details && s7.details.tl_raw)    || {};
+    const tlr = (s7 && s7.details && s7.details.components && s7.details.components.tl_raw) || {};
     const vp  = (s7 && s7.details && (s7.details.components || s7.details).volume_pattern) || {};
     const ea  = (data.enhanced_analysis || {}).details || {};
     const vq  = ea.volume_quality || {};
@@ -972,7 +1123,7 @@ function cardTechnical(data) {
     if (!s7) return '';
     const d7  = s7.details || {};
     const comp = d7.components || d7;
-    const tlr  = d7.tl_raw || {};
+    const tlr  = (d7.components && d7.components.tl_raw) || {};
     const ea   = (data.enhanced_analysis || {}).details || {};
     const tm   = ea.technical_momentum || {};
     const tl   = comp.trendlyne || {};
@@ -1117,13 +1268,23 @@ function cardExecutiveSummary(data) {
     const s7 = findStep(data.execution_log, 'Multi-Factor Technical');
     const ea_d = ea.details || {};
     const tm = ea_d.technical_momentum || {};
-    const rsiVal = (tm.rsi && tm.rsi.value) || ((s7 && s7.details && s7.details.tl_raw) || {}).rsi;
+    const rsiVal = (tm.rsi && tm.rsi.value) || ((s7 && s7.details && s7.details.components && s7.details.components.tl_raw) || {}).rsi;
+
+    const oiBuildupType = s3 && s3.details && s3.details.buildup_type;
+    const oiVal = oiBuildupType ? oiBuildupType.replace(/_/g,' ')
+                : (s3 && s3.status === 'SKIP') ? 'N/A (data unavailable)'
+                : '—';
+
+    const dmaT = s4 && s4.details && s4.details.trend;
+    const trendVal = dmaT ? dmaT.replace(/_/g,' ')
+                   : (s4 && s4.status === 'SKIP') ? 'N/A (data unavailable)'
+                   : '—';
 
     const rows = [
         { label: 'Overall Score',   value: (ea.composite_score || analysis.composite_score || 0) + '/100' },
         { label: 'Directional Bias', value: direction.replace(/_/g,' ') },
-        { label: 'OI Positioning',  value: s3 ? (s3.details.buildup_type || '—').replace(/_/g,' ') : '—' },
-        { label: 'Trend Structure', value: s4 ? (s4.details.trend || '—').replace(/_/g,' ') : '—' },
+        { label: 'OI Positioning',  value: oiVal },
+        { label: 'Trend Structure', value: trendVal },
         { label: 'RSI Momentum',    value: rsiVal != null ? fmt(rsiVal,1) + (rsiVal > 75 ? ' — Extended' : rsiVal < 30 ? ' — Oversold' : ' — Normal') : '—' },
         { label: 'Recommendation',  value: (ea.recommendation || '—').replace(/_/g,' ') },
     ];
@@ -1138,8 +1299,28 @@ function cardExecutiveSummary(data) {
         suggestedAction = `Score of ${score}/100 is below threshold. Avoid trading this contract — unfavourable risk/reward.`;
     }
 
-    if (data.verdict && data.verdict.includes('BLOCK')) {
-        suggestedAction = `Trade is BLOCKED: ${data.reason || 'See blocking reasons above.'}`;
+    if (data.verdict && data.verdict.toUpperCase().includes('BLOCK')) {
+        // Derive a concise human-readable block summary from structured data
+        const hv = data.historical_verification || {};
+        const failedChecks = (hv.risk_checks || []).filter(c => (c.status||'').toUpperCase()==='FAIL');
+        const newsBlocks = (data.news_verification || {}).blocking_articles || [];
+        const analystBlocks = (data.analyst_verification || {}).blocking_reasons || [];
+
+        const blockParts = [];
+        failedChecks.forEach(c => {
+            const d = c.details || {};
+            if (c.id === 'single_day_drop' && d.worst_day && d.worst_day.date) {
+                blockParts.push(`${c.name}: ${Math.abs(d.worst_day.change).toFixed(2)}% drop on ${d.worst_day.date}`);
+            } else {
+                blockParts.push(c.message || c.name);
+            }
+        });
+        newsBlocks.forEach(a => blockParts.push(`News: "${(a.title||'').slice(0,50)}"`));
+        analystBlocks.forEach(r => blockParts.push(typeof r === 'string' ? r : JSON.stringify(r)));
+
+        suggestedAction = blockParts.length
+            ? `Trade blocked — ${blockParts.join('; ')}. See blocking details above.`
+            : `Trade blocked. See blocking details above.`;
     }
 
     const gridHTML = rows.map(r => `<div><div class="eg-label">${r.label}</div><div class="eg-value">${r.value}</div></div>`).join('');
@@ -1198,12 +1379,130 @@ function downloadJSON() {
     URL.revokeObjectURL(a.href);
 }
 
-function renderActions() {
+function _tradeParams(d, lots) {
+    // Build the payload for /trading/api/place-futures-order/
+    const analysis = d.analysis || {};
+    const pos      = analysis.position_details || {};
+    const enhanced = d.enhanced_analysis || {};
+    const direction = (enhanced.recommendation || analysis.direction || 'LONG').toUpperCase();
+    return {
+        symbol:      d.symbol || SYMBOL,
+        expiry:      d.expiry || EXPIRY,
+        direction:   direction === 'SHORT' ? 'sell' : 'buy',
+        lots:        lots,
+        entry_price: analysis.contract_price || analysis.spot_price || 0,
+        stop_loss:   pos.stop_loss || 0,
+        target:      pos.target    || 0,
+    };
+}
+
+function _placeTrade(payload, label) {
+    return fetch('/trading/api/place-futures-order/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCookie('csrftoken') },
+        body: JSON.stringify(payload)
+    })
+    .then(r => r.json())
+    .then(res => {
+        if (res.success) {
+            alert(`✅ ${label} placed successfully!\n${res.message || ''}`);
+        } else {
+            alert(`❌ ${label} failed: ${res.error || res.message || 'Unknown error'}`);
+        }
+    })
+    .catch(e => alert(`❌ Network error: ${e.message}`));
+}
+
+function takeTrade(d) {
+    d = d || _analysisData;
+    if (!d) { alert('No analysis data available.'); return; }
+    const analysis = d.analysis || {};
+    const pos      = analysis.position_details || {};
+    const recLots  = pos.recommended_lots || 1;
+    const msg = `Confirm trade: ${d.symbol} ${(d.enhanced_analysis||{}).recommendation || analysis.direction || ''}\n`
+              + `Entry: ₹${fmt(analysis.contract_price)} | SL: ₹${fmt(pos.stop_loss)} | Target: ₹${fmt(pos.target)}\n`
+              + `Lots: ${recLots}\n\nProceed?`;
+    if (!confirm(msg)) return;
+    _placeTrade(_tradeParams(d, recLots), 'Trade');
+}
+
+function takeConservativeTrade(d) {
+    d = d || _analysisData;
+    if (!d) { alert('No analysis data available.'); return; }
+    const analysis = d.analysis || {};
+    const pos      = analysis.position_details || {};
+    const recLots  = pos.recommended_lots || 1;
+    const conservLots = Math.max(1, Math.floor(recLots / 2));
+
+    // Summarise the warnings/blocks so user knows what they're overriding
+    const hv = d.historical_verification || {};
+    const failNames = (hv.risk_checks || [])
+        .filter(c => ['FAIL','WARNING'].includes((c.status||'').toUpperCase()))
+        .map(c => c.name || c.id).join(', ');
+
+    const msg = `⚠️  OVERRIDE WARNING\n\nThis trade has risk check issues:\n${failNames || 'Unknown'}\n\n`
+              + `You are overriding with a CONSERVATIVE position:\n`
+              + `Entry: ₹${fmt(analysis.contract_price)} | SL: ₹${fmt(pos.stop_loss)} | Target: ₹${fmt(pos.target)}\n`
+              + `Lots: ${conservLots} (reduced from ${recLots})\n\n`
+              + `Are you sure you want to proceed despite the risk warnings?`;
+    if (!confirm(msg)) return;
+    _placeTrade(_tradeParams(d, conservLots), `Conservative Trade (${conservLots} lot${conservLots > 1 ? 's' : ''})`);
+}
+
+function renderActions(data) {
+    const d = data || {};
+    const verdict = (d.verdict || '').toUpperCase();
+    const hardBlocked = !d.passed && (verdict.includes('BLOCK') || verdict.includes('FAIL') || verdict.includes('HARD'));
+    const isPass = d.passed === true;
+
+    // Check if there are any WARNING-level checks that triggered the block/caution
+    const hv = d.historical_verification || {};
+    const failChecks    = (hv.risk_checks || []).filter(c => (c.status||'').toUpperCase() === 'FAIL');
+    const warnChecks    = (hv.risk_checks || []).filter(c => (c.status||'').toUpperCase() === 'WARNING');
+    const hasWarnings   = warnChecks.length > 0;
+    // "soft block" = only MEDIUM-severity failures (volatile/volume), no HIGH
+    const onlyMediumFails = failChecks.length > 0 && failChecks.every(c => (c.severity||'').toUpperCase() === 'MEDIUM');
+    // Show conservative button if: hard blocked but has warnings, or only medium-severity fails
+    const showConservative = hardBlocked || hasWarnings || onlyMediumFails;
+
+    const analysis = d.analysis || {};
+    const pos = analysis.position_details || {};
+    const recLots = pos.recommended_lots || 1;
+    const conservLots = Math.max(1, Math.floor(recLots / 2));
+
+    let tradeBtnHtml = '';
+    if (isPass) {
+        tradeBtnHtml = `<button class="action-btn" onclick="takeTrade(_analysisData)"
+            style="background:#059669;color:#fff;border-color:#059669;font-weight:700;">
+            ✅ Take Trade (${recLots} lot${recLots !== 1 ? 's' : ''})
+        </button>`;
+    } else {
+        tradeBtnHtml = `<button class="action-btn" disabled title="Trade does not meet full criteria"
+            style="opacity:0.4;cursor:not-allowed;background:#6b7280;color:#fff;border-color:#6b7280;">
+            🚫 Take Trade (Blocked)
+        </button>`;
+    }
+
+    const conservBtnHtml = showConservative
+        ? `<button class="action-btn" onclick="takeConservativeTrade(_analysisData)"
+            style="background:#d97706;color:#fff;border-color:#d97706;font-weight:600;"
+            title="Take a reduced ${conservLots}-lot position despite risk warnings">
+            ⚠️ Override — ${conservLots} Lot${conservLots !== 1 ? 's' : ''} (Conservative)
+        </button>`
+        : '';
+
     return `<div class="section">
         <div class="action-bar">
+            ${tradeBtnHtml}
+            ${conservBtnHtml}
             <button class="action-btn" onclick="window.print()">🖨 Print / Save PDF</button>
             <button class="action-btn" onclick="downloadJSON()">⬇ Download JSON</button>
         </div>
+        ${showConservative && !isPass ? `<div style="font-size:0.78rem;color:#92400e;margin-top:0.5rem;background:#fffbeb;border:1px solid #fde68a;border-radius:0.4rem;padding:0.5rem 0.75rem;">
+            ⚠️ Conservative override takes <strong>${conservLots} lot${conservLots !== 1 ? 's' : ''}</strong> (reduced from ${recLots}).
+            Risk checks flagged: ${[...failChecks, ...warnChecks].map(c => c.name || c.id).join(', ') || 'See above'}.
+            Proceed only if you accept these risks.
+        </div>` : ''}
     </div>`;
 }
 
@@ -1219,7 +1518,7 @@ function render(data) {
         renderNews(data),
         renderAnalyst(data),
         renderHistorical(data),
-        renderActions(),
+        renderActions(data),
     ].join('');
 
     document.title = `${data.symbol || SYMBOL} ${data.verdict || ''} — Analysis`;
