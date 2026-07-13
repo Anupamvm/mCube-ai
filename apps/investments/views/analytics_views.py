@@ -6,20 +6,24 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from ..models import FamilyMember, PortfolioGroup, InvestmentProduct, PortfolioHealthScore
 from ..serializers import PortfolioSnapshotSerializer, PortfolioHealthScoreSerializer
-from ..tasks import update_all_prices_task
+from ..tasks import update_all_prices_task, sync_missing_mf_categories_task
 
 logger = logging.getLogger('apps.investments')
+
+
+def _resolve_members(request):
+    """FamilyMembers for a comma-separated `member_ids` query param, defaulting to all of the user's members."""
+    member_ids_param = request.query_params.get('member_ids', '')
+    if member_ids_param:
+        member_ids = [int(x) for x in member_ids_param.split(',') if x.strip().isdigit()]
+        return FamilyMember.objects.filter(pk__in=member_ids, user=request.user)
+    return FamilyMember.objects.filter(user=request.user)
 
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def consolidated_portfolio(request):
-    member_ids_param = request.query_params.get('member_ids', '')
-    if member_ids_param:
-        member_ids = [int(x) for x in member_ids_param.split(',') if x.strip().isdigit()]
-        members = FamilyMember.objects.filter(pk__in=member_ids, user=request.user)
-    else:
-        members = FamilyMember.objects.filter(user=request.user)
+    members = _resolve_members(request)
 
     products = InvestmentProduct.objects.filter(
         investment_account__family_member__in=members,
@@ -39,6 +43,8 @@ def consolidated_portfolio(request):
         asset_allocation[p.product_type] = asset_allocation.get(p.product_type, 0.0) + cv
         account_ids.add(p.investment_account_id)
 
+    from ..services.analytics.xirr_calculator import compute_family_xirr
+
     return Response({
         'total_invested_value': round(total_invested, 2),
         'total_current_value': round(total_current, 2),
@@ -46,6 +52,7 @@ def consolidated_portfolio(request):
         'gain_loss_pct': round(
             ((total_current - total_invested) / total_invested * 100) if total_invested else 0, 2
         ),
+        'xirr': compute_family_xirr(members),
         'asset_allocation': {k: round(v, 2) for k, v in asset_allocation.items()},
         'accounts_count': len(account_ids),
         'products_count': products.count(),
@@ -71,6 +78,25 @@ def trigger_price_update(request):
             return Response({'status': 'price_update_complete', 'result': result})
         except Exception as sync_err:
             logger.error('Synchronous price update failed: %s', sync_err)
+            return Response({'error': str(sync_err)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def sync_mf_categories(request):
+    """Backfill fund categories from MFAPI for held ISINs that don't have one yet."""
+    member_id = request.data.get('member_id')
+    try:
+        task = sync_missing_mf_categories_task.delay(user_id=request.user.id, member_id=member_id)
+        return Response({'status': 'sync_queued', 'task_id': task.id})
+    except Exception as e:
+        logger.warning('Celery broker unavailable, running category sync synchronously: %s', e)
+        try:
+            from apps.investments.tasks import sync_missing_mf_categories_task as task_fn
+            result = task_fn(user_id=request.user.id, member_id=member_id)
+            return Response({'status': 'sync_complete', 'updated': result})
+        except Exception as sync_err:
+            logger.error('Synchronous category sync failed: %s', sync_err)
             return Response({'error': str(sync_err)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
@@ -116,3 +142,144 @@ def health_score_view(request):
         return Response({'error': 'No health score computed yet'}, status=status.HTTP_404_NOT_FOUND)
 
     return Response(PortfolioHealthScoreSerializer(score).data)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def risk_summary(request):
+    """Value-weighted risk/performance metrics across all mutual fund holdings for the given members."""
+    from datetime import date, timedelta
+    from ..models import MutualFundScheme, NAVHistory
+    from ..services.analytics.risk_metrics import compute_risk_metrics
+
+    members = _resolve_members(request)
+    products = InvestmentProduct.objects.filter(
+        investment_account__family_member__in=members,
+        is_active=True,
+        product_type='MUTUAL_FUND',
+    ).exclude(isin='')
+
+    # Dedup by ISIN — a fund held by two members is only computed once.
+    value_by_isin: dict[str, float] = {}
+    name_by_isin: dict[str, str] = {}
+    for p in products:
+        value_by_isin[p.isin] = value_by_isin.get(p.isin, 0.0) + float(p.current_value)
+        name_by_isin.setdefault(p.isin, p.name)
+
+    total_mf_value = sum(value_by_isin.values())
+    if total_mf_value == 0:
+        return Response({'error': 'No mutual fund holdings to analyse'}, status=status.HTTP_422_UNPROCESSABLE_ENTITY)
+
+    since = date.today() - timedelta(days=365 * 3)
+    metric_keys = ['sharpe_ratio', 'sortino_ratio', 'std_dev_annual', 'max_drawdown', 'beta', 'alpha_annual']
+    weighted_sums = {k: 0.0 for k in metric_keys}
+    weight_totals = {k: 0.0 for k in metric_keys}
+    covered_value = 0.0
+    excluded_funds = []
+
+    schemes = {s.isin: s for s in MutualFundScheme.objects.filter(isin__in=value_by_isin.keys())}
+    for isin, value in value_by_isin.items():
+        scheme = schemes.get(isin)
+        metrics = {}
+        if scheme:
+            nav_qs = NAVHistory.objects.filter(scheme=scheme, date__gte=since).order_by('date')
+            if nav_qs.count() >= 30:
+                metrics = compute_risk_metrics(nav_qs)
+
+        if not metrics:
+            excluded_funds.append({'isin': isin, 'name': name_by_isin[isin], 'value': round(value, 2)})
+            continue
+
+        covered_value += value
+        for k in metric_keys:
+            v = metrics.get(k)
+            if v is not None:
+                weighted_sums[k] += v * value
+                weight_totals[k] += value
+
+    result = {
+        'total_mf_value': round(total_mf_value, 2),
+        'covered_value': round(covered_value, 2),
+        'coverage_pct': round(covered_value / total_mf_value * 100, 2),
+        'excluded_funds': excluded_funds,
+        'weighted_sharpe': round(weighted_sums['sharpe_ratio'] / weight_totals['sharpe_ratio'], 4) if weight_totals['sharpe_ratio'] else None,
+        'weighted_sortino': round(weighted_sums['sortino_ratio'] / weight_totals['sortino_ratio'], 4) if weight_totals['sortino_ratio'] else None,
+        'weighted_std_dev': round(weighted_sums['std_dev_annual'] / weight_totals['std_dev_annual'], 4) if weight_totals['std_dev_annual'] else None,
+        'weighted_max_drawdown': round(weighted_sums['max_drawdown'] / weight_totals['max_drawdown'], 4) if weight_totals['max_drawdown'] else None,
+        'weighted_beta': round(weighted_sums['beta'] / weight_totals['beta'], 4) if weight_totals['beta'] else None,
+        'weighted_alpha': round(weighted_sums['alpha_annual'] / weight_totals['alpha_annual'], 4) if weight_totals['alpha_annual'] else None,
+    }
+    return Response(result)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def tenor_ladder(request):
+    """Maturity-bucket breakdown of debt-like holdings (FD/RD/Bond/SGB) using extra_data.maturity_date."""
+    from datetime import date, datetime
+
+    members = _resolve_members(request)
+    products = InvestmentProduct.objects.filter(
+        investment_account__family_member__in=members,
+        is_active=True,
+        product_type__in=['FD', 'RD', 'BOND', 'SGB'],
+    )
+
+    buckets = {'<1Y': 0.0, '1-3Y': 0.0, '3-5Y': 0.0, '5Y+': 0.0}
+    total_debt_value = 0.0
+    covered_value = 0.0
+    weighted_years_sum = 0.0
+    missing = 0
+    today = date.today()
+
+    for p in products:
+        value = float(p.current_value)
+        total_debt_value += value
+
+        maturity_str = (p.extra_data or {}).get('maturity_date')
+        if not maturity_str:
+            missing += 1
+            continue
+        try:
+            maturity = datetime.strptime(maturity_str, '%Y-%m-%d').date()
+        except ValueError:
+            missing += 1
+            continue
+
+        years = (maturity - today).days / 365.0
+        if years <= 0:
+            continue  # already matured — excluded from the forward-looking ladder
+        bucket = '<1Y' if years < 1 else '1-3Y' if years < 3 else '3-5Y' if years < 5 else '5Y+'
+        buckets[bucket] += value
+        covered_value += value
+        weighted_years_sum += years * value
+
+    return Response({
+        'buckets': {k: round(v, 2) for k, v in buckets.items()},
+        'weighted_avg_tenor_years': round(weighted_years_sum / covered_value, 2) if covered_value else None,
+        'covered_value': round(covered_value, 2),
+        'total_debt_value': round(total_debt_value, 2),
+        'holdings_missing_maturity': missing,
+    })
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def portfolio_trend(request):
+    """Invested vs current value over time, summed across the given members' PortfolioSnapshots."""
+    from ..models import PortfolioSnapshot
+
+    members = _resolve_members(request)
+    snapshots = PortfolioSnapshot.objects.filter(family_member__in=members).order_by('snapshot_date')
+
+    by_date: dict = {}
+    for s in snapshots:
+        entry = by_date.setdefault(s.snapshot_date, {'invested': 0.0, 'current': 0.0})
+        entry['invested'] += float(s.total_invested)
+        entry['current'] += float(s.current_value)
+
+    series = [
+        {'date': str(d), 'invested': round(v['invested'], 2), 'current': round(v['current'], 2)}
+        for d, v in sorted(by_date.items())
+    ]
+    return Response({'series': series})

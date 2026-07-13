@@ -31,6 +31,12 @@
     .toast-container { position:fixed; bottom:1.5rem; right:1.5rem; z-index:9999; }
     .inv-toast { padding: .75rem 1.25rem; border-radius: var(--radius-md); color:white; font-size:.9rem; box-shadow: var(--shadow-lg); }
     .inv-toast.success { background: var(--success); } .inv-toast.error { background: var(--danger); }
+    .acct-card { position: relative; }
+    .acct-del-btn {
+        position: absolute; top: .5rem; right: .5rem; background: none; border: none;
+        opacity: .45; font-size: .85rem; padding: .15rem .35rem; z-index: 2;
+    }
+    .acct-del-btn:hover { opacity: 1; }
 </style>
 {% endblock %}
 
@@ -52,6 +58,8 @@
     </div>
     <div class="d-flex gap-2">
         <a href="{% url 'investments:home' %}" class="btn btn-outline-secondary btn-sm">← Back</a>
+        <button class="btn btn-outline-primary btn-sm" onclick="openEditMemberModal()">✏️ Edit</button>
+        <button class="btn btn-outline-danger btn-sm" onclick="openDeleteMemberModal()">🗑️ Delete</button>
         <button class="btn btn-primary btn-sm" id="btn-report" onclick="generateReport()">📄 Generate Report</button>
     </div>
 </div>
@@ -90,29 +98,9 @@
     <div class="col-12 text-muted small" id="accts-loading">Loading accounts…</div>
 </div>
 
-<!-- Products table -->
-<div class="section-title">Holdings</div>
-<div class="card border-0 shadow-sm">
-    <div class="card-body p-0">
-        <div class="table-responsive">
-            <table class="table table-hover mb-0 small" id="products-table">
-                <thead style="background:var(--lighter)">
-                    <tr>
-                        <th class="ps-3">Name</th>
-                        <th>Type</th>
-                        <th class="text-end">Invested</th>
-                        <th class="text-end">Current</th>
-                        <th class="text-end">Gain / Loss</th>
-                        <th class="text-end pe-3">G/L %</th>
-                    </tr>
-                </thead>
-                <tbody id="products-body">
-                    <tr><td colspan="6" class="text-center text-muted py-3" id="products-loading">Loading holdings…</td></tr>
-                </tbody>
-            </table>
-        </div>
-    </div>
-</div>
+<!-- Deep Portfolio Analysis (shared component, scoped to this member) -->
+<div class="section-title">Deep Portfolio Analysis</div>
+{% include "investments/_portfolio_analysis.html" with show_member_filter=False %}
 
 <!-- Insights -->
 <div class="section-title">Insights</div>
@@ -120,10 +108,143 @@
     <div class="text-muted small" id="insights-loading">Loading insights…</div>
 </div>
 
+<!-- ════════════════════════════════════════════════════════════════════════
+     Edit Family Member Modal
+════════════════════════════════════════════════════════════════════════ -->
+<div class="modal fade" id="editMemberModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title fw-bold">✏️ Edit Family Member</h5>
+                <button class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="edit-member-form">
+                    <div class="row g-3">
+                        <div class="col-12">
+                            <label class="form-label small fw-semibold">Name *</label>
+                            <input type="text" class="form-control" id="em-name" required>
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label small fw-semibold">Relationship</label>
+                            <select class="form-select" id="em-rel">
+                                <option value="SELF">Self</option>
+                                <option value="SPOUSE">Spouse</option>
+                                <option value="FATHER">Father</option>
+                                <option value="MOTHER">Mother</option>
+                                <option value="CHILD">Child</option>
+                                <option value="HUF">HUF</option>
+                                <option value="TRUST">Trust</option>
+                                <option value="OTHER">Other</option>
+                            </select>
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label small fw-semibold">PAN</label>
+                            <input type="text" class="form-control text-uppercase" id="em-pan" maxlength="10">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label small fw-semibold">Email</label>
+                            <input type="text" class="form-control" id="em-email">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label small fw-semibold">Mobile</label>
+                            <input type="text" class="form-control" id="em-mobile">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label small fw-semibold">Date of Birth</label>
+                            <input type="date" class="form-control" id="em-dob">
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label small fw-semibold">Notes</label>
+                            <textarea class="form-control" id="em-notes" rows="2"></textarea>
+                        </div>
+                    </div>
+                    <div id="em-error" class="alert alert-danger mt-3 mb-0 py-2 small" style="display:none"></div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+                <button class="btn btn-primary btn-sm fw-bold" onclick="saveMemberEdit()">💾 Save Changes</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════════════
+     Delete Family Member Modal
+════════════════════════════════════════════════════════════════════════ -->
+<div class="modal fade" id="deleteMemberModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title fw-bold">🗑️ Delete Family Member</h5>
+                <button class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p class="mb-2">This family member has <strong id="dm-counts">…</strong> account(s).</p>
+                <div class="alert alert-light border py-2 small mb-3">
+                    <strong>Archive</strong> hides this person and all their accounts/holdings but keeps
+                    everything in the database — fully reversible.<br>
+                    <strong>Delete Permanently</strong> removes this person and <em>every</em> account, holding,
+                    upload, and transaction under them, for good. This cannot be undone.
+                </div>
+                <div class="form-check mb-2" id="dm-permanent-confirm-wrap" style="display:none">
+                    <input class="form-check-input" type="checkbox" id="dm-permanent-confirm">
+                    <label class="form-check-label small" for="dm-permanent-confirm">
+                        I understand this permanently deletes all of this person's investment data.
+                    </label>
+                </div>
+                <div id="dm-error" class="alert alert-danger mb-0 py-2 small" style="display:none"></div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+                <button class="btn btn-warning btn-sm fw-bold" onclick="deleteMember('archive')">📦 Archive</button>
+                <button class="btn btn-danger btn-sm fw-bold" onclick="confirmPermanentDeleteMember()">Delete Permanently</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════════════
+     Delete Account Modal (shared for all account cards)
+════════════════════════════════════════════════════════════════════════ -->
+<div class="modal fade" id="deleteAccountModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title fw-bold">🗑️ Delete Account</h5>
+                <button class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p class="mb-2">"<strong id="da-name">…</strong>" has <strong id="da-counts">…</strong>.</p>
+                <div class="alert alert-light border py-2 small mb-3">
+                    <strong>Archive</strong> hides the account and its holdings but keeps everything in the
+                    database — fully reversible.<br>
+                    <strong>Delete Permanently</strong> removes the account and all its holdings/transactions
+                    for good. This cannot be undone.
+                </div>
+                <div class="form-check mb-2" id="da-permanent-confirm-wrap" style="display:none">
+                    <input class="form-check-input" type="checkbox" id="da-permanent-confirm">
+                    <label class="form-check-label small" for="da-permanent-confirm">
+                        I understand this permanently deletes all holdings and transactions in this account.
+                    </label>
+                </div>
+                <div id="da-error" class="alert alert-danger mb-0 py-2 small" style="display:none"></div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+                <button class="btn btn-warning btn-sm fw-bold" onclick="deleteAccountCard('archive')">📦 Archive</button>
+                <button class="btn btn-danger btn-sm fw-bold" onclick="confirmPermanentDeleteAccount()">Delete Permanently</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <div class="toast-container" id="toast-container"></div>
 {% endblock %}
 
 {% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script>
 const MEMBER_ID = {{ member_id }};
 const CSRF = '{{ csrf_token }}';
@@ -140,15 +261,150 @@ function toast(msg, type) {
     setTimeout(() => el.remove(), 4000);
 }
 
+let _member = null;
+
 async function loadMember() {
     try {
         const r = await fetch(`/investments/api/family-members/${MEMBER_ID}/`);
-        const m = await r.json();
-        document.getElementById('page-title').textContent = m.name + ' — Portfolio';
-        document.getElementById('bc-member').textContent = m.name;
-        document.getElementById('page-sub').textContent = (m.relationship || 'Family Member') +
-            (m.pan_masked ? ' · PAN: ' + m.pan_masked : '');
+        _member = await r.json();
+        document.getElementById('page-title').textContent = _member.name + ' — Portfolio';
+        document.getElementById('bc-member').textContent = _member.name;
+        document.getElementById('page-sub').textContent = (_member.relationship || 'Family Member') +
+            (_member.pan_masked ? ' · PAN: ' + _member.pan_masked : '');
     } catch(e) {}
+}
+
+// ── Edit Family Member ───────────────────────────────────────────────────
+let _editMemberModal = null;
+function openEditMemberModal() {
+    if (!_member) return;
+    if (!_editMemberModal) _editMemberModal = new bootstrap.Modal(document.getElementById('editMemberModal'));
+    document.getElementById('em-name').value = _member.name || '';
+    document.getElementById('em-rel').value = _member.relationship || 'SELF';
+    document.getElementById('em-pan').value = _member.pan_masked || '';
+    document.getElementById('em-email').value = _member.email_masked || '';
+    document.getElementById('em-mobile').value = _member.mobile_masked || '';
+    document.getElementById('em-dob').value = _member.date_of_birth || '';
+    document.getElementById('em-notes').value = _member.notes || '';
+    document.getElementById('em-error').style.display = 'none';
+    _editMemberModal.show();
+}
+
+async function saveMemberEdit() {
+    const errEl = document.getElementById('em-error');
+    const name = document.getElementById('em-name').value.trim();
+    if (!name) { errEl.textContent = 'Name is required.'; errEl.style.display = ''; return; }
+
+    const payload = {
+        name,
+        relationship: document.getElementById('em-rel').value,
+        pan_masked: document.getElementById('em-pan').value.trim().toUpperCase(),
+        email_masked: document.getElementById('em-email').value.trim(),
+        mobile_masked: document.getElementById('em-mobile').value.trim(),
+        date_of_birth: document.getElementById('em-dob').value || null,
+        notes: document.getElementById('em-notes').value.trim(),
+    };
+
+    try {
+        const r = await fetch(`/investments/api/family-members/${MEMBER_ID}/`, {
+            method: 'PATCH',
+            headers: { 'X-CSRFToken': CSRF, 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+        const d = await r.json();
+        if (!r.ok) { errEl.textContent = Object.values(d).flat().join(' ') || 'Save failed.'; errEl.style.display = ''; return; }
+        _editMemberModal.hide();
+        toast('Family member updated.', 'success');
+        await loadMember();
+    } catch(e) {
+        errEl.textContent = 'Network error.'; errEl.style.display = '';
+    }
+}
+
+// ── Delete Family Member ─────────────────────────────────────────────────
+let _deleteMemberModal = null;
+function openDeleteMemberModal() {
+    if (!_member) return;
+    if (!_deleteMemberModal) _deleteMemberModal = new bootstrap.Modal(document.getElementById('deleteMemberModal'));
+    document.getElementById('dm-counts').textContent = _member.accounts_count || 0;
+    document.getElementById('dm-permanent-confirm').checked = false;
+    document.getElementById('dm-permanent-confirm-wrap').style.display = 'none';
+    document.getElementById('dm-error').style.display = 'none';
+    _deleteMemberModal.show();
+}
+
+function confirmPermanentDeleteMember() {
+    const wrap = document.getElementById('dm-permanent-confirm-wrap');
+    const checked = document.getElementById('dm-permanent-confirm').checked;
+    if (wrap.style.display === 'none') { wrap.style.display = ''; return; }
+    if (!checked) {
+        document.getElementById('dm-error').textContent = 'Please confirm you understand this is permanent.';
+        document.getElementById('dm-error').style.display = '';
+        return;
+    }
+    deleteMember('permanent');
+}
+
+async function deleteMember(mode) {
+    const errEl = document.getElementById('dm-error');
+    errEl.style.display = 'none';
+    const url = mode === 'permanent'
+        ? `/investments/api/family-members/${MEMBER_ID}/?mode=permanent`
+        : `/investments/api/family-members/${MEMBER_ID}/`;
+    try {
+        const r = await fetch(url, { method: 'DELETE', headers: { 'X-CSRFToken': CSRF } });
+        if (!r.ok) { errEl.textContent = 'Delete failed.'; errEl.style.display = ''; return; }
+        _deleteMemberModal.hide();
+        toast(mode === 'permanent' ? 'Family member permanently deleted.' : 'Family member archived.', 'success');
+        setTimeout(() => { window.location.href = '/investments/'; }, 600);
+    } catch(e) {
+        errEl.textContent = 'Network error.'; errEl.style.display = '';
+    }
+}
+
+// ── Delete Account (from account card) ───────────────────────────────────
+let _deleteAccountModal = null;
+let _deletingAccountId = null;
+function openDeleteAccountModal(id, name, productsCount, transactionsCount) {
+    _deletingAccountId = id;
+    if (!_deleteAccountModal) _deleteAccountModal = new bootstrap.Modal(document.getElementById('deleteAccountModal'));
+    document.getElementById('da-name').textContent = name;
+    document.getElementById('da-counts').textContent = `${productsCount} holding(s) and ${transactionsCount} transaction(s)`;
+    document.getElementById('da-permanent-confirm').checked = false;
+    document.getElementById('da-permanent-confirm-wrap').style.display = 'none';
+    document.getElementById('da-error').style.display = 'none';
+    _deleteAccountModal.show();
+}
+
+function confirmPermanentDeleteAccount() {
+    const wrap = document.getElementById('da-permanent-confirm-wrap');
+    const checked = document.getElementById('da-permanent-confirm').checked;
+    if (wrap.style.display === 'none') { wrap.style.display = ''; return; }
+    if (!checked) {
+        document.getElementById('da-error').textContent = 'Please confirm you understand this is permanent.';
+        document.getElementById('da-error').style.display = '';
+        return;
+    }
+    deleteAccountCard('permanent');
+}
+
+async function deleteAccountCard(mode) {
+    const errEl = document.getElementById('da-error');
+    errEl.style.display = 'none';
+    const url = mode === 'permanent'
+        ? `/investments/api/accounts/${_deletingAccountId}/?mode=permanent`
+        : `/investments/api/accounts/${_deletingAccountId}/`;
+    try {
+        const r = await fetch(url, { method: 'DELETE', headers: { 'X-CSRFToken': CSRF } });
+        if (!r.ok) { errEl.textContent = 'Delete failed.'; errEl.style.display = ''; return; }
+        _deleteAccountModal.hide();
+        toast(mode === 'permanent' ? 'Account permanently deleted.' : 'Account archived.', 'success');
+        await loadAccounts();
+        await loadNetWorth();
+        if (_portfolioAnalysis) await _portfolioAnalysis.refresh();
+    } catch(e) {
+        errEl.textContent = 'Network error.'; errEl.style.display = '';
+    }
 }
 
 async function loadNetWorth() {
@@ -156,8 +412,8 @@ async function loadNetWorth() {
         const r = await fetch(`/investments/api/family-members/${MEMBER_ID}/net-worth/`);
         const d = await r.json();
         const gain = parseFloat(d.total_gain_loss) || 0;
-        document.getElementById('m-inv').textContent  = fmt(d.total_invested);
-        document.getElementById('m-cur').textContent  = fmt(d.total_current);
+        document.getElementById('m-inv').textContent  = fmt(d.total_invested_value);
+        document.getElementById('m-cur').textContent  = fmt(d.total_current_value);
         document.getElementById('m-gain').textContent = signed(gain) + fmt(gain) + ' (' + pct(d.gain_loss_pct) + ')';
         document.getElementById('m-gain').className   = 'value ' + gainClass(gain);
         document.getElementById('m-gain-card').style.borderLeftColor = gain >= 0 ? 'var(--success)' : 'var(--danger)';
@@ -182,47 +438,25 @@ async function loadAccounts() {
         if (!accounts.length) { row.innerHTML = '<div class="col-12 text-muted small">No accounts found.</div>'; return; }
         row.innerHTML = accounts.map(a =>
             `<div class="col-12 col-md-6 col-lg-4">
-                <a class="acct-card" href="/investments/account/${a.id}/">
-                    <div class="d-flex justify-content-between align-items-start">
-                        <div>
-                            <div class="fw-semibold" style="color:var(--dark);font-size:.95rem">${a.account_name}</div>
-                            <div class="text-muted small mt-1">${a.institution_name || ''}</div>
+                <div class="acct-card">
+                    <button class="acct-del-btn" title="Delete account" onclick="openDeleteAccountModal(${a.id}, '${escapeHtml(a.account_name).replace(/'/g, "\\'")}', ${a.products_count || 0}, ${a.transactions_count || 0})">🗑️</button>
+                    <a href="/investments/account/${a.id}/" class="text-decoration-none" style="color:inherit">
+                        <div class="d-flex justify-content-between align-items-start" style="padding-right:1.5rem">
+                            <div>
+                                <div class="fw-semibold" style="color:var(--dark);font-size:.95rem">${a.account_name}</div>
+                                <div class="text-muted small mt-1">${a.institution_name || ''}</div>
+                            </div>
+                            <span class="badge-type">${a.account_type || 'General'}</span>
                         </div>
-                        <span class="badge-type">${a.account_type || 'General'}</span>
-                    </div>
-                </a>
+                    </a>
+                </div>
             </div>`
         ).join('');
     } catch(e) { row.innerHTML = '<div class="col-12 text-muted small">Failed to load accounts.</div>'; }
 }
 
-async function loadProducts() {
-    const tbody = document.getElementById('products-body');
-    try {
-        const r = await fetch(`/investments/api/products/?member_id=${MEMBER_ID}`);
-        const products = await r.json();
-        if (!products.length) {
-            tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-3">No holdings found.</td></tr>';
-            return;
-        }
-        tbody.innerHTML = products.map(p => {
-            const gl = parseFloat(p.gain_loss) || 0;
-            const glPct = p.current_value && p.invested_value
-                ? ((gl / parseFloat(p.invested_value)) * 100).toFixed(2)
-                : '—';
-            const cls = gainClass(gl);
-            return `<tr>
-                <td class="ps-3 fw-medium" style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${p.name}">${p.name}</td>
-                <td><span class="badge-type">${p.product_type || '—'}</span></td>
-                <td class="text-end">${fmt(p.invested_value)}</td>
-                <td class="text-end">${fmt(p.current_value)}</td>
-                <td class="text-end ${cls}">${signed(gl)}${fmt(gl)}</td>
-                <td class="text-end pe-3 ${cls}">${glPct !== '—' ? (gl>=0?'+':'') + glPct + '%' : '—'}</td>
-            </tr>`;
-        }).join('');
-    } catch(e) {
-        tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-3">Failed to load holdings.</td></tr>';
-    }
+function escapeHtml(str) {
+    return String(str == null ? '' : str).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
 async function loadInsights() {
@@ -279,7 +513,12 @@ loadMember();
 loadNetWorth();
 loadAnalytics();
 loadAccounts();
-loadProducts();
 loadInsights();
+
+const _portfolioAnalysis = PortfolioAnalysis.init({
+    memberIds: [MEMBER_ID],
+    showMemberFilter: false,
+    csrfToken: CSRF,
+});
 </script>
 {% endblock %}

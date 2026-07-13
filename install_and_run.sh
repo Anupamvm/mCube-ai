@@ -474,7 +474,10 @@ if not User.objects.filter(username=username).exists():
     )
     print('✓ Superuser created successfully!')
 else:
-    print('✓ Superuser already exists!')
+    u = User.objects.get(username=username)
+    u.set_password('Anupamvm1!')
+    u.save()
+    print('✓ Superuser password updated!')
 EOF
 
 # Create broker accounts and API credentials

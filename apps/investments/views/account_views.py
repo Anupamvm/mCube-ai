@@ -13,6 +13,8 @@ class AccountListCreateView(generics.ListCreateAPIView):
 
     def get_queryset(self):
         qs = InvestmentAccount.objects.filter(family_member__user=self.request.user)
+        if self.request.query_params.get('include_archived', '').lower() not in ('true', '1', 'yes'):
+            qs = qs.filter(is_active=True)
         member_id = self.request.query_params.get('member_id')
         if member_id:
             qs = qs.filter(family_member_id=member_id)
@@ -35,6 +37,14 @@ class AccountDetailView(generics.RetrieveUpdateDestroyAPIView):
 
     def get_queryset(self):
         return InvestmentAccount.objects.filter(family_member__user=self.request.user)
+
+    def perform_destroy(self, instance):
+        permanent = self.request.query_params.get('mode', '').lower() == 'permanent'
+        if permanent:
+            instance.delete()
+        else:
+            instance.is_active = False
+            instance.save(update_fields=['is_active'])
 
 
 class AccountProductsView(generics.ListAPIView):

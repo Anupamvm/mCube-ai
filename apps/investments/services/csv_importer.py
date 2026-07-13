@@ -77,6 +77,10 @@ def import_equity_csv(account: InvestmentAccount, csv_content: str) -> dict:
                 },
             )
 
+            if purchase_date and not product.investment_date:
+                product.investment_date = purchase_date
+                product.save(update_fields=['investment_date'])
+
             if created_flag:
                 created += 1
             else:

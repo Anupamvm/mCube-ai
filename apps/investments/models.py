@@ -58,8 +58,9 @@ class DataSource(models.TextChoices):
 
 class CASType(models.TextChoices):
     NSDL = 'NSDL', 'NSDL e-CAS'
-    CAMS = 'CAMS', 'CAMS CAS'
+    CAMS = 'CAMS', 'CAMS / KFintech CAS'
     KFINTECH = 'KFINTECH', 'KFintech CAS'
+    PORTFOLIO = 'PORTFOLIO', 'Equity Portfolio'
 
 
 class ParseStatus(models.TextChoices):
@@ -106,12 +107,13 @@ class FamilyMember(TimeStampedModel):
     name = models.CharField(max_length=200)
     relationship = models.CharField(max_length=20, choices=Relationship.choices, default=Relationship.SELF)
     pan_masked = models.CharField(max_length=20, blank=True, help_text='e.g. AAXXXXXX1B')
-    pan_hash = models.CharField(max_length=64, blank=True, db_index=True,
+    pan_hash = models.CharField(max_length=64, blank=True, null=True, db_index=True,
                                 help_text='SHA-256 of uppercase PAN for dedup detection')
     email_masked = models.CharField(max_length=100, blank=True)
     mobile_masked = models.CharField(max_length=20, blank=True)
     date_of_birth = models.DateField(null=True, blank=True)
     notes = models.TextField(blank=True)
+    is_active = models.BooleanField(default=True)
 
     class Meta:
         ordering = ['name']
@@ -123,6 +125,10 @@ class FamilyMember(TimeStampedModel):
     @staticmethod
     def make_pan_hash(pan: str) -> str:
         return hashlib.sha256(pan.upper().strip().encode()).hexdigest()
+
+    def save(self, *args, **kwargs):
+        self.pan_hash = self.make_pan_hash(self.pan_masked) if self.pan_masked else None
+        super().save(*args, **kwargs)
 
 
 # ---------------------------------------------------------------------------
@@ -176,11 +182,16 @@ class InvestmentProduct(TimeStampedModel):
     invested_value = models.DecimalField(max_digits=20, decimal_places=2, default=0)
     current_value = models.DecimalField(max_digits=20, decimal_places=2, default=0)
     as_of_date = models.DateField(null=True, blank=True)
+    investment_date = models.DateField(null=True, blank=True,
+        help_text='Date capital was first deployed — used as the XIRR cash-flow date when no transaction history exists')
     gain_loss = models.DecimalField(max_digits=20, decimal_places=2, default=0)
     xirr = models.DecimalField(max_digits=10, decimal_places=4, null=True, blank=True)
     extra_data = models.JSONField(default=dict, blank=True,
                                   help_text='Product-type-specific fields (units, nav, interest_rate, etc.)')
     notes = models.TextField(blank=True)
+    source_upload = models.ForeignKey('CASUpload', on_delete=models.SET_NULL, null=True, blank=True,
+                                      related_name='sourced_products',
+                                      help_text='Most recent upload that created or updated this holding')
 
     class Meta:
         ordering = ['-current_value']
@@ -238,6 +249,7 @@ class CASUpload(TimeStampedModel):
     parse_error = models.TextField(blank=True)
     accounts_created = models.IntegerField(default=0)
     products_created = models.IntegerField(default=0)
+    products_updated = models.IntegerField(default=0)
     transactions_created = models.IntegerField(default=0)
 
     class Meta:

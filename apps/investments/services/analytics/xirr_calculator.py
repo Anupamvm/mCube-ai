@@ -1,7 +1,7 @@
 from __future__ import annotations
 import logging
-from datetime import date, datetime
-from decimal import Decimal
+from datetime import date
+from typing import Iterable
 from pyxirr import xirr as _xirr, InvalidPaymentsError
 
 logger = logging.getLogger('apps.investments')
@@ -35,8 +35,13 @@ def compute_xirr(cashflows: list[tuple[date, float]]) -> float | None:
         return None
 
 
-def compute_product_xirr(product) -> float | None:
-    """Build cashflows from a product's transactions and current value."""
+def _product_cashflows(product) -> list[tuple[date, float]]:
+    """
+    Investment cashflows for a single product (purchases/sales), excluding the
+    terminal current-value inflow. Falls back to a single synthetic outflow at
+    product.investment_date when there's no transaction history (manual assets,
+    CSV/portfolio imports without full history).
+    """
     from apps.investments.models import Transaction
 
     txns = Transaction.objects.filter(
@@ -44,17 +49,7 @@ def compute_product_xirr(product) -> float | None:
         transaction_type__in=['PURCHASE', 'SALE', 'SIP', 'SWP'],
     ).order_by('transaction_date')
 
-    if not txns.exists():
-        # Fallback: single investment → current value
-        if product.invested_value and product.current_value:
-            cashflows = [
-                (product.created_at.date() if product.created_at else date.today(), -float(product.invested_value)),
-                (date.today(), float(product.current_value)),
-            ]
-            return compute_xirr(cashflows)
-        return None
-
-    cashflows = []
+    cashflows: list[tuple[date, float]] = []
     for txn in txns:
         if txn.amount is not None:
             if txn.transaction_type in ('PURCHASE', 'SIP'):
@@ -69,6 +64,72 @@ def compute_product_xirr(product) -> float | None:
             cashflows.append((txn.transaction_date, sign * amount))
 
     if cashflows:
-        cashflows.append((date.today(), float(product.current_value)))
-        return compute_xirr(cashflows)
-    return None
+        return cashflows
+
+    if product.invested_value:
+        invest_date = product.investment_date or (
+            product.created_at.date() if product.created_at else date.today()
+        )
+        return [(invest_date, -float(product.invested_value))]
+    return []
+
+
+def compute_product_xirr(product) -> float | None:
+    """XIRR for a single product's own cashflows plus its current value."""
+    cashflows = _product_cashflows(product)
+    if not cashflows:
+        return None
+    cashflows.append((date.today(), float(product.current_value)))
+    return compute_xirr(cashflows)
+
+
+def compute_products_xirr(products: Iterable) -> float | None:
+    """
+    Aggregate XIRR across many products — the shared aggregator behind account-,
+    member-, family-, and fund-level XIRR. Flattens each product's own cashflows
+    and appends a single terminal inflow of their combined current value.
+    """
+    products = list(products)
+    cashflows: list[tuple[date, float]] = []
+    total_current = 0.0
+    for product in products:
+        cashflows.extend(_product_cashflows(product))
+        total_current += float(product.current_value)
+
+    if not cashflows:
+        return None
+
+    cashflows.append((date.today(), total_current))
+    return compute_xirr(cashflows)
+
+
+def compute_account_xirr(account) -> float | None:
+    return compute_products_xirr(account.products.filter(is_active=True))
+
+
+def compute_member_xirr(member) -> float | None:
+    from apps.investments.models import InvestmentProduct
+
+    products = InvestmentProduct.objects.filter(
+        investment_account__family_member=member, is_active=True,
+    )
+    return compute_products_xirr(products)
+
+
+def compute_family_xirr(members) -> float | None:
+    from apps.investments.models import InvestmentProduct
+
+    products = InvestmentProduct.objects.filter(
+        investment_account__family_member__in=members, is_active=True,
+    )
+    return compute_products_xirr(products)
+
+
+def compute_fund_xirr(isin: str, members=None) -> float | None:
+    """XIRR for all of the given members' holdings of a single ISIN (across accounts)."""
+    from apps.investments.models import InvestmentProduct
+
+    products = InvestmentProduct.objects.filter(isin=isin, is_active=True)
+    if members is not None:
+        products = products.filter(investment_account__family_member__in=members)
+    return compute_products_xirr(products)

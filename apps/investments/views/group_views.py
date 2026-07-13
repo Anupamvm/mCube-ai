@@ -52,6 +52,8 @@ def group_net_worth(request, pk):
         breakdown[key]['current'] += float(p.current_value)
         breakdown[key]['count'] += 1
 
+    from ..services.analytics.xirr_calculator import compute_family_xirr
+
     return Response({
         'group_id': group.id,
         'group_name': group.name,
@@ -62,5 +64,6 @@ def group_net_worth(request, pk):
         'gain_loss_pct': round(
             ((total_current - total_invested) / total_invested * 100) if total_invested else 0, 2
         ),
+        'xirr': compute_family_xirr(members),
         'breakdown_by_type': breakdown,
     })

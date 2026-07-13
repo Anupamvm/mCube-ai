@@ -6297,6 +6297,8 @@ const TradeVerification = {
                         ` : ''}
                         <div style="flex: 1; min-width: 0;">
                             <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px; flex-wrap: wrap;">
+                                ${article.is_exchange_filing ? `<span style="background:#1e3a5f;color:#fff;font-size:0.65rem;font-weight:700;padding:2px 7px;border-radius:4px;">🏛 ${article.source?.name || 'Exchange'} Filing</span>` : ''}
+                                ${article.event_type ? `<span style="background:#eff6ff;color:#1d4ed8;font-size:0.65rem;font-weight:600;padding:2px 7px;border-radius:4px;">${article.event_type}</span>` : ''}
                                 ${impactBadge}
                                 ${isBlocking ? '<span style="background: #dc2626; color: white; font-size: 0.7rem; padding: 2px 8px; border-radius: 4px; font-weight: 600;">BLOCKS TRADE</span>' : ''}
                             </div>
@@ -6309,18 +6311,18 @@ const TradeVerification = {
                                 ${article.description || ''}
                             </p>
                             ${article.impact_reasoning ? `
-                            <div style="background: #f3f4f6; padding: 8px 12px; border-radius: 6px; margin-bottom: 8px; font-size: 0.8rem; color: #4b5563; border-left: 3px solid ${this.getImpactBorderColor(article.impact_label)};">
+                            <div style="background: #f3f4f6; padding: 8px 12px; border-radius: 6px; margin-bottom: 8px; font-size: 0.8rem; color: #4b5563; border-left: 3px solid ${article.is_exchange_filing ? '#1e3a5f' : this.getImpactBorderColor(article.impact_label)};">
                                 <strong>Impact Analysis:</strong> ${article.impact_reasoning}
                             </div>
                             ` : ''}
                             <div style="display: flex; gap: 15px; align-items: center; flex-wrap: wrap; font-size: 0.75rem; color: #9ca3af;">
                                 <span>📅 ${publishedDate}</span>
                                 ${article.source?.name ? `<span>📰 ${article.source.name}</span>` : ''}
-                                ${article.impact_score !== undefined ? `<span style="font-weight: 500;">Score: ${article.impact_score.toFixed(2)}</span>` : ''}
+                                ${article.impact_score !== undefined && article.impact_score !== null ? `<span style="font-weight: 500; color: ${article.impact_score >= 0.2 ? '#16a34a' : article.impact_score <= -0.2 ? '#dc2626' : '#6b7280'};">Score: ${article.impact_score >= 0 ? '+' : ''}${article.impact_score.toFixed(2)}</span>` : ''}
                                 <a href="${article.url}"
                                    target="_blank"
                                    style="color: ${color}; text-decoration: none; font-weight: 500;">
-                                    Read more →
+                                    ${article.is_exchange_filing ? `View ${article.source?.name || 'Exchange'} →` : 'Read more →'}
                                 </a>
                             </div>
                         </div>

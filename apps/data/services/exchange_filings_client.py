@@ -67,8 +67,23 @@ def _classify_event_type(subject: str) -> str:
 
 
 def _build_filing_url(exchange: str, symbol: str, filing_id: str) -> str:
-    """Build a stable dedup URL for a filing (not a real web URL)."""
-    return f"https://filing.{exchange.lower()}.in/{symbol}/{filing_id}"
+    """
+    Build a unique, clickable URL for a filing.
+
+    NSE: company announcements page (seqno disambiguates per-filing in our DB;
+         the param is ignored by NSE but makes each URL unique for dedup).
+    BSE: announcement detail page (newsid IS honoured by BSE's ann.html handler).
+    """
+    if exchange == 'NSE':
+        return (
+            f"https://www.nseindia.com/companies-listing/corporate-filings-announcements"
+            f"?symbol={symbol}&seqno={filing_id}"
+        )
+    else:  # BSE
+        return (
+            f"https://www.bseindia.com/corporates/ann.html"
+            f"?scrip={symbol}&newsid={filing_id}"
+        )
 
 
 class NSEFilingsClient:
@@ -299,6 +314,10 @@ class ExchangeFilingsClient:
                 title = f"[{exchange}] {filing['company_name']}: {filing['subject']}"
                 content = filing['description'] or filing['subject']
 
+                # search_keywords: stock symbol + company name so keyword-based
+                # queries (get_historical_news_analysis) also find this filing.
+                keywords = [k for k in [filing.get('symbol', ''), filing.get('company_name', '')] if k]
+
                 NewsArticle.objects.create(
                     title=title[:500],
                     content=content,
@@ -306,8 +325,10 @@ class ExchangeFilingsClient:
                     source=exchange,
                     url=url,
                     published_at=timezone.now(),
+                    category='Stock',       # Required: UI queries filter by category='Stock'
                     news_type='STOCK',
                     symbols_mentioned=nse_symbols,
+                    search_keywords=keywords,
                     source_quality_score=1.0,   # Exchange-grade authority
                     event_type=event_type,
                 )

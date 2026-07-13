@@ -122,6 +122,29 @@
             color: #4b5563;
         }
 
+        .exchange-filing-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            background: #1e3a5f;
+            color: #ffffff;
+            font-size: 0.65rem;
+            font-weight: 700;
+            padding: 2px 7px;
+            border-radius: 4px;
+            letter-spacing: 0.03em;
+        }
+
+        .event-type-tag {
+            display: inline-block;
+            background: #eff6ff;
+            color: #1d4ed8;
+            font-size: 0.65rem;
+            font-weight: 600;
+            padding: 2px 7px;
+            border-radius: 4px;
+        }
+
         .direction-icon {
             font-size: 1.2rem;
             margin-right: 6px;
@@ -295,39 +318,59 @@
                         <img src="{{ article.image_url }}" alt="{{ article.title }}" class="article-image" onerror="this.style.display='none'">
                         {% endif %}
                         <div class="article-text">
-                            {% if category == 'market' and article.market_direction %}
-                            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 10px; flex-wrap: wrap;">
+                            {# Badges row: exchange filing marker, event type, sentiment, score #}
+                            {% if article.source == 'NSE' or article.source == 'BSE' or article.sentiment_score or article.market_direction %}
+                            <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 10px; flex-wrap: wrap;">
+                                {% if article.source == 'NSE' or article.source == 'BSE' %}
+                                <span class="exchange-filing-badge">🏛 {{ article.source }} Filing</span>
+                                {% endif %}
+                                {% if article.event_type %}
+                                <span class="event-type-tag">{{ article.event_type }}</span>
+                                {% endif %}
+                                {% if article.sentiment_score is not None %}
+                                <span class="impact-badge impact-{% if article.sentiment_score <= -0.6 %}highly-negative{% elif article.sentiment_score <= -0.2 %}negative{% elif article.sentiment_score >= 0.6 %}highly-positive{% elif article.sentiment_score >= 0.2 %}positive{% else %}neutral{% endif %}">
+                                    {% if article.sentiment_score >= 0.6 %}Highly Positive
+                                    {% elif article.sentiment_score >= 0.2 %}Positive
+                                    {% elif article.sentiment_score <= -0.6 %}Highly Negative
+                                    {% elif article.sentiment_score <= -0.2 %}Negative
+                                    {% else %}Neutral{% endif %}
+                                </span>
+                                <span class="impact-score" style="color: {% if article.sentiment_score <= -0.2 %}#dc2626{% elif article.sentiment_score >= 0.2 %}#16a34a{% else %}#6b7280{% endif %};">
+                                    {% if article.sentiment_score >= 0 %}+{% endif %}{{ article.sentiment_score|floatformat:2 }}
+                                </span>
+                                {% endif %}
+                                {% if article.market_direction %}
                                 <span class="direction-icon">
                                     {% if article.market_direction == 'BEARISH' %}📉{% elif article.market_direction == 'BULLISH' %}📈{% else %}➖{% endif %}
-                                </span>
-                                {% if article.impact_analysis.impact_label %}
-                                <span class="impact-badge impact-{{ article.impact_analysis.impact_label|lower|default:'neutral' }}">
-                                    {{ article.impact_analysis.impact_label|default:'NEUTRAL' }}
                                 </span>
                                 {% endif %}
                                 {% if article.impact_category %}
                                 <span class="impact-category-tag">{{ article.impact_category }}</span>
                                 {% endif %}
-                                {% if article.sentiment_score %}
-                                <span class="impact-score" style="color: {% if article.sentiment_score <= -0.3 %}#dc2626{% elif article.sentiment_score >= 0.3 %}#16a34a{% else %}#6b7280{% endif %};">
-                                    Score: {% if article.sentiment_score >= 0 %}+{% endif %}{{ article.sentiment_score|floatformat:2 }}
-                                </span>
-                                {% endif %}
                             </div>
                             {% endif %}
                             <h2 class="article-title">
+                                {% if article.source == 'NSE' or article.source == 'BSE' %}
+                                {# Exchange filings: URL opens company announcements page — not a news article #}
+                                <a href="{{ article.url }}" target="_blank" title="View on {{ article.source }} announcements page">{{ article.title }}</a>
+                                {% else %}
                                 <a href="{{ article.url }}" target="_blank">{{ article.title }}</a>
+                                {% endif %}
                             </h2>
                             <p class="article-description">{{ article.summary }}</p>
-                            {% if category == 'market' and article.impact_reasoning %}
-                            <div class="impact-analysis-box">
+                            {% if article.impact_reasoning %}
+                            <div class="impact-analysis-box" style="{% if article.source == 'NSE' or article.source == 'BSE' %}border-left-color: #1e3a5f;{% endif %}">
                                 <strong>Impact Analysis:</strong> {{ article.impact_reasoning }}
                             </div>
                             {% endif %}
                             <div class="article-meta">
                                 <span>📅 {{ article.published_at|date:"M d, Y" }} at {{ article.published_at|time:"g:i A" }}</span>
                                 <span>📰 {{ article.source }}</span>
+                                {% if article.source == 'NSE' or article.source == 'BSE' %}
+                                <a href="{{ article.url }}" target="_blank" class="read-more">View {{ article.source }} Announcements →</a>
+                                {% else %}
                                 <a href="{{ article.url }}" target="_blank" class="read-more">Read full article →</a>
+                                {% endif %}
                             </div>
                         </div>
                     </div>

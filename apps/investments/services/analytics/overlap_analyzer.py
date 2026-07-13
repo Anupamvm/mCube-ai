@@ -1,12 +1,13 @@
 import logging
 from collections import defaultdict
 from apps.investments.models import InvestmentProduct, MutualFundScheme, FamilyMember
+from apps.data.models import TLStockData
 
 logger = logging.getLogger('apps.investments')
 
 
 def compute_overlap(member_ids: list, user) -> dict:
-    """AMC and category concentration analysis across selected members."""
+    """AMC, category, and sector concentration analysis across selected members."""
     members = FamilyMember.objects.filter(pk__in=member_ids, user=user)
     products = InvestmentProduct.objects.filter(
         investment_account__family_member__in=members,
@@ -17,11 +18,11 @@ def compute_overlap(member_ids: list, user) -> dict:
     if total_value == 0:
         return {'error': 'No portfolio value to analyse'}
 
-    # AMC concentration (MF only)
+    # AMC / category concentration (MF only), sector concentration (equity only)
     amc_totals = defaultdict(float)
     category_totals = defaultdict(float)
+    sector_totals = defaultdict(float)
     product_type_totals = defaultdict(float)
-    weighted_expense = 0.0
     expense_weighted_sum = 0.0
 
     for product in products:
@@ -39,6 +40,11 @@ def compute_overlap(member_ids: list, user) -> dict:
                     expense_weighted_sum += float(scheme.expense_ratio) * val
             except MutualFundScheme.DoesNotExist:
                 pass
+
+        if product.product_type == 'EQUITY' and product.isin:
+            stock = TLStockData.objects.filter(isin=product.isin).first()
+            if stock and stock.sector_name:
+                sector_totals[stock.sector_name] += val
 
     # Weighted average expense ratio
     mf_total = product_type_totals.get('MUTUAL_FUND', 0)
@@ -60,6 +66,11 @@ def compute_overlap(member_ids: list, user) -> dict:
         if pct > 40:
             warnings.append(f'High category concentration: {cat} is {pct:.1f}% of portfolio')
 
+    for sector, val in sector_totals.items():
+        pct = val / total_value * 100
+        if pct > 40:
+            warnings.append(f'High sector concentration: {sector} is {pct:.1f}% of portfolio')
+
     re_val = product_type_totals.get('REAL_ESTATE', 0)
     if re_val / total_value > 0.6:
         warnings.append(f'Real estate concentration {re_val/total_value*100:.1f}% exceeds 60% threshold')
@@ -68,6 +79,7 @@ def compute_overlap(member_ids: list, user) -> dict:
         'total_portfolio_value': round(total_value, 2),
         'amc_concentration': _pct(amc_totals, total_value),
         'category_concentration': _pct(category_totals, total_value),
+        'sector_concentration': _pct(sector_totals, total_value),
         'asset_type_allocation': _pct(dict(product_type_totals), total_value),
         'weighted_expense_ratio': round(wer * 100, 4),
         'estimated_annual_cost': round(mf_total * wer, 2),

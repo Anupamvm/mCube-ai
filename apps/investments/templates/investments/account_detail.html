@@ -9,6 +9,12 @@
     .gain-neg { color: var(--danger); font-weight: 600; }
     .badge-type { font-size: .7rem; padding: .2rem .55rem; border-radius: 20px; background: #e0e7ff; color: #3730a3; }
     .summary-pill { background: var(--lighter); border-radius: var(--radius-md); padding: .5rem .9rem; font-size: .85rem; }
+    .row-actions { white-space: nowrap; }
+    .row-actions button { background: none; border: none; padding: .1rem .3rem; font-size: .85rem; cursor: pointer; opacity: .6; }
+    .row-actions button:hover { opacity: 1; }
+    .toast-container { position:fixed; bottom:1.5rem; right:1.5rem; z-index:9999; }
+    .inv-toast { padding: .75rem 1.25rem; border-radius: var(--radius-md); color:white; font-size:.9rem; box-shadow: var(--shadow-lg); margin-top:.5rem; }
+    .inv-toast.success { background: var(--success); } .inv-toast.error { background: var(--danger); }
 </style>
 {% endblock %}
 
@@ -28,7 +34,11 @@
         <h1 class="h3 fw-bold mb-1" id="page-title" style="color:var(--dark)">Account Holdings</h1>
         <p class="text-muted mb-0 small" id="page-sub">Loading…</p>
     </div>
-    <a href="javascript:history.back()" class="btn btn-outline-secondary btn-sm">← Back</a>
+    <div class="d-flex gap-2">
+        <a href="javascript:history.back()" class="btn btn-outline-secondary btn-sm">← Back</a>
+        <button class="btn btn-outline-primary btn-sm" onclick="openEditAccountModal()">✏️ Edit</button>
+        <button class="btn btn-outline-danger btn-sm" onclick="openDeleteAccountModal()">🗑️ Delete</button>
+    </div>
 </div>
 
 <!-- Summary row -->
@@ -36,6 +46,7 @@
     <div class="summary-pill">Invested: <strong id="s-inv">—</strong></div>
     <div class="summary-pill">Current: <strong id="s-cur">—</strong></div>
     <div class="summary-pill">Gain/Loss: <strong id="s-gain">—</strong></div>
+    <div class="summary-pill">XIRR: <strong id="s-xirr">—</strong></div>
     <div class="summary-pill">Holdings: <strong id="s-count">—</strong></div>
 </div>
 
@@ -54,46 +65,220 @@
                         <th class="text-end">Invested</th>
                         <th class="text-end">Current</th>
                         <th class="text-end">Gain / Loss</th>
-                        <th class="text-end pe-3">G/L %</th>
+                        <th class="text-end">G/L %</th>
+                        <th class="text-end">XIRR</th>
+                        <th class="text-end pe-3">Actions</th>
                     </tr>
                 </thead>
                 <tbody id="products-body">
-                    <tr><td colspan="9" class="text-center text-muted py-4">Loading holdings…</td></tr>
+                    <tr><td colspan="11" class="text-center text-muted py-4">Loading holdings…</td></tr>
                 </tbody>
             </table>
         </div>
     </div>
 </div>
+
+<!-- ════════════════════════════════════════════════════════════════════════
+     Edit Account Modal
+════════════════════════════════════════════════════════════════════════ -->
+<div class="modal fade" id="editAccountModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title fw-bold">✏️ Edit Account</h5>
+                <button class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="edit-account-form">
+                    <div class="row g-3">
+                        <div class="col-12">
+                            <label class="form-label small fw-semibold">Account Name *</label>
+                            <input type="text" class="form-control" id="ea-name" required>
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label small fw-semibold">Account Type</label>
+                            <select class="form-select" id="ea-type">
+                                <option value="DEMAT">Demat Account</option>
+                                <option value="MF_FOLIO">Mutual Fund Folio</option>
+                                <option value="SAVINGS_BANK">Savings Bank</option>
+                                <option value="PPF">PPF Account</option>
+                                <option value="EPF">EPF / PF Account</option>
+                                <option value="NPS">NPS Account</option>
+                                <option value="REAL_ESTATE">Real Estate</option>
+                                <option value="PHYSICAL_GOLD">Physical Gold</option>
+                                <option value="CUSTOM">Other / Custom</option>
+                            </select>
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label small fw-semibold">Institution / Bank</label>
+                            <input type="text" class="form-control" id="ea-institution">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label small fw-semibold">Account Number</label>
+                            <input type="text" class="form-control" id="ea-acctnum">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label small fw-semibold">Depository</label>
+                            <input type="text" class="form-control" id="ea-depository" placeholder="NSDL / CDSL">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label small fw-semibold">DP ID</label>
+                            <input type="text" class="form-control" id="ea-dpid">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label small fw-semibold">Client ID</label>
+                            <input type="text" class="form-control" id="ea-clientid">
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label small fw-semibold">Notes</label>
+                            <textarea class="form-control" id="ea-notes" rows="2"></textarea>
+                        </div>
+                    </div>
+                    <div id="ea-error" class="alert alert-danger mt-3 mb-0 py-2 small" style="display:none"></div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+                <button class="btn btn-primary btn-sm fw-bold" onclick="saveAccountEdit()">💾 Save Changes</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════════════
+     Delete Account Modal
+════════════════════════════════════════════════════════════════════════ -->
+<div class="modal fade" id="deleteAccountModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title fw-bold">🗑️ Delete Account</h5>
+                <button class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p class="mb-2">This account has <strong id="da-counts">…</strong>.</p>
+                <div class="alert alert-light border py-2 small mb-3">
+                    <strong>Archive</strong> hides the account and its holdings but keeps everything in the
+                    database — fully reversible.<br>
+                    <strong>Delete Permanently</strong> removes the account and all its holdings/transactions
+                    for good. This cannot be undone.
+                </div>
+                <div class="form-check mb-2" id="da-permanent-confirm-wrap" style="display:none">
+                    <input class="form-check-input" type="checkbox" id="da-permanent-confirm">
+                    <label class="form-check-label small" for="da-permanent-confirm">
+                        I understand this permanently deletes all holdings and transactions in this account.
+                    </label>
+                </div>
+                <div id="da-error" class="alert alert-danger mb-0 py-2 small" style="display:none"></div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+                <button class="btn btn-warning btn-sm fw-bold" onclick="deleteAccount('archive')">📦 Archive</button>
+                <button class="btn btn-danger btn-sm fw-bold" id="btn-delete-permanent" onclick="confirmPermanentDelete()">Delete Permanently</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════════════
+     Edit Holding Modal
+════════════════════════════════════════════════════════════════════════ -->
+<div class="modal fade" id="editProductModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title fw-bold">✏️ Edit Holding</h5>
+                <button class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="edit-product-form">
+                    <div class="row g-3">
+                        <div class="col-12">
+                            <label class="form-label small fw-semibold">Name *</label>
+                            <input type="text" class="form-control" id="ep-name" required>
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label small fw-semibold">Invested Value ₹</label>
+                            <input type="number" class="form-control" id="ep-invested" min="0" step="0.01">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label small fw-semibold">Current Value ₹</label>
+                            <input type="number" class="form-control" id="ep-current" min="0" step="0.01">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label small fw-semibold">Investment Date</label>
+                            <input type="date" class="form-control" id="ep-investment-date">
+                            <div class="form-text">Used to compute XIRR when no transaction history exists.</div>
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label small fw-semibold">Notes</label>
+                            <textarea class="form-control" id="ep-notes" rows="2"></textarea>
+                        </div>
+                    </div>
+                    <div id="ep-error" class="alert alert-danger mt-3 mb-0 py-2 small" style="display:none"></div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+                <button class="btn btn-primary btn-sm fw-bold" onclick="saveProductEdit()">💾 Save</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="toast-container" id="toast-container"></div>
 {% endblock %}
 
 {% block extra_js %}
 <script>
 const ACCOUNT_ID = {{ account_id }};
+const CSRF = '{{ csrf_token }}';
+const API  = '/investments/api';
 
 function fmt(n)  { n = parseFloat(n)||0; return '₹' + Math.abs(n).toLocaleString('en-IN',{maximumFractionDigits:0}); }
 function pct(n)  { return (parseFloat(n)||0).toFixed(2) + '%'; }
 function signed(n) { return parseFloat(n) >= 0 ? '+' : ''; }
 function gainClass(n) { return parseFloat(n) >= 0 ? 'gain-pos' : 'gain-neg'; }
 function extra(d, key) { return d && d[key] != null ? parseFloat(d[key]) : null; }
+function escapeHtml(str) {
+    return String(str == null ? '' : str).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function toast(msg, type='success') {
+    const el = document.createElement('div');
+    el.className = 'inv-toast ' + (type === 'error' ? 'error' : 'success');
+    el.textContent = msg;
+    document.getElementById('toast-container').appendChild(el);
+    setTimeout(() => el.remove(), 4000);
+}
+
+let _account = null;
+let _products = [];
 
 async function loadAccount() {
     try {
-        const r = await fetch(`/investments/api/accounts/${ACCOUNT_ID}/`);
-        const a = await r.json();
-        document.getElementById('page-title').textContent = a.account_name || 'Account Holdings';
-        document.getElementById('bc-account').textContent = a.account_name || 'Account';
+        const r = await fetch(`${API}/accounts/${ACCOUNT_ID}/`);
+        _account = await r.json();
+        document.getElementById('page-title').textContent = _account.account_name || 'Account Holdings';
+        document.getElementById('bc-account').textContent = _account.account_name || 'Account';
         document.getElementById('page-sub').textContent =
-            [a.institution_name, a.account_type].filter(Boolean).join(' · ');
+            [_account.institution_name, _account.account_type].filter(Boolean).join(' · ');
+        const xirrEl = document.getElementById('s-xirr');
+        const xirr = _account.xirr != null ? parseFloat(_account.xirr) : NaN;
+        xirrEl.textContent = isNaN(xirr) ? '—' : pct(xirr * 100);
+        xirrEl.className = isNaN(xirr) ? '' : gainClass(xirr);
     } catch(e) {}
 }
 
 async function loadProducts() {
     const tbody = document.getElementById('products-body');
     try {
-        const r = await fetch(`/investments/api/accounts/${ACCOUNT_ID}/products/`);
+        const r = await fetch(`${API}/accounts/${ACCOUNT_ID}/products/`);
         const products = await r.json();
+        _products = products;
         if (!products.length) {
-            tbody.innerHTML = '<tr><td colspan="9" class="text-center text-muted py-4">No holdings in this account.</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="11" class="text-center text-muted py-4">No holdings in this account.</td></tr>';
+            document.getElementById('s-count').textContent = 0;
             return;
         }
 
@@ -107,8 +292,9 @@ async function loadProducts() {
             const cls = gainClass(gl);
             const units = extra(p.extra_data, 'units') ?? extra(p.extra_data, 'quantity');
             const nav   = extra(p.extra_data, 'nav') ?? extra(p.extra_data, 'price') ?? extra(p.extra_data, 'ltp');
+            const pxirr = p.xirr != null ? parseFloat(p.xirr) : NaN;
             return `<tr>
-                <td class="ps-3 fw-medium" style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${p.name}">${p.name}</td>
+                <td class="ps-3 fw-medium" style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(p.name)}">${escapeHtml(p.name)}</td>
                 <td class="text-muted" style="font-size:.75rem">${p.isin || '—'}</td>
                 <td><span class="badge-type">${p.product_type || '—'}</span></td>
                 <td class="text-end">${units != null ? units.toLocaleString('en-IN',{maximumFractionDigits:4}) : '—'}</td>
@@ -116,7 +302,12 @@ async function loadProducts() {
                 <td class="text-end">${fmt(inv)}</td>
                 <td class="text-end">${fmt(cur)}</td>
                 <td class="text-end ${cls}">${signed(gl)}${fmt(gl)}</td>
-                <td class="text-end pe-3 ${cls}">${glPct != null ? (gl>=0?'+':'') + glPct + '%' : '—'}</td>
+                <td class="text-end ${cls}">${glPct != null ? (gl>=0?'+':'') + glPct + '%' : '—'}</td>
+                <td class="text-end ${isNaN(pxirr) ? '' : gainClass(pxirr)}">${isNaN(pxirr) ? '—' : pct(pxirr * 100)}</td>
+                <td class="text-end pe-3 row-actions">
+                    <button onclick="openEditProductModal(${p.id})" title="Edit">✏️</button>
+                    <button onclick="deleteProduct(${p.id})" title="Delete">🗑️</button>
+                </td>
             </tr>`;
         }).join('');
 
@@ -127,7 +318,165 @@ async function loadProducts() {
         gEl.className = gainClass(totGl);
         document.getElementById('s-count').textContent = products.length;
     } catch(e) {
-        tbody.innerHTML = '<tr><td colspan="9" class="text-center text-muted py-4">Failed to load holdings.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="11" class="text-center text-muted py-4">Failed to load holdings.</td></tr>';
+    }
+}
+
+// ── Edit Account ─────────────────────────────────────────────────────────
+let _editAccountModal = null;
+function openEditAccountModal() {
+    if (!_account) return;
+    if (!_editAccountModal) _editAccountModal = new bootstrap.Modal(document.getElementById('editAccountModal'));
+    document.getElementById('ea-name').value = _account.account_name || '';
+    document.getElementById('ea-type').value = _account.account_type || 'DEMAT';
+    document.getElementById('ea-institution').value = _account.institution_name || '';
+    document.getElementById('ea-acctnum').value = _account.account_number_masked || '';
+    document.getElementById('ea-depository').value = _account.depository || '';
+    document.getElementById('ea-dpid').value = _account.dp_id || '';
+    document.getElementById('ea-clientid').value = _account.client_id || '';
+    document.getElementById('ea-notes').value = _account.notes || '';
+    document.getElementById('ea-error').style.display = 'none';
+    _editAccountModal.show();
+}
+
+async function saveAccountEdit() {
+    const errEl = document.getElementById('ea-error');
+    const name = document.getElementById('ea-name').value.trim();
+    if (!name) { errEl.textContent = 'Account name is required.'; errEl.style.display = ''; return; }
+
+    const payload = {
+        account_name: name,
+        account_type: document.getElementById('ea-type').value,
+        institution_name: document.getElementById('ea-institution').value.trim(),
+        account_number_masked: document.getElementById('ea-acctnum').value.trim(),
+        depository: document.getElementById('ea-depository').value.trim(),
+        dp_id: document.getElementById('ea-dpid').value.trim(),
+        client_id: document.getElementById('ea-clientid').value.trim(),
+        notes: document.getElementById('ea-notes').value.trim(),
+    };
+
+    try {
+        const r = await fetch(`${API}/accounts/${ACCOUNT_ID}/`, {
+            method: 'PATCH',
+            headers: { 'X-CSRFToken': CSRF, 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+        const d = await r.json();
+        if (!r.ok) { errEl.textContent = Object.values(d).flat().join(' ') || 'Save failed.'; errEl.style.display = ''; return; }
+        _editAccountModal.hide();
+        toast('Account updated.');
+        await loadAccount();
+    } catch(e) {
+        errEl.textContent = 'Network error.'; errEl.style.display = '';
+    }
+}
+
+// ── Delete Account ───────────────────────────────────────────────────────
+let _deleteAccountModal = null;
+function openDeleteAccountModal() {
+    if (!_account) return;
+    if (!_deleteAccountModal) _deleteAccountModal = new bootstrap.Modal(document.getElementById('deleteAccountModal'));
+    document.getElementById('da-counts').textContent =
+        `${_account.products_count || 0} holding(s) and ${_account.transactions_count || 0} transaction(s)`;
+    document.getElementById('da-permanent-confirm').checked = false;
+    document.getElementById('da-permanent-confirm-wrap').style.display = 'none';
+    document.getElementById('da-error').style.display = 'none';
+    _deleteAccountModal.show();
+}
+
+function confirmPermanentDelete() {
+    const wrap = document.getElementById('da-permanent-confirm-wrap');
+    const checked = document.getElementById('da-permanent-confirm').checked;
+    if (wrap.style.display === 'none') {
+        wrap.style.display = '';
+        return;
+    }
+    if (!checked) {
+        document.getElementById('da-error').textContent = 'Please confirm you understand this is permanent.';
+        document.getElementById('da-error').style.display = '';
+        return;
+    }
+    deleteAccount('permanent');
+}
+
+async function deleteAccount(mode) {
+    const errEl = document.getElementById('da-error');
+    errEl.style.display = 'none';
+    const url = mode === 'permanent'
+        ? `${API}/accounts/${ACCOUNT_ID}/?mode=permanent`
+        : `${API}/accounts/${ACCOUNT_ID}/`;
+    try {
+        const r = await fetch(url, { method: 'DELETE', headers: { 'X-CSRFToken': CSRF } });
+        if (!r.ok) { errEl.textContent = 'Delete failed.'; errEl.style.display = ''; return; }
+        _deleteAccountModal.hide();
+        toast(mode === 'permanent' ? 'Account permanently deleted.' : 'Account archived.');
+        setTimeout(() => {
+            window.location.href = _account.family_member
+                ? `/investments/member/${_account.family_member}/`
+                : '/investments/';
+        }, 600);
+    } catch(e) {
+        errEl.textContent = 'Network error.'; errEl.style.display = '';
+    }
+}
+
+// ── Edit / Delete Holding ────────────────────────────────────────────────
+let _editProductModal = null;
+let _editingProductId = null;
+
+function openEditProductModal(id) {
+    const p = _products.find(x => x.id === id);
+    if (!p) return;
+    _editingProductId = id;
+    if (!_editProductModal) _editProductModal = new bootstrap.Modal(document.getElementById('editProductModal'));
+    document.getElementById('ep-name').value = p.name || '';
+    document.getElementById('ep-invested').value = p.invested_value || 0;
+    document.getElementById('ep-current').value = p.current_value || 0;
+    document.getElementById('ep-investment-date').value = p.investment_date || '';
+    document.getElementById('ep-notes').value = p.notes || '';
+    document.getElementById('ep-error').style.display = 'none';
+    _editProductModal.show();
+}
+
+async function saveProductEdit() {
+    const errEl = document.getElementById('ep-error');
+    const name = document.getElementById('ep-name').value.trim();
+    if (!name) { errEl.textContent = 'Name is required.'; errEl.style.display = ''; return; }
+
+    const payload = {
+        name,
+        invested_value: document.getElementById('ep-invested').value || 0,
+        current_value: document.getElementById('ep-current').value || 0,
+        investment_date: document.getElementById('ep-investment-date').value || null,
+        notes: document.getElementById('ep-notes').value.trim(),
+    };
+
+    try {
+        const r = await fetch(`${API}/products/${_editingProductId}/`, {
+            method: 'PATCH',
+            headers: { 'X-CSRFToken': CSRF, 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+        const d = await r.json();
+        if (!r.ok) { errEl.textContent = Object.values(d).flat().join(' ') || 'Save failed.'; errEl.style.display = ''; return; }
+        _editProductModal.hide();
+        toast('Holding updated.');
+        await loadProducts();
+    } catch(e) {
+        errEl.textContent = 'Network error.'; errEl.style.display = '';
+    }
+}
+
+async function deleteProduct(id) {
+    const p = _products.find(x => x.id === id);
+    if (!confirm(`Remove "${p ? p.name : 'this holding'}" from this account? It can be re-imported or re-added later.`)) return;
+    try {
+        const r = await fetch(`${API}/products/${id}/`, { method: 'DELETE', headers: { 'X-CSRFToken': CSRF } });
+        if (!r.ok) { toast('Delete failed.', 'error'); return; }
+        toast('Holding removed.');
+        await loadProducts();
+    } catch(e) {
+        toast('Network error.', 'error');
     }
 }
 

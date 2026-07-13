@@ -9,99 +9,108 @@ from django.core.cache import cache
 logger = logging.getLogger('apps.investments')
 
 
-@shared_task(bind=True, max_retries=3, default_retry_delay=30)
-def parse_cas_upload_task(self, upload_id: int, password: str, saved_passwords: list | None = None):
-    """Parse a CAS PDF file and create accounts/products/transactions.
+def _build_password_list(password: str, saved_passwords: list | None) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for p in [password] + list(saved_passwords or []):
+        if p and p not in seen:
+            result.append(p)
+            seen.add(p)
+    return result or ['']
 
-    Tries the explicit password first, then each saved password in order.
+
+def _smart_parse_pdf(tmp_path: str, passwords: list[str]):
     """
-    from apps.investments.models import CASUpload, FamilyMember, InvestmentAccount, InvestmentProduct, Transaction
-    from apps.investments.services.encryption import decrypt_bytes
-    from apps.investments.services.cas_parser.nsdl_parser import parse_nsdl_cas
+    Auto-detect CAS format and parse.
+    Order of attempts (per password):
+      1. casparser  — standard CAMS / KFintech / MF Central PDFs
+      2. mfcentral  — Stimulsoft-generated MF Central PDFs (.xlsx-named PDFs)
+      3. nsdl       — NSDL equity demat e-CAS
+    Returns (cas_data, detected_type_str).
+    """
     from apps.investments.services.cas_parser.cams_parser import parse_cams_cas
-    from apps.investments.services.cas_parser.kfintech_parser import parse_kfintech_cas
+    from apps.investments.services.cas_parser.nsdl_parser import parse_nsdl_cas
+    from apps.investments.services.cas_parser.mfcentral_parser import parse_mfcentral_cas
+
+    last_error: Exception | None = None
+
+    for pwd in passwords:
+        # 1. casparser (standard CAMS/KFintech format)
+        try:
+            data = parse_cams_cas(tmp_path, pwd)
+            return data, data.cas_type or 'CAMS'
+        except Exception as e:
+            last_error = e
+
+        # 2. MF Central Stimulsoft PDF (often sent with .xlsx extension)
+        try:
+            data = parse_mfcentral_cas(tmp_path, pwd)
+            return data, 'CAMS'
+        except Exception as e:
+            last_error = e
+
+        # 3. NSDL e-CAS (equity demat holdings)
+        try:
+            data = parse_nsdl_cas(tmp_path, pwd)
+            return data, 'NSDL'
+        except Exception as e:
+            last_error = e
+
+    raise last_error or ValueError('Could not parse PDF — try a different password or check the file')
+
+
+def run_cas_parse(upload_id: int, password: str, saved_passwords: list | None = None) -> dict:
+    """
+    Parse a CAS PDF synchronously and upsert accounts / products / transactions.
+    Auto-detects NSDL, CAMS, KFintech, MF Central.
+    Returns a result dict; raises on unrecoverable error.
+    """
+    from apps.investments.models import CASUpload, InvestmentAccount, InvestmentProduct, Transaction
+    from apps.investments.services.encryption import decrypt_bytes
     from apps.investments.services.mfapi_client import MFAPIClient
     from datetime import date
 
-    try:
-        upload = CASUpload.objects.get(pk=upload_id)
-    except CASUpload.DoesNotExist:
-        logger.error('CAS upload %d not found', upload_id)
-        return
-
+    upload = CASUpload.objects.get(pk=upload_id)
     upload.parse_status = 'PROCESSING'
     upload.save(update_fields=['parse_status'])
 
     try:
-        # Decrypt and write to temp file
-        raw_bytes = bytes(upload.encrypted_content)
-        decrypted = decrypt_bytes(raw_bytes)
+        decrypted = decrypt_bytes(bytes(upload.encrypted_content))
 
         with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as tmp:
             tmp.write(decrypted)
             tmp_path = tmp.name
 
         try:
-            # Build ordered password list: explicit first, then saved (deduplicated)
-            passwords_to_try: list[str] = []
-            if password:
-                passwords_to_try.append(password)
-            for p in (saved_passwords or []):
-                if p and p not in passwords_to_try:
-                    passwords_to_try.append(p)
-            if not passwords_to_try:
-                passwords_to_try = ['']  # try empty password as last resort
-
-            def _parse(pwd: str):
-                if upload.cas_type == 'NSDL':
-                    return parse_nsdl_cas(tmp_path, pwd)
-                elif upload.cas_type == 'CAMS':
-                    return parse_cams_cas(tmp_path, pwd)
-                elif upload.cas_type == 'KFINTECH':
-                    return parse_kfintech_cas(tmp_path, pwd)
-                return parse_nsdl_cas(tmp_path, pwd)
-
-            cas_data = None
-            last_error: Exception | None = None
-            for pwd in passwords_to_try:
-                try:
-                    cas_data = _parse(pwd)
-                    logger.info('CAS upload %d parsed with password index %d', upload_id, passwords_to_try.index(pwd))
-                    break
-                except Exception as e:
-                    last_error = e
-                    logger.debug('Password attempt failed for upload %d: %s', upload_id, e)
-
-            if cas_data is None:
-                raise last_error or ValueError('All passwords failed — no data returned')
+            passwords = _build_password_list(password, saved_passwords)
+            cas_data, detected_type = _smart_parse_pdf(tmp_path, passwords)
         finally:
             os.unlink(tmp_path)
 
+        upload.cas_type = detected_type
         member = upload.family_member
         info = cas_data.account_info
 
-        # Update member PAN info if parsed
         if info.pan_masked and not member.pan_masked:
             member.pan_masked = info.pan_masked
             member.save(update_fields=['pan_masked'])
 
-        # Update statement period
         if info.statement_month:
             upload.statement_month = info.statement_month
             upload.statement_year = info.statement_year
 
-        # Create or update InvestmentAccount (DEMAT for NSDL)
+        is_nsdl = detected_type == 'NSDL'
         account_defaults = {
             'institution_name': info.dp_name or '',
             'dp_id': info.dp_id or '',
             'client_id': info.client_id or '',
-            'depository': info.depository or 'NSDL',
-            'account_type': 'DEMAT' if upload.cas_type == 'NSDL' else 'MF_FOLIO',
+            'depository': info.depository or ('NSDL' if is_nsdl else ''),
+            'account_type': 'DEMAT' if is_nsdl else 'MF_FOLIO',
             'nominee_registered': info.nominee_registered,
             'data_source': 'CAS',
         }
 
-        if upload.cas_type == 'NSDL' and info.dp_id and info.client_id:
+        if is_nsdl and info.dp_id and info.client_id:
             account, _ = InvestmentAccount.objects.get_or_create(
                 family_member=member,
                 dp_id=info.dp_id,
@@ -109,75 +118,78 @@ def parse_cas_upload_task(self, upload_id: int, password: str, saved_passwords: 
                 defaults={**account_defaults, 'account_name': f'{info.dp_name or "Demat"} ({info.client_id})'},
             )
         else:
+            label = 'CAMS / KFintech' if detected_type in ('CAMS', 'KFINTECH') else detected_type
             account, _ = InvestmentAccount.objects.get_or_create(
                 family_member=member,
                 account_type='MF_FOLIO',
                 data_source='CAS',
-                defaults={**account_defaults, 'account_name': f'{upload.cas_type} MF Folio'},
+                defaults={**account_defaults, 'account_name': f'{label} MF Folio'},
             )
 
-        accounts_created = 1
-        products_created = 0
-        transactions_created = 0
+        products_created = products_updated = transactions_created = 0
 
-        # Build ISIN → scheme_code map for MF products
         mf_client = MFAPIClient()
         isin_map = mf_client.get_isin_map()
 
-        # Create holdings as InvestmentProduct records
-        for holding in cas_data.holdings:
-            product_type_map = {
-                'E': 'EQUITY',
-                'M': 'MUTUAL_FUND',
-                'SGB': 'SGB',
-                'C': 'BOND',
-                'G': 'BOND',
-                'I': 'BOND',
-                'P': 'EQUITY',
-                'A': 'MUTUAL_FUND',
-            }
-            product_type = product_type_map.get(holding.asset_class, 'OTHER')
+        _ASSET_CLASS_TO_PRODUCT = {
+            'E': 'EQUITY', 'M': 'MUTUAL_FUND', 'SGB': 'SGB',
+            'C': 'BOND',   'G': 'BOND',        'I': 'BOND',
+            'P': 'EQUITY', 'A': 'MUTUAL_FUND',
+        }
 
+        for holding in cas_data.holdings:
+            product_type = _ASSET_CLASS_TO_PRODUCT.get(holding.asset_class, 'OTHER')
             extra = dict(holding.extra_data)
-            # Always persist quantity/units from the CAS holding so price updaters
-            # can compute current_value = quantity × live_price without re-parsing.
             if holding.quantity:
-                key = 'units' if product_type == 'MUTUAL_FUND' else 'shares'
-                extra[key] = holding.quantity
+                extra['units' if product_type == 'MUTUAL_FUND' else 'shares'] = holding.quantity
             if holding.current_price:
                 extra['current_price'] = holding.current_price
             if holding.avg_cost_per_unit:
                 extra['avg_cost_per_unit'] = holding.avg_cost_per_unit
-
             if product_type == 'MUTUAL_FUND':
-                scheme_code = isin_map.get(holding.isin)
-                if scheme_code:
-                    extra['scheme_code'] = scheme_code
+                sc = isin_map.get(holding.isin)
+                if sc:
+                    extra['scheme_code'] = sc
 
-            product, created = InvestmentProduct.objects.update_or_create(
-                investment_account=account,
-                isin=holding.isin,
-                product_type=product_type,
-                defaults={
-                    'name': holding.security_name,
-                    'data_source': 'CAS',
-                    'is_active': True,
-                    'invested_value': holding.total_cost or holding.current_value,
-                    'current_value': holding.current_value,
-                    'as_of_date': date.today(),
-                    'extra_data': extra,
-                },
-            )
+            prod_defaults = {
+                'name': holding.security_name,
+                'data_source': 'CAS',
+                'is_active': True,
+                'invested_value': holding.total_cost or holding.current_value,
+                'current_value': holding.current_value,
+                'as_of_date': date.today(),
+                'extra_data': extra,
+                'source_upload': upload,
+            }
+            if product_type == 'MUTUAL_FUND':
+                from apps.investments.services.product_resolver import resolve_mf_product
+                _product, created = resolve_mf_product(
+                    account, holding.security_name, holding.isin or '', prod_defaults,
+                )
+            elif holding.isin:
+                _product, created = InvestmentProduct.objects.update_or_create(
+                    investment_account=account,
+                    isin=holding.isin,
+                    product_type=product_type,
+                    defaults=prod_defaults,
+                )
+            else:
+                _product, created = InvestmentProduct.objects.update_or_create(
+                    investment_account=account,
+                    product_type=product_type,
+                    name=holding.security_name,
+                    isin='',
+                    defaults=prod_defaults,
+                )
             if created:
                 products_created += 1
+            else:
+                products_updated += 1
 
-        # Create transactions
         for txn in cas_data.transactions:
             product = InvestmentProduct.objects.filter(
-                investment_account=account,
-                isin=txn.isin,
+                investment_account=account, isin=txn.isin,
             ).first()
-
             _, created = Transaction.objects.get_or_create(
                 investment_account=account,
                 isin=txn.isin,
@@ -199,28 +211,49 @@ def parse_cas_upload_task(self, upload_id: int, password: str, saved_passwords: 
             if created:
                 transactions_created += 1
 
-        upload.accounts_created = accounts_created
+        upload.accounts_created = 1
         upload.products_created = products_created
+        upload.products_updated = products_updated
         upload.transactions_created = transactions_created
         upload.parse_status = 'DONE'
         upload.save()
 
         logger.info(
-            'CAS upload %d parsed: %d accounts, %d products, %d transactions',
-            upload_id, accounts_created, products_created, transactions_created,
+            'CAS upload %d [%s] done: %d new, %d updated, %d txns',
+            upload_id, detected_type, products_created, products_updated, transactions_created,
         )
 
-        # Trigger analytics computation — best-effort; don't fail the parse if broker is down.
         try:
             compute_portfolio_analytics_task.delay(member.id)
-        except Exception as broker_err:
-            logger.warning('Could not queue analytics task after parse: %s', broker_err)
+        except Exception as err:
+            logger.warning('Could not queue analytics after parse: %s', err)
+
+        try:
+            sync_missing_mf_categories_task.delay(member_id=member.id)
+        except Exception as err:
+            logger.warning('Could not queue category sync after parse: %s', err)
+
+        return {
+            'products_created': products_created,
+            'products_updated': products_updated,
+            'transactions_created': transactions_created,
+            'detected_type': detected_type,
+        }
 
     except Exception as e:
         logger.exception('CAS parse failed for upload %d: %s', upload_id, e)
         upload.parse_status = 'ERROR'
         upload.parse_error = str(e)[:500]
-        upload.save(update_fields=['parse_status', 'parse_error'])
+        upload.save(update_fields=['parse_status', 'parse_error', 'cas_type'])
+        raise
+
+
+@shared_task(bind=True, max_retries=3, default_retry_delay=30)
+def parse_cas_upload_task(self, upload_id: int, password: str, saved_passwords: list | None = None):
+    """Celery wrapper around run_cas_parse — used only for re-parse jobs."""
+    try:
+        return run_cas_parse(upload_id, password, saved_passwords)
+    except Exception as e:
         raise self.retry(exc=e)
 
 
@@ -282,6 +315,54 @@ def sync_nav_history_task(scheme_code: int, isin: str):
 
 
 @shared_task
+def sync_missing_mf_categories_task(user_id: int | None = None, member_id: int | None = None):
+    """
+    Backfill MutualFundScheme.category (and amc/scheme_type) via a per-scheme
+    MFAPI lookup for any ISIN currently held that has no category yet.
+
+    The bulk MFAPI scheme-list endpoint (used by sync_mf_scheme_list_task /
+    get_isin_map) does not include category — only the per-scheme detail
+    endpoint does, so this has to be a separate, targeted backfill.
+    """
+    from apps.investments.models import InvestmentProduct, MutualFundScheme
+    from apps.investments.services.mfapi_client import MFAPIClient
+
+    qs = InvestmentProduct.objects.filter(product_type='MUTUAL_FUND', is_active=True).exclude(isin='')
+    if member_id:
+        qs = qs.filter(investment_account__family_member_id=member_id)
+    elif user_id:
+        qs = qs.filter(investment_account__family_member__user_id=user_id)
+
+    isins = set(qs.values_list('isin', flat=True))
+    if not isins:
+        return 0
+
+    have_category = set(
+        MutualFundScheme.objects.filter(isin__in=isins).exclude(category='').values_list('isin', flat=True)
+    )
+    missing = isins - have_category
+    if not missing:
+        return 0
+
+    client = MFAPIClient()
+    isin_map = client.get_isin_map()
+
+    updated = 0
+    for isin in missing:
+        code = isin_map.get(isin)
+        if not code:
+            continue
+        try:
+            client.fetch_and_save_scheme(code, isin)
+            updated += 1
+        except Exception as e:
+            logger.warning('Category backfill failed for %s: %s', isin, e)
+
+    logger.info('MF category backfill: %d/%d schemes updated', updated, len(missing))
+    return updated
+
+
+@shared_task
 def update_all_prices_task(user_id: int | None = None, member_ids: list | None = None):
     """Update NAVs, equity prices, and gold prices; then recompute analytics."""
     from apps.investments.services.price_updater import update_mf_navs, update_equity_prices, update_gold_prices
@@ -331,7 +412,7 @@ def accrue_fd_interest_task():
 def compute_portfolio_analytics_task(member_id: int):
     """Compute XIRR, health score, and save portfolio snapshot for a family member."""
     from apps.investments.models import FamilyMember, InvestmentProduct, PortfolioSnapshot
-    from apps.investments.services.analytics.xirr_calculator import compute_product_xirr
+    from apps.investments.services.analytics.xirr_calculator import compute_product_xirr, compute_member_xirr
     from apps.investments.services.analytics.health_scorer import compute_health_score
     from apps.investments.services.analytics.insights_generator import generate_insights
     from django.utils import timezone
@@ -369,6 +450,12 @@ def compute_portfolio_analytics_task(member_id: int):
     gain = total_current - total_invested
     gain_pct = (gain / total_invested * 100) if total_invested else 0
 
+    try:
+        member_xirr = compute_member_xirr(member)
+    except Exception as e:
+        logger.debug('Member XIRR failed for member %d: %s', member_id, e)
+        member_xirr = None
+
     PortfolioSnapshot.objects.update_or_create(
         family_member=member,
         portfolio_group=None,
@@ -378,6 +465,7 @@ def compute_portfolio_analytics_task(member_id: int):
             'current_value': total_current,
             'gain_loss': gain,
             'gain_loss_pct': gain_pct,
+            'xirr': member_xirr,
             'net_worth_breakdown': type_vals,
             'asset_allocation': {k: round(v / total_current * 100, 2) for k, v in type_vals.items()} if total_current else {},
         },

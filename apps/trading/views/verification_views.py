@@ -2318,19 +2318,25 @@ def fetch_trade_news(request):
         logger.info(f"[Trade News] Saved {competitor_articles_saved} competitor articles to database")
 
         # Step 7: Retrieve saved articles from database (to ensure consistency)
-        # Note: SQLite doesn't support __contains on JSONField, so we filter by category
-        # and then do additional filtering in Python if needed
+        from django.db.models import Q
 
-        # Get stock news from DB - filter by category, then filter in Python
+        # Stock news: GNews articles (category='Stock') + exchange filings (NSE/BSE).
+        # Exchange filings stored before the category fix may have category='' so we
+        # use an OR query to catch both old and new records.
         all_stock_articles = NewsArticle.objects.filter(
-            category='Stock'
-        ).order_by('-published_at')[:50]  # Get more, then filter
+            Q(category='Stock') | Q(source__in=['NSE', 'BSE'], news_type='STOCK')
+        ).order_by('-published_at')[:100]
 
-        # Filter for this specific stock symbol
-        stock_articles_db = [
-            article for article in all_stock_articles
-            if stock_symbol in (article.symbols_mentioned or [])
-        ][:10]
+        # Filter for this specific stock symbol, then surface exchange filings first
+        # (source_quality_score=1.0 = highest authority).
+        matched_stock = [
+            a for a in all_stock_articles
+            if stock_symbol in (a.symbols_mentioned or [])
+        ]
+        matched_stock.sort(
+            key=lambda a: (0 if a.source in ('NSE', 'BSE') else 1, -a.published_at.timestamp())
+        )
+        stock_articles_db = matched_stock[:10]
 
         # Get industry news from DB
         all_industry_articles = NewsArticle.objects.filter(
@@ -2354,17 +2360,39 @@ def fetch_trade_news(request):
             if industry_name in (article.sectors_mentioned or [])
         ][:10] if industry_name else []
 
-        # Build articles list from DB
+        def _to_5label(score, label_3):
+            """Map 3-value DB label → 5-value UI label using score for HIGHLY_ variants."""
+            if score is None:
+                return 'NEUTRAL'
+            if label_3 == 'POSITIVE':
+                return 'HIGHLY_POSITIVE' if score >= 0.6 else 'POSITIVE'
+            if label_3 == 'NEGATIVE':
+                return 'HIGHLY_NEGATIVE' if score <= -0.6 else 'NEGATIVE'
+            return 'NEUTRAL'
+
+        # Build articles list from DB — include pre-computed sentiment so exchange
+        # filings (which already have LLM scores from fetch_exchange_filings) render
+        # with impact badges and reasoning in the UI without re-analysis.
         def db_articles_to_dict(articles):
-            return [{
-                'title': article.title,
-                'description': article.summary,
-                'content': article.content,
-                'url': article.url,
-                'image': article.image_url,  # Include image from DB
-                'publishedAt': article.published_at.isoformat(),
-                'source': {'name': article.source, 'url': ''}
-            } for article in articles]
+            result = []
+            for article in articles:
+                is_filing = article.source in ('NSE', 'BSE')
+                result.append({
+                    'title': article.title,
+                    'description': article.summary,
+                    'content': article.content,
+                    'url': article.url,
+                    'image': article.image_url,
+                    'publishedAt': article.published_at.isoformat(),
+                    'source': {'name': article.source, 'url': ''},
+                    # Pre-computed sentiment (always present for exchange filings)
+                    'impact_score': article.sentiment_score,
+                    'impact_label': _to_5label(article.sentiment_score, article.sentiment_label),
+                    'impact_reasoning': article.impact_reasoning or '',
+                    'event_type': getattr(article, 'event_type', '') or '',
+                    'is_exchange_filing': is_filing,
+                })
+            return result
 
         # Build initial response from database
         stock_news_data = {
@@ -2546,16 +2574,22 @@ def news_details_page(request):
     articles = []
 
     if category == 'stock':
-        # Stock news - filter by symbol
+        from django.db.models import Q as _Q
+        # Include GNews articles (category='Stock') + exchange filings (NSE/BSE).
+        # Old filings stored before the category fix may have category='' so use OR.
         all_articles = NewsArticle.objects.filter(
-            category='Stock'
-        ).order_by('-published_at')
+            _Q(category='Stock') | _Q(source__in=['NSE', 'BSE'], news_type='STOCK')
+        ).order_by('-published_at')[:500]
 
-        # Filter for this specific stock symbol
-        articles = [
-            article for article in all_articles
-            if identifier in (article.symbols_mentioned or [])
+        matched = [
+            a for a in all_articles
+            if identifier in (a.symbols_mentioned or [])
         ]
+        # Exchange filings first (authority = 1.0), then by date
+        matched.sort(
+            key=lambda a: (0 if a.source in ('NSE', 'BSE') else 1, -a.published_at.timestamp())
+        )
+        articles = matched
     elif category == 'industry':
         # Industry news - filter by sector
         all_articles = NewsArticle.objects.filter(

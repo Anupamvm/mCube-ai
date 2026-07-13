@@ -1,0 +1,300 @@
+{% load static %}
+<style>
+    .pa-metric-card { background: white; border-radius: var(--radius-md); padding: 1.1rem; box-shadow: var(--shadow-md); border-left: 4px solid var(--primary); }
+    .pa-metric-card .label { font-size: .75rem; color: var(--gray); text-transform: uppercase; letter-spacing: .05em; }
+    .pa-metric-card .value { font-size: 1.35rem; font-weight: 700; color: var(--dark); margin: .2rem 0; }
+    .pa-metric-card.success { border-left-color: var(--success); }
+    .gain-pos { color: var(--success) !important; } .gain-neg { color: var(--danger) !important; }
+    .pa-filter-group { margin-bottom: .6rem; }
+    .pa-filter-group .group-label { font-size: .72rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--gray); margin-bottom: .3rem; }
+    .filter-chip { border: 1px solid #e2e8f0; background: #fff; color: var(--gray); border-radius: 20px; padding: .28rem .75rem; font-size: .78rem; cursor: pointer; transition: all .15s; line-height: 1.1; display: inline-flex; align-items: center; gap: 3px; }
+    .filter-chip:hover { border-color: var(--primary); color: var(--primary); }
+    .filter-chip.active { background: var(--primary); border-color: var(--primary); color: #fff; }
+    .filter-chip .chip-count { opacity: .75; font-size: .7rem; }
+    .badge-type { font-size: .7rem; padding: .2rem .55rem; border-radius: 20px; font-weight: 600; }
+    .pa-risk-tile { text-align: center; padding: .75rem .5rem; }
+    .pa-risk-tile .label { font-size: .72rem; color: var(--gray); text-transform: uppercase; letter-spacing: .03em; }
+    .pa-risk-tile .value { font-size: 1.25rem; font-weight: 700; color: var(--dark); margin-top: .2rem; }
+    .pa-chart-box { position: relative; height: 240px; }
+    .pa-chart-box.short { height: 180px; }
+    .group-row { background: var(--lighter); }
+    .group-row td { border-top: 2px solid #e2e8f0; padding-top: .5rem; padding-bottom: .5rem; }
+    #pa-holdings-table tbody tr:not(.group-row):hover { background: #f8fafc; }
+</style>
+
+<!-- Live summary strip -->
+<div class="row g-3 mb-3">
+    <div class="col-6 col-md-3">
+        <div class="pa-metric-card">
+            <div class="label">Invested</div>
+            <div class="value" id="pa-m-inv">—</div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="pa-metric-card success">
+            <div class="label">Current Value</div>
+            <div class="value" id="pa-m-cur">—</div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="pa-metric-card" id="pa-m-gain-card">
+            <div class="label">Gain / Loss</div>
+            <div class="value" id="pa-m-gain">—</div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="pa-metric-card">
+            <div class="label">Weighted XIRR</div>
+            <div class="value" id="pa-m-xirr">—</div>
+        </div>
+    </div>
+</div>
+<div class="text-muted small mb-3" id="pa-badge"></div>
+
+<!-- Filter bar -->
+<div class="card border-0 shadow-sm mb-3">
+    <div class="card-body pb-2">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+            <h6 class="fw-bold mb-0" style="color:var(--dark)">🔎 Filters</h6>
+            <div class="d-flex align-items-center gap-3">
+                <div class="form-check form-check-inline mb-0">
+                    <input class="form-check-input" type="checkbox" id="pa-show-inactive">
+                    <label class="form-check-label small text-muted" for="pa-show-inactive">Show closed / inactive</label>
+                </div>
+                <a href="#" id="pa-sync-categories" class="small" title="Fetch missing fund categories from MFAPI for the funds shown below">🔄 Sync Categories</a>
+                <a href="#" id="pa-reset-filters" class="small">Reset filters</a>
+            </div>
+        </div>
+        <div class="row g-2 align-items-center mb-2">
+            <div class="col-12 col-md-4">
+                <input type="text" class="form-control form-control-sm" id="pa-search" placeholder="🔍 Search by name, fund house, ISIN…">
+            </div>
+            <div class="col-6 col-md-3">
+                <select class="form-select form-select-sm" id="pa-sort">
+                    <option value="current_desc">Sort: Current Value ↓</option>
+                    <option value="current_asc">Sort: Current Value ↑</option>
+                    <option value="gain_pct_desc">Sort: Gain % ↓</option>
+                    <option value="gain_pct_asc">Sort: Gain % ↑</option>
+                    <option value="gain_desc">Sort: Gain ₹ ↓</option>
+                    <option value="invested_desc">Sort: Invested ↓</option>
+                    <option value="name_asc">Sort: Name A–Z</option>
+                </select>
+            </div>
+            <div class="col-6 col-md-3">
+                <select class="form-select form-select-sm" id="pa-group">
+                    <option value="none">No grouping</option>
+                    <option value="category">Group by Category</option>
+                    <option value="product_type">Group by Asset Class</option>
+                    <option value="mf_amc">Group by Fund House</option>
+                    <option value="equity_sector">Group by Sector</option>
+                    {% if show_member_filter %}<option value="member_name">Group by Member</option>{% endif %}
+                </select>
+            </div>
+            <div class="col-12 col-md-2 text-md-end">
+                <div class="form-check form-check-inline mb-0">
+                    <input class="form-check-input" type="checkbox" id="pa-hide-zero">
+                    <label class="form-check-label small text-muted" for="pa-hide-zero">Hide zero-value</label>
+                </div>
+            </div>
+        </div>
+        <div class="d-flex flex-wrap gap-2 align-items-center mb-2">
+            <div class="btn-group btn-group-sm" role="group" id="pa-pnl">
+                <button type="button" class="btn btn-outline-secondary active" data-pnl="all">All</button>
+                <button type="button" class="btn btn-outline-secondary" data-pnl="profit">📈 Gainers</button>
+                <button type="button" class="btn btn-outline-secondary" data-pnl="loss">📉 Losers</button>
+            </div>
+        </div>
+
+        {% if show_member_filter %}
+        <div class="pa-filter-group">
+            <div class="group-label">Family Member</div>
+            <div class="d-flex flex-wrap gap-2" id="pa-chips-member"></div>
+        </div>
+        {% endif %}
+        <div class="pa-filter-group">
+            <div class="group-label">Asset Class</div>
+            <div class="d-flex flex-wrap gap-2" id="pa-chips-type"></div>
+        </div>
+        <div class="pa-filter-group">
+            <div class="group-label">Fund Category</div>
+            <div class="d-flex flex-wrap gap-2" id="pa-chips-category"></div>
+        </div>
+        <div class="pa-filter-group">
+            <div class="group-label">Fund House (AMC)</div>
+            <div class="d-flex flex-wrap gap-2" id="pa-chips-amc"></div>
+        </div>
+        <div class="pa-filter-group">
+            <div class="group-label">Sector (Equity)</div>
+            <div class="d-flex flex-wrap gap-2" id="pa-chips-sector"></div>
+        </div>
+        <div class="pa-filter-group">
+            <div class="group-label">Market Cap (Equity)</div>
+            <div class="d-flex flex-wrap gap-2" id="pa-chips-mcap"></div>
+        </div>
+    </div>
+</div>
+
+<!-- Allocation views -->
+<div class="card border-0 shadow-sm mb-3">
+    <div class="card-body">
+        <ul class="nav nav-tabs mb-3" id="pa-chart-tabs" role="tablist">
+            <li class="nav-item" role="presentation">
+                <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#pa-tab-overview" type="button">Overview</button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" data-bs-toggle="tab" data-bs-target="#pa-tab-equity" type="button">Equity Lens</button>
+            </li>
+        </ul>
+        <div class="tab-content">
+            <div class="tab-pane fade show active" id="pa-tab-overview">
+                <div class="row g-3">
+                    <div class="col-12 col-lg-4">
+                        <div class="small fw-semibold mb-1">By Fund Category</div>
+                        <div class="pa-chart-box"><canvas id="pa-chart-category"></canvas></div>
+                        <div id="pa-legend-category" class="mt-2"></div>
+                    </div>
+                    {% if show_member_filter %}
+                    <div class="col-12 col-lg-4">
+                        <div class="small fw-semibold mb-1">By Family Member</div>
+                        <div class="pa-chart-box"><canvas id="pa-chart-member"></canvas></div>
+                        <div id="pa-legend-member" class="mt-2"></div>
+                    </div>
+                    {% endif %}
+                    <div class="col-12 col-lg-4">
+                        <div class="small fw-semibold mb-1">By Asset Class</div>
+                        <div class="pa-chart-box"><canvas id="pa-chart-assetclass"></canvas></div>
+                        <div id="pa-legend-assetclass" class="mt-2"></div>
+                    </div>
+                </div>
+            </div>
+            <div class="tab-pane fade" id="pa-tab-equity">
+                <div class="row g-3">
+                    <div class="col-12 col-lg-4">
+                        <div class="small fw-semibold mb-1">By Sector</div>
+                        <div class="pa-chart-box"><canvas id="pa-chart-sector"></canvas></div>
+                        <div id="pa-legend-sector" class="mt-2"></div>
+                    </div>
+                    <div class="col-12 col-lg-4">
+                        <div class="small fw-semibold mb-1">By Market Cap</div>
+                        <div class="pa-chart-box"><canvas id="pa-chart-mcap"></canvas></div>
+                    </div>
+                    <div class="col-12 col-lg-4">
+                        <div class="small fw-semibold mb-1">By Fund House (AMC)</div>
+                        <div class="pa-chart-box"><canvas id="pa-chart-amc"></canvas></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Risk & Performance -->
+<div class="card border-0 shadow-sm mb-3">
+    <div class="card-body" id="pa-risk-panel">
+        <h6 class="fw-bold mb-3" style="color:var(--dark)">📐 Risk &amp; Performance (Mutual Funds)</h6>
+        <div class="row g-2">
+            <div class="col-6 col-md-2"><div class="pa-risk-tile" title="Return earned per unit of risk taken, vs. the risk-free rate. Higher is better."><div class="label">Sharpe</div><div class="value" id="pa-risk-sharpe">—</div></div></div>
+            <div class="col-6 col-md-2"><div class="pa-risk-tile" title="Like Sharpe, but only penalises downside volatility. Higher is better."><div class="label">Sortino</div><div class="value" id="pa-risk-sortino">—</div></div></div>
+            <div class="col-6 col-md-2"><div class="pa-risk-tile" title="Annualised volatility of returns. Lower means steadier."><div class="label">Std. Dev</div><div class="value" id="pa-risk-stddev">—</div></div></div>
+            <div class="col-6 col-md-2"><div class="pa-risk-tile" title="Largest peak-to-trough fall historically seen."><div class="label">Max Drawdown</div><div class="value" id="pa-risk-maxdd">—</div></div></div>
+            <div class="col-6 col-md-2"><div class="pa-risk-tile" title="Sensitivity to Nifty 50 moves. 1.0 = moves with the market."><div class="label">Beta</div><div class="value" id="pa-risk-beta">—</div></div></div>
+            <div class="col-6 col-md-2"><div class="pa-risk-tile" title="Annualised excess return vs. what Beta alone would predict."><div class="label">Alpha</div><div class="value" id="pa-risk-alpha">—</div></div></div>
+        </div>
+        <div class="text-muted small mt-2" id="pa-risk-coverage"></div>
+    </div>
+</div>
+
+<!-- Tenor / Maturity Ladder -->
+<div class="card border-0 shadow-sm mb-3">
+    <div class="card-body">
+        <h6 class="fw-bold mb-3" style="color:var(--dark)">📅 Tenor / Maturity Ladder (FD · RD · Bond · SGB)</h6>
+        <div class="row g-3 align-items-center">
+            <div class="col-12 col-md-8">
+                <div class="pa-chart-box short"><canvas id="pa-chart-tenor"></canvas></div>
+            </div>
+            <div class="col-12 col-md-4">
+                <div class="fw-bold" style="color:var(--dark)" id="pa-tenor-avg">—</div>
+                <div class="text-muted small" id="pa-tenor-coverage"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Value trend -->
+<div class="card border-0 shadow-sm mb-3">
+    <div class="card-body">
+        <h6 class="fw-bold mb-3" style="color:var(--dark)">📈 Value Over Time</h6>
+        <div class="pa-chart-box"><canvas id="pa-chart-trend"></canvas></div>
+        <p class="text-muted small mb-0 mt-2" id="pa-trend-empty" style="display:none">Not enough price history yet — this builds up automatically as prices update over time.</p>
+    </div>
+</div>
+
+<!-- Concentration & Insights -->
+<div class="card border-0 shadow-sm mb-3">
+    <div class="card-body" id="pa-concentration">
+        <h6 class="fw-bold mb-3" style="color:var(--dark)">⚠️ Concentration &amp; Insights</h6>
+        <div class="text-muted small">Loading…</div>
+    </div>
+</div>
+
+<!-- Holdings table -->
+<div class="d-flex justify-content-between align-items-end flex-wrap gap-2 mb-2">
+    <h6 class="fw-bold mb-0" style="color:var(--dark)">Holdings</h6>
+    <div class="text-muted small" id="pa-holdings-summary"></div>
+</div>
+<div class="card border-0 shadow-sm mb-3">
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-hover mb-0 small" id="pa-holdings-table">
+                <thead style="background:var(--lighter)">
+                    <tr>
+                        <th class="ps-3">Name</th>
+                        {% if show_member_filter %}<th>Member</th>{% endif %}
+                        <th>Category</th>
+                        <th class="text-end">Invested</th>
+                        <th class="text-end">Current</th>
+                        <th class="text-end">Gain / Loss</th>
+                        <th class="text-end">G/L %</th>
+                        <th class="text-end pe-3">XIRR</th>
+                    </tr>
+                </thead>
+                <tbody id="pa-holdings-body">
+                    <tr><td colspan="8" class="text-center text-muted py-3">Loading holdings…</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════════════
+     Set Fund Category Modal (shared, single instance)
+════════════════════════════════════════════════════════════════════════ -->
+<div class="modal fade" id="paCategoryModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title fw-bold">🏷️ Set Fund Category</h5>
+                <button class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p class="text-muted small mb-2" id="pa-cat-fund-name">…</p>
+                <label class="form-label small fw-semibold">Category</label>
+                <select class="form-select mb-2" id="pa-cat-select"></select>
+                <input type="text" class="form-control" id="pa-cat-custom" placeholder="Type category name…" style="display:none">
+                <div class="text-muted small mt-2">
+                    We'll try to auto-detect this from MFAPI first (use 🔄 Sync Categories). Set it manually here
+                    only if auto-detection can't find it — your choice always takes priority.
+                </div>
+                <div id="pa-cat-error" class="alert alert-danger mt-2 mb-0 py-2 small" style="display:none"></div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+                <button class="btn btn-primary btn-sm fw-bold" id="pa-cat-save">💾 Save</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="position-fixed bottom-0 end-0 p-3" style="z-index:9999" id="pa-toasts"></div>
+
+<script src="{% static 'js/investments/portfolio_analysis.js' %}?v=2"></script>

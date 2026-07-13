@@ -10,17 +10,19 @@ from .views.family_views import (
 from .views.account_views import AccountListCreateView, AccountDetailView, AccountProductsView
 from .views.product_views import (
     ProductListView, ProductDetailView, ProductCreateView,
-    ProductValuationHistoryView, update_product_value,
+    ProductValuationHistoryView, update_product_value, set_product_category,
 )
 from .views.upload_views import (
     cas_upload_list, cas_upload_detail, cas_reparse, equity_csv_upload,
-    CASPasswordListCreateView, CASPasswordDetailView,
+    smart_upload, portfolio_file_upload, manual_asset_entry, manual_asset_detail,
+    clear_account_csv, CASPasswordListCreateView, CASPasswordDetailView,
 )
 from .views.analytics_views import (
     consolidated_portfolio, trigger_price_update,
     overlap_analysis, health_score_view,
+    risk_summary, tenor_ladder, portfolio_trend, sync_mf_categories,
 )
-from .views.fund_views import fund_detail, fund_nav_history, fund_risk_metrics
+from .views.fund_views import fund_detail, fund_nav_history, fund_risk_metrics, fund_my_holding
 from .views.report_views import generate_report, download_report
 from .views.group_views import PortfolioGroupListCreateView, PortfolioGroupDetailView, group_net_worth
 
@@ -88,14 +90,24 @@ urlpatterns = [
     path('api/products/<int:pk>/', ProductDetailView.as_view(), name='product-detail'),
     path('api/products/<int:pk>/valuations/', ProductValuationHistoryView.as_view(), name='product-valuations'),
     path('api/products/<int:pk>/update-value/', update_product_value, name='product-update-value'),
+    path('api/products/<int:pk>/set-category/', set_product_category, name='product-set-category'),
+
+    # ── Smart Upload (single endpoint, auto-detects format) ──────────────────
+    path('api/uploads/smart/', smart_upload, name='smart-upload'),
+    path('api/accounts/<int:pk>/clear-csv/', clear_account_csv, name='account-clear-csv'),
 
     # ── Uploads ───────────────────────────────────────────────────────────────
     path('api/uploads/cas/', cas_upload_list, name='cas-upload-list'),
     path('api/uploads/cas/<int:pk>/', cas_upload_detail, name='cas-upload-detail'),
     path('api/uploads/cas/<int:pk>/reparse/', cas_reparse, name='cas-reparse'),
     path('api/uploads/equity-csv/', equity_csv_upload, name='equity-csv-upload'),
+    path('api/uploads/portfolio-file/', portfolio_file_upload, name='portfolio-file-upload'),
     path('api/uploads/passwords/', CASPasswordListCreateView.as_view(), name='cas-passwords'),
     path('api/uploads/passwords/<int:pk>/', CASPasswordDetailView.as_view(), name='cas-password-detail'),
+
+    # ── Manual Asset Entry ────────────────────────────────────────────────────
+    path('api/assets/manual/', manual_asset_entry, name='manual-asset-entry'),
+    path('api/assets/manual/<int:pk>/', manual_asset_detail, name='manual-asset-detail'),
 
     # ── Portfolio Analytics ───────────────────────────────────────────────────
     path('api/portfolio/consolidated/', consolidated_portfolio, name='consolidated'),
@@ -105,13 +117,18 @@ urlpatterns = [
 
     # ── Analytics ─────────────────────────────────────────────────────────────
     path('api/analytics/update-prices/', trigger_price_update, name='update-prices'),
+    path('api/analytics/sync-categories/', sync_mf_categories, name='sync-categories'),
     path('api/analytics/overlap/', overlap_analysis, name='overlap'),
     path('api/analytics/health-score/', health_score_view, name='health-score'),
+    path('api/analytics/risk-summary/', risk_summary, name='risk-summary'),
+    path('api/analytics/tenor-ladder/', tenor_ladder, name='tenor-ladder'),
+    path('api/analytics/trend/', portfolio_trend, name='portfolio-trend'),
 
     # ── Mutual Funds ──────────────────────────────────────────────────────────
     path('api/funds/<str:isin>/', fund_detail, name='fund-detail'),
     path('api/funds/<str:isin>/nav-history/', fund_nav_history, name='fund-nav-history'),
     path('api/funds/<str:isin>/risk-metrics/', fund_risk_metrics, name='fund-risk-metrics'),
+    path('api/funds/<str:isin>/my-holding/', fund_my_holding, name='fund-my-holding'),
 
     # ── Reports ───────────────────────────────────────────────────────────────
     path('api/reports/generate/', generate_report, name='report-generate'),

@@ -1,35 +1,94 @@
 {% extends "core/master_base.html" %}
 {% load static %}
 
-{% block title %}Upload CAS Statement — mCube Investments{% endblock %}
+{% block title %}Import Portfolio — mCube Investments{% endblock %}
 
 {% block extra_css %}
 <style>
-    .dropzone {
-        border: 2px dashed var(--gray-light); border-radius: var(--radius-lg);
-        padding: 2.5rem; text-align: center; cursor: pointer;
-        transition: border-color .2s, background .2s;
-        background: var(--lighter);
-    }
-    .dropzone:hover, .dropzone.drag-over { border-color: var(--primary); background: #eff6ff; }
-    .dropzone.has-file { border-color: var(--success); background: #f0fdf4; }
-    .dropzone-icon { font-size: 3rem; margin-bottom: .75rem; }
-    .status-badge { font-size: .75rem; padding: .25rem .65rem; border-radius: 20px; font-weight: 600; }
-    .badge-pending    { background: #fef3c7; color: #92400e; }
-    .badge-processing { background: #dbeafe; color: #1e40af; }
-    .badge-done       { background: #d1fae5; color: #065f46; }
-    .badge-error      { background: #fee2e2; color: #991b1b; }
-    .pwd-chip {
-        display: inline-flex; align-items: center; gap: .4rem;
-        background: #e0e7ff; color: #3730a3;
-        border-radius: 20px; padding: .2rem .75rem; font-size: .8rem; font-weight: 600;
-    }
-    .pwd-chip .del-btn {
-        background: none; border: none; color: #6b7280; cursor: pointer;
-        padding: 0; line-height: 1; font-size: .9rem;
-    }
-    .pwd-chip .del-btn:hover { color: #dc2626; }
-    .pwd-hint { font-size: .78rem; color: var(--gray); }
+/* ── Drop zone ─────────────────────────────────────────────────────── */
+.drop-zone {
+    border: 2px dashed #cbd5e1;
+    border-radius: 16px;
+    padding: 3rem 2rem;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color .2s, background .2s;
+    background: #f8fafc;
+    position: relative;
+}
+.drop-zone:hover, .drop-zone.drag-over {
+    border-color: var(--primary);
+    background: #eff6ff;
+}
+.drop-zone.has-file {
+    border-color: #10b981;
+    background: #f0fdf4;
+}
+.drop-zone.is-pdf .pdf-hint  { display: block; }
+.drop-zone.is-pdf .xls-hint  { display: none; }
+.drop-zone.is-xls .xls-hint  { display: block; }
+.drop-zone.is-xls .pdf-hint  { display: none; }
+.pdf-hint, .xls-hint { display: none; }
+
+/* ── File badge ────────────────────────────────────────────────────── */
+.file-badge {
+    display: inline-flex; align-items: center; gap: .5rem;
+    background: white; border: 1px solid #e2e8f0; border-radius: 10px;
+    padding: .4rem .9rem; font-size: .875rem; font-weight: 600;
+}
+.file-badge .remove-btn {
+    background: none; border: none; color: #94a3b8; cursor: pointer;
+    padding: 0; line-height: 1; font-size: 1rem;
+}
+.file-badge .remove-btn:hover { color: #ef4444; }
+
+/* ── Result panels ─────────────────────────────────────────────────── */
+.result-stat {
+    text-align: center; padding: 1rem;
+    background: white; border-radius: 12px;
+    border: 1px solid #e2e8f0;
+}
+.result-stat .num { font-size: 1.75rem; font-weight: 700; line-height: 1; }
+.result-stat .lbl { font-size: .75rem; color: #64748b; margin-top: .25rem; }
+
+/* ── History table ─────────────────────────────────────────────────── */
+.history-row { display: grid; grid-template-columns: 1fr auto auto auto auto; gap: .75rem;
+    align-items: center; padding: .65rem 0; border-bottom: 1px solid #f1f5f9; }
+.history-row:last-child { border-bottom: none; }
+.history-del-btn { background: none; border: none; opacity: .5; font-size: .85rem; padding: 0 .2rem; }
+.history-del-btn:hover { opacity: 1; }
+.status-pill { font-size: .7rem; font-weight: 700; padding: .2rem .65rem;
+    border-radius: 20px; white-space: nowrap; }
+.pill-done       { background: #dcfce7; color: #166534; }
+.pill-processing { background: #dbeafe; color: #1e40af; }
+.pill-pending    { background: #fef3c7; color: #92400e; }
+.pill-error      { background: #fee2e2; color: #991b1b; }
+
+/* ── Asset modal ───────────────────────────────────────────────────── */
+.asset-chip {
+    border: 1.5px solid #e2e8f0; border-radius: 8px;
+    padding: .4rem .75rem; cursor: pointer; font-size: .8rem;
+    background: white; transition: all .12s; white-space: nowrap;
+    display: inline-flex; align-items: center; gap: .3rem;
+}
+.asset-chip:hover, .asset-chip.active {
+    border-color: var(--primary); background: #eff6ff; color: var(--primary);
+}
+
+/* ── Saved passwords ───────────────────────────────────────────────── */
+.pwd-chip {
+    display: inline-flex; align-items: center; gap: .3rem;
+    background: #e0e7ff; color: #3730a3; border-radius: 20px;
+    padding: .15rem .6rem; font-size: .75rem; font-weight: 600;
+}
+.pwd-chip button { background: none; border: none; color: #6b7280; cursor: pointer; padding: 0; }
+.pwd-chip button:hover { color: #dc2626; }
+
+/* ── Misc ──────────────────────────────────────────────────────────── */
+.section-head { font-size: .7rem; font-weight: 700; letter-spacing: .08em;
+    text-transform: uppercase; color: #94a3b8; margin-bottom: .75rem; }
+.format-tag { display: inline-block; background: #f1f5f9; border-radius: 5px;
+    padding: .1rem .4rem; font-size: .7rem; color: #475569; font-family: monospace; }
 </style>
 {% endblock %}
 
@@ -38,107 +97,359 @@
     <ol class="breadcrumb">
         <li class="breadcrumb-item"><a href="/">Home</a></li>
         <li class="breadcrumb-item"><a href="{% url 'investments:home' %}">Investments</a></li>
-        <li class="breadcrumb-item active">Upload CAS</li>
+        <li class="breadcrumb-item active">Import</li>
     </ol>
 </nav>
 {% endblock %}
 
 {% block content %}
-<div class="d-flex justify-content-between align-items-center mb-4">
-    <div>
-        <h1 class="h3 fw-bold mb-1" style="color:var(--dark)">📤 Upload CAS Statement</h1>
-        <p class="text-muted mb-0 small">Import holdings from NSDL, CAMS, or KFintech Consolidated Account Statements</p>
-    </div>
-    <a href="{% url 'investments:home' %}" class="btn btn-outline-secondary btn-sm">← Dashboard</a>
-</div>
+<div class="row justify-content-center g-4">
 
-<div class="row g-4">
-    <!-- Left: upload form -->
-    <div class="col-lg-6">
-        <div class="card border-0 shadow-sm mb-3">
+    <!-- ══════════════════════════════════════════════════════════════════
+         LEFT COLUMN — Upload card
+    ══════════════════════════════════════════════════════════════════ -->
+    <div class="col-lg-7">
+
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <div>
+                <h1 class="h4 fw-bold mb-0" style="color:var(--dark)">📥 Import Portfolio</h1>
+                <p class="text-muted small mb-0">Drop any statement — format detected automatically</p>
+            </div>
+            <a href="{% url 'investments:home' %}" class="btn btn-outline-secondary btn-sm">← Dashboard</a>
+        </div>
+
+        <div class="card border-0 shadow-sm">
             <div class="card-body p-4">
-                <h5 class="fw-bold mb-3" style="color:var(--dark)">Upload Statement</h5>
-                <form id="cas-form">
-                    <!-- Family Member -->
-                    <div class="mb-3">
-                        <label class="form-label fw-semibold">Family Member</label>
-                        <select class="form-select" id="member-select" required>
+
+                <!-- Family member -->
+                <div class="mb-3">
+                    <label class="form-label fw-semibold small mb-1">For</label>
+                    <div class="d-flex gap-2">
+                        <select class="form-select" id="member-select">
                             <option value="">Loading members…</option>
                         </select>
+                        <button class="btn btn-outline-primary btn-sm px-3 flex-shrink-0"
+                                onclick="openAddMemberModal()" title="Add new family member">+ Member</button>
                     </div>
-                    <!-- CAS Type -->
-                    <div class="mb-3">
-                        <label class="form-label fw-semibold">CAS Type</label>
-                        <select class="form-select" id="cas-type">
-                            <option value="NSDL">NSDL e-CAS</option>
-                            <option value="CAMS">CAMS CAS</option>
-                            <option value="KFINTECH">KFintech CAS</option>
-                        </select>
-                    </div>
-                    <!-- File Dropzone -->
-                    <div class="mb-3">
-                        <label class="form-label fw-semibold">PDF File</label>
-                        <div class="dropzone" id="dropzone" onclick="document.getElementById('cas-file').click()">
-                            <div class="dropzone-icon">📄</div>
-                            <div id="dropzone-label" class="fw-semibold">Click or drag &amp; drop PDF here</div>
-                            <div class="text-muted small mt-1">Supports password-protected NSDL, CAMS, KFintech CAS files</div>
+                </div>
+
+                <!-- Drop zone -->
+                <div class="drop-zone" id="drop-zone"
+                     onclick="document.getElementById('file-input').click()">
+                    <input type="file" id="file-input"
+                           accept=".pdf,.xls,.xlsx,.csv" class="d-none">
+
+                    <!-- idle state -->
+                    <div id="dz-idle">
+                        <div style="font-size:2.5rem;margin-bottom:.5rem">☁️</div>
+                        <div class="fw-semibold mb-1">Click to browse or drag &amp; drop</div>
+                        <div class="text-muted small">
+                            <span class="format-tag">PDF</span>&nbsp;NSDL&nbsp;·&nbsp;CAMS&nbsp;·&nbsp;KFintech&nbsp;·&nbsp;MF&nbsp;Central
+                            &nbsp;&nbsp;
+                            <span class="format-tag">XLS/CSV</span>&nbsp;Kotak&nbsp;·&nbsp;ICICI&nbsp;·&nbsp;Zerodha&nbsp;·&nbsp;any broker
                         </div>
-                        <input type="file" id="cas-file" accept=".pdf" class="d-none">
                     </div>
-                    <!-- Password (optional when saved passwords exist) -->
-                    <div class="mb-4">
-                        <label class="form-label fw-semibold">
-                            PDF Password
-                            <span class="text-muted fw-normal" id="pwd-label-hint">(usually your PAN)</span>
+
+                    <!-- file selected state -->
+                    <div id="dz-file" style="display:none">
+                        <div id="file-icon" style="font-size:2rem;margin-bottom:.4rem">📄</div>
+                        <div class="file-badge">
+                            <span id="file-name-display">—</span>
+                            <button class="remove-btn" onclick="clearFile(event)">✕</button>
+                        </div>
+                        <div id="file-type-hint" class="text-muted small mt-2"></div>
+                    </div>
+                </div>
+
+                <!-- Password (PDF only, shown when PDF selected) -->
+                <div id="pwd-row" class="mt-3" style="display:none">
+                    <label class="form-label small fw-semibold mb-1">
+                        PDF Password
+                        <span class="text-muted fw-normal">(usually your PAN — leave blank to use saved passwords)</span>
+                    </label>
+                    <input type="text" class="form-control form-control-sm" id="pdf-password"
+                           placeholder="e.g. ABCDE1234F" autocomplete="off">
+                    <div id="saved-pwd-hint" class="text-muted small mt-1" style="display:none">
+                        🔑 <span id="saved-pwd-count">0</span> saved password(s) will be tried automatically.
+                        <a href="#" onclick="togglePwdManager(event)" class="ms-1">Manage →</a>
+                    </div>
+                </div>
+
+                <!-- Clear before import (spreadsheet only) -->
+                <div id="clear-row" class="mt-3" style="display:none">
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="clear-before-import">
+                        <label class="form-check-label small" for="clear-before-import">
+                            <strong>Replace all existing holdings</strong>
+                            <span class="text-muted fw-normal">— deletes previous CSV import before uploading (fixes wrong data)</span>
                         </label>
-                        <input type="text" class="form-control" id="cas-password"
-                               placeholder="e.g. AAQHA1835B" autocomplete="off">
-                        <div class="pwd-hint mt-1" id="saved-pwd-notice" style="display:none">
-                            🔑 <span id="saved-pwd-count">0</span> saved password(s) will be tried automatically — leave blank to use only those.
-                        </div>
                     </div>
-                    <button type="submit" class="btn btn-primary w-100 fw-bold" id="btn-upload">
-                        📤 Upload &amp; Parse
+                </div>
+
+                <!-- Import button -->
+                <button class="btn btn-primary w-100 fw-bold mt-3 py-2" id="btn-import"
+                        onclick="doImport()">
+                    📥 Import
+                </button>
+
+                <!-- Status/result area -->
+                <div id="status-area" class="mt-3" style="display:none"></div>
+
+                <hr class="my-3">
+                <div class="text-center">
+                    <button class="btn btn-link text-muted small py-0"
+                            onclick="openManualModal()">
+                        + Add PPF / Gold / FD / Real Estate manually
                     </button>
-                </form>
-                <div id="upload-status" class="mt-3" style="display:none"></div>
+                </div>
             </div>
         </div>
 
-        <!-- Saved Passwords Card -->
-        <div class="card border-0 shadow-sm">
-            <div class="card-body p-4">
-                <div class="d-flex justify-content-between align-items-center mb-3">
-                    <h6 class="fw-bold mb-0" style="color:var(--dark)">🔑 Saved PDF Passwords</h6>
-                    <span class="text-muted small">Tried automatically on every upload</span>
+        <!-- Saved Passwords (collapsible) -->
+        <div id="pwd-manager" class="card border-0 shadow-sm mt-3" style="display:none">
+            <div class="card-body p-3">
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <span class="section-head mb-0">Saved PDF Passwords</span>
+                    <button class="btn btn-link btn-sm py-0 text-muted"
+                            onclick="togglePwdManager(event)">Hide</button>
                 </div>
-                <div id="saved-pwds-list" class="d-flex flex-wrap gap-2 mb-3">
-                    <span class="text-muted small">Loading…</span>
-                </div>
+                <div id="pwd-chips" class="d-flex flex-wrap gap-1 mb-2"></div>
                 <form id="add-pwd-form" class="d-flex gap-2">
-                    <input type="text" class="form-control form-control-sm" id="new-pwd-value"
-                           placeholder="Password (e.g. PAN)" autocomplete="off" required style="max-width:160px">
+                    <input type="text" class="form-control form-control-sm" id="new-pwd"
+                           placeholder="Password (e.g. PAN)" autocomplete="off" required style="max-width:140px">
                     <input type="text" class="form-control form-control-sm" id="new-pwd-label"
-                           placeholder="Label (optional)" style="max-width:140px">
+                           placeholder="Label (opt)" style="max-width:110px">
                     <button type="submit" class="btn btn-outline-primary btn-sm">+ Add</button>
                 </form>
-                <div class="pwd-hint mt-2">Passwords are stored securely and only used to open CAS PDFs.</div>
             </div>
         </div>
     </div>
 
-    <!-- Right: past uploads -->
-    <div class="col-lg-6">
-        <div class="card border-0 shadow-sm">
+    <!-- ══════════════════════════════════════════════════════════════════
+         RIGHT COLUMN — History
+    ══════════════════════════════════════════════════════════════════ -->
+    <div class="col-lg-5">
+        <div class="card border-0 shadow-sm h-100">
             <div class="card-body p-4">
-                <h5 class="fw-bold mb-3" style="color:var(--dark)">Past Uploads</h5>
-                <div id="uploads-table-wrap">
+                <div class="section-head">Recent Imports</div>
+                <div id="history-list">
                     <div class="text-muted small">Loading…</div>
                 </div>
             </div>
         </div>
     </div>
 </div>
+
+<!-- ════════════════════════════════════════════════════════════════════════
+     Add Member Modal (reused from index)
+════════════════════════════════════════════════════════════════════════ -->
+<div class="modal fade" id="addMemberModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title fw-bold">Add Family Member</h5>
+                <button class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="add-member-form">
+                    <div class="row g-3">
+                        <div class="col-12">
+                            <label class="form-label small fw-semibold">Name *</label>
+                            <input type="text" class="form-control" id="am-name" placeholder="Full name" required>
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label small fw-semibold">Relationship *</label>
+                            <select class="form-select" id="am-rel">
+                                <option value="SELF">Self</option>
+                                <option value="SPOUSE">Spouse</option>
+                                <option value="FATHER">Father</option>
+                                <option value="MOTHER">Mother</option>
+                                <option value="CHILD">Child</option>
+                                <option value="HUF">HUF</option>
+                                <option value="OTHER">Other</option>
+                            </select>
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label small fw-semibold">PAN</label>
+                            <input type="text" class="form-control text-uppercase" id="am-pan"
+                                   placeholder="ABCDE1234F" maxlength="10">
+                        </div>
+                    </div>
+                    <div id="am-error" class="alert alert-danger mt-3 mb-0 py-2 small" style="display:none"></div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+                <button class="btn btn-primary btn-sm fw-bold" onclick="saveMember()">Add Member</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════════════
+     Manual Asset Modal
+════════════════════════════════════════════════════════════════════════ -->
+<div class="modal fade" id="manualModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title fw-bold">Add Asset Manually</h5>
+                <button class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <!-- Asset type picker -->
+                <div class="mb-3">
+                    <div class="section-head">Asset Type</div>
+                    <div class="d-flex flex-wrap gap-2" id="asset-chips">
+                        <button class="asset-chip" data-type="PPF"           onclick="pickAsset('PPF',this)">🏛️ PPF</button>
+                        <button class="asset-chip" data-type="EPF"           onclick="pickAsset('EPF',this)">🏢 EPF / PF</button>
+                        <button class="asset-chip" data-type="NPS"           onclick="pickAsset('NPS',this)">🎯 NPS</button>
+                        <button class="asset-chip" data-type="FD"            onclick="pickAsset('FD',this)">🏦 FD</button>
+                        <button class="asset-chip" data-type="RD"            onclick="pickAsset('RD',this)">📅 RD</button>
+                        <button class="asset-chip" data-type="SGB"           onclick="pickAsset('SGB',this)">🪙 SGB</button>
+                        <button class="asset-chip" data-type="PHYSICAL_GOLD" onclick="pickAsset('PHYSICAL_GOLD',this)">🥇 Gold</button>
+                        <button class="asset-chip" data-type="REAL_ESTATE"   onclick="pickAsset('REAL_ESTATE',this)">🏠 Real Estate</button>
+                        <button class="asset-chip" data-type="SAVINGS"       onclick="pickAsset('SAVINGS',this)">💳 Savings</button>
+                        <button class="asset-chip" data-type="BOND"          onclick="pickAsset('BOND',this)">📜 Bond</button>
+                        <button class="asset-chip" data-type="CRYPTO"        onclick="pickAsset('CRYPTO',this)">₿ Crypto</button>
+                        <button class="asset-chip" data-type="OTHER"         onclick="pickAsset('OTHER',this)">📦 Other</button>
+                    </div>
+                </div>
+
+                <div id="asset-form" style="display:none">
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <label class="form-label small fw-semibold">Family Member *</label>
+                            <select class="form-select" id="ma-member"></select>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label small fw-semibold">Institution / Bank</label>
+                            <input type="text" class="form-control" id="ma-institution" placeholder="SBI, HDFC…">
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label small fw-semibold">Name / Description *</label>
+                            <input type="text" class="form-control" id="ma-name" placeholder="" required>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label small fw-semibold">Amount Invested ₹</label>
+                            <input type="number" class="form-control" id="ma-invested" min="0" step="0.01" placeholder="0">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label small fw-semibold">Current Value ₹</label>
+                            <input type="number" class="form-control" id="ma-current" min="0" step="0.01"
+                                   placeholder="Same as invested">
+                        </div>
+
+                        <!-- Gold extras -->
+                        <div id="gold-extra" class="col-12" style="display:none">
+                            <div class="p-3 rounded bg-warning bg-opacity-10 border border-warning border-opacity-25">
+                                <div class="small fw-semibold mb-2">Gold Details</div>
+                                <div class="row g-2">
+                                    <div class="col-6">
+                                        <label class="form-label small">Quantity (grams)</label>
+                                        <input type="number" class="form-control form-control-sm"
+                                               id="ma-grams" min="0" step="0.001" placeholder="0">
+                                    </div>
+                                    <div class="col-6">
+                                        <label class="form-label small">Rate per gram ₹</label>
+                                        <input type="number" class="form-control form-control-sm"
+                                               id="ma-gold-rate" min="0" step="0.01" placeholder="0">
+                                    </div>
+                                </div>
+                                <div class="text-muted small mt-1">Fills current value = grams × rate</div>
+                            </div>
+                        </div>
+
+                        <!-- FD extras -->
+                        <div id="fd-extra" class="col-12" style="display:none">
+                            <div class="p-3 rounded bg-success bg-opacity-10 border border-success border-opacity-25">
+                                <div class="small fw-semibold mb-2">FD / RD Details</div>
+                                <div class="row g-2">
+                                    <div class="col-6">
+                                        <label class="form-label small">Interest Rate %</label>
+                                        <input type="number" class="form-control form-control-sm"
+                                               id="ma-fd-rate" min="0" step="0.01" placeholder="e.g. 6.75">
+                                    </div>
+                                    <div class="col-6">
+                                        <label class="form-label small">Maturity Date</label>
+                                        <input type="date" class="form-control form-control-sm" id="ma-maturity">
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Real estate extras -->
+                        <div id="re-extra" class="col-12" style="display:none">
+                            <div class="p-3 rounded bg-primary bg-opacity-10 border border-primary border-opacity-25">
+                                <div class="small fw-semibold mb-2">Property Details</div>
+                                <div class="row g-2">
+                                    <div class="col-6">
+                                        <label class="form-label small">Area (sq ft)</label>
+                                        <input type="number" class="form-control form-control-sm"
+                                               id="ma-area" min="0" placeholder="0">
+                                    </div>
+                                    <div class="col-6">
+                                        <label class="form-label small">Location</label>
+                                        <input type="text" class="form-control form-control-sm"
+                                               id="ma-location" placeholder="City, State">
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="col-md-6">
+                            <label class="form-label small fw-semibold">As of Date</label>
+                            <input type="date" class="form-control" id="ma-date">
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label small fw-semibold">Notes</label>
+                            <textarea class="form-control" id="ma-notes" rows="2" placeholder="Any extra info…"></textarea>
+                        </div>
+                    </div>
+                    <div id="ma-error" class="alert alert-danger mt-3 mb-0 py-2 small" style="display:none"></div>
+                </div>
+            </div>
+            <div class="modal-footer" id="asset-modal-footer" style="display:none">
+                <button class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+                <button class="btn btn-primary btn-sm fw-bold" onclick="saveManualAsset()">💾 Save Asset</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════════════
+     Delete Upload Modal
+════════════════════════════════════════════════════════════════════════ -->
+<div class="modal fade" id="deleteUploadModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title fw-bold">🗑️ Delete Import</h5>
+                <button class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p class="mb-2">Delete "<strong id="du-name">…</strong>"?</p>
+                <p class="text-muted small mb-3">This upload touched <strong id="du-counts">…</strong>.</p>
+                <div class="form-check mb-2">
+                    <input class="form-check-input" type="checkbox" id="du-cascade">
+                    <label class="form-check-label small" for="du-cascade">
+                        Also remove these holdings
+                        <span class="text-muted fw-normal">— archives the holdings this import created/updated and
+                        deletes its transactions. Holdings later touched by a newer import are unaffected.</span>
+                    </label>
+                </div>
+                <div id="du-error" class="alert alert-danger mb-0 py-2 small" style="display:none"></div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+                <button class="btn btn-danger btn-sm fw-bold" onclick="deleteUpload()">Delete</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Toast -->
+<div class="position-fixed bottom-0 end-0 p-3" style="z-index:9999" id="toasts"></div>
 {% endblock %}
 
 {% block extra_js %}
@@ -146,227 +457,466 @@
 const CSRF = '{{ csrf_token }}';
 const API  = '/investments/api';
 
-// ── Drag-and-drop ──────────────────────────────────────────────────────────
-const dropzone = document.getElementById('dropzone');
-const fileInput = document.getElementById('cas-file');
+// ── Toast ─────────────────────────────────────────────────────────────
+function toast(msg, type='success') {
+    const d = document.createElement('div');
+    d.className = `alert alert-${type === 'error' ? 'danger' : 'success'} shadow mb-2 py-2 px-3`;
+    d.style.cssText = 'font-size:.85rem;min-width:220px';
+    d.textContent = msg;
+    document.getElementById('toasts').appendChild(d);
+    setTimeout(() => d.remove(), 5000);
+}
 
-dropzone.addEventListener('dragover', e => { e.preventDefault(); dropzone.classList.add('drag-over'); });
-dropzone.addEventListener('dragleave', () => dropzone.classList.remove('drag-over'));
-dropzone.addEventListener('drop', e => {
-    e.preventDefault(); dropzone.classList.remove('drag-over');
+// ── Members ───────────────────────────────────────────────────────────
+let _members = [];
+
+async function loadMembers() {
+    try {
+        const r = await fetch(API + '/family-members/');
+        _members = await r.json();
+    } catch(e) { _members = []; }
+    const html = _members.length
+        ? _members.map(m => `<option value="${m.id}">${m.name}${m.relationship ? ' · '+m.relationship : ''}</option>`).join('')
+        : '<option value="">No members yet — add one</option>';
+    document.getElementById('member-select').innerHTML = html;
+    document.getElementById('ma-member').innerHTML = html;
+}
+loadMembers();
+
+// ── Add member ────────────────────────────────────────────────────────
+let _memberModal = null;
+function openAddMemberModal() {
+    if (!_memberModal) _memberModal = new bootstrap.Modal(document.getElementById('addMemberModal'));
+    document.getElementById('add-member-form').reset();
+    document.getElementById('am-error').style.display = 'none';
+    _memberModal.show();
+}
+async function saveMember() {
+    const name = document.getElementById('am-name').value.trim();
+    const rel  = document.getElementById('am-rel').value;
+    const pan  = document.getElementById('am-pan').value.trim().toUpperCase();
+    const errEl = document.getElementById('am-error');
+    if (!name) { errEl.textContent = 'Name is required.'; errEl.style.display = ''; return; }
+    const payload = { name, relationship: rel };
+    if (pan) payload.pan_masked = pan;
+    try {
+        const r = await fetch(API + '/family-members/', {
+            method: 'POST',
+            headers: { 'X-CSRFToken': CSRF, 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+        const d = await r.json();
+        if (!r.ok) { errEl.textContent = Object.values(d).flat().join(' '); errEl.style.display = ''; return; }
+        _memberModal.hide();
+        toast(`${name} added!`);
+        await loadMembers();
+        document.getElementById('member-select').value = d.id;
+    } catch(e) {
+        errEl.textContent = 'Network error.'; errEl.style.display = '';
+    }
+}
+
+// ── File selection ────────────────────────────────────────────────────
+const dz       = document.getElementById('drop-zone');
+const fileInput = document.getElementById('file-input');
+let _file = null;
+
+const FILE_TYPE_HINTS = {
+    pdf:  '📄 PDF detected — will auto-detect NSDL / CAMS / KFintech / MF Central',
+    xls:  '📊 Excel file detected — will auto-detect broker and import holdings',
+    xlsx: '📊 Excel file detected — will auto-detect broker and import holdings',
+    csv:  '📄 CSV file detected — will auto-detect broker and import holdings',
+};
+
+dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('drag-over'); });
+dz.addEventListener('dragleave', () => dz.classList.remove('drag-over'));
+dz.addEventListener('drop', e => {
+    e.preventDefault(); dz.classList.remove('drag-over');
     if (e.dataTransfer.files.length) setFile(e.dataTransfer.files[0]);
 });
 fileInput.addEventListener('change', () => { if (fileInput.files.length) setFile(fileInput.files[0]); });
 
 function setFile(f) {
-    if (!f.name.endsWith('.pdf')) { alert('Please select a PDF file.'); return; }
-    dropzone.classList.add('has-file');
-    document.getElementById('dropzone-label').textContent = '📎 ' + f.name;
-    const name = f.name.toUpperCase();
-    if (name.includes('NSDL')) document.getElementById('cas-type').value = 'NSDL';
-    else if (name.includes('CAMS')) document.getElementById('cas-type').value = 'CAMS';
-    else if (name.includes('KFIN') || name.includes('KARVY')) document.getElementById('cas-type').value = 'KFINTECH';
-    const dt = new DataTransfer(); dt.items.add(f);
-    fileInput.files = dt.files;
-}
-
-// ── Load family members ────────────────────────────────────────────────────
-fetch(API + '/family-members/').then(r => r.json()).then(members => {
-    const sel = document.getElementById('member-select');
-    if (!members.length) {
-        sel.innerHTML = '<option value="">No family members — add one first</option>';
+    const ext = f.name.split('.').pop().toLowerCase();
+    const allowed = ['pdf','xls','xlsx','csv'];
+    if (!allowed.includes(ext)) {
+        showStatus('Only PDF, XLS, XLSX, and CSV files are supported.', 'error');
         return;
     }
-    sel.innerHTML = members.map(m =>
-        `<option value="${m.id}">${m.name}${m.relationship ? ' (' + m.relationship + ')' : ''}</option>`
-    ).join('');
-}).catch(() => {
-    document.getElementById('member-select').innerHTML = '<option value="">Failed to load members</option>';
-});
+    _file = f;
+    const isPdf = ext === 'pdf';
+    dz.classList.add('has-file');
+    dz.classList.remove('is-pdf','is-xls');
+    dz.classList.add(isPdf ? 'is-pdf' : 'is-xls');
+    document.getElementById('dz-idle').style.display  = 'none';
+    document.getElementById('dz-file').style.display  = '';
+    document.getElementById('file-icon').textContent  = isPdf ? '📄' : '📊';
+    document.getElementById('file-name-display').textContent = f.name;
+    document.getElementById('file-type-hint').textContent = FILE_TYPE_HINTS[ext] || '';
+    document.getElementById('pwd-row').style.display   = isPdf ? '' : 'none';
+    document.getElementById('clear-row').style.display = isPdf ? 'none' : '';
+    document.getElementById('status-area').style.display = 'none';
+    // Sync to hidden input
+    const dt = new DataTransfer(); dt.items.add(f); fileInput.files = dt.files;
+}
 
-// ── Saved passwords ────────────────────────────────────────────────────────
-let savedPasswords = [];
+function clearFile(e) {
+    e.stopPropagation();
+    _file = null;
+    dz.classList.remove('has-file','is-pdf','is-xls','drag-over');
+    document.getElementById('dz-idle').style.display = '';
+    document.getElementById('dz-file').style.display = 'none';
+    document.getElementById('pwd-row').style.display = 'none';
+    fileInput.value = '';
+}
 
-async function loadSavedPasswords() {
+// ── Import ────────────────────────────────────────────────────────────
+async function doImport() {
+    const memberId = document.getElementById('member-select').value;
+    const password = document.getElementById('pdf-password').value;
+
+    if (!memberId) { showStatus('Please select a family member.', 'error'); return; }
+    if (!_file)    { showStatus('Please select a file to import.', 'error'); return; }
+
+    const btn = document.getElementById('btn-import');
+    const isPdf = _file && _file.name.split('.').pop().toLowerCase() === 'pdf'
+               || (_file && _file.name.toLowerCase().endsWith('.xlsx'));  // MF Central sends PDFs as .xlsx
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>' + (isPdf ? 'Parsing…' : 'Importing…');
+    showStatus('<div class="d-flex align-items-center gap-2"><div class="spinner-border spinner-border-sm text-primary"></div><span>' + (isPdf ? 'Parsing PDF — detecting format automatically…' : 'Uploading &amp; importing…') + '</span></div>', 'info');
+
+    const clearBefore = document.getElementById('clear-before-import').checked;
+    const fd = new FormData();
+    fd.append('file', _file);
+    fd.append('member_id', memberId);
+    if (password) fd.append('password', password);
+    if (clearBefore) fd.append('clear_before_import', 'true');
+
+    try {
+        const r = await fetch(API + '/uploads/smart/', {
+            method: 'POST', headers: { 'X-CSRFToken': CSRF }, body: fd,
+        });
+        const d = await r.json();
+
+        if (!r.ok) {
+            showStatus(d.error || 'Upload failed.', 'error');
+            return;
+        }
+
+        if (d.mode === 'spreadsheet') {
+            showSpreadsheetResult(d);
+        } else {
+            showPdfResult(d);
+        }
+        loadHistory();
+    } catch(err) {
+        showStatus('Network error — please try again.', 'error');
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = '📥 Import';
+    }
+}
+
+function fmt(n) {
+    n = parseFloat(n) || 0;
+    return '₹' + Math.abs(n).toLocaleString('en-IN', {maximumFractionDigits: 0});
+}
+
+function showSpreadsheetResult(d) {
+    const errors = (d.errors || []).length;
+    const detected = d.detected_broker ? `<div class="text-muted small mb-2">Broker detected: <strong>${d.detected_broker}</strong> · Account: <strong>${d.account_name}</strong></div>` : '';
+    const clearedHtml = d.cleared ? `<div class="text-muted small mb-2">🗑 ${d.cleared} previous holding(s) cleared before import</div>` : '';
+    const errHtml = errors ? `<div class="alert alert-warning py-2 small mt-2 mb-0"><strong>${errors} row error(s):</strong> ${d.errors.slice(0,3).join('; ')}${errors > 3 ? '…' : ''}</div>` : '';
+    document.getElementById('status-area').style.display = '';
+    document.getElementById('status-area').innerHTML = `
+        <div class="border border-success rounded p-3" style="background:#f0fdf4">
+            <div class="fw-semibold text-success mb-2">✓ Import complete</div>
+            ${detected}${clearedHtml}
+            <div class="row g-2">
+                ${stat(d.rows_read||0, 'Rows read', '#6366f1')}
+                ${stat(d.created||0, 'New', '#10b981')}
+                ${stat(d.updated||0, 'Updated', '#f59e0b')}
+                ${stat(d.skipped||0, 'Skipped', '#94a3b8')}
+            </div>
+            ${errHtml}
+            <div class="mt-2"><a href="/investments/" class="small fw-semibold">View dashboard →</a></div>
+        </div>`;
+}
+
+function showPdfResult(d) {
+    const label = {NSDL:'NSDL e-CAS', CAMS:'CAMS / KFintech CAS', KFINTECH:'KFintech CAS', PORTFOLIO:'Portfolio File'}[d.cas_type] || d.cas_type;
+    document.getElementById('status-area').style.display = '';
+    document.getElementById('status-area').innerHTML = `
+        <div class="border border-success rounded p-3" style="background:#f0fdf4">
+            <div class="fw-semibold text-success mb-2">✓ Parsed — <span class="text-muted fw-normal">${label}</span></div>
+            <div class="row g-2">
+                ${stat(d.products_created||0, 'New holdings', '#10b981')}
+                ${stat(d.products_updated||0, 'Updated', '#f59e0b')}
+                ${stat(d.transactions_created||0, 'Transactions', '#6366f1')}
+            </div>
+            <div class="mt-2"><a href="/investments/" class="small fw-semibold">View dashboard →</a></div>
+        </div>`;
+}
+
+function stat(val, label, color) {
+    return `<div class="col-3"><div class="result-stat"><div class="num" style="color:${color}">${val}</div><div class="lbl">${label}</div></div></div>`;
+}
+
+function showStatus(html, type) {
+    const el = document.getElementById('status-area');
+    el.style.display = '';
+    if (type === 'error') {
+        el.innerHTML = `<div class="alert alert-danger py-2 small mb-0">${html}</div>`;
+    } else if (type === 'info' || type === 'warning') {
+        el.innerHTML = `<div class="alert alert-${type === 'warning' ? 'warning' : 'info'} py-2 small mb-0">${html}</div>`;
+    } else {
+        el.innerHTML = html;
+    }
+}
+
+// ── Saved passwords ───────────────────────────────────────────────────
+let _pwds = [];
+
+function togglePwdManager(e) {
+    if (e) e.preventDefault();
+    const el = document.getElementById('pwd-manager');
+    el.style.display = el.style.display === 'none' ? '' : 'none';
+}
+
+async function loadPasswords() {
     try {
         const r = await fetch(API + '/uploads/passwords/');
-        savedPasswords = await r.json();
-    } catch(e) {
-        savedPasswords = [];
-    }
-    renderSavedPasswords();
+        _pwds = await r.json();
+    } catch(e) { _pwds = []; }
+    const hint   = document.getElementById('saved-pwd-hint');
+    const countEl = document.getElementById('saved-pwd-count');
+    hint.style.display = _pwds.length ? '' : 'none';
+    if (countEl) countEl.textContent = _pwds.length;
+    const chips = document.getElementById('pwd-chips');
+    chips.innerHTML = _pwds.length
+        ? _pwds.map(p => `<span class="pwd-chip">${p.label ? p.label+': ' : ''}${maskPwd(p.password)}<button onclick="deletePwd(${p.id})">✕</button></span>`).join('')
+        : '<span class="text-muted small">No saved passwords.</span>';
 }
 
 function maskPwd(p) {
-    if (!p) return '(empty)';
-    if (p.length <= 4) return '*'.repeat(p.length);
-    return p.slice(0, 2) + '****' + p.slice(-2);
+    if (!p || p.length <= 4) return '*'.repeat(p.length||1);
+    return p.slice(0,2) + '****' + p.slice(-2);
 }
 
-function renderSavedPasswords() {
-    const list = document.getElementById('saved-pwds-list');
-    const notice = document.getElementById('saved-pwd-notice');
-    const countEl = document.getElementById('saved-pwd-count');
-
-    if (!savedPasswords.length) {
-        list.innerHTML = '<span class="text-muted small">No saved passwords yet.</span>';
-        notice.style.display = 'none';
-        return;
-    }
-
-    notice.style.display = '';
-    countEl.textContent = savedPasswords.length;
-
-    list.innerHTML = savedPasswords.map(p =>
-        `<span class="pwd-chip">
-            ${p.label ? '<span>' + p.label + ':</span> ' : ''}${maskPwd(p.password)}
-            <button class="del-btn" onclick="deleteSavedPassword(${p.id})" title="Remove">✕</button>
-        </span>`
-    ).join('');
-}
-
-async function deleteSavedPassword(id) {
-    if (!confirm('Remove this saved password?')) return;
-    try {
-        await fetch(API + '/uploads/passwords/' + id + '/', {
-            method: 'DELETE',
-            headers: { 'X-CSRFToken': CSRF },
-        });
-        await loadSavedPasswords();
-    } catch(e) {
-        alert('Failed to remove password.');
-    }
+async function deletePwd(id) {
+    await fetch(API + '/uploads/passwords/' + id + '/', { method: 'DELETE', headers: { 'X-CSRFToken': CSRF } });
+    loadPasswords();
 }
 
 document.getElementById('add-pwd-form').addEventListener('submit', async function(e) {
     e.preventDefault();
-    const pwd   = document.getElementById('new-pwd-value').value.trim();
+    const pwd   = document.getElementById('new-pwd').value.trim();
     const label = document.getElementById('new-pwd-label').value.trim();
     if (!pwd) return;
-    try {
-        const r = await fetch(API + '/uploads/passwords/', {
-            method: 'POST',
-            headers: { 'X-CSRFToken': CSRF, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ password: pwd, label: label }),
-        });
-        if (!r.ok) {
-            const d = await r.json();
-            alert(d.password?.[0] || d.detail || 'Could not save password.');
-            return;
-        }
-        document.getElementById('new-pwd-value').value = '';
+    const r = await fetch(API + '/uploads/passwords/', {
+        method: 'POST',
+        headers: { 'X-CSRFToken': CSRF, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: pwd, label }),
+    });
+    if (r.ok) {
+        document.getElementById('new-pwd').value = '';
         document.getElementById('new-pwd-label').value = '';
-        await loadSavedPasswords();
-    } catch(e) {
-        alert('Failed to save password.');
+        loadPasswords();
     }
 });
 
-// ── Upload form ────────────────────────────────────────────────────────────
-document.getElementById('cas-form').addEventListener('submit', async function(e) {
-    e.preventDefault();
-    const memberId = document.getElementById('member-select').value;
-    const casType  = document.getElementById('cas-type').value;
-    const password = document.getElementById('cas-password').value;
-    const file     = document.getElementById('cas-file').files[0];
-    if (!memberId) { alert('Please select a family member.'); return; }
-    if (!file) { alert('Please select a PDF file.'); return; }
+loadPasswords();
 
-    const btn = document.getElementById('btn-upload');
-    btn.disabled = true; btn.textContent = '⏳ Uploading…';
-    const statusEl = document.getElementById('upload-status');
-    statusEl.style.display = 'block';
-    statusEl.innerHTML = '<div class="alert alert-info mb-0">Uploading and parsing… this may take a moment.</div>';
-
-    const fd = new FormData();
-    fd.append('file', file);
-    fd.append('member_id', memberId);
-    fd.append('cas_type', casType);
-    if (password) fd.append('password', password);
-
-    try {
-        const r = await fetch(API + '/uploads/cas/', {
-            method: 'POST',
-            headers: { 'X-CSRFToken': CSRF },
-            body: fd
-        });
-        const d = await r.json();
-        if (!r.ok) throw new Error(d.detail || d.error || 'Upload failed');
-
-        statusEl.innerHTML = '<div class="alert alert-success mb-0">' +
-            '<strong>✓ Uploaded!</strong> ' +
-            'Parse status: <strong>' + (d.parse_status || 'PENDING') + '</strong>. ' +
-            'Parsing runs in background — see status below.</div>';
-
-        if (d.id) pollParseStatus(d.id);
-        loadPastUploads();
-    } catch(err) {
-        statusEl.innerHTML = '<div class="alert alert-danger mb-0">❌ ' + err.message + '</div>';
-    } finally {
-        btn.disabled = false; btn.textContent = '📤 Upload & Parse';
-    }
-});
-
-async function pollParseStatus(uploadId, attempts) {
-    attempts = attempts || 0;
-    if (attempts > 30) return;
-    try {
-        const r = await fetch(API + '/uploads/cas/' + uploadId + '/');
-        const d = await r.json();
-        const statusEl = document.getElementById('upload-status');
-        if (d.parse_status === 'DONE') {
-            statusEl.innerHTML = '<div class="alert alert-success mb-0">✓ Parsed successfully! ' +
-                'Accounts: <strong>' + (d.accounts_created||0) + '</strong>, ' +
-                'Products: <strong>' + (d.products_created||0) + '</strong>, ' +
-                'Transactions: <strong>' + (d.transactions_created||0) + '</strong>.' +
-                ' <a href="/investments/">View Dashboard →</a></div>';
-            loadPastUploads();
-            return;
-        }
-        if (d.parse_status === 'ERROR') {
-            statusEl.innerHTML = '<div class="alert alert-danger mb-0">❌ Parse error: ' + (d.parse_error || 'Unknown error') + '</div>';
-            return;
-        }
-    } catch(e) {}
-    setTimeout(() => pollParseStatus(uploadId, attempts + 1), 2000);
-}
-
-function statusBadge(s) {
-    const map = { PENDING: 'pending', PROCESSING: 'processing', DONE: 'done', ERROR: 'error' };
-    return '<span class="status-badge badge-' + (map[s] || 'pending') + '">' + s + '</span>';
-}
-
-async function loadPastUploads() {
-    const wrap = document.getElementById('uploads-table-wrap');
+// ── Import history ────────────────────────────────────────────────────
+async function loadHistory() {
+    const wrap = document.getElementById('history-list');
     try {
         const r = await fetch(API + '/uploads/cas/');
-        const uploads = await r.json();
-        if (!uploads.length) {
-            wrap.innerHTML = '<p class="text-muted small mb-0">No uploads yet.</p>';
+        const items = await r.json();
+        if (!items.length) {
+            wrap.innerHTML = '<p class="text-muted small mb-0">No imports yet.</p>';
             return;
         }
-        wrap.innerHTML = '<div class="table-responsive"><table class="table table-sm small mb-0">' +
-            '<thead style="background:var(--lighter)"><tr>' +
-            '<th>File</th><th>Date</th><th>Status</th><th class="text-end">Accounts</th><th class="text-end">Products</th>' +
-            '</tr></thead><tbody>' +
-            uploads.slice().reverse().slice(0, 20).map(u => {
-                const d = new Date(u.created_at || '');
-                const date = isNaN(d) ? '—' : d.toLocaleDateString('en-IN');
-                return '<tr>' +
-                    '<td style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + u.original_filename + '">' + u.original_filename + '</td>' +
-                    '<td>' + date + '</td>' +
-                    '<td>' + statusBadge(u.parse_status) + '</td>' +
-                    '<td class="text-end">' + (u.accounts_created||0) + '</td>' +
-                    '<td class="text-end">' + (u.products_created||0) + '</td>' +
-                    '</tr>';
-            }).join('') +
-            '</tbody></table></div>';
+        const sorted = items.slice().reverse();
+        const TYPE_LABEL = {
+            NSDL: 'NSDL e-CAS', CAMS: 'CAMS / KFintech',
+            KFINTECH: 'KFintech', PORTFOLIO: 'Equity File',
+        };
+        wrap.innerHTML = sorted.slice(0, 25).map(u => {
+            const dt    = new Date(u.created_at);
+            const dstr  = isNaN(dt) ? '—' : dt.toLocaleDateString('en-IN', {day:'numeric',month:'short'});
+            const tlabel = TYPE_LABEL[u.cas_type] || u.cas_type || '—';
+            const pill  = statusPill(u.parse_status);
+            const counts = u.parse_status === 'DONE'
+                ? `<span class="text-muted small">${(u.products_created||0) + (u.products_updated||0)} holdings</span>`
+                : '';
+            const fname = u.original_filename.length > 28
+                ? u.original_filename.slice(0, 26) + '…' : u.original_filename;
+            return `<div class="history-row">
+                <div>
+                    <div class="small fw-semibold" title="${u.original_filename}">${fname}</div>
+                    <div style="font-size:.72rem;color:#94a3b8">${tlabel} · ${u.family_member_name || ''} · ${dstr}</div>
+                </div>
+                ${counts}
+                ${pill}
+                <button class="history-del-btn" title="Delete upload"
+                        onclick='openDeleteUploadModal(${u.id}, ${JSON.stringify(fname)}, ${u.affected_products_count||0}, ${u.affected_transactions_count||0})'>🗑️</button>
+            </div>`;
+        }).join('');
     } catch(e) {
-        wrap.innerHTML = '<p class="text-muted small mb-0">Could not load upload history.</p>';
+        wrap.innerHTML = '<p class="text-muted small mb-0">Could not load history.</p>';
     }
 }
 
-loadSavedPasswords();
-loadPastUploads();
+function statusPill(s) {
+    const map = { DONE: 'done', PROCESSING: 'processing', PENDING: 'pending', ERROR: 'error' };
+    return `<span class="status-pill pill-${map[s] || 'pending'}">${s}</span>`;
+}
+
+// ── Delete upload ─────────────────────────────────────────────────────
+let _deleteUploadModal = null;
+let _deletingUploadId = null;
+
+function openDeleteUploadModal(id, filename, productsCount, transactionsCount) {
+    _deletingUploadId = id;
+    if (!_deleteUploadModal) _deleteUploadModal = new bootstrap.Modal(document.getElementById('deleteUploadModal'));
+    document.getElementById('du-name').textContent = filename;
+    document.getElementById('du-counts').textContent = `${productsCount} holding(s) and ${transactionsCount} transaction(s)`;
+    document.getElementById('du-cascade').checked = false;
+    document.getElementById('du-error').style.display = 'none';
+    _deleteUploadModal.show();
+}
+
+async function deleteUpload() {
+    const errEl = document.getElementById('du-error');
+    errEl.style.display = 'none';
+    const cascade = document.getElementById('du-cascade').checked;
+    const url = `${API}/uploads/cas/${_deletingUploadId}/` + (cascade ? '?cascade=true' : '');
+    try {
+        const r = await fetch(url, { method: 'DELETE', headers: { 'X-CSRFToken': CSRF } });
+        if (!r.ok) { errEl.textContent = 'Delete failed.'; errEl.style.display = ''; return; }
+        const d = await r.json().catch(() => ({}));
+        _deleteUploadModal.hide();
+        if (cascade) {
+            toast(`Upload removed — ${d.products_archived||0} holding(s) archived, ${d.transactions_deleted||0} transaction(s) deleted.`);
+        } else {
+            toast('Upload removed.');
+        }
+        loadHistory();
+    } catch(e) {
+        errEl.textContent = 'Network error.'; errEl.style.display = '';
+    }
+}
+
+loadHistory();
+
+// ── Manual Asset Modal ────────────────────────────────────────────────
+let _manualModal = null;
+let _selectedType = '';
+
+function openManualModal() {
+    if (!_manualModal) _manualModal = new bootstrap.Modal(document.getElementById('manualModal'));
+    // reset
+    document.querySelectorAll('.asset-chip').forEach(c => c.classList.remove('active'));
+    document.getElementById('asset-form').style.display = 'none';
+    document.getElementById('asset-modal-footer').style.display = 'none';
+    document.getElementById('ma-error').style.display = 'none';
+    _selectedType = '';
+    // sync member list
+    const opts = document.getElementById('member-select').innerHTML;
+    document.getElementById('ma-member').innerHTML = opts;
+    // set today as default date
+    document.getElementById('ma-date').value = new Date().toISOString().slice(0,10);
+    _manualModal.show();
+}
+
+const ASSET_PLACEHOLDERS = {
+    PPF: 'e.g. SBI PPF Account', EPF: 'e.g. EPFO (Employer XYZ)',
+    NPS: 'e.g. NPS Tier 1 — HDFC Pension', FD: 'e.g. SBI 12-month FD',
+    RD: 'e.g. HDFC Recurring Deposit', SGB: 'e.g. SGB 2024-25 Series III',
+    PHYSICAL_GOLD: 'e.g. Gold Jewellery 24K', REAL_ESTATE: 'e.g. Flat in Pune, Kothrud',
+    SAVINGS: 'e.g. HDFC Savings Account', BOND: 'e.g. NABARD Bond 2026',
+    CRYPTO: 'e.g. Bitcoin Holdings', OTHER: 'e.g. LIC Policy',
+};
+
+function pickAsset(type, el) {
+    _selectedType = type;
+    document.querySelectorAll('.asset-chip').forEach(c => c.classList.remove('active'));
+    el.classList.add('active');
+    document.getElementById('ma-name').placeholder = ASSET_PLACEHOLDERS[type] || 'Asset name';
+    document.getElementById('gold-extra').style.display = ['PHYSICAL_GOLD','SGB'].includes(type) ? '' : 'none';
+    document.getElementById('fd-extra').style.display   = ['FD','RD'].includes(type) ? '' : 'none';
+    document.getElementById('re-extra').style.display   = type === 'REAL_ESTATE' ? '' : 'none';
+    document.getElementById('asset-form').style.display = '';
+    document.getElementById('asset-modal-footer').style.display = '';
+}
+
+// Auto-compute gold current value
+['ma-grams','ma-gold-rate'].forEach(id => {
+    document.getElementById(id).addEventListener('input', () => {
+        const g = parseFloat(document.getElementById('ma-grams').value) || 0;
+        const r = parseFloat(document.getElementById('ma-gold-rate').value) || 0;
+        if (g && r) document.getElementById('ma-current').value = (g * r).toFixed(2);
+    });
+});
+
+async function saveManualAsset() {
+    const errEl = document.getElementById('ma-error');
+    errEl.style.display = 'none';
+
+    const memberId = document.getElementById('ma-member').value;
+    const name     = document.getElementById('ma-name').value.trim();
+    const inst     = document.getElementById('ma-institution').value.trim();
+    const invested = parseFloat(document.getElementById('ma-invested').value) || 0;
+    const current  = parseFloat(document.getElementById('ma-current').value) || invested;
+    const asOf     = document.getElementById('ma-date').value || new Date().toISOString().slice(0,10);
+    const notes    = document.getElementById('ma-notes').value.trim();
+
+    if (!memberId) { errEl.textContent = 'Select a family member.'; errEl.style.display = ''; return; }
+    if (!name)     { errEl.textContent = 'Name is required.'; errEl.style.display = ''; return; }
+
+    const extra = {};
+    if (_selectedType === 'PHYSICAL_GOLD' || _selectedType === 'SGB') {
+        const g = parseFloat(document.getElementById('ma-grams').value) || 0;
+        const r = parseFloat(document.getElementById('ma-gold-rate').value) || 0;
+        if (g) extra.quantity_grams = g;
+        if (r) extra.price_per_gram = r;
+    }
+    if (_selectedType === 'FD' || _selectedType === 'RD') {
+        const fdRate = parseFloat(document.getElementById('ma-fd-rate').value) || 0;
+        const mat    = document.getElementById('ma-maturity').value;
+        if (fdRate) extra.interest_rate = fdRate;
+        if (mat)   extra.maturity_date  = mat;
+    }
+    if (_selectedType === 'REAL_ESTATE') {
+        const area = parseFloat(document.getElementById('ma-area').value) || 0;
+        const loc  = document.getElementById('ma-location').value.trim();
+        if (area) extra.area_sqft = area;
+        if (loc)  extra.location  = loc;
+    }
+
+    const btn = document.querySelector('#manualModal .btn-primary');
+    btn.disabled = true; btn.textContent = 'Saving…';
+
+    try {
+        const r = await fetch(API + '/assets/manual/', {
+            method: 'POST',
+            headers: { 'X-CSRFToken': CSRF, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                member_id: memberId, asset_type: _selectedType, name,
+                institution: inst, invested_value: invested,
+                current_value: current, as_of_date: asOf, notes, extra_data: extra,
+            }),
+        });
+        const d = await r.json();
+        if (!r.ok) { errEl.textContent = d.error || 'Save failed.'; errEl.style.display = ''; return; }
+        _manualModal.hide();
+        toast(`${d.created ? 'Added' : 'Updated'}: ${name}`);
+    } catch(e) {
+        errEl.textContent = 'Network error.'; errEl.style.display = '';
+    } finally {
+        btn.disabled = false; btn.textContent = '💾 Save Asset';
+    }
+}
 </script>
 {% endblock %}

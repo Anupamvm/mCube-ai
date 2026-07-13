@@ -1,30 +1,14 @@
 {% extends "core/master_base.html" %}
 {% load static %}
 
-{% block title %}Consolidated Portfolio — mCube Investments{% endblock %}
-
-{% block extra_css %}
-<style>
-    .inv-metric-card {
-        background: white; border-radius: var(--radius-md); padding: 1.25rem;
-        box-shadow: var(--shadow-md); border-left: 4px solid var(--primary);
-    }
-    .inv-metric-card .label { font-size: .78rem; color: var(--gray); text-transform: uppercase; letter-spacing: .05em; }
-    .inv-metric-card .value { font-size: 1.5rem; font-weight: 700; color: var(--dark); margin: .2rem 0; }
-    .inv-metric-card.success { border-left-color: var(--success); }
-    .inv-metric-card.danger  { border-left-color: var(--danger); }
-    .gain-pos { color: var(--success); font-weight: 600; }
-    .gain-neg { color: var(--danger);  font-weight: 600; }
-    .alloc-bar-label { font-size: .82rem; font-weight: 600; }
-</style>
-{% endblock %}
+{% block title %}Deep Portfolio Analysis — mCube Investments{% endblock %}
 
 {% block breadcrumb %}
 <nav aria-label="breadcrumb">
     <ol class="breadcrumb">
         <li class="breadcrumb-item"><a href="/">Home</a></li>
         <li class="breadcrumb-item"><a href="{% url 'investments:home' %}">Investments</a></li>
-        <li class="breadcrumb-item active">Consolidated</li>
+        <li class="breadcrumb-item active">Deep Analysis</li>
     </ol>
 </nav>
 {% endblock %}
@@ -32,137 +16,22 @@
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-4">
     <div>
-        <h1 class="h3 fw-bold mb-1" style="color:var(--dark)">📊 Consolidated Portfolio</h1>
-        <p class="text-muted mb-0 small">Full portfolio view across all family members and asset classes</p>
+        <h1 class="h3 fw-bold mb-1" style="color:var(--dark)">📊 Deep Portfolio Analysis</h1>
+        <p class="text-muted mb-0 small">Full family portfolio — filter, drill down, and analyse across every asset class</p>
     </div>
     <a href="{% url 'investments:home' %}" class="btn btn-outline-secondary btn-sm">← Dashboard</a>
 </div>
 
-<!-- Metric Cards -->
-<div class="row g-3 mb-4">
-    <div class="col-6 col-md-3">
-        <div class="inv-metric-card">
-            <div class="label">Total Invested</div>
-            <div class="value" id="m-inv">—</div>
-        </div>
-    </div>
-    <div class="col-6 col-md-3">
-        <div class="inv-metric-card success">
-            <div class="label">Current Value</div>
-            <div class="value" id="m-cur">—</div>
-        </div>
-    </div>
-    <div class="col-6 col-md-3">
-        <div class="inv-metric-card" id="m-gain-card">
-            <div class="label">Total Gain / Loss</div>
-            <div class="value" id="m-gain">—</div>
-            <div class="small text-muted" id="m-pct"></div>
-        </div>
-    </div>
-    <div class="col-6 col-md-3">
-        <div class="inv-metric-card">
-            <div class="label">Accounts / Products</div>
-            <div class="value" id="m-counts">—</div>
-        </div>
-    </div>
-</div>
-
-<!-- Asset Allocation -->
-<div class="card border-0 shadow-sm mb-4">
-    <div class="card-body">
-        <h5 class="fw-bold mb-3" style="color:var(--dark)">Asset Allocation</h5>
-        <div id="alloc-bars"><div class="text-muted small">Loading…</div></div>
-    </div>
-</div>
-
-<!-- Holdings by Type -->
-<div class="card border-0 shadow-sm">
-    <div class="card-body p-0">
-        <div class="p-3 pb-0">
-            <h5 class="fw-bold" style="color:var(--dark)">Holdings by Asset Class</h5>
-        </div>
-        <div class="table-responsive">
-            <table class="table table-hover mb-0 small">
-                <thead style="background:var(--lighter)">
-                    <tr>
-                        <th class="ps-3">Asset Class</th>
-                        <th class="text-end">Invested</th>
-                        <th class="text-end">Current Value</th>
-                        <th class="text-end">Gain / Loss</th>
-                        <th class="text-end pe-3">G/L %</th>
-                    </tr>
-                </thead>
-                <tbody id="alloc-table-body">
-                    <tr><td colspan="5" class="text-center text-muted py-3">Loading…</td></tr>
-                </tbody>
-            </table>
-        </div>
-    </div>
-</div>
+{% include "investments/_portfolio_analysis.html" with show_member_filter=True %}
 {% endblock %}
 
 {% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script>
-const API = '/investments/api';
-const COLORS = ['#2563eb','#10b981','#f59e0b','#ef4444','#8b5cf6','#06b6d4','#ec4899','#84cc16','#f97316','#64748b'];
-
-function fmt(n) { n = parseFloat(n)||0; return '₹' + Math.abs(n).toLocaleString('en-IN',{maximumFractionDigits:0}); }
-function signed(n) { return parseFloat(n) >= 0 ? '+' : ''; }
-function gainClass(n) { return parseFloat(n) >= 0 ? 'gain-pos' : 'gain-neg'; }
-
-fetch(API + '/portfolio/consolidated/').then(r => r.json()).then(d => {
-    const gain = parseFloat(d.total_gain_loss) || 0;
-    const glPct = parseFloat(d.gain_loss_pct) || 0;
-
-    document.getElementById('m-inv').textContent    = fmt(d.total_invested_value);
-    document.getElementById('m-cur').textContent    = fmt(d.total_current_value);
-    document.getElementById('m-gain').textContent   = signed(gain) + fmt(gain);
-    document.getElementById('m-gain').className     = 'value ' + gainClass(gain);
-    document.getElementById('m-pct').textContent    = signed(glPct) + glPct.toFixed(2) + '%';
-    document.getElementById('m-counts').textContent = (d.accounts_count||0) + ' / ' + (d.products_count||0);
-    document.getElementById('m-gain-card').style.borderLeftColor = gain >= 0 ? 'var(--success)' : 'var(--danger)';
-
-    // Asset allocation bars
-    const alloc = d.asset_allocation || {};
-    const keys  = Object.keys(alloc);
-    const barsEl = document.getElementById('alloc-bars');
-    const tbody  = document.getElementById('alloc-table-body');
-
-    if (!keys.length) {
-        barsEl.innerHTML = '<p class="text-muted small mb-0">No allocation data yet.</p>';
-        tbody.innerHTML  = '<tr><td colspan="5" class="text-center text-muted py-3">No data.</td></tr>';
-        return;
-    }
-
-    const total = keys.reduce((s,k) => s + (parseFloat(alloc[k]) || 0), 0);
-
-    barsEl.innerHTML = keys.map((k, i) => {
-        const val = parseFloat(alloc[k]) || 0;
-        const pct = total ? (val / total * 100).toFixed(1) : 0;
-        return '<div class="mb-3">' +
-            '<div class="d-flex justify-content-between mb-1">' +
-            '<span class="alloc-bar-label">' + k + '</span>' +
-            '<span class="small text-muted">' + fmt(val) + ' (' + pct + '%)</span>' +
-            '</div>' +
-            '<div class="progress" style="height:12px;border-radius:6px">' +
-            '<div class="progress-bar" style="width:' + pct + '%;background:' + COLORS[i % COLORS.length] + ';border-radius:6px"></div>' +
-            '</div></div>';
-    }).join('');
-
-    tbody.innerHTML = keys.map((k, i) => {
-        const val = parseFloat(alloc[k]) || 0;
-        const pct = total ? (val / total * 100).toFixed(2) : '0.00';
-        return '<tr>' +
-            '<td class="ps-3 fw-medium"><span style="display:inline-block;width:12px;height:12px;border-radius:3px;background:' + COLORS[i%COLORS.length] + ';margin-right:8px;vertical-align:middle"></span>' + k + '</td>' +
-            '<td class="text-end">—</td>' +
-            '<td class="text-end">' + fmt(val) + '</td>' +
-            '<td class="text-end">—</td>' +
-            '<td class="text-end pe-3 text-muted">' + pct + '%</td>' +
-            '</tr>';
-    }).join('');
-
-}).catch(() => {
-    document.getElementById('alloc-bars').innerHTML = '<p class="text-danger small mb-0">Failed to load portfolio data.</p>';
-});
+    PortfolioAnalysis.init({
+        memberIds: null,
+        showMemberFilter: true,
+        csrfToken: '{{ csrf_token }}',
+    });
 </script>
 {% endblock %}

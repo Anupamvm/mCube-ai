@@ -1115,16 +1115,13 @@ def fetch_exchange_filings(self):
     Fetch NSE/BSE corporate announcements and store as NewsArticle records (3× daily).
 
     Runs at 7:30 AM, 12:00 PM, and 3:45 PM IST on weekdays.
-    Disabled by default — enable via the Task Control UI after staging validation.
 
     Stored articles get:
       - source_quality_score = 1.0 (exchange-grade authority)
       - news_type = 'STOCK'
       - event_type classified from filing subject
       - symbols_mentioned resolved via SymbolExtractor
-
-    LLM sentiment analysis is NOT run here — articles are scored on demand
-    when the futures algorithm runs and calls NewsImpactAnalyzer.
+      - sentiment_score populated via LLM (so futures algorithm can use them immediately)
     """
     logger = TaskLogger(
         task_name='fetch_exchange_filings',
@@ -1144,12 +1141,83 @@ def fetch_exchange_filings(self):
         )
         logger.success(summary, context=stats)
 
+        # Run LLM sentiment analysis on newly stored filings so they are immediately
+        # usable by the futures algorithm (which skips articles with sentiment_score=None).
+        scored = 0
         if total_new > 0:
-            send_telegram_notification(
-                f"📋 *Exchange Filings*: {total_new} new announcements "
-                f"(NSE: {stats['nse']}, BSE: {stats['bse']})"
-            )
+            try:
+                from apps.data.models import NewsArticle, ContractStockData
+                from apps.llm.services.news_impact_analyzer import NewsImpactAnalyzer
+                from datetime import timedelta
 
+                analyzer = NewsImpactAnalyzer()
+                cutoff = timezone.now() - timedelta(hours=4)
+
+                # Build a symbol→name lookup for LLM context
+                sym_to_name = dict(
+                    ContractStockData.objects.values_list('nse_code', 'stock_name')
+                )
+
+                unscored = NewsArticle.objects.filter(
+                    source__in=['NSE', 'BSE'],
+                    news_type='STOCK',
+                    published_at__gte=cutoff,
+                    sentiment_score__isnull=True,
+                ).order_by('-published_at')[:50]
+
+                for article in unscored:
+                    try:
+                        symbols = article.symbols_mentioned or []
+                        nse_sym = symbols[0] if symbols else ''
+                        company = sym_to_name.get(nse_sym, nse_sym or article.source)
+
+                        art_dict = {
+                            'title': article.title,
+                            'description': article.summary or '',
+                            'content': article.content or article.summary or '',
+                        }
+                        result = analyzer.analyze_article_impact(
+                            article=art_dict,
+                            stock_symbol=nse_sym or 'MARKET',
+                            stock_name=company,
+                            trade_direction='LONG',  # LONG direction → positive score = bullish
+                        )
+                        score = result.get('impact_score')
+                        if score is not None:
+                            raw_label = result.get('impact_label', '')
+                            # Map 5-value LLM label → 3-value DB choices
+                            label = (
+                                'POSITIVE' if raw_label in ('POSITIVE', 'HIGHLY_POSITIVE')
+                                else 'NEGATIVE' if raw_label in ('NEGATIVE', 'HIGHLY_NEGATIVE')
+                                else 'NEUTRAL'
+                            )
+                            article.sentiment_score = score
+                            article.sentiment_label = label
+                            article.impact_reasoning = result.get('reasoning', '')
+                            # Preserve event_type from filing classification unless LLM gives a
+                            # more specific one (LLM can upgrade REGULATORY → EARNINGS, etc.)
+                            if result.get('event_type') and not article.event_type:
+                                article.event_type = result['event_type']
+                            article.already_priced_in = result.get('already_priced_in')
+                            article.save(update_fields=[
+                                'sentiment_score', 'sentiment_label',
+                                'impact_reasoning', 'event_type', 'already_priced_in',
+                            ])
+                            scored += 1
+                    except Exception as ex:
+                        logger.warning('llm_score_failed', f"LLM scoring failed for filing {article.id}: {ex}")
+
+                logger.info('llm_scoring_complete', f"LLM-scored {scored}/{total_new} new exchange filings")
+            except Exception as e:
+                logger.warning('llm_scoring_error', f"Exchange filings LLM scoring failed (non-critical): {e}")
+
+        notification_parts = [f"📋 *Exchange Filings*: {total_new} new (NSE: {stats['nse']}, BSE: {stats['bse']})"]
+        if scored > 0:
+            notification_parts.append(f"🧠 Scored: {scored}")
+        if total_new > 0:
+            send_telegram_notification(" | ".join(notification_parts))
+
+        stats['llm_scored'] = scored
         return stats
 
     except Exception as e:
