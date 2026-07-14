@@ -291,7 +291,11 @@ def build_consolidated_message(
                 tgt_dist = pos.target - pos.current_price
                 risk_parts.append(f"Tgt ₹{pos.target:,.0f} ({tgt_dist:+.0f})")
 
-            msg += f"<b>{sym_label}</b> {direction_arrow} {lots}L\n"
+            lots_label = (
+                f"⚠️ qty={pos.quantity} (lot={pos.lot_size})"
+                if pos.is_lot_mismatch else f"{lots}L"
+            )
+            msg += f"<b>{sym_label}</b> {direction_arrow} {lots_label}\n"
             msg += f"  ₹{pos.entry_price:,.0f}→₹{pos.current_price:,.0f} ({move_sign}₹{move:,.2f}/u)\n"
             msg += f"  {pnl_emoji} <b>{_fmt_compact(pnl, pnl_pct)}</b>{sl_badge}\n"
             if risk_parts:
@@ -362,7 +366,8 @@ def _build_dashboard_keyboard(positions_data: List[Dict]) -> dict:
         if d.get('needs_avg'):
             sym_label += f" @{pos.entry_price:,.0f}"
 
-        label = f"{badge} {sym_label}  {direction_arrow}{lots}L  {pnl_label}  [{broker_short}]"
+        lots_label = f"⚠️qty{pos.quantity}" if pos.is_lot_mismatch else f"{direction_arrow}{lots}L"
+        label = f"{badge} {sym_label}  {lots_label}  {pnl_label}  [{broker_short}]"
         rows.append([{'text': label, 'callback_data': f'monitor_pos_{pos.id}'}])
 
     return {'inline_keyboard': rows}
@@ -381,17 +386,31 @@ SL_TARGET_PROXIMITY_PCT = 0.002  # 0.2% of price = "close to SL/target"
 
 
 def _is_first_or_last_run(master, now=None) -> bool:
-    """True on first run of the day or at/after 3:30 PM (closing snapshot)."""
+    """True on first run of the day, or ONCE at/after 3:30 PM (closing snapshot).
+
+    Bug history: this used to return True for every tick from 15:30 onward
+    (not just the first one), which — combined with a beat schedule that ran
+    until 15:59 — forced a dashboard edit every single minute for 30 minutes
+    past market close. Now it fires the closing snapshot exactly once, by
+    checking whether the last update already happened at/after 15:30 today.
+    """
     if not master.snapshots:
         return True
 
     if now is None:
         now = timezone.now()
     ist_now = _to_ist(now)
-    if ist_now.hour >= 15 and ist_now.minute >= 30:
-        return True
+    is_close_window = ist_now.hour >= 15 and ist_now.minute >= 30
+    if not is_close_window:
+        return False
 
-    return False
+    if master.last_updated:
+        ist_last = _to_ist(master.last_updated)
+        already_sent_closing = ist_last.hour >= 15 and ist_last.minute >= 30
+        if already_sent_closing:
+            return False
+
+    return True
 
 
 def _near_sl_or_target(positions_data: List[Dict]) -> bool:

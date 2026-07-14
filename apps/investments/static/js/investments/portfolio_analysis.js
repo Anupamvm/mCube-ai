@@ -140,6 +140,99 @@
         const syncCats = el('pa-sync-categories');
         if (syncCats) syncCats.addEventListener('click', e => { e.preventDefault(); this.syncCategories(); });
         this._initCategoryModal();
+        this._initLegacyPurchaseModal();
+        this._wireSortableHeaders();
+    };
+
+    // ── Add legacy purchase date (fills the XIRR cashflow gap) ──────────────
+    PortfolioAnalysis.prototype._initLegacyPurchaseModal = function () {
+        const modalEl = el('paLegacyPurchaseModal');
+        if (!modalEl || typeof bootstrap === 'undefined') return;
+        this._legacyPurchaseModal = new bootstrap.Modal(modalEl);
+
+        const saveBtn = el('pa-legacy-save');
+        if (saveBtn && !saveBtn.dataset.wired) {
+            saveBtn.dataset.wired = '1';
+            saveBtn.addEventListener('click', () => this._saveLegacyPurchase());
+        }
+    };
+
+    PortfolioAnalysis.prototype.openLegacyPurchaseModal = async function (productId, fundName) {
+        if (!this._legacyPurchaseModal) return;
+        this._legacyPurchaseProductId = productId;
+        el('pa-legacy-fund-name').textContent = fundName;
+        el('pa-legacy-gap-amount').textContent = '…';
+        el('pa-legacy-earliest-date').textContent = '…';
+        el('pa-legacy-date').value = '';
+        el('pa-legacy-amount').value = '';
+        el('pa-legacy-error').style.display = 'none';
+        this._legacyPurchaseModal.show();
+
+        try {
+            const r = await fetch(`${API}/products/${productId}/cashflow-gap/`);
+            const d = await r.json();
+            el('pa-legacy-gap-amount').textContent = fmt(d.gap_amount);
+            el('pa-legacy-earliest-date').textContent = d.earliest_known_date || 'today';
+            el('pa-legacy-amount').value = d.gap_amount;
+            if (d.earliest_known_date) el('pa-legacy-date').max = d.earliest_known_date;
+        } catch (e) {
+            el('pa-legacy-gap-amount').textContent = 'the missing portion';
+        }
+    };
+
+    PortfolioAnalysis.prototype._saveLegacyPurchase = async function () {
+        const errEl = el('pa-legacy-error');
+        const date = el('pa-legacy-date').value;
+        const amount = el('pa-legacy-amount').value;
+        if (!date || !amount || parseFloat(amount) <= 0) {
+            errEl.textContent = 'Please enter a valid date and amount.';
+            errEl.style.display = '';
+            return;
+        }
+        try {
+            const r = await fetch(`${API}/products/${this._legacyPurchaseProductId}/legacy-purchase/`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-CSRFToken': this.csrfToken },
+                body: JSON.stringify({ date, amount }),
+            });
+            const d = await r.json();
+            if (!r.ok) { errEl.textContent = d.error || 'Save failed.'; errEl.style.display = ''; return; }
+            this._legacyPurchaseModal.hide();
+            paToast(d.xirr_pct !== null ? `Saved — XIRR is now ${d.xirr_pct}%.` : 'Saved, but XIRR still needs more history.', 'success');
+            this._loadReturnsBreakdown(
+                document.querySelector('#pa-returns-group-toggle button.active')?.dataset.group || 'fund',
+                'pa-chart-returns', 'pa-returns-chart-box', 'pa-returns-tbody',
+            );
+        } catch (e) {
+            errEl.textContent = 'Network error.'; errEl.style.display = '';
+        }
+    };
+
+    PortfolioAnalysis.prototype._wireSortableHeaders = function () {
+        const table = el('pa-holdings-table');
+        if (!table) return;
+        const headers = Array.from(table.querySelectorAll('.pa-sortable'));
+        const defaultDir = {
+            name: 'asc', member: 'asc', category: 'asc',
+            invested: 'desc', current: 'desc', gain: 'desc', gain_pct: 'desc', xirr: 'desc',
+        };
+        headers.forEach(th => {
+            th.addEventListener('click', () => {
+                const key = th.dataset.sort;
+                const match = /^(.+)_(asc|desc)$/.exec(this.state.sort || '');
+                const curKey = match ? match[1] : null;
+                const curDir = match ? match[2] : null;
+                const dir = (curKey === key) ? (curDir === 'asc' ? 'desc' : 'asc') : (defaultDir[key] || 'desc');
+                this.state.sort = `${key}_${dir}`;
+                headers.forEach(h => {
+                    h.classList.remove('sort-active');
+                    h.querySelector('.sort-arrow').textContent = '';
+                });
+                th.classList.add('sort-active');
+                th.querySelector('.sort-arrow').textContent = dir === 'asc' ? '▲' : '▼';
+                this.applyFilters();
+            });
+        });
     };
 
     // ── Sync missing categories from MFAPI ──────────────────────────────────
@@ -500,7 +593,7 @@
                 return `<div class="d-flex align-items-center gap-2 small mb-1">
                     <span style="width:10px;height:10px;border-radius:50%;background:${data.colors[i]};display:inline-block;flex-shrink:0"></span>
                     <span class="text-truncate" style="max-width:140px" title="${escapeHtml(label)}">${escapeHtml(label)}</span>
-                    <span class="text-muted ms-auto">${share}%</span>
+                    <span class="text-muted ms-auto text-end">${share}%<br><span style="font-size:.85em">${fmt(data.values[i])}</span></span>
                 </div>`;
             }).join('');
         }
@@ -585,11 +678,24 @@
             return;
         }
 
+        const xirrCmp = (dir) => (a, b) => {
+            if (a._xirr === null && b._xirr === null) return 0;
+            if (a._xirr === null) return 1;   // nulls always last, either direction
+            if (b._xirr === null) return -1;
+            return dir === 'asc' ? a._xirr - b._xirr : b._xirr - a._xirr;
+        };
         const cmp = {
             current_desc: (a, b) => b._cur - a._cur, current_asc: (a, b) => a._cur - b._cur,
             gain_pct_desc: (a, b) => b._gainPct - a._gainPct, gain_pct_asc: (a, b) => a._gainPct - b._gainPct,
-            gain_desc: (a, b) => b._gain - a._gain, invested_desc: (a, b) => b._inv - a._inv,
+            gain_desc: (a, b) => b._gain - a._gain, gain_asc: (a, b) => a._gain - b._gain,
+            invested_desc: (a, b) => b._inv - a._inv, invested_asc: (a, b) => a._inv - b._inv,
             name_asc: (a, b) => (a.name || '').localeCompare(b.name || ''),
+            name_desc: (a, b) => (b.name || '').localeCompare(a.name || ''),
+            member_asc: (a, b) => (a.member_name || '').localeCompare(b.member_name || ''),
+            member_desc: (a, b) => (b.member_name || '').localeCompare(a.member_name || ''),
+            category_asc: (a, b) => (a._category || '').localeCompare(b._category || ''),
+            category_desc: (a, b) => (b._category || '').localeCompare(a._category || ''),
+            xirr_asc: xirrCmp('asc'), xirr_desc: xirrCmp('desc'),
         }[this.state.sort] || ((a, b) => b._cur - a._cur);
         const sorted = list.slice().sort(cmp);
 
@@ -637,7 +743,100 @@
             this._loadTenorLadder(),
             this._loadTrend(),
             this._loadOverlap(),
+            this._loadReturnsBreakdown('fund', 'pa-chart-returns', 'pa-returns-chart-box', 'pa-returns-tbody'),
+            this._loadReturnsBreakdown('category', 'pa-chart-returns-category', 'pa-returns-category-chart-box', null),
         ]);
+        const toggle = el('pa-returns-group-toggle');
+        if (toggle && !toggle.dataset.wired) {
+            toggle.dataset.wired = '1';
+            toggle.querySelectorAll('button').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    toggle.querySelectorAll('button').forEach(b => b.classList.remove('active'));
+                    btn.classList.add('active');
+                    this._loadReturnsBreakdown(btn.dataset.group, 'pa-chart-returns', 'pa-returns-chart-box', 'pa-returns-tbody');
+                });
+            });
+        }
+    };
+
+    // groupBy: 'fund'|'amc'|'sector'|'asset_class'. tbodyId may be null for a
+    // chart-only view (e.g. the fixed sector chart, which doesn't need its
+    // own table alongside the main toggle-driven one).
+    PortfolioAnalysis.prototype._loadReturnsBreakdown = async function (groupBy, canvasId, boxId, tbodyId) {
+        const box = el(boxId);
+        const tbody = tbodyId ? el(tbodyId) : null;
+        try {
+            const base = this._analyticsUrl('returns-breakdown');
+            const url = base + (base.includes('?') ? '&' : '?') + `group_by=${groupBy}`;
+            const r = await fetch(url);
+            if (!r.ok) throw new Error();
+            const d = await r.json();
+            const groups = d.groups || [];
+
+            // Chart: only groups with a real (annualised) XIRR — mixing that
+            // with plain gain/loss % on one axis would misleadingly compare
+            // different kinds of return.
+            const withXirr = groups.filter(g => g.xirr_pct !== null).slice(0, 12);
+            const canvas = el(canvasId);
+            if (this.charts[canvasId]) this.charts[canvasId].destroy();
+            if (canvas && withXirr.length) {
+                this.charts[canvasId] = new Chart(canvas, {
+                    type: 'bar',
+                    data: {
+                        labels: withXirr.map(g => g.label.length > 28 ? g.label.slice(0, 27) + '…' : g.label),
+                        datasets: [{
+                            data: withXirr.map(g => g.xirr_pct),
+                            backgroundColor: withXirr.map(g => g.xirr_pct >= 0 ? '#1baf7a' : '#e34948'),
+                            borderRadius: 4,
+                        }],
+                    },
+                    options: {
+                        indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+                        plugins: {
+                            legend: { display: false },
+                            tooltip: { callbacks: { label: (c) => `XIRR: ${c.parsed.x.toFixed(2)}%` } },
+                        },
+                        scales: { x: { ticks: { callback: (v) => v + '%' } } },
+                    },
+                });
+            } else if (canvas) {
+                const ctx = canvas.getContext('2d');
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+            }
+            if (box) {
+                let note = box.querySelector('.pa-no-xirr-note');
+                if (!withXirr.length) {
+                    if (!note) {
+                        note = document.createElement('p');
+                        note.className = 'pa-no-xirr-note text-muted small text-center mb-0 mt-5';
+                        note.textContent = 'None of these groups have dated transaction history yet — see gain/loss % in the table below.';
+                        box.appendChild(note);
+                    }
+                } else if (note) {
+                    note.remove();
+                }
+            }
+
+            if (tbody) {
+                tbody.innerHTML = groups.map(g => `
+                    <tr>
+                        <td class="text-truncate" style="max-width:260px" title="${escapeHtml(g.label)}">${escapeHtml(g.label)}</td>
+                        <td class="text-end">${fmt(g.invested_value)}</td>
+                        <td class="text-end">${fmt(g.current_value)}</td>
+                        <td class="text-end ${gainClass(g.gain_loss)}">${signed(g.gain_loss)}${fmt(g.gain_loss)} (${signed(g.gain_loss_pct)}${g.gain_loss_pct.toFixed(2)}%)</td>
+                        <td class="text-end ${g.xirr_pct !== null ? gainClass(g.xirr_pct) : 'text-muted'}">${
+                            g.xirr_pct !== null
+                                ? signed(g.xirr_pct) + g.xirr_pct.toFixed(2) + '%'
+                                : (g.product_id
+                                    ? `— <a href="#" class="small" onclick="event.preventDefault();window.__paInstance.openLegacyPurchaseModal(${g.product_id},'${escapeHtml(g.label).replace(/'/g, "\\'")}')">📅 add date</a>`
+                                    : '—')
+                        }</td>
+                        <td class="text-end text-muted">${g.holdings_count}</td>
+                    </tr>`).join('');
+            }
+        } catch (e) {
+            if (tbody) tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted small py-3">Returns breakdown unavailable.</td></tr>';
+        }
     };
 
     PortfolioAnalysis.prototype._loadRiskSummary = async function () {
@@ -654,6 +853,14 @@
             set('pa-risk-maxdd', d.weighted_max_drawdown, true);
             set('pa-risk-beta', d.weighted_beta);
             set('pa-risk-alpha', d.weighted_alpha, true);
+            const setRet = (id, v) => { const e = el(id); if (e) e.textContent = (v === null || v === undefined) ? '—' : pct(v); };
+            const rets = d.weighted_returns || {};
+            setRet('pa-risk-ret-1m', rets['1M']);
+            setRet('pa-risk-ret-3m', rets['3M']);
+            setRet('pa-risk-ret-6m', rets['6M']);
+            setRet('pa-risk-ret-1y', rets['1Y']);
+            setRet('pa-risk-ret-3y', rets['3Y']);
+            setRet('pa-risk-ret-5y', rets['5Y']);
             const cov = el('pa-risk-coverage');
             if (cov) {
                 cov.textContent = d.coverage_pct !== undefined

@@ -246,6 +246,14 @@ TASK_DEFAULT_CONFIG = {
         'default_interval_seconds': 60,
         'default_days': [0, 1, 2, 3, 4],
     },
+    'monitor-and-manage-positions-close': {
+        'display_name': 'Position Monitor & Manager (Close)',
+        'description': 'Continues position monitoring from 3:00-3:30 PM, up to market close',
+        'schedule_type': 'interval',
+        'category': 'transactions',
+        'default_interval_seconds': 60,
+        'default_days': [0, 1, 2, 3, 4],
+    },
 
     # =========================================================================
     # RISK MANAGEMENT TASKS
@@ -337,6 +345,7 @@ ALGORITHM_TASK_GROUPS = {
         ],
         'monitoring_tasks': [
             'monitor-and-manage-positions',
+            'monitor-and-manage-positions-close',
         ],
     },
     'futures': {
@@ -354,6 +363,7 @@ ALGORITHM_TASK_GROUPS = {
         ],
         'monitoring_tasks': [
             'monitor-and-manage-positions',
+            'monitor-and-manage-positions-close',
         ],
     },
 }

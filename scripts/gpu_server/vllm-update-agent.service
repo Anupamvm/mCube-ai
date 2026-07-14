@@ -1,0 +1,15 @@
+[Unit]
+Description=vLLM Update Agent
+After=network.target docker.service
+
+[Service]
+Type=simple
+User=anupamvm
+WorkingDirectory=/home/anupamvm/vllm
+EnvironmentFile=/home/anupamvm/vllm/update_agent.env
+ExecStart=/usr/bin/python3 /home/anupamvm/vllm/vllm_update_agent.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

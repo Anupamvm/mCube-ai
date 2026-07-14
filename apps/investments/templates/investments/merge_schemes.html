@@ -1,0 +1,205 @@
+{% extends "core/master_base.html" %}
+{% load static %}
+
+{% block title %}Merge Schemes — mCube{% endblock %}
+
+{% block extra_css %}
+<style>
+    .merge-card { background: white; border-radius: var(--radius-md); box-shadow: var(--shadow-md); padding: 2rem; }
+    .scheme-preview { border: 1px solid var(--light); border-radius: var(--radius-md); padding: .9rem 1rem; margin-top: .6rem; background: var(--lighter); }
+    .scheme-preview .row-line { display: flex; justify-content: space-between; font-size: .85rem; padding: .15rem 0; }
+    .scheme-preview .row-line .label { color: var(--gray); }
+    .merge-arrow { font-size: 1.6rem; color: var(--primary); text-align: center; }
+</style>
+{% endblock %}
+
+{% block breadcrumb %}
+<nav aria-label="breadcrumb">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="/">Home</a></li>
+        <li class="breadcrumb-item"><a href="{% url 'investments:home' %}">Investments</a></li>
+        <li class="breadcrumb-item active">Merge Schemes</li>
+    </ol>
+</nav>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h1 class="h3 fw-bold mb-1" style="color:var(--dark)">🔀 Merge Schemes</h1>
+        <p class="text-muted mb-0 small">
+            For AMC mergers (e.g. an old scheme absorbed into a new one) — moves the closed scheme's
+            transaction history onto the surviving scheme so XIRR can span the merger.
+        </p>
+    </div>
+    <a href="{% url 'investments:home' %}" class="btn btn-outline-secondary btn-sm">← Dashboard</a>
+</div>
+
+<div class="row justify-content-center">
+    <div class="col-lg-8">
+        <div class="merge-card">
+            <div class="mb-4">
+                <label class="form-label fw-semibold">Family Member</label>
+                <select class="form-select" id="member-select">
+                    <option value="">Loading members…</option>
+                </select>
+            </div>
+
+            <div class="row g-3">
+                <div class="col-12 col-md-5">
+                    <label class="form-label fw-semibold">Old / Closed Scheme <span class="text-muted fw-normal">(source)</span></label>
+                    <select class="form-select" id="source-select" disabled>
+                        <option value="">Select a family member first</option>
+                    </select>
+                    <div id="source-preview"></div>
+                </div>
+                <div class="col-12 col-md-2 d-flex align-items-center justify-content-center merge-arrow">→</div>
+                <div class="col-12 col-md-5">
+                    <label class="form-label fw-semibold">Surviving Scheme <span class="text-muted fw-normal">(target)</span></label>
+                    <select class="form-select" id="target-select" disabled>
+                        <option value="">Select a family member first</option>
+                    </select>
+                    <div id="target-preview"></div>
+                </div>
+            </div>
+
+            <p class="text-muted small mt-3 mb-0">
+                Note: unit counts aren't carried over — AMC mergers reallot units based on the NAV ratio at
+                merger time (value-preserving, not unit-count-preserving), so only the dated transaction
+                history (rupee cashflows) is moved. The surviving scheme's own invested/current value is
+                left untouched.
+            </p>
+
+            <button class="btn btn-primary w-100 fw-bold py-2 mt-4" id="btn-merge" onclick="doMerge()" disabled>
+                🔀 Merge Schemes
+            </button>
+
+            <div id="merge-status" class="mt-3" style="display:none"></div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+const CSRF = '{{ csrf_token }}';
+const API  = '/investments/api';
+let allProducts = [];
+
+function fmt(n) { return '₹' + (parseFloat(n) || 0).toLocaleString('en-IN', { maximumFractionDigits: 0 }); }
+
+fetch(API + '/family-members/').then(r => r.json()).then(members => {
+    const sel = document.getElementById('member-select');
+    if (!members.length) {
+        sel.innerHTML = '<option value="">No family members found</option>';
+        return;
+    }
+    sel.innerHTML = '<option value="">Select…</option>' + members.map(m =>
+        `<option value="${m.id}">${m.name}${m.relationship ? ' (' + m.relationship + ')' : ''}</option>`
+    ).join('');
+    sel.addEventListener('change', loadSchemesForMember);
+}).catch(() => {
+    document.getElementById('member-select').innerHTML = '<option value="">Failed to load</option>';
+});
+
+async function loadSchemesForMember() {
+    const memberId = document.getElementById('member-select').value;
+    const sourceSel = document.getElementById('source-select');
+    const targetSel = document.getElementById('target-select');
+    document.getElementById('source-preview').innerHTML = '';
+    document.getElementById('target-preview').innerHTML = '';
+    document.getElementById('btn-merge').disabled = true;
+
+    if (!memberId) {
+        sourceSel.innerHTML = targetSel.innerHTML = '<option value="">Select a family member first</option>';
+        sourceSel.disabled = targetSel.disabled = true;
+        return;
+    }
+
+    sourceSel.innerHTML = targetSel.innerHTML = '<option value="">Loading…</option>';
+    try {
+        const [activeR, inactiveR] = await Promise.all([
+            fetch(`${API}/products/?member_id=${memberId}&product_type=MUTUAL_FUND&is_active=true`),
+            fetch(`${API}/products/?member_id=${memberId}&product_type=MUTUAL_FUND&is_active=false`),
+        ]);
+        const active = await activeR.json();
+        const inactive = await inactiveR.json();
+        allProducts = [...active, ...inactive];
+        if (!allProducts.length) {
+            sourceSel.innerHTML = targetSel.innerHTML = '<option value="">No mutual fund holdings for this member</option>';
+            sourceSel.disabled = targetSel.disabled = true;
+            return;
+        }
+        const options = '<option value="">Select…</option>' + allProducts.map(p =>
+            `<option value="${p.id}">${p.name}${p.is_active ? '' : ' (closed)'}</option>`
+        ).join('');
+        sourceSel.innerHTML = options;
+        targetSel.innerHTML = options;
+        sourceSel.disabled = targetSel.disabled = false;
+    } catch (e) {
+        sourceSel.innerHTML = targetSel.innerHTML = '<option value="">Failed to load</option>';
+    }
+}
+
+function renderPreview(productId, elId) {
+    const el = document.getElementById(elId);
+    const p = allProducts.find(x => String(x.id) === String(productId));
+    if (!p) { el.innerHTML = ''; return; }
+    el.innerHTML = `
+        <div class="scheme-preview">
+            <div class="row-line"><span class="label">ISIN</span><span>${p.isin || '—'}</span></div>
+            <div class="row-line"><span class="label">Invested</span><span>${fmt(p.invested_value)}</span></div>
+            <div class="row-line"><span class="label">Current</span><span>${fmt(p.current_value)}</span></div>
+            <div class="row-line"><span class="label">Status</span><span>${p.is_active ? 'Active' : 'Closed'}</span></div>
+        </div>`;
+}
+
+document.getElementById('source-select').addEventListener('change', e => {
+    renderPreview(e.target.value, 'source-preview');
+    checkReady();
+});
+document.getElementById('target-select').addEventListener('change', e => {
+    renderPreview(e.target.value, 'target-preview');
+    checkReady();
+});
+
+function checkReady() {
+    const s = document.getElementById('source-select').value;
+    const t = document.getElementById('target-select').value;
+    document.getElementById('btn-merge').disabled = !(s && t && s !== t);
+}
+
+async function doMerge() {
+    const sourceId = document.getElementById('source-select').value;
+    const targetId = document.getElementById('target-select').value;
+    const source = allProducts.find(x => String(x.id) === String(sourceId));
+    const target = allProducts.find(x => String(x.id) === String(targetId));
+    if (!confirm(`Merge "${source.name}" into "${target.name}"?\n\nThis moves all transaction history from the old scheme onto the surviving one and marks the old scheme as closed. This cannot be undone from this page.`)) {
+        return;
+    }
+
+    const btn = document.getElementById('btn-merge');
+    const statusEl = document.getElementById('merge-status');
+    btn.disabled = true; btn.textContent = '⏳ Merging…';
+    statusEl.style.display = 'block';
+    statusEl.innerHTML = '<div class="alert alert-info mb-0">Merging…</div>';
+
+    try {
+        const r = await fetch(API + '/products/merge/', {
+            method: 'POST',
+            headers: { 'X-CSRFToken': CSRF, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ source_id: sourceId, target_id: targetId }),
+        });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error || 'Merge failed');
+        statusEl.innerHTML = `<div class="alert alert-success mb-0">✓ Moved ${d.transactions_moved} transaction(s) from "${d.source.name}" into "${d.target.name}". The old scheme is now marked closed.</div>`;
+        await loadSchemesForMember();
+    } catch (err) {
+        statusEl.innerHTML = '<div class="alert alert-danger mb-0">❌ ' + err.message + '</div>';
+    } finally {
+        btn.textContent = '🔀 Merge Schemes';
+        checkReady();
+    }
+}
+</script>
+{% endblock %}

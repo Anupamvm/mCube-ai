@@ -86,12 +86,12 @@ def _mode_footer(config) -> str:
 
 
 @shared_task(name='apps.positions.tasks.monitor_and_manage_positions')
-@task_enabled_guard('monitor-and-manage-positions')
+@task_enabled_guard(['monitor-and-manage-positions', 'monitor-and-manage-positions-close'])
 def monitor_and_manage_positions():
     """
     Monitors all active positions: updates P&L, checks exit conditions.
 
-    Scheduled: Every minute during market hours (9:00 AM – 3:59 PM, Mon–Fri)
+    Scheduled: Every minute during market hours (9:00 AM – 3:30 PM, Mon–Fri)
 
     Behaviour depends on notification_level in TradingCoreConfig:
 
@@ -257,8 +257,14 @@ def monitor_and_manage_positions():
                 add_snapshot(dashboard, position.current_price, pnl, pnl_pct, now)
 
                 # Collect for consolidated Telegram message
-                lot_size = position.lot_size or 1
-                lots = position.quantity // lot_size if lot_size > 1 else position.quantity
+                lots = position.lots
+                if position.is_lot_mismatch:
+                    logger.warning(
+                        f"Position #{position.id} ({position.instrument}) has a "
+                        f"quantity/lot_size mismatch: qty={position.quantity} "
+                        f"lot_size={position.lot_size} — likely orphaned/corrupted "
+                        f"data, not a real broker position. Flagging in dashboard."
+                    )
                 broker_name = BROKER_DISPLAY.get(
                     position.account.broker if position.account else '',
                     position.account.broker if position.account else 'Unknown'

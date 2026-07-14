@@ -2,6 +2,7 @@ from __future__ import annotations
 import logging
 import tempfile
 import os
+from decimal import Decimal
 from celery import shared_task
 from django.contrib.auth.models import User
 from django.core.cache import cache
@@ -45,7 +46,7 @@ def _smart_parse_pdf(tmp_path: str, passwords: list[str]):
         # 2. MF Central Stimulsoft PDF (often sent with .xlsx extension)
         try:
             data = parse_mfcentral_cas(tmp_path, pwd)
-            return data, 'CAMS'
+            return data, 'MFCENTRAL'
         except Exception as e:
             last_error = e
 
@@ -87,6 +88,17 @@ def run_cas_parse(upload_id: int, password: str, saved_passwords: list | None = 
         finally:
             os.unlink(tmp_path)
 
+        if not cas_data.holdings and not cas_data.transactions:
+            upload.cas_type = detected_type
+            upload.parse_status = 'ERROR'
+            upload.parse_error = (
+                'No holdings or transactions could be extracted. This may be an '
+                'unsupported statement variant (e.g. an NSDL Summary CAS instead '
+                'of a Detailed CAS) — please verify the file and try again.'
+            )
+            upload.save(update_fields=['cas_type', 'parse_status', 'parse_error'])
+            raise ValueError(upload.parse_error)
+
         upload.cas_type = detected_type
         member = upload.family_member
         info = cas_data.account_info
@@ -94,6 +106,15 @@ def run_cas_parse(upload_id: int, password: str, saved_passwords: list | None = 
         if info.pan_masked and not member.pan_masked:
             member.pan_masked = info.pan_masked
             member.save(update_fields=['pan_masked'])
+
+        if info.pan_full:
+            # The CAS PDF password is always the PAN — auto-learn it so future
+            # password-protected uploads (e.g. NSDL e-CAS) unlock automatically.
+            from apps.investments.models import UserCASPassword
+            UserCASPassword.objects.get_or_create(
+                user=upload.uploaded_by, password=info.pan_full,
+                defaults={'label': f'{member.name} PAN'},
+            )
 
         if info.statement_month:
             upload.statement_month = info.statement_month
@@ -118,7 +139,8 @@ def run_cas_parse(upload_id: int, password: str, saved_passwords: list | None = 
                 defaults={**account_defaults, 'account_name': f'{info.dp_name or "Demat"} ({info.client_id})'},
             )
         else:
-            label = 'CAMS / KFintech' if detected_type in ('CAMS', 'KFINTECH') else detected_type
+            _labels = {'CAMS': 'CAMS / KFintech', 'KFINTECH': 'CAMS / KFintech', 'MFCENTRAL': 'MF Central'}
+            label = _labels.get(detected_type, detected_type)
             account, _ = InvestmentAccount.objects.get_or_create(
                 family_member=member,
                 account_type='MF_FOLIO',
@@ -190,26 +212,40 @@ def run_cas_parse(upload_id: int, password: str, saved_passwords: list | None = 
             product = InvestmentProduct.objects.filter(
                 investment_account=account, isin=txn.isin,
             ).first()
-            _, created = Transaction.objects.get_or_create(
+            # order_no is a strong natural key when present (CAMS/NSDL); when
+            # blank (common for MF Central data), amount alone isn't enough —
+            # with years of history, two distinct same-day transactions of a
+            # round-number amount (e.g. two ₹5,000 SIP instalments) are a real
+            # possibility, so description (stable/deterministic per parser —
+            # a raw cell/line value, not fuzzy-regenerated) narrows it further.
+            txn_amount = Decimal(str(round(txn.amount, 2))) if txn.amount is not None else None
+            txn_description = (txn.description or '')[:500]
+            txn_obj, created = Transaction.objects.get_or_create(
                 investment_account=account,
                 isin=txn.isin,
                 transaction_date=txn.transaction_date,
                 order_no=txn.order_no,
+                amount=txn_amount,
+                description=txn_description,
                 defaults={
                     'product': product,
                     'cas_upload': upload,
                     'security_name': txn.security_name,
-                    'description': txn.description,
                     'transaction_type': txn.transaction_type,
                     'units_debit': txn.debit,
                     'units_credit': txn.credit,
                     'units_balance': txn.closing_balance,
-                    'amount': txn.amount,
                     'nav_at_transaction': txn.nav_at_transaction,
                 },
             )
             if created:
                 transactions_created += 1
+            elif txn_obj.cas_upload_id != upload.id:
+                # Re-attribute ownership to the most recent upload that
+                # reconfirmed this transaction, mirroring product ownership —
+                # so deleting an older, superseded upload leaves it alone.
+                txn_obj.cas_upload = upload
+                txn_obj.save(update_fields=['cas_upload'])
 
         upload.accounts_created = 1
         upload.products_created = products_created
@@ -289,7 +325,7 @@ def sync_mf_scheme_list_task():
         code = s.get('schemeCode')
         name = s.get('schemeName', '')
         isin_growth = s.get('isinGrowth', '')
-        isin_div = s.get('isinDividend', '')
+        isin_div = s.get('isinDivReinvestment', '')
 
         for isin in filter(None, [isin_growth, isin_div]):
             MutualFundScheme.objects.update_or_create(
@@ -317,48 +353,49 @@ def sync_nav_history_task(scheme_code: int, isin: str):
 @shared_task
 def sync_missing_mf_categories_task(user_id: int | None = None, member_id: int | None = None):
     """
-    Backfill MutualFundScheme.category (and amc/scheme_type) via a per-scheme
-    MFAPI lookup for any ISIN currently held that has no category yet.
+    Refresh MutualFundScheme.category/sub_category/amc/scheme_type (and top up
+    NAV history) via a per-scheme MFAPI lookup for every currently-held ISIN —
+    always, not just ones missing a category. AMFI/MFAPI's own categorisation
+    can change over time (re-categorisation, corrections), and both the
+    category split fix and the NAV-history backfill are recent additions, so
+    always refreshing keeps this accurate rather than only backfilling once.
 
     The bulk MFAPI scheme-list endpoint (used by sync_mf_scheme_list_task /
     get_isin_map) does not include category — only the per-scheme detail
-    endpoint does, so this has to be a separate, targeted backfill.
+    endpoint does, so this has to be a separate, targeted call per scheme.
     """
-    from apps.investments.models import InvestmentProduct, MutualFundScheme
+    from apps.investments.models import InvestmentProduct
     from apps.investments.services.mfapi_client import MFAPIClient
+    from apps.investments.services.mf_scheme_matcher import backfill_isins
 
-    qs = InvestmentProduct.objects.filter(product_type='MUTUAL_FUND', is_active=True).exclude(isin='')
+    base_qs = InvestmentProduct.objects.filter(product_type='MUTUAL_FUND', is_active=True)
     if member_id:
-        qs = qs.filter(investment_account__family_member_id=member_id)
+        base_qs = base_qs.filter(investment_account__family_member_id=member_id)
     elif user_id:
-        qs = qs.filter(investment_account__family_member__user_id=user_id)
+        base_qs = base_qs.filter(investment_account__family_member__user_id=user_id)
 
-    isins = set(qs.values_list('isin', flat=True))
+    backfill_isins(base_qs)
+
+    isins = set(base_qs.exclude(isin='').values_list('isin', flat=True))
     if not isins:
-        return 0
-
-    have_category = set(
-        MutualFundScheme.objects.filter(isin__in=isins).exclude(category='').values_list('isin', flat=True)
-    )
-    missing = isins - have_category
-    if not missing:
         return 0
 
     client = MFAPIClient()
     isin_map = client.get_isin_map()
 
     updated = 0
-    for isin in missing:
+    for isin in isins:
         code = isin_map.get(isin)
         if not code:
             continue
         try:
             client.fetch_and_save_scheme(code, isin)
+            client.sync_nav_history_to_db(code, isin)
             updated += 1
         except Exception as e:
-            logger.warning('Category backfill failed for %s: %s', isin, e)
+            logger.warning('Category/NAV-history refresh failed for %s: %s', isin, e)
 
-    logger.info('MF category backfill: %d/%d schemes updated', updated, len(missing))
+    logger.info('MF category/NAV-history refresh: %d/%d schemes updated', updated, len(isins))
     return updated
 
 
@@ -371,7 +408,20 @@ def update_all_prices_task(user_id: int | None = None, member_ids: list | None =
     eq_updated = update_equity_prices(member_ids)
     gold_updated = update_gold_prices()
 
-    logger.info('Price update: MF=%d, Equity=%d, Gold=%d', mf_updated, eq_updated, gold_updated)
+    # Always refresh category/sub-category/AMC from MFAPI on every price
+    # update, not just after a fresh CAS upload — AMFI's own categorisation
+    # can change, and this is cheap once the 24h scheme-detail cache is warm.
+    category_updated = 0
+    try:
+        if member_ids:
+            for mid in member_ids:
+                category_updated += sync_missing_mf_categories_task(member_id=mid)
+        else:
+            category_updated = sync_missing_mf_categories_task(user_id=user_id)
+    except Exception as e:
+        logger.warning('Category refresh during price update failed: %s', e)
+
+    logger.info('Price update: MF=%d, Equity=%d, Gold=%d, Categories=%d', mf_updated, eq_updated, gold_updated, category_updated)
 
     # Re-run analytics for affected members — best-effort; don't fail if broker is down.
     def _queue_or_run(mid):
@@ -428,11 +478,14 @@ def compute_portfolio_analytics_task(member_id: int):
         is_active=True,
     )
 
-    # Update XIRR per product
+    # Update XIRR per product — always reflect the current computation,
+    # including clearing a previously-stored value that's no longer valid
+    # (e.g. a stale/degenerate result from before a bug fix), rather than
+    # only writing when a new value happens to be computable.
     for product in products:
         try:
             xirr = compute_product_xirr(product)
-            if xirr is not None:
+            if xirr != product.xirr:
                 product.xirr = xirr
                 product.save(update_fields=['xirr'])
         except Exception as e:

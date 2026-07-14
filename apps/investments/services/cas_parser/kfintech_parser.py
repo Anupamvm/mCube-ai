@@ -1,5 +1,5 @@
 import logging
-from .cams_parser import _normalize, _mask_pan
+from .cams_parser import _normalize
 from .base import CASData
 
 logger = logging.getLogger('apps.investments')

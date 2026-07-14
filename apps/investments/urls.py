@@ -10,7 +10,8 @@ from .views.family_views import (
 from .views.account_views import AccountListCreateView, AccountDetailView, AccountProductsView
 from .views.product_views import (
     ProductListView, ProductDetailView, ProductCreateView,
-    ProductValuationHistoryView, update_product_value, set_product_category,
+    ProductValuationHistoryView, update_product_value, set_product_category, merge_products,
+    product_cashflow_gap, add_legacy_purchase,
 )
 from .views.upload_views import (
     cas_upload_list, cas_upload_detail, cas_reparse, equity_csv_upload,
@@ -20,9 +21,9 @@ from .views.upload_views import (
 from .views.analytics_views import (
     consolidated_portfolio, trigger_price_update,
     overlap_analysis, health_score_view,
-    risk_summary, tenor_ladder, portfolio_trend, sync_mf_categories,
+    risk_summary, tenor_ladder, portfolio_trend, sync_mf_categories, returns_breakdown,
 )
-from .views.fund_views import fund_detail, fund_nav_history, fund_risk_metrics, fund_my_holding
+from .views.fund_views import fund_detail, fund_nav_history, fund_risk_metrics, fund_my_holding, fund_returns
 from .views.report_views import generate_report, download_report
 from .views.group_views import PortfolioGroupListCreateView, PortfolioGroupDetailView, group_net_worth
 
@@ -57,6 +58,11 @@ def reports_page(request):
     return render(request, 'investments/reports.html')
 
 
+@login_required
+def merge_schemes_page(request):
+    return render(request, 'investments/merge_schemes.html')
+
+
 def csrf_token_view(request):
     return JsonResponse({'csrfToken': get_token(request)})
 
@@ -71,6 +77,7 @@ urlpatterns = [
     path('upload/', upload_page, name='upload-page'),
     path('consolidated/', consolidated_page, name='consolidated-page'),
     path('reports/', reports_page, name='reports-page'),
+    path('merge-schemes/', merge_schemes_page, name='merge-schemes-page'),
 
     # ── Family Members ────────────────────────────────────────────────────────
     path('api/family-members/', FamilyMemberListCreateView.as_view(), name='family-list'),
@@ -91,6 +98,9 @@ urlpatterns = [
     path('api/products/<int:pk>/valuations/', ProductValuationHistoryView.as_view(), name='product-valuations'),
     path('api/products/<int:pk>/update-value/', update_product_value, name='product-update-value'),
     path('api/products/<int:pk>/set-category/', set_product_category, name='product-set-category'),
+    path('api/products/merge/', merge_products, name='product-merge'),
+    path('api/products/<int:pk>/cashflow-gap/', product_cashflow_gap, name='product-cashflow-gap'),
+    path('api/products/<int:pk>/legacy-purchase/', add_legacy_purchase, name='product-legacy-purchase'),
 
     # ── Smart Upload (single endpoint, auto-detects format) ──────────────────
     path('api/uploads/smart/', smart_upload, name='smart-upload'),
@@ -121,6 +131,7 @@ urlpatterns = [
     path('api/analytics/overlap/', overlap_analysis, name='overlap'),
     path('api/analytics/health-score/', health_score_view, name='health-score'),
     path('api/analytics/risk-summary/', risk_summary, name='risk-summary'),
+    path('api/analytics/returns-breakdown/', returns_breakdown, name='returns-breakdown'),
     path('api/analytics/tenor-ladder/', tenor_ladder, name='tenor-ladder'),
     path('api/analytics/trend/', portfolio_trend, name='portfolio-trend'),
 
@@ -128,6 +139,7 @@ urlpatterns = [
     path('api/funds/<str:isin>/', fund_detail, name='fund-detail'),
     path('api/funds/<str:isin>/nav-history/', fund_nav_history, name='fund-nav-history'),
     path('api/funds/<str:isin>/risk-metrics/', fund_risk_metrics, name='fund-risk-metrics'),
+    path('api/funds/<str:isin>/returns/', fund_returns, name='fund-returns'),
     path('api/funds/<str:isin>/my-holding/', fund_my_holding, name='fund-my-holding'),
 
     # ── Reports ───────────────────────────────────────────────────────────────

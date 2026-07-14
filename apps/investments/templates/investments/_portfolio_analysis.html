@@ -17,6 +17,39 @@
     .pa-risk-tile .value { font-size: 1.25rem; font-weight: 700; color: var(--dark); margin-top: .2rem; }
     .pa-chart-box { position: relative; height: 240px; }
     .pa-chart-box.short { height: 180px; }
+    .pa-chart-box-lg { height: 300px; }
+    .pa-legend-list { padding-top: .25rem; }
+    .pa-subtabs {
+        display: inline-flex; gap: 2px; background: var(--lighter); border: 1px solid var(--light);
+        border-radius: 10px; padding: 4px; margin-bottom: 1rem;
+    }
+    .pa-subtabs .nav-link {
+        border: none; background: transparent; color: var(--gray); font-weight: 600; font-size: .8rem;
+        padding: .45rem 1rem; border-radius: 7px; transition: background .15s ease, color .15s ease;
+    }
+    .pa-subtabs .nav-link:hover:not(.active) { color: var(--dark); background: rgba(255,255,255,.7); }
+    .pa-subtabs .nav-link.active { background: #fff; color: var(--dark); box-shadow: var(--shadow-sm); }
+    .pa-primary-tabs { border-bottom: 2px solid var(--light); gap: 1.5rem; }
+    .pa-primary-tabs .nav-link {
+        border: none; background: transparent; color: var(--gray); font-weight: 600; font-size: .9rem;
+        padding: .5rem .1rem; border-radius: 0; border-bottom: 2px solid transparent; margin-bottom: -2px;
+        transition: color .15s ease, border-color .15s ease;
+    }
+    .pa-primary-tabs .nav-link:hover:not(.active) { color: var(--dark); }
+    .pa-primary-tabs .nav-link.active { color: var(--primary); border-bottom-color: var(--primary); background: transparent; }
+    .pa-group-toggle { display: inline-flex; gap: 2px; background: var(--lighter); border: 1px solid var(--light); border-radius: 10px; padding: 4px; margin-bottom: 1rem; }
+    .pa-group-toggle button {
+        border: none; background: transparent; color: var(--gray); font-weight: 600; font-size: .78rem;
+        padding: .4rem .85rem; border-radius: 7px; cursor: pointer; transition: background .15s ease, color .15s ease;
+    }
+    .pa-group-toggle button:hover:not(.active) { color: var(--dark); background: rgba(255,255,255,.7); }
+    .pa-group-toggle button.active { background: #fff; color: var(--dark); box-shadow: var(--shadow-sm); }
+    #pa-returns-table th, #pa-returns-table td { font-size: .82rem; padding: .5rem .6rem; }
+    #pa-returns-table tbody tr:hover { background: var(--lighter); }
+    .pa-sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+    .pa-sortable:hover { color: var(--primary); }
+    .pa-sortable .sort-arrow { font-size: .65em; margin-left: 3px; color: var(--primary); display: inline-block; width: .7em; }
+    .pa-sortable:not(.sort-active) .sort-arrow::before { content: '\2195'; opacity: .25; }
     .group-row { background: var(--lighter); }
     .group-row td { border-top: 2px solid #e2e8f0; padding-top: .5rem; padding-bottom: .5rem; }
     #pa-holdings-table tbody tr:not(.group-row):hover { background: #f8fafc; }
@@ -137,52 +170,99 @@
 <!-- Allocation views -->
 <div class="card border-0 shadow-sm mb-3">
     <div class="card-body">
-        <ul class="nav nav-tabs mb-3" id="pa-chart-tabs" role="tablist">
+        <ul class="nav pa-primary-tabs mb-3" id="pa-chart-tabs" role="tablist">
             <li class="nav-item" role="presentation">
                 <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#pa-tab-overview" type="button">Overview</button>
             </li>
             <li class="nav-item" role="presentation">
                 <button class="nav-link" data-bs-toggle="tab" data-bs-target="#pa-tab-equity" type="button">Equity Lens</button>
             </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" data-bs-toggle="tab" data-bs-target="#pa-tab-returns" type="button">📈 Returns</button>
+            </li>
         </ul>
         <div class="tab-content">
             <div class="tab-pane fade show active" id="pa-tab-overview">
-                <div class="row g-3">
-                    <div class="col-12 col-lg-4">
-                        <div class="small fw-semibold mb-1">By Fund Category</div>
-                        <div class="pa-chart-box"><canvas id="pa-chart-category"></canvas></div>
-                        <div id="pa-legend-category" class="mt-2"></div>
+                <ul class="nav pa-subtabs" id="pa-overview-subtabs" role="tablist">
+                    <li class="nav-item" role="presentation"><button class="nav-link active" data-bs-toggle="pill" data-bs-target="#pa-sub-category" type="button">By Fund Category</button></li>
+                    {% if show_member_filter %}
+                    <li class="nav-item" role="presentation"><button class="nav-link" data-bs-toggle="pill" data-bs-target="#pa-sub-member" type="button">By Family Member</button></li>
+                    {% endif %}
+                    <li class="nav-item" role="presentation"><button class="nav-link" data-bs-toggle="pill" data-bs-target="#pa-sub-assetclass" type="button">By Asset Class</button></li>
+                </ul>
+                <div class="tab-content">
+                    <div class="tab-pane fade show active" id="pa-sub-category">
+                        <div class="row g-3">
+                            <div class="col-12 col-md-6"><div class="pa-chart-box pa-chart-box-lg"><canvas id="pa-chart-category"></canvas></div></div>
+                            <div class="col-12 col-md-6"><div id="pa-legend-category" class="pa-legend-list"></div></div>
+                        </div>
                     </div>
                     {% if show_member_filter %}
-                    <div class="col-12 col-lg-4">
-                        <div class="small fw-semibold mb-1">By Family Member</div>
-                        <div class="pa-chart-box"><canvas id="pa-chart-member"></canvas></div>
-                        <div id="pa-legend-member" class="mt-2"></div>
+                    <div class="tab-pane fade" id="pa-sub-member">
+                        <div class="row g-3">
+                            <div class="col-12 col-md-6"><div class="pa-chart-box pa-chart-box-lg"><canvas id="pa-chart-member"></canvas></div></div>
+                            <div class="col-12 col-md-6"><div id="pa-legend-member" class="pa-legend-list"></div></div>
+                        </div>
                     </div>
                     {% endif %}
-                    <div class="col-12 col-lg-4">
-                        <div class="small fw-semibold mb-1">By Asset Class</div>
-                        <div class="pa-chart-box"><canvas id="pa-chart-assetclass"></canvas></div>
-                        <div id="pa-legend-assetclass" class="mt-2"></div>
+                    <div class="tab-pane fade" id="pa-sub-assetclass">
+                        <div class="row g-3">
+                            <div class="col-12 col-md-6"><div class="pa-chart-box pa-chart-box-lg"><canvas id="pa-chart-assetclass"></canvas></div></div>
+                            <div class="col-12 col-md-6"><div id="pa-legend-assetclass" class="pa-legend-list"></div></div>
+                        </div>
                     </div>
                 </div>
             </div>
             <div class="tab-pane fade" id="pa-tab-equity">
-                <div class="row g-3">
-                    <div class="col-12 col-lg-4">
-                        <div class="small fw-semibold mb-1">By Sector</div>
-                        <div class="pa-chart-box"><canvas id="pa-chart-sector"></canvas></div>
-                        <div id="pa-legend-sector" class="mt-2"></div>
+                <ul class="nav pa-subtabs" id="pa-equity-subtabs" role="tablist">
+                    <li class="nav-item" role="presentation"><button class="nav-link active" data-bs-toggle="pill" data-bs-target="#pa-sub-sector" type="button">By Sector</button></li>
+                    <li class="nav-item" role="presentation"><button class="nav-link" data-bs-toggle="pill" data-bs-target="#pa-sub-mcap" type="button">By Market Cap</button></li>
+                    <li class="nav-item" role="presentation"><button class="nav-link" data-bs-toggle="pill" data-bs-target="#pa-sub-amc" type="button">By Fund House (AMC)</button></li>
+                </ul>
+                <div class="tab-content">
+                    <div class="tab-pane fade show active" id="pa-sub-sector">
+                        <div class="row g-3">
+                            <div class="col-12 col-md-6"><div class="pa-chart-box pa-chart-box-lg"><canvas id="pa-chart-sector"></canvas></div></div>
+                            <div class="col-12 col-md-6"><div id="pa-legend-sector" class="pa-legend-list"></div></div>
+                        </div>
                     </div>
-                    <div class="col-12 col-lg-4">
-                        <div class="small fw-semibold mb-1">By Market Cap</div>
-                        <div class="pa-chart-box"><canvas id="pa-chart-mcap"></canvas></div>
+                    <div class="tab-pane fade" id="pa-sub-mcap">
+                        <div class="pa-chart-box pa-chart-box-lg"><canvas id="pa-chart-mcap"></canvas></div>
                     </div>
-                    <div class="col-12 col-lg-4">
-                        <div class="small fw-semibold mb-1">By Fund House (AMC)</div>
-                        <div class="pa-chart-box"><canvas id="pa-chart-amc"></canvas></div>
+                    <div class="tab-pane fade" id="pa-sub-amc">
+                        <div class="pa-chart-box pa-chart-box-lg"><canvas id="pa-chart-amc"></canvas></div>
                     </div>
                 </div>
+            </div>
+            <div class="tab-pane fade" id="pa-tab-returns">
+                <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-1">
+                    <div class="pa-group-toggle" id="pa-returns-group-toggle">
+                        <button class="active" data-group="fund" type="button">By Fund</button>
+                        <button data-group="amc" type="button">By AMC</button>
+                        <button data-group="category" type="button">By Category</button>
+                        <button data-group="sector" type="button">By Sector</button>
+                        <button data-group="asset_class" type="button">By Asset Class</button>
+                    </div>
+                </div>
+                <p class="text-muted small mb-2">
+                    XIRR is the true annualised return of pooling every holding in a group as one investment — it needs dated purchase/sale history to mean anything, so holdings without that history show gain/loss % instead (still an honest number, just not annualised).
+                </p>
+                <div class="pa-chart-box pa-chart-box-lg mb-3" id="pa-returns-chart-box"><canvas id="pa-chart-returns"></canvas></div>
+                <div class="table-responsive mb-4">
+                    <table class="table table-sm mb-0" id="pa-returns-table">
+                        <thead><tr>
+                            <th>Name</th><th class="text-end">Invested</th><th class="text-end">Current</th>
+                            <th class="text-end">Gain/Loss</th><th class="text-end">XIRR</th><th class="text-end">Holdings</th>
+                        </tr></thead>
+                        <tbody id="pa-returns-tbody"></tbody>
+                    </table>
+                </div>
+
+                <h6 class="fw-bold mb-2" style="color:var(--dark)">Category-wise Returns</h6>
+                <p class="text-muted small mb-2">
+                    Fund strategy (Flexi Cap, Mid Cap, Index Fund, Sectoral/Thematic, etc.) — the meaningful performance lens for mutual funds, since a diversified fund doesn't belong to just one stock-market sector.
+                </p>
+                <div class="pa-chart-box pa-chart-box-lg" id="pa-returns-category-chart-box"><canvas id="pa-chart-returns-category"></canvas></div>
             </div>
         </div>
     </div>
@@ -197,8 +277,16 @@
             <div class="col-6 col-md-2"><div class="pa-risk-tile" title="Like Sharpe, but only penalises downside volatility. Higher is better."><div class="label">Sortino</div><div class="value" id="pa-risk-sortino">—</div></div></div>
             <div class="col-6 col-md-2"><div class="pa-risk-tile" title="Annualised volatility of returns. Lower means steadier."><div class="label">Std. Dev</div><div class="value" id="pa-risk-stddev">—</div></div></div>
             <div class="col-6 col-md-2"><div class="pa-risk-tile" title="Largest peak-to-trough fall historically seen."><div class="label">Max Drawdown</div><div class="value" id="pa-risk-maxdd">—</div></div></div>
-            <div class="col-6 col-md-2"><div class="pa-risk-tile" title="Sensitivity to Nifty 50 moves. 1.0 = moves with the market."><div class="label">Beta</div><div class="value" id="pa-risk-beta">—</div></div></div>
+            <div class="col-6 col-md-2"><div class="pa-risk-tile" title="Sensitivity to each fund's own category benchmark (Nifty 50 for large cap, Nifty Midcap 150 for mid cap, Nifty Bank for banking/financial sectoral funds, Nifty 500 otherwise). 1.0 = moves with that benchmark."><div class="label">Beta</div><div class="value" id="pa-risk-beta">—</div></div></div>
             <div class="col-6 col-md-2"><div class="pa-risk-tile" title="Annualised excess return vs. what Beta alone would predict."><div class="label">Alpha</div><div class="value" id="pa-risk-alpha">—</div></div></div>
+        </div>
+        <div class="row g-2 mt-1">
+            <div class="col-4 col-md-2"><div class="pa-risk-tile" title="Value-weighted trailing return, invested-value weighted across your mutual fund holdings."><div class="label">1M Return</div><div class="value" id="pa-risk-ret-1m">—</div></div></div>
+            <div class="col-4 col-md-2"><div class="pa-risk-tile"><div class="label">3M Return</div><div class="value" id="pa-risk-ret-3m">—</div></div></div>
+            <div class="col-4 col-md-2"><div class="pa-risk-tile"><div class="label">6M Return</div><div class="value" id="pa-risk-ret-6m">—</div></div></div>
+            <div class="col-4 col-md-2"><div class="pa-risk-tile"><div class="label">1Y Return</div><div class="value" id="pa-risk-ret-1y">—</div></div></div>
+            <div class="col-4 col-md-2"><div class="pa-risk-tile" title="Annualised (CAGR)"><div class="label">3Y CAGR</div><div class="value" id="pa-risk-ret-3y">—</div></div></div>
+            <div class="col-4 col-md-2"><div class="pa-risk-tile" title="Annualised (CAGR)"><div class="label">5Y CAGR</div><div class="value" id="pa-risk-ret-5y">—</div></div></div>
         </div>
         <div class="text-muted small mt-2" id="pa-risk-coverage"></div>
     </div>
@@ -248,14 +336,14 @@
             <table class="table table-hover mb-0 small" id="pa-holdings-table">
                 <thead style="background:var(--lighter)">
                     <tr>
-                        <th class="ps-3">Name</th>
-                        {% if show_member_filter %}<th>Member</th>{% endif %}
-                        <th>Category</th>
-                        <th class="text-end">Invested</th>
-                        <th class="text-end">Current</th>
-                        <th class="text-end">Gain / Loss</th>
-                        <th class="text-end">G/L %</th>
-                        <th class="text-end pe-3">XIRR</th>
+                        <th class="ps-3 pa-sortable" data-sort="name">Name<span class="sort-arrow"></span></th>
+                        {% if show_member_filter %}<th class="pa-sortable" data-sort="member">Member<span class="sort-arrow"></span></th>{% endif %}
+                        <th class="pa-sortable" data-sort="category">Category<span class="sort-arrow"></span></th>
+                        <th class="text-end pa-sortable" data-sort="invested">Invested<span class="sort-arrow"></span></th>
+                        <th class="text-end pa-sortable sort-active" data-sort="current">Current<span class="sort-arrow">▼</span></th>
+                        <th class="text-end pa-sortable" data-sort="gain">Gain / Loss<span class="sort-arrow"></span></th>
+                        <th class="text-end pa-sortable" data-sort="gain_pct">G/L %<span class="sort-arrow"></span></th>
+                        <th class="text-end pe-3 pa-sortable" data-sort="xirr">XIRR<span class="sort-arrow"></span></th>
                     </tr>
                 </thead>
                 <tbody id="pa-holdings-body">
@@ -295,6 +383,39 @@
     </div>
 </div>
 
+<!-- ════════════════════════════════════════════════════════════════════════
+     Add Legacy Purchase Modal (fills the XIRR cashflow gap)
+════════════════════════════════════════════════════════════════════════ -->
+<div class="modal fade" id="paLegacyPurchaseModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title fw-bold">📅 Add Missing Purchase Date</h5>
+                <button class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p class="text-muted small mb-2" id="pa-legacy-fund-name">…</p>
+                <p class="small mb-3">
+                    Your CAS statement only reports transactions within its own date range, so
+                    <strong id="pa-legacy-gap-amount">…</strong> of this holding's invested value has no
+                    known purchase date — XIRR can't be trusted without it. Enter when that portion was
+                    actually invested (before <span id="pa-legacy-earliest-date">…</span>, the earliest
+                    purchase we do have) to unlock an accurate annualised return.
+                </p>
+                <label class="form-label small fw-semibold">Purchase Date</label>
+                <input type="date" class="form-control mb-2" id="pa-legacy-date">
+                <label class="form-label small fw-semibold">Amount (₹)</label>
+                <input type="number" class="form-control" id="pa-legacy-amount" step="0.01" min="0.01">
+                <div id="pa-legacy-error" class="alert alert-danger mt-2 mb-0 py-2 small" style="display:none"></div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+                <button class="btn btn-primary btn-sm fw-bold" id="pa-legacy-save">💾 Save</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <div class="position-fixed bottom-0 end-0 p-3" style="z-index:9999" id="pa-toasts"></div>
 
-<script src="{% static 'js/investments/portfolio_analysis.js' %}?v=2"></script>
+<script src="{% static 'js/investments/portfolio_analysis.js' %}?v=8"></script>

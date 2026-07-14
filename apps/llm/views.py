@@ -93,6 +93,7 @@ def chat_interface(request):
             return JsonResponse({
                 'success': success,
                 'response': response,
+                'error': metadata.get('error') if not success else None,
                 'metadata': metadata
             })
 
@@ -402,3 +403,66 @@ def ask_question(request):
             'success': False,
             'error': str(e)
         })
+
+
+@login_required
+def model_manager(request):
+    """
+    Model Manager - list, download, activate, and delete models on the
+    GPU server's vLLM update agent.
+    """
+    from apps.llm.services.vllm_updater import list_models, get_status
+
+    models_ok, models_or_error = list_models()
+    status_ok, status = get_status()
+
+    context = {
+        'agent_reachable': models_ok,
+        'models': models_or_error if models_ok else [],
+        'agent_error': models_or_error if not models_ok else None,
+        'activate_status': status if status_ok else None,
+    }
+    return render(request, 'llm/model_manager.html', context)
+
+
+@login_required
+@require_http_methods(["POST"])
+def model_manager_download(request):
+    """Kick off a background download of a model into the shared HF cache.
+
+    Returns JSON so it can be driven by a plain fetch() call from any page
+    (the dedicated Model Manager page, or a card embedded inside System
+    Configuration's single page-wide <form>, where a nested <form> would be
+    invalid HTML).
+    """
+    from apps.llm.services.vllm_updater import download_model
+
+    model = (request.POST.get('model') or '').strip()
+    if not model:
+        return JsonResponse({'success': False, 'message': 'Model repo is required'})
+    ok, msg = download_model(model)
+    return JsonResponse({'success': ok, 'message': msg})
+
+
+@login_required
+@require_http_methods(["POST"])
+def model_manager_activate(request):
+    """Switch the live vLLM container to serve the given model. Returns JSON (see model_manager_download)."""
+    from apps.llm.services.vllm_updater import activate_model
+
+    model = (request.POST.get('model') or '').strip() or None
+    ok, msg = activate_model(model=model)
+    return JsonResponse({'success': ok, 'message': msg})
+
+
+@login_required
+@require_http_methods(["POST"])
+def model_manager_delete(request):
+    """Remove a model's weights from the HF cache to free disk space. Returns JSON (see model_manager_download)."""
+    from apps.llm.services.vllm_updater import delete_model
+
+    model = (request.POST.get('model') or '').strip()
+    if not model:
+        return JsonResponse({'success': False, 'message': 'Model repo is required'})
+    ok, msg = delete_model(model)
+    return JsonResponse({'success': ok, 'message': msg})

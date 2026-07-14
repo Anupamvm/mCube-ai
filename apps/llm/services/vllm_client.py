@@ -37,69 +37,125 @@ class VLLMClient:
         'http://192.168.1.32:8000/v1',     # Local IP
     ]
 
+    # Short timeout just for probing which candidate URL is reachable
+    CONNECT_TIMEOUT = 10.0
+
+    # How often a long-running process (Django, Celery worker/beat, Telegram bot)
+    # re-verifies which model the server is actually serving. The GPU-server update
+    # agent can switch models out from under any of these at any time - without this,
+    # a process that connected before a switch would keep requesting the old model
+    # name for its entire lifetime (until restarted).
+    MODEL_RECHECK_SECONDS = 30
+
     def __init__(self):
         """Initialize vLLM client with automatic URL fallback"""
-        self.model = os.getenv('VLLM_MODEL', 'hugging-quants/Meta-Llama-3.1-70B-Instruct-AWQ-INT4')
         self.api_key = os.getenv('VLLM_API_KEY', 'not-needed')
+        # Real generation on a 70B model can take a while; keep this well above CONNECT_TIMEOUT
+        self.request_timeout = float(os.getenv('VLLM_TIMEOUT', '120'))
+        # Only used if the server can't tell us what it's actually serving
+        self._fallback_model = os.getenv('VLLM_MODEL', 'hugging-quants/Meta-Llama-3.1-70B-Instruct-AWQ-INT4')
+        self.model = self._fallback_model
 
         # If VLLM_HOST is explicitly set, use only that URL
         explicit_host = os.getenv('VLLM_HOST')
-        if explicit_host:
-            urls_to_try = [explicit_host]
-        else:
-            urls_to_try = self.DEFAULT_URLS
+        self._urls_to_try = [explicit_host] if explicit_host else self.DEFAULT_URLS
 
-        # Try each URL until one works
         self.base_url = None
         self.client = None
         self.enabled = False
+        self._last_recheck = 0.0
 
-        for url in urls_to_try:
+        self._connect()
+
+    def _connect(self):
+        """(Re)establish a connection, discovering whichever model the server is currently serving."""
+        self._last_recheck = time.time()
+
+        for url in self._urls_to_try:
             logger.info(f"Trying vLLM server at {url}...")
             try:
-                client = OpenAI(
+                probe_client = OpenAI(
                     base_url=url,
                     api_key=self.api_key,
-                    timeout=10.0  # 10 second timeout for connection attempts
+                    timeout=self.CONNECT_TIMEOUT
                 )
-                if self._try_connection(client):
+                served_model = self._discover_served_model(probe_client)
+                if served_model:
                     self.base_url = url
-                    self.client = client
+                    self.model = served_model
+                    # Separate client with a longer timeout for actual generation requests
+                    self.client = OpenAI(
+                        base_url=url,
+                        api_key=self.api_key,
+                        timeout=self.request_timeout
+                    )
                     self.enabled = True
-                    logger.info(f"Successfully connected to vLLM at {url}")
-                    break
+                    logger.info(f"Successfully connected to vLLM at {url} (serving {served_model})")
+                    return
             except Exception as e:
                 logger.warning(f"Failed to connect to {url}: {str(e)}")
                 continue
 
-        if not self.enabled:
-            logger.warning("Could not connect to any vLLM server")
+        logger.warning("Could not connect to any vLLM server")
+        self.enabled = False
+        if not self.base_url:
             # Set defaults for error reporting
-            self.base_url = urls_to_try[0] if urls_to_try else 'not-configured'
-            self.client = OpenAI(base_url=self.base_url, api_key=self.api_key)
+            self.base_url = self._urls_to_try[0] if self._urls_to_try else 'not-configured'
+            self.client = OpenAI(base_url=self.base_url, api_key=self.api_key, timeout=self.request_timeout)
 
-    def _try_connection(self, client: OpenAI) -> bool:
-        """Try to connect to vLLM server with given client"""
+    def _refresh_if_stale(self):
+        """Re-verify (at most every MODEL_RECHECK_SECONDS) that we're still talking to
+        whatever model the server is currently serving, reconnecting if it changed or
+        if we were previously unreachable. Cheap - just a GET /v1/models."""
+        if time.time() - self._last_recheck < self.MODEL_RECHECK_SECONDS:
+            return
+
+        if self.enabled and self.client:
+            self._last_recheck = time.time()
+            served_model = self._discover_served_model(self.client)
+            if served_model and served_model != self.model:
+                logger.info(f"vLLM now serving '{served_model}' (was '{self.model}') - switching client to match")
+                self.model = served_model
+            elif not served_model:
+                logger.warning("vLLM server became unreachable")
+                self.enabled = False
+        else:
+            self._connect()
+
+    def _discover_served_model(self, client: OpenAI) -> Optional[str]:
+        """Ask the server which model it's actually serving.
+
+        vLLM serves exactly one model per instance, but the model name can change
+        any time someone uses the update agent to switch models - so we must ask
+        the server rather than trust a locally configured name, or every request
+        would target a model that's no longer running.
+        """
+        try:
+            models = client.models.list()
+            model_ids = [m.id for m in models.data]
+            if model_ids:
+                return model_ids[0]
+        except Exception:
+            pass
+
+        # Fallback: /v1/models unavailable for some reason - probe with a real
+        # completion using the locally configured model name.
         try:
             response = client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": "You are a helpful assistant."},
-                    {"role": "user", "content": "Test"}
-                ],
+                model=self._fallback_model,
+                messages=[{"role": "user", "content": "Test"}],
                 max_tokens=5,
                 temperature=0.1
             )
-            return response and response.choices
+            if response and response.choices:
+                return self._fallback_model
         except Exception:
-            return False
-
-    def _check_connection(self) -> bool:
-        """Check if vLLM server is accessible (re-check current connection)"""
-        return self._try_connection(self.client) if self.client else False
+            pass
+        return None
 
     def is_enabled(self) -> bool:
-        """Check if vLLM client is enabled"""
+        """Check if vLLM client is enabled (re-verifies periodically - see MODEL_RECHECK_SECONDS)"""
+        self._refresh_if_stale()
         return self.enabled
 
     def chat(
@@ -121,6 +177,7 @@ class VLLMClient:
         Returns:
             Tuple[bool, str, Dict]: (success, response_text, metadata)
         """
+        self._refresh_if_stale()
         if not self.enabled:
             return False, "", {"error": "vLLM not enabled"}
 

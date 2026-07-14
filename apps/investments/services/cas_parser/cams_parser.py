@@ -1,6 +1,6 @@
 import logging
 from datetime import date
-from .base import CASData, AccountInfo, HoldingEntry, TransactionEntry
+from .base import CASData, AccountInfo, HoldingEntry, TransactionEntry, mask_pan as _mask_pan
 
 logger = logging.getLogger('apps.investments')
 
@@ -22,6 +22,7 @@ def _normalize(data: dict) -> CASData:
     account_info = AccountInfo(
         holder_name=investor.get('name', ''),
         pan_masked=_mask_pan(investor.get('pan', '')),
+        pan_full=investor.get('pan', ''),
         email_masked=investor.get('email', ''),
         mobile_masked=investor.get('mobile', ''),
         depository='',
@@ -101,12 +102,6 @@ def _normalize(data: dict) -> CASData:
         transactions=transactions,
         cas_type='CAMS',
     )
-
-
-def _mask_pan(pan: str) -> str:
-    if not pan or len(pan) < 10:
-        return pan
-    return pan[:2] + 'X' * 6 + pan[-2:]
 
 
 def _parse_date(date_str: str) -> date:

@@ -5,6 +5,27 @@ from .models import (
     PortfolioGroup, PortfolioSnapshot, PortfolioHealthScore, UserCASPassword,
 )
 
+# Fund category strings vary in case by source (MF Central's own "Category"
+# column is inconsistently all-caps, e.g. "EQUITY" vs "EQUITY FUND" in the
+# same export) which otherwise splits one logical category into multiple
+# dashboard chart slices. Title-case for consistent display, but preserve
+# common all-caps acronyms that title() would otherwise mangle (e.g. ELSS).
+_CATEGORY_ACRONYMS = {
+    'Elss': 'ELSS', 'Etf': 'ETF', 'Sip': 'SIP', 'Psu': 'PSU', 'Sdl': 'SDL',
+    'Nps': 'NPS', 'Ppf': 'PPF', 'Epf': 'EPF', 'Nfo': 'NFO', 'Fd': 'FD',
+    'Rd': 'RD', 'Sgb': 'SGB',
+}
+
+
+def _normalize_category(raw: str) -> str:
+    value = (raw or '').strip()
+    if not value:
+        return value
+    titled = value.title()
+    for wrong, right in _CATEGORY_ACRONYMS.items():
+        titled = titled.replace(wrong, right)
+    return titled
+
 
 class FamilyMemberSerializer(serializers.ModelSerializer):
     total_net_worth = serializers.SerializerMethodField()
@@ -137,13 +158,13 @@ class InvestmentProductSerializer(serializers.ModelSerializer):
         extra = obj.extra_data or {}
         # A manual override always wins.
         if extra.get('category_source') == 'manual' and extra.get('category'):
-            return extra['category']
+            return _normalize_category(extra['category'])
         scheme = self._mf_scheme(obj)
         if scheme and scheme.category:
-            return scheme.category
+            return _normalize_category(scheme.category)
         # Fall back to a category captured directly from the source file
         # (e.g. MF Central XLSX) when the ISIN hasn't been MFAPI-synced yet.
-        return extra.get('category', '')
+        return _normalize_category(extra.get('category', ''))
 
     def get_mf_sub_category(self, obj):
         scheme = self._mf_scheme(obj)

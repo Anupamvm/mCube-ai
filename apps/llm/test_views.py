@@ -336,6 +336,43 @@ def trigger_performance_test(request):
 
 @login_required
 @require_http_methods(["POST"])
+def trigger_llm_update(request):
+    """Kick off a model/engine update via the vLLM update agent on the GPU server"""
+    from apps.llm.services.vllm_updater import trigger_update
+
+    model = (request.POST.get('model') or '').strip() or None
+    success, message = trigger_update(model=model)
+    return JsonResponse({
+        'success': success,
+        'status': 'pass' if success else 'fail',
+        'message': message,
+    })
+
+
+@login_required
+@require_http_methods(["POST"])
+def check_llm_update_status(request):
+    """Check the status of the last/current update from the vLLM update agent"""
+    from apps.llm.services.vllm_updater import get_status
+
+    success, status = get_status()
+    if not success:
+        return JsonResponse({
+            'success': False,
+            'status': 'fail',
+            'message': status.get('error', 'Could not reach update agent'),
+        })
+
+    return JsonResponse({
+        'success': True,
+        'status': 'pass',
+        'message': f"Status: {status.get('status')} | Started: {status.get('started_at')} | Finished: {status.get('finished_at')}",
+        'details': status,
+    })
+
+
+@login_required
+@require_http_methods(["POST"])
 def trigger_all_llm_tests(request):
     """Run all LLM tests"""
     results = {}

@@ -69,11 +69,29 @@ def fund_risk_metrics(request, isin):
         return Response({'error': 'Insufficient NAV history for risk metrics'}, status=status.HTTP_422_UNPROCESSABLE_ENTITY)
 
     try:
-        metrics = compute_risk_metrics(nav_qs)
+        metrics = compute_risk_metrics(nav_qs, sub_category=scheme.sub_category, scheme_name=scheme.scheme_name)
         return Response({'isin': isin, 'period': period, **metrics})
     except Exception as e:
         logger.error('Risk metrics error for %s: %s', isin, e)
         return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def fund_returns(request, isin):
+    """Trailing point-to-point returns (1W/1M/3M/6M/1Y/3Y/5Y, CAGR beyond 1Y)."""
+    try:
+        scheme = MutualFundScheme.objects.get(isin=isin)
+    except MutualFundScheme.DoesNotExist:
+        return Response({'error': 'Fund not found'}, status=status.HTTP_404_NOT_FOUND)
+
+    from ..services.analytics.returns_calculator import compute_trailing_returns
+    nav_qs = NAVHistory.objects.filter(scheme=scheme)
+    returns = compute_trailing_returns(nav_qs)
+    if not returns:
+        return Response({'error': 'Insufficient NAV history for returns'}, status=status.HTTP_422_UNPROCESSABLE_ENTITY)
+
+    return Response({'isin': isin, 'scheme_name': scheme.scheme_name, 'returns': returns})
 
 
 @api_view(['GET'])

@@ -187,6 +187,7 @@
             margin-left: 15px;
             display: flex;
             align-items: center;
+            gap: 8px;
         }
 
         .trigger-btn {
@@ -395,12 +396,20 @@
                     </div>
                     {% endif %}
                 </div>
-                {% if test.trigger_url %}
+                {% if test.trigger_url or test.link_url %}
                 <div class="test-actions">
-                    <form method="post" action="{{ test.trigger_url }}" style="display: inline;">
+                    {% if test.link_url %}
+                    <a href="{{ test.link_url }}" target="_blank" class="trigger-btn" style="text-decoration: none; display: inline-block;">{{ test.link_label|default:"Open" }}</a>
+                    {% endif %}
+                    {% if test.trigger_url %}
+                    <form method="post" action="{{ test.trigger_url }}" style="display: inline-flex; align-items: center; gap: 6px;">
                         {% csrf_token %}
+                        {% if test.input_name %}
+                        <input type="text" name="{{ test.input_name }}" placeholder="{{ test.input_placeholder|default:'' }}" style="padding: 7px 10px; border: 1px solid #cbd5e0; border-radius: 6px; font-size: 13px; width: 260px;">
+                        {% endif %}
                         <button type="submit" class="trigger-btn">{{ test.trigger_label|default:"🔄 Run Test" }}</button>
                     </form>
+                    {% endif %}
                 </div>
                 {% endif %}
             </div>

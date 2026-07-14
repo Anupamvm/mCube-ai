@@ -2043,6 +2043,8 @@ def test_llm():
                 ),
                 'trigger_url': reverse('llm:test_connection'),
                 'trigger_label': '🔄 Test Connection',
+                'link_url': reverse('llm:chat'),
+                'link_label': '💬 Open LLM Chat',
             })
         else:
             tests.append({
@@ -2072,6 +2074,64 @@ def test_llm():
                 '<br><code>cd /home/anupamvm/vllm && docker compose up -d</code>'
                 '<br><code>docker logs -f vllm-70b</code>'
             ),
+        })
+
+    # Test 1b: Update LLM (model/engine refresh via GPU-server update agent)
+    try:
+        from apps.llm.services.vllm_updater import get_status
+        from django.urls import reverse
+        from django.utils.html import escape
+
+        reachable, status = get_status(timeout=5)
+        if reachable:
+            state = status.get('status', 'unknown')
+            current_model = status.get('current_model') or 'unknown'
+            image = status.get('image') or 'unknown'
+            image_id = status.get('image_id') or ''
+            container_status = status.get('container_status') or 'unknown'
+
+            message = f"Status: {state} | Model: {current_model} | Container: {container_status}"
+            if status.get('started_at'):
+                message += f" | Started: {status['started_at']}"
+            if status.get('finished_at'):
+                message += f" | Finished: {status['finished_at']}"
+
+            test_status = 'warning' if state == 'running' else ('fail' if state == 'failed' else 'pass')
+
+            description = (
+                f'<b>Engine image:</b> {escape(image)} ({escape(image_id)})<br>'
+                f'<b>Current model:</b> {escape(current_model)}<br>'
+                f'<b>Container status:</b> {escape(container_status)}'
+            )
+            log_tail = status.get('log_tail', '')
+            if log_tail:
+                description += (
+                    '<div style="margin-top:8px;"><b>Recent update log:</b>'
+                    '<pre style="max-height:250px; overflow-y:auto; background:#1a202c; color:#e2e8f0; '
+                    'padding:10px; border-radius:4px; font-size:12px; white-space:pre-wrap; margin-top:4px;">'
+                    + escape(log_tail[-4000:]) + '</pre></div>'
+                )
+        else:
+            message = status.get('error', 'Update agent unreachable')
+            test_status = 'skip'
+            description = (
+                'Pulls the latest <code>vllm/vllm-openai</code> image, optionally switches the model, '
+                'and restarts the <code>vllm-70b</code> container on the GPU server via a small update agent.'
+            )
+
+        tests.append({
+            'name': '🚀 Update LLM',
+            'status': test_status,
+            'message': message,
+            'description': description,
+            'link_url': reverse('llm:model_manager'),
+            'link_label': '🧠 Open Model Manager',
+        })
+    except Exception as e:
+        tests.append({
+            'name': '🚀 Update LLM',
+            'status': 'skip',
+            'message': f'Update agent not configured: {str(e)}',
         })
 
     # Test 2: Text Generation
@@ -3333,6 +3393,11 @@ def broker_settings(request):
     from apps.core.models import TradingCoreConfig
     trading_config = TradingCoreConfig.get_instance()
 
+    # vLLM Model Manager (GPU server agent) - for the Advanced tab
+    from apps.llm.services.vllm_updater import list_models, get_status
+    llm_models_ok, llm_models_or_error = list_models()
+    llm_status_ok, llm_activate_status = get_status()
+
     context = {
         # Credentials
         'kotak_creds': kotak_creds,
@@ -3349,6 +3414,11 @@ def broker_settings(request):
         # LLM Settings (from Django settings)
         'ollama_base_url': getattr(django_settings, 'OLLAMA_BASE_URL', 'http://localhost:11434'),
         'ollama_model': getattr(django_settings, 'OLLAMA_MODEL', 'deepseek-r1:7b'),
+        # vLLM Model Manager
+        'llm_agent_reachable': llm_models_ok,
+        'llm_models': llm_models_or_error if llm_models_ok else [],
+        'llm_agent_error': llm_models_or_error if not llm_models_ok else None,
+        'llm_activate_status': llm_activate_status if llm_status_ok else None,
         # Days of week for dropdown
         'days_of_week': [
             (0, 'Monday'),

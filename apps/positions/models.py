@@ -105,6 +105,18 @@ class Position(TimeStampedModel):
         return self.quantity // ls if ls > 1 else self.quantity
 
     @property
+    def is_lot_mismatch(self):
+        """True when quantity isn't a clean multiple of lot_size.
+
+        F&O quantities can only be traded in lot multiples, so this signals
+        corrupted/orphaned data (e.g. a stale position that never reconciled
+        with a real broker snapshot) rather than a genuine position — and
+        without this flag `lots` silently floors to 0 for such rows.
+        """
+        ls = self.lot_size or 1
+        return ls > 1 and self.quantity % ls != 0
+
+    @property
     def label(self):
         """Display-friendly name; falls back to instrument if not set."""
         return self.display_name or self.instrument

@@ -94,28 +94,28 @@ def cas_upload_detail(request, pk):
         return Response({'error': 'Not found'}, status=status.HTTP_404_NOT_FOUND)
 
     if request.method == 'DELETE':
-        cascade = str(request.query_params.get('cascade', '')).lower() in ('true', '1', 'yes')
-        products_archived = 0
-        transactions_deleted = 0
         family_member_id = upload.family_member_id
 
+        # Deleting an upload always cleans up the holdings/transactions it
+        # produced — a product's source_upload reflects whichever upload most
+        # recently touched it, so if a newer import has since updated a
+        # holding, that holding correctly belongs to the newer upload and is
+        # left alone here.
         with transaction.atomic():
-            if cascade:
-                products_archived = InvestmentProduct.objects.filter(
-                    source_upload=upload, is_active=True,
-                ).update(is_active=False)
-                transactions_deleted, _ = Transaction.objects.filter(cas_upload=upload).delete()
+            _, txn_detail = Transaction.objects.filter(cas_upload=upload).delete()
+            transactions_deleted = txn_detail.get('investments.Transaction', 0)
+            _, prod_detail = InvestmentProduct.objects.filter(source_upload=upload).delete()
+            products_deleted = prod_detail.get('investments.InvestmentProduct', 0)
             upload.delete()
 
-        if cascade:
-            try:
-                from ..tasks import compute_portfolio_analytics_task
-                compute_portfolio_analytics_task.delay(family_member_id)
-            except Exception:
-                pass
+        try:
+            from ..tasks import compute_portfolio_analytics_task
+            compute_portfolio_analytics_task.delay(family_member_id)
+        except Exception:
+            pass
 
         return Response({
-            'products_archived': products_archived,
+            'products_deleted': products_deleted,
             'transactions_deleted': transactions_deleted,
         }, status=status.HTTP_200_OK)
 
@@ -268,7 +268,7 @@ def smart_upload(request):
             return Response({
                 'mode': 'pdf',   # same result shape as PDF CAS
                 'id': result['upload_id'],
-                'cas_type': 'CAMS',
+                'cas_type': 'MFCENTRAL',
                 'products_created': result['products_created'],
                 'products_updated': result['products_updated'],
                 'transactions_created': result['transactions_created'],

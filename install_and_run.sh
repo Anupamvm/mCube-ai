@@ -280,6 +280,10 @@ EMAIL_HOST_PASSWORD=
 OLLAMA_HOST=http://localhost:11434
 OLLAMA_MODEL=deepseek-coder:33b
 
+# vLLM update agent (GPU server) - see scripts/gpu_server/
+VLLM_UPDATE_AGENT_URL=http://192.168.1.32:8090
+VLLM_UPDATE_AGENT_TOKEN=OA5Uj49tYKeaytzZON3WcevP8wwok3jw9KWeo8oPStc
+
 # Paper Trading
 PAPER_TRADING=True
 ENVEOF
@@ -355,6 +359,64 @@ echo "  - static/             (for static files)"
 echo "  - media/              (for uploaded media)"
 echo "  - templates/          (for Django templates)"
 echo "  - data/SecurityMaster (for ICICI SecurityMaster files)"
+
+# ============================================================================
+# STEP 6.5: Deploy vLLM update agent (GPU server only)
+# ============================================================================
+echo ""
+echo "Step 6.5/10: Setting up vLLM update agent..."
+echo "--------------------------------------------"
+if [[ "$OSTYPE" != "darwin"* ]] && [ -f "$HOME/vllm/docker-compose.yml" ] && command -v docker &> /dev/null; then
+    echo "  Detected vLLM docker-compose setup — installing update agent..."
+
+    cp "$SCRIPT_DIR/scripts/gpu_server/vllm_update_agent.py" "$HOME/vllm/vllm_update_agent.py"
+
+    # The vLLM container runs as root inside Docker, so files it wrote into the
+    # bind-mounted ~/hf_cache over time are almost certainly owned by root on the
+    # host. The agent runs as the regular user, so without this it would get
+    # PermissionError the first time it tries to download a new model. Root inside
+    # the container can still read/write these regardless of ownership, so this is
+    # safe in both directions.
+    mkdir -p "$HOME/hf_cache"
+    sudo chown -R "$(whoami):$(whoami)" "$HOME/hf_cache"
+
+    # The agent needs huggingface_hub (for model listing/download/delete) in its
+    # own isolated venv - avoids PEP 668 "externally managed environment" errors
+    # on modern Debian/Ubuntu and keeps it independent of the Django app's venv.
+    if [ ! -d "$HOME/vllm/agent_venv" ]; then
+        python3 -m venv "$HOME/vllm/agent_venv"
+    fi
+    "$HOME/vllm/agent_venv/bin/pip" install --quiet --upgrade pip
+    # Pinned to the version the agent's scan_cache_dir/delete_revisions calls were
+    # verified against - an unpinned install could silently break on a future
+    # huggingface_hub release that changes those internal APIs.
+    "$HOME/vllm/agent_venv/bin/pip" install --quiet "huggingface_hub==0.36.0"
+
+    if [ ! -f "$HOME/vllm/update_agent.env" ]; then
+        cat > "$HOME/vllm/update_agent.env" << AGENTENVEOF
+UPDATE_AGENT_TOKEN=OA5Uj49tYKeaytzZON3WcevP8wwok3jw9KWeo8oPStc
+UPDATE_AGENT_PORT=8090
+HF_CACHE_DIR=$HOME/hf_cache/hub
+AGENTENVEOF
+        chmod 600 "$HOME/vllm/update_agent.env"
+    fi
+
+    # Point the systemd unit's ExecStart at the agent's own venv interpreter
+    sed "s#/usr/bin/python3#$HOME/vllm/agent_venv/bin/python3#" \
+        "$SCRIPT_DIR/scripts/gpu_server/vllm-update-agent.service" | sudo tee /etc/systemd/system/vllm-update-agent.service > /dev/null
+    sudo systemctl daemon-reload
+    sudo systemctl enable vllm-update-agent > /dev/null 2>&1
+    sudo systemctl restart vllm-update-agent
+
+    # Open the agent port if UFW is active
+    if command -v ufw &>/dev/null && sudo ufw status 2>/dev/null | grep -q "Status: active"; then
+        sudo ufw allow 8090/tcp > /dev/null 2>&1 || true
+    fi
+
+    echo "✓ vLLM update agent installed and running (systemctl status vllm-update-agent)"
+else
+    echo "  (skipping — this is not the vLLM GPU server)"
+fi
 
 # ============================================================================
 # STEP 7.5: Check and repair SQLite database if malformed

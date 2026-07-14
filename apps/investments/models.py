@@ -60,6 +60,7 @@ class CASType(models.TextChoices):
     NSDL = 'NSDL', 'NSDL e-CAS'
     CAMS = 'CAMS', 'CAMS / KFintech CAS'
     KFINTECH = 'KFINTECH', 'KFintech CAS'
+    MFCENTRAL = 'MFCENTRAL', 'MF Central CAS'
     PORTFOLIO = 'PORTFOLIO', 'Equity Portfolio'
 
 

@@ -55,14 +55,18 @@ def resolve_mf_product(
 
     # ── 3. Create ─────────────────────────────────────────────────────────
     if product is None:
-        product = InvestmentProduct.objects.create(
-            investment_account=account,
-            product_type='MUTUAL_FUND',
-            name=scheme_name,
-            isin=isin or '',
-            is_active=True,
+        # `defaults` may itself carry any of these keys (e.g. callers that
+        # build a single dict shared with update_or_create elsewhere) — let
+        # defaults win on overlap rather than colliding as duplicate kwargs.
+        create_kwargs = {
+            'investment_account': account,
+            'product_type': 'MUTUAL_FUND',
+            'name': scheme_name,
+            'isin': isin or '',
+            'is_active': True,
             **defaults,
-        )
+        }
+        product = InvestmentProduct.objects.create(**create_kwargs)
         logger.debug('MF product created: %s isin=%s', scheme_name[:40], isin)
         return product, True
 

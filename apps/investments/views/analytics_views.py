@@ -151,6 +151,7 @@ def risk_summary(request):
     from datetime import date, timedelta
     from ..models import MutualFundScheme, NAVHistory
     from ..services.analytics.risk_metrics import compute_risk_metrics
+    from ..services.analytics.returns_calculator import compute_trailing_returns
 
     members = _resolve_members(request)
     products = InvestmentProduct.objects.filter(
@@ -177,14 +178,26 @@ def risk_summary(request):
     covered_value = 0.0
     excluded_funds = []
 
+    return_period_keys = ['1M', '3M', '6M', '1Y', '3Y', '5Y']
+    return_weighted_sums = {k: 0.0 for k in return_period_keys}
+    return_weight_totals = {k: 0.0 for k in return_period_keys}
+
     schemes = {s.isin: s for s in MutualFundScheme.objects.filter(isin__in=value_by_isin.keys())}
     for isin, value in value_by_isin.items():
         scheme = schemes.get(isin)
         metrics = {}
         if scheme:
             nav_qs = NAVHistory.objects.filter(scheme=scheme, date__gte=since).order_by('date')
+            full_nav_qs = NAVHistory.objects.filter(scheme=scheme)
             if nav_qs.count() >= 30:
-                metrics = compute_risk_metrics(nav_qs)
+                metrics = compute_risk_metrics(nav_qs, sub_category=scheme.sub_category, scheme_name=scheme.scheme_name)
+
+            for label, entry in compute_trailing_returns(full_nav_qs).items():
+                if label in return_weight_totals:
+                    # CAGR beyond 1Y is the comparable, annualised figure to weight
+                    ret = entry.get('cagr_pct', entry.get('return_pct'))
+                    return_weighted_sums[label] += ret * value
+                    return_weight_totals[label] += value
 
         if not metrics:
             excluded_funds.append({'isin': isin, 'name': name_by_isin[isin], 'value': round(value, 2)})
@@ -208,8 +221,136 @@ def risk_summary(request):
         'weighted_max_drawdown': round(weighted_sums['max_drawdown'] / weight_totals['max_drawdown'], 4) if weight_totals['max_drawdown'] else None,
         'weighted_beta': round(weighted_sums['beta'] / weight_totals['beta'], 4) if weight_totals['beta'] else None,
         'weighted_alpha': round(weighted_sums['alpha_annual'] / weight_totals['alpha_annual'], 4) if weight_totals['alpha_annual'] else None,
+        'weighted_returns': {
+            label: round(return_weighted_sums[label] / return_weight_totals[label], 2)
+            for label in return_period_keys if return_weight_totals[label]
+        },
     }
     return Response(result)
+
+
+_RETURNS_TYPE_LABELS = {
+    'MUTUAL_FUND': 'Mutual Fund', 'EQUITY': 'Equity', 'FD': 'Fixed Deposit', 'RD': 'Recurring Deposit',
+    'SGB': 'Sovereign Gold Bond', 'BOND': 'Bond', 'PPF': 'PPF', 'EPF': 'EPF / PF', 'NPS': 'NPS',
+    'REAL_ESTATE': 'Real Estate', 'PHYSICAL_GOLD': 'Physical Gold', 'CRYPTO': 'Crypto',
+    'CASH': 'Cash', 'SAVINGS': 'Savings', 'OTHER': 'Other',
+}
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def returns_breakdown(request):
+    """
+    XIRR-based performance breakdown grouped by fund / AMC / sector / asset
+    class. Each group's XIRR is computed from the *pooled* cashflows of every
+    holding in that group (via compute_products_xirr) — the true return of
+    treating the group as one investment — not a naive average of individual
+    fund XIRRs, which would misweight small and large holdings equally.
+
+    XIRR needs real transaction-dated cashflows to mean anything; holdings
+    imported without transaction history (common for MF Central-only imports)
+    fall back to a same-day synthetic cashflow, which is undefined for XIRR
+    and correctly returns None. gain_loss_pct (always computable from
+    invested vs current value) is included on every group so the view stays
+    useful even where a true annualised return can't be established yet.
+    """
+    from ..models import MutualFundScheme
+    from apps.data.models import TLStockData
+    from ..services.analytics.xirr_calculator import compute_products_xirr
+    from ..serializers import _normalize_category
+
+    group_by = request.query_params.get('group_by', 'fund')
+    members = _resolve_members(request)
+    products = list(InvestmentProduct.objects.filter(
+        investment_account__family_member__in=members,
+        is_active=True,
+    ))
+    if not products:
+        return Response({'error': 'No holdings to analyse'}, status=status.HTTP_422_UNPROCESSABLE_ENTITY)
+
+    isins = {p.isin for p in products if p.isin}
+    schemes = {s.isin: s for s in MutualFundScheme.objects.filter(isin__in=isins)}
+    equity_isins = {p.isin for p in products if p.isin and p.product_type == 'EQUITY'}
+    stocks = {s.isin: s for s in TLStockData.objects.filter(isin__in=equity_isins)}
+
+    def key_fund(p):
+        label = p.name[:60]
+        return (p.isin or f'p{p.id}'), label
+
+    def key_amc(p):
+        if p.product_type == 'MUTUAL_FUND':
+            scheme = schemes.get(p.isin)
+            amc = (scheme.amc if scheme and scheme.amc else '') or (p.extra_data or {}).get('amc', '')
+            label = amc or 'Unknown AMC'
+            return label, label
+        label = 'Direct Equity' if p.product_type == 'EQUITY' else _RETURNS_TYPE_LABELS.get(p.product_type, p.product_type)
+        return label, label
+
+    def key_sector(p):
+        if p.product_type == 'EQUITY':
+            stock = stocks.get(p.isin)
+            label = (stock.sector_name if stock and stock.sector_name else 'Unclassified')
+            return label, label
+        return 'Mutual Funds / Other', 'Mutual Funds / Other'
+
+    def key_category(p):
+        # Fund strategy/category (Flexi Cap, Mid Cap, Index Fund, Sectoral...)
+        # — the meaningful grouping for mutual funds, unlike "sector" (a
+        # stock-market concept a diversified fund doesn't have just one of).
+        if p.product_type == 'MUTUAL_FUND':
+            scheme = schemes.get(p.isin)
+            sub_cat = scheme.sub_category if scheme and scheme.sub_category else ''
+            if sub_cat:
+                return sub_cat, sub_cat
+            raw_cat = _normalize_category((p.extra_data or {}).get('category', ''))
+            label = raw_cat or 'Uncategorised Fund'
+            return label, label
+        label = 'Direct Equity' if p.product_type == 'EQUITY' else _RETURNS_TYPE_LABELS.get(p.product_type, p.product_type)
+        return label, label
+
+    def key_asset_class(p):
+        return p.product_type, _RETURNS_TYPE_LABELS.get(p.product_type, p.product_type)
+
+    key_fn = {
+        'fund': key_fund, 'amc': key_amc, 'sector': key_sector,
+        'category': key_category, 'asset_class': key_asset_class,
+    }.get(group_by, key_fund)
+
+    buckets: dict = {}
+    for p in products:
+        key, label = key_fn(p)
+        buckets.setdefault(key, {'label': label, 'products': []})
+        buckets[key]['products'].append(p)
+
+    groups = []
+    for key, b in buckets.items():
+        prods = b['products']
+        invested = sum(float(x.invested_value) for x in prods)
+        current = sum(float(x.current_value) for x in prods)
+        xirr = compute_products_xirr(prods)
+        groups.append({
+            'key': key,
+            'label': b['label'],
+            'invested_value': round(invested, 2),
+            'current_value': round(current, 2),
+            'gain_loss': round(current - invested, 2),
+            'gain_loss_pct': round((current - invested) / invested * 100, 2) if invested else 0,
+            'xirr_pct': round(xirr * 100, 2) if xirr is not None else None,
+            'holdings_count': len(prods),
+            # Only meaningful for a single-holding group (e.g. group_by=fund)
+            # — lets the UI offer "add missing purchase date" for that one
+            # product specifically when XIRR isn't computable.
+            'product_id': prods[0].id if len(prods) == 1 else None,
+        })
+
+    groups.sort(key=lambda g: (g['xirr_pct'] is None, -(g['xirr_pct'] or 0)))
+
+    return Response({
+        'group_by': group_by,
+        'groups': groups,
+        'total_invested': round(sum(g['invested_value'] for g in groups), 2),
+        'total_current': round(sum(g['current_value'] for g in groups), 2),
+    })
 
 
 @api_view(['GET'])

@@ -16,6 +16,12 @@ def update_mf_navs(member_ids: list | None = None):
     if member_ids:
         qs = qs.filter(investment_account__family_member_id__in=member_ids)
 
+    # MF Central holdings arrive with no ISIN at all — resolve by name before
+    # attempting any NAV lookup, otherwise every such holding is silently
+    # skipped below with no NAV, no price update, ever.
+    from apps.investments.services.mf_scheme_matcher import backfill_isins
+    backfill_isins(qs)
+
     client = MFAPIClient()
     isin_map = client.get_isin_map()
     updated = 0
@@ -23,6 +29,7 @@ def update_mf_navs(member_ids: list | None = None):
     for product in qs:
         isin = product.isin
         if not isin:
+            logger.warning('No ISIN for "%s" (id=%d) — name match against MFAPI failed, skipping', product.name[:60], product.id)
             continue
         scheme_code = isin_map.get(isin)
         if not scheme_code:

@@ -150,7 +150,7 @@ class Command(BaseCommand):
                 ]
                 df = df.replace([np.inf, -np.inf], np.nan)
                 df = df.fillna(0)
-                for col in df.select_dtypes(include=['object', 'str']).columns:
+                for col in df.select_dtypes(include=['object']).columns:
                     df[col] = df[col].replace({'nan': '', 'Export NA': ''})
                 csv_path = download_dir / 'contract_data.csv'
                 df.to_csv(csv_path, index=False)
@@ -175,7 +175,7 @@ class Command(BaseCommand):
                 df = df.replace([np.inf, -np.inf], np.nan)
                 for col in df.select_dtypes(include=['float64', 'int64']).columns:
                     df[col] = df[col].fillna(0)
-                for col in df.select_dtypes(include=['object', 'str']).columns:
+                for col in df.select_dtypes(include=['object']).columns:
                     df[col] = df[col].fillna('').replace({'nan': '', 'Export NA': ''})
                 csv_path = download_dir / 'stock_data.csv'
                 df.to_csv(csv_path, index=False)

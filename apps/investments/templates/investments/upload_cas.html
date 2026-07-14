@@ -429,16 +429,9 @@
             </div>
             <div class="modal-body">
                 <p class="mb-2">Delete "<strong id="du-name">…</strong>"?</p>
-                <p class="text-muted small mb-3">This upload touched <strong id="du-counts">…</strong>.</p>
-                <div class="form-check mb-2">
-                    <input class="form-check-input" type="checkbox" id="du-cascade">
-                    <label class="form-check-label small" for="du-cascade">
-                        Also remove these holdings
-                        <span class="text-muted fw-normal">— archives the holdings this import created/updated and
-                        deletes its transactions. Holdings later touched by a newer import are unaffected.</span>
-                    </label>
-                </div>
-                <div id="du-error" class="alert alert-danger mb-0 py-2 small" style="display:none"></div>
+                <p class="text-muted small mb-0">This removes the <strong id="du-counts">…</strong> it created, along
+                with the import record itself. Holdings later touched by a newer import are unaffected.</p>
+                <div id="du-error" class="alert alert-danger mb-0 mt-2 py-2 small" style="display:none"></div>
             </div>
             <div class="modal-footer">
                 <button class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
@@ -782,7 +775,6 @@ function openDeleteUploadModal(id, filename, productsCount, transactionsCount) {
     if (!_deleteUploadModal) _deleteUploadModal = new bootstrap.Modal(document.getElementById('deleteUploadModal'));
     document.getElementById('du-name').textContent = filename;
     document.getElementById('du-counts').textContent = `${productsCount} holding(s) and ${transactionsCount} transaction(s)`;
-    document.getElementById('du-cascade').checked = false;
     document.getElementById('du-error').style.display = 'none';
     _deleteUploadModal.show();
 }
@@ -790,18 +782,13 @@ function openDeleteUploadModal(id, filename, productsCount, transactionsCount) {
 async function deleteUpload() {
     const errEl = document.getElementById('du-error');
     errEl.style.display = 'none';
-    const cascade = document.getElementById('du-cascade').checked;
-    const url = `${API}/uploads/cas/${_deletingUploadId}/` + (cascade ? '?cascade=true' : '');
+    const url = `${API}/uploads/cas/${_deletingUploadId}/`;
     try {
         const r = await fetch(url, { method: 'DELETE', headers: { 'X-CSRFToken': CSRF } });
         if (!r.ok) { errEl.textContent = 'Delete failed.'; errEl.style.display = ''; return; }
         const d = await r.json().catch(() => ({}));
         _deleteUploadModal.hide();
-        if (cascade) {
-            toast(`Upload removed — ${d.products_archived||0} holding(s) archived, ${d.transactions_deleted||0} transaction(s) deleted.`);
-        } else {
-            toast('Upload removed.');
-        }
+        toast(`Upload removed — ${d.products_deleted||0} holding(s) and ${d.transactions_deleted||0} transaction(s) deleted.`);
         loadHistory();
     } catch(e) {
         errEl.textContent = 'Network error.'; errEl.style.display = '';

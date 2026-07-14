@@ -3,10 +3,17 @@ from dataclasses import dataclass, field
 from datetime import date
 
 
+def mask_pan(pan: str) -> str:
+    if not pan or len(pan) < 10:
+        return pan
+    return pan[:2] + 'X' * 6 + pan[-2:]
+
+
 @dataclass
 class AccountInfo:
     holder_name: str = ''
     pan_masked: str = ''
+    pan_full: str = ''  # transient: unmasked PAN, used only for CAS-password auto-learning, never persisted
     email_masked: str = ''
     mobile_masked: str = ''
     dp_name: str = ''

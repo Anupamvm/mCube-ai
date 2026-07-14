@@ -197,29 +197,38 @@ def save_mfcentral_xlsx(member, raw_bytes: bytes, filename: str, uploaded_by) ->
     from datetime import date as date_cls
     from collections import defaultdict
     from apps.investments.models import (
-        CASUpload, InvestmentAccount, Transaction,
+        CASUpload, InvestmentAccount, Transaction, UserCASPassword,
     )
     from apps.investments.services.product_resolver import resolve_mf_product
+    from .base import mask_pan
 
     data = parse_mfcentral_xlsx(raw_bytes)
     investor = data['investor']
     pan = investor.get('pan', '')
 
-    if pan and not member.pan_masked:
-        member.pan_masked = pan
-        member.save(update_fields=['pan_masked'])
+    if pan:
+        if not member.pan_masked:
+            member.pan_masked = mask_pan(pan)
+            member.save(update_fields=['pan_masked'])
+        # Auto-learn: the CAS PDF password is always the PAN, so any future
+        # password-protected upload for this member (e.g. NSDL e-CAS) unlocks
+        # automatically via the existing saved_passwords mechanism.
+        UserCASPassword.objects.get_or_create(
+            user=uploaded_by, password=pan,
+            defaults={'label': f'{member.name} PAN'},
+        )
 
     account, _ = InvestmentAccount.objects.get_or_create(
         family_member=member,
         account_type='MF_FOLIO',
         data_source='CAS',
-        defaults={'account_name': 'CAMS / KFintech MF Folio'},
+        defaults={'account_name': 'MF Central MF Folio'},
     )
 
     upload = CASUpload.objects.create(
         family_member=member,
         uploaded_by=uploaded_by,
-        cas_type='CAMS',
+        cas_type='MFCENTRAL',
         original_filename=filename,
         parse_status='PROCESSING',
     )
@@ -285,27 +294,53 @@ def save_mfcentral_xlsx(member, raw_bytes: bytes, filename: str, uploaded_by) ->
 
         units = float(t['units'])
         amount = float(t['amount'])
-        # Include amount+description in dedup key to distinguish same-day transactions
-        _, created = Transaction.objects.get_or_create(
+        amount_decimal = Decimal(str(round(amount, 2)))
+        description = (t['description'] or '')[:500]
+        # order_no is always blank for MF Central data, so amount alone isn't
+        # a safe differentiator with years of history — two distinct same-day
+        # transactions of a round-number amount (e.g. two ₹5,000 SIP
+        # instalments) are a real possibility. description is a raw cell
+        # value straight from the sheet (not fuzzy-regenerated), so it's
+        # stable across re-parses and narrows the key further.
+        #
+        # Match by `product` (resolved by name, stable) rather than
+        # `product.isin` — the product's own ISIN can go from blank to
+        # resolved between two uploads (via the MFAPI name-matcher backfill),
+        # which would otherwise silently break this lookup and duplicate
+        # every transaction the next time the same statement is re-uploaded.
+        lookup = dict(
             investment_account=account,
-            isin=product.isin if product else '',
             transaction_date=t['date'],
             order_no='',
+            amount=amount_decimal,
+            description=description,
+        )
+        if product:
+            lookup['product'] = product
+        else:
+            lookup['isin'] = ''
+            lookup['security_name'] = t['scheme_name']
+        txn_obj, created = Transaction.objects.get_or_create(
+            **lookup,
             defaults={
                 'product': product,
+                'isin': product.isin if product else '',
                 'cas_upload': upload,
                 'security_name': t['scheme_name'],
-                'description': t['description'],
                 'transaction_type': _txn_type(t['description']),
                 'units_debit': max(0.0, -units),
                 'units_credit': max(0.0, units),
                 'units_balance': 0.0,
-                'amount': Decimal(str(round(amount, 2))),
                 'nav_at_transaction': t['nav'],
             },
         )
         if created:
             transactions_created += 1
+        elif txn_obj.cas_upload_id != upload.id:
+            # Re-attribute ownership to the most recent upload that
+            # reconfirmed this transaction, mirroring product ownership.
+            txn_obj.cas_upload = upload
+            txn_obj.save(update_fields=['cas_upload'])
 
     upload.products_created = products_created
     upload.products_updated = products_updated

@@ -21,6 +21,17 @@ from celery.schedules import crontab
 # Set the default Django settings module for the 'celery' program
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'mcube_ai.settings')
 
+# macOS's Objective-C runtime aborts/crashes a forked child that touches
+# certain frameworks (Security/Network, used transitively by libraries like
+# curl_cffi — required by yfinance since Yahoo now blocks plain requests —
+# and potentially other native deps in this project, e.g. Selenium for
+# Breeze auto-login) after the parent process initialized them pre-fork.
+# Celery's default 'prefork' pool forks a fresh worker per task, which is
+# exactly the pattern that triggers this. This is Apple's own documented
+# opt-out of that safety check; must be set before any worker forks.
+if 'OBJC_DISABLE_INITIALIZE_FORK_SAFETY' not in os.environ:
+    os.environ['OBJC_DISABLE_INITIALIZE_FORK_SAFETY'] = 'YES'
+
 # Create Celery application
 app = Celery('mcube_ai')
 
@@ -265,7 +276,14 @@ def get_static_schedule():
 
     'monitor-and-manage-positions': {
         'task': 'apps.positions.tasks.monitor_and_manage_positions',
-        'schedule': crontab(hour='9-15', minute='*', day_of_week='1-5'),  # Every minute 9 AM-3:59 PM Mon-Fri
+        'schedule': crontab(hour='9-14', minute='*', day_of_week='1-5'),  # Every minute 9 AM-2:59 PM Mon-Fri
+        'options': {'queue': 'monitoring'},
+    },
+    'monitor-and-manage-positions-close': {
+        'task': 'apps.positions.tasks.monitor_and_manage_positions',
+        # Every minute 3:00-3:30 PM Mon-Fri — stops at NSE market close (3:30 PM),
+        # unlike the old hour='9-15' entry which kept firing until 3:59 PM.
+        'schedule': crontab(hour=15, minute='0-30', day_of_week='1-5'),
         'options': {'queue': 'monitoring'},
     },
 

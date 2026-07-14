@@ -39,4 +39,14 @@ urlpatterns = [
     path('test/rag/', test_views.trigger_rag_test, name='test_rag'),
     path('test/performance/', test_views.trigger_performance_test, name='test_performance'),
     path('test/all/', test_views.trigger_all_llm_tests, name='test_all'),
+
+    # Model update (GPU server agent) - legacy single-model switch, kept for compatibility
+    path('update/trigger/', test_views.trigger_llm_update, name='trigger_update'),
+    path('update/status/', test_views.check_llm_update_status, name='check_update_status'),
+
+    # Model Manager (GPU server agent) - list/download/activate/delete models
+    path('models/', views.model_manager, name='model_manager'),
+    path('models/download/', views.model_manager_download, name='model_manager_download'),
+    path('models/activate/', views.model_manager_activate, name='model_manager_activate'),
+    path('models/delete/', views.model_manager_delete, name='model_manager_delete'),
 ]

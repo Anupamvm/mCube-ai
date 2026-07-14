@@ -17,7 +17,7 @@ from __future__ import annotations
 import re
 import logging
 from datetime import datetime
-from .base import CASData, AccountInfo, HoldingEntry, TransactionEntry
+from .base import CASData, AccountInfo, HoldingEntry, TransactionEntry, mask_pan
 
 logger = logging.getLogger('apps.investments')
 
@@ -108,7 +108,8 @@ def parse_mfcentral_cas(pdf_path: str, password: str = '') -> CASData:
 
     account_info = AccountInfo(
         holder_name=name,
-        pan_masked=pan,
+        pan_masked=mask_pan(pan),
+        pan_full=pan,
         statement_month=stmt_month,
         statement_year=stmt_year,
         depository='',

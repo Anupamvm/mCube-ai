@@ -1,0 +1,284 @@
+{% extends "core/master_base.html" %}
+
+{% block title %}Model Manager - mCube AI{% endblock %}
+
+{% block page_background %}gradient-background{% endblock %}
+
+{% block extra_css %}
+<style>
+    .container {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 20px;
+    }
+
+    .header {
+        background: white;
+        border-radius: 10px;
+        padding: 30px;
+        margin-bottom: 30px;
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+    }
+
+    .header h1 {
+        color: #2d3748;
+        font-size: 32px;
+        margin-bottom: 10px;
+    }
+
+    .header p {
+        color: #718096;
+        font-size: 16px;
+    }
+
+    .card {
+        background: white;
+        border-radius: 10px;
+        padding: 25px 30px;
+        margin-bottom: 25px;
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+    }
+
+    .card h2 {
+        color: #2d3748;
+        font-size: 20px;
+        margin-bottom: 15px;
+    }
+
+    .messages { margin-bottom: 20px; }
+    .alert {
+        padding: 15px 20px;
+        border-radius: 8px;
+        margin-bottom: 10px;
+        font-size: 14px;
+    }
+    .alert-success { background: #c6f6d5; color: #22543d; }
+    .alert-error { background: #fed7d7; color: #742a2a; }
+
+    .add-model-form {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+    }
+
+    .add-model-form input[type="text"] {
+        flex: 1;
+        padding: 10px 14px;
+        border: 1px solid #cbd5e0;
+        border-radius: 6px;
+        font-size: 14px;
+    }
+
+    .btn {
+        background: #4299e1;
+        color: white;
+        border: none;
+        padding: 10px 18px;
+        border-radius: 6px;
+        font-size: 14px;
+        font-weight: 500;
+        cursor: pointer;
+        transition: all 0.2s ease;
+        white-space: nowrap;
+    }
+    .btn:hover { background: #3182ce; transform: translateY(-1px); }
+    .btn-danger { background: #e53e3e; }
+    .btn-danger:hover { background: #c53030; }
+    .btn-small { padding: 6px 12px; font-size: 13px; }
+    .btn:disabled { background: #cbd5e0; cursor: not-allowed; transform: none; }
+
+    table.models {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 10px;
+    }
+    table.models th, table.models td {
+        text-align: left;
+        padding: 12px 10px;
+        border-bottom: 1px solid #edf2f7;
+        font-size: 14px;
+    }
+    table.models th { color: #718096; font-weight: 600; font-size: 12px; text-transform: uppercase; }
+
+    .badge {
+        display: inline-block;
+        padding: 4px 10px;
+        border-radius: 12px;
+        font-size: 12px;
+        font-weight: 600;
+    }
+    .badge-active { background: #c6f6d5; color: #22543d; }
+    .badge-downloaded { background: #bee3f8; color: #2a4365; }
+    .badge-downloading { background: #feebc8; color: #744210; }
+    .badge-failed { background: #fed7d7; color: #742a2a; }
+
+    .actions-cell { display: flex; gap: 6px; }
+
+    .agent-status {
+        font-size: 13px;
+        color: #718096;
+        margin-top: 6px;
+    }
+
+    .empty-state {
+        text-align: center;
+        color: #a0aec0;
+        padding: 30px 0;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container">
+    <div class="header">
+        <h1>🧠 Model Manager</h1>
+        <p>Download, switch, and remove Hugging Face models on the GPU server.</p>
+        {% if not agent_reachable %}
+        <div class="agent-status">⚠ Update agent unreachable: {{ agent_error }}</div>
+        {% endif %}
+    </div>
+
+    {% if messages %}
+    <div class="messages">
+        {% for message in messages %}
+        <div class="alert alert-{{ message.tags }}">{{ message }}</div>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    {% csrf_token %}
+
+    <div class="card">
+        <h2>Add a model</h2>
+        <div class="add-model-form" style="flex-wrap: wrap;">
+            <select id="model-suggestions" onchange="llmApplySuggestion(this.value)" style="padding: 10px 12px; border: 1px solid #cbd5e0; border-radius: 6px; font-size: 14px;">
+                <option value="">Suggested models...</option>
+                <option value="Qwen/Qwen3.6-27B">Qwen/Qwen3.6-27B - best all-around fit for a single 48GB GPU</option>
+                <option value="Qwen/Qwen3-VL-32B">Qwen/Qwen3-VL-32B - vision-language, reads PDF tables/charts directly</option>
+                <option value="__custom__">Other (type a custom repo below)</option>
+            </select>
+            <input type="text" id="new-model-input" placeholder="org/model-name, e.g. Qwen/Qwen3.6-27B">
+            <button type="button" class="btn" onclick="llmDownload(document.getElementById('new-model-input').value.trim())">⬇ Download</button>
+        </div>
+        <p class="agent-status">Downloads run in the background on the GPU server and don't affect the live model. Once downloaded, use "Activate" below to switch traffic to it.</p>
+        <div id="llm-message" class="agent-status"></div>
+    </div>
+
+    <div class="card">
+        <h2>Models</h2>
+        {% if models %}
+        <table class="models">
+            <tr>
+                <th>Model</th>
+                <th>Status</th>
+                <th>Size</th>
+                <th>Actions</th>
+            </tr>
+            {% for m in models %}
+            <tr>
+                <td>{{ m.repo_id }}</td>
+                <td>
+                    <span class="badge badge-{{ m.status }}">{{ m.status }}</span>
+                    {% if m.status == 'failed' and m.error %}<div class="agent-status">{{ m.error }}</div>{% endif %}
+                </td>
+                <td>{{ m.size|default:"-" }}</td>
+                <td class="actions-cell">
+                    {% if m.status == 'downloaded' %}
+                    <button type="button" class="btn btn-small" onclick="llmActivate('{{ m.repo_id }}')">🚀 Activate</button>
+                    <button type="button" class="btn btn-small btn-danger" onclick="llmDelete('{{ m.repo_id }}')">🗑 Delete</button>
+                    {% elif m.status == 'active' %}
+                    <button class="btn btn-small" disabled>✓ Serving now</button>
+                    {% elif m.status == 'downloading' %}
+                    <span class="agent-status">Downloading... reload to check progress</span>
+                    {% elif m.status == 'failed' %}
+                    <button type="button" class="btn btn-small" onclick="llmDownload('{{ m.repo_id }}')">↻ Retry download</button>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </table>
+        {% else %}
+        <div class="empty-state">No models known yet. Add one above.</div>
+        {% endif %}
+    </div>
+
+    {% if activate_status and activate_status.status != 'idle' %}
+    <div class="card">
+        <h2>Last activation</h2>
+        <p><b>Status:</b> {{ activate_status.status }}</p>
+        {% if activate_status.target_model %}<p><b>Target model:</b> {{ activate_status.target_model }}</p>{% endif %}
+        {% if activate_status.started_at %}<p><b>Started:</b> {{ activate_status.started_at }}</p>{% endif %}
+        {% if activate_status.finished_at %}<p><b>Finished:</b> {{ activate_status.finished_at }}</p>{% endif %}
+        {% if activate_status.log_tail %}
+        <pre style="max-height:300px; overflow-y:auto; background:#1a202c; color:#e2e8f0; padding:12px; border-radius:6px; font-size:12px; white-space:pre-wrap; margin-top:10px;">{{ activate_status.log_tail }}</pre>
+        {% endif %}
+    </div>
+    {% endif %}
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    function llmCsrfToken() {
+        return document.querySelector('[name=csrfmiddlewaretoken]').value;
+    }
+
+    async function llmPost(url, model) {
+        const msgBox = document.getElementById('llm-message');
+        try {
+            const resp = await fetch(url, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                    'X-CSRFToken': llmCsrfToken(),
+                },
+                body: 'model=' + encodeURIComponent(model || ''),
+            });
+            const data = await resp.json();
+            msgBox.textContent = data.message;
+            msgBox.style.color = data.success ? '#22543d' : '#742a2a';
+            setTimeout(function() { location.reload(); }, 1200);
+        } catch (e) {
+            msgBox.textContent = 'Request failed: ' + e;
+            msgBox.style.color = '#742a2a';
+        }
+    }
+
+    function llmApplySuggestion(value) {
+        const input = document.getElementById('new-model-input');
+        if (value === '__custom__') {
+            input.value = '';
+            input.focus();
+        } else if (value) {
+            input.value = value;
+        }
+    }
+
+    function llmDownload(model) {
+        if (!model) { alert('Enter a model repo, e.g. org/model-name'); return; }
+        llmPost("{% url 'llm:model_manager_download' %}", model);
+    }
+
+    function llmActivate(model) {
+        if (!confirm('Switch the live model to "' + model + '"? This restarts the vLLM container and takes several minutes.')) return;
+        llmPost("{% url 'llm:model_manager_activate' %}", model);
+    }
+
+    function llmDelete(model) {
+        if (!confirm('Delete "' + model + '" from disk?')) return;
+        llmPost("{% url 'llm:model_manager_delete' %}", model);
+    }
+
+    // Auto-refresh while anything is downloading or activating, so progress is visible.
+    {% if models %}
+        {% for m in models %}
+            {% if m.status == 'downloading' %}
+            setTimeout(function() { location.reload(); }, 15000);
+            {% endif %}
+        {% endfor %}
+    {% endif %}
+    {% if activate_status.status == 'running' %}
+    setTimeout(function() { location.reload(); }, 15000);
+    {% endif %}
+</script>
+{% endblock %}
