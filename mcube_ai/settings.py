@@ -94,6 +94,7 @@ INSTALLED_APPS = [
     'apps.alerts.apps.AlertsConfig',
     'apps.brokers.apps.BrokersConfig',
     'apps.trading.apps.TradingConfig',
+    'apps.hedging.apps.HedgingConfig',
 
     # Family Portfolio Intelligence
     'apps.investments.apps.InvestmentsConfig',

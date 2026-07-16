@@ -16,6 +16,7 @@ from .signals import SignalGenerator
 from apps.core.utils.task_logger import TaskLogger
 from apps.core.utils.decorators import task_enabled_guard
 from apps.alerts.services.telegram_client import send_telegram_notification
+from apps.brokers.exceptions import BreezeAuthenticationError
 
 
 @shared_task(name='fetch_trendlyne_data', bind=True, max_retries=3)
@@ -210,6 +211,11 @@ def update_live_market_data(self):
             "timestamp": timezone.now().isoformat()
         }
 
+    except BreezeAuthenticationError as e:
+        # Retrying can't fix an expired session - it just spams identical
+        # failure notifications every 30/60/120s until the manual login happens.
+        logger.failure("Live market data update skipped - Breeze session needs manual login", error=e)
+        raise
     except Exception as e:
         logger.failure("Error updating live market data", error=e, context={'retry': self.request.retries})
         if self.request.retries < self.max_retries:
@@ -243,6 +249,11 @@ def update_pre_market_data(self):
             "timestamp": timezone.now().isoformat()
         }
 
+    except BreezeAuthenticationError as e:
+        # Retrying can't fix an expired session - it just spams identical
+        # failure notifications every 30/60/120s until the manual login happens.
+        logger.failure("Pre-market data update skipped - Breeze session needs manual login", error=e)
+        raise
     except Exception as e:
         logger.failure("Error updating pre-market data", error=e, context={'retry': self.request.retries})
         if self.request.retries < self.max_retries:
@@ -276,6 +287,11 @@ def update_post_market_data(self):
             "timestamp": timezone.now().isoformat()
         }
 
+    except BreezeAuthenticationError as e:
+        # Retrying can't fix an expired session - it just spams identical
+        # failure notifications every 30/60/120s until the manual login happens.
+        logger.failure("Post-market data update skipped - Breeze session needs manual login", error=e)
+        raise
     except Exception as e:
         logger.failure("Error updating post-market data", error=e, context={'retry': self.request.retries})
         if self.request.retries < self.max_retries:

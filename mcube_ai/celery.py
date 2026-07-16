@@ -103,7 +103,7 @@ def get_static_schedule():
 
     'update-pre-market-data': {
         'task': 'update_pre_market_data',  # Uses custom name from @shared_task
-        'schedule': crontab(hour=8, minute=50, day_of_week='1-5'),  # Mon-Fri 8:50 AM
+        'schedule': crontab(hour=9, minute=10, day_of_week='1-5'),  # Mon-Fri 9:10 AM (after broker auto-login window)
         'options': {'queue': 'data'},
     },
 

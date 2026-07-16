@@ -68,14 +68,22 @@ def trigger_price_update(request):
             user_id=request.user.id,
             member_ids=member_ids_param or None,
         )
-        return Response({'status': 'price_update_queued', 'task_id': task.id})
+        return Response({
+            'status': 'price_update_queued',
+            'task_id': task.id,
+            'message': 'Price update queued — refresh in a moment to see updated values.',
+        })
     except Exception as e:
         # Broker unavailable — run synchronously so the user still gets a result.
         logger.warning('Celery broker unavailable, running price update synchronously: %s', e)
         try:
             from apps.investments.tasks import update_all_prices_task as task_fn
             result = task_fn(user_id=request.user.id, member_ids=member_ids_param or None)
-            return Response({'status': 'price_update_complete', 'result': result})
+            message = (
+                f"Updated {result.get('mf', 0)} mutual fund, {result.get('equity', 0)} equity, "
+                f"and {result.get('gold', 0)} gold holdings."
+            )
+            return Response({'status': 'price_update_complete', 'result': result, 'message': message})
         except Exception as sync_err:
             logger.error('Synchronous price update failed: %s', sync_err)
             return Response({'error': str(sync_err)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

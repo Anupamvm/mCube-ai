@@ -48,6 +48,7 @@ urlpatterns = [
     path('alerts/', include('apps.alerts.urls')),
     path('llm/', include('apps.llm.urls')),
     path('trading/', include('apps.trading.urls')),
+    path('hedging/', include('apps.hedging.urls')),
 
     # Investments (Family Portfolio Intelligence)
     path('investments/', include('apps.investments.urls')),

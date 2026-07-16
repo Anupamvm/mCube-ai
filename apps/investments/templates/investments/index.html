@@ -276,7 +276,10 @@ async function updatePrices() {
             body: '{}'
         });
         const d = await r.json();
-        toast(d.result || d.status || 'Prices updated!', r.ok ? 'success' : 'error');
+        // Never hand toast() a non-string (e.g. d.result is a {mf, equity, gold}
+        // object on the synchronous-fallback path) — always resolve to text first.
+        const msg = d.message || d.error || (typeof d.status === 'string' ? d.status : null) || 'Prices updated!';
+        toast(msg, r.ok ? 'success' : 'error');
         if (r.ok) { loadConsolidated(); loadMembers(); }
     } catch(e) {
         toast('Failed to update prices.', 'error');

@@ -511,6 +511,47 @@
         transform: none;
     }
 
+    .cover-btn {
+        padding: 0.5rem 1rem;
+        background: #6366F1;
+        color: white;
+        border: none;
+        border-radius: var(--radius-md);
+        cursor: pointer;
+        font-size: 0.75rem;
+        font-weight: 600;
+        transition: all 0.2s ease;
+        margin-top: 0.375rem;
+    }
+
+    .cover-btn:hover {
+        background: #4F46E5;
+        transform: translateY(-1px);
+    }
+
+    .cover-btn:disabled {
+        background: var(--gray-light);
+        cursor: not-allowed;
+        transform: none;
+    }
+
+    .hedge-badge {
+        display: inline-block;
+        margin-top: 0.375rem;
+        padding: 0.25rem 0.5rem;
+        border-radius: var(--radius-md);
+        font-size: 0.7rem;
+        font-weight: 600;
+        background: #EEF2FF;
+        color: #4338CA;
+        border: 1px solid #C7D2FE;
+        cursor: pointer;
+    }
+
+    .hedge-badge:hover {
+        background: #E0E7FF;
+    }
+
     .no-positions {
         text-align: center;
         padding: 3rem;
@@ -755,6 +796,357 @@
 
     .average-modal-close:hover {
         background: rgba(255, 255, 255, 0.3);
+    }
+
+    /* Cover Position Modal Styles */
+    .cover-modal-content {
+        background: white;
+        border-radius: var(--radius-lg);
+        padding: 0;
+        max-width: 1100px;
+        width: 96%;
+        max-height: 92vh;
+        overflow-y: auto;
+        box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
+    }
+
+    .cover-modal-header {
+        background: linear-gradient(135deg, #6366F1 0%, #4338CA 100%);
+        color: white;
+        padding: 1.5rem 2rem;
+        border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+    .cover-modal-header h2 {
+        margin: 0;
+        font-size: 1.5rem;
+        font-weight: 600;
+    }
+
+    .cover-modal-close {
+        background: rgba(255, 255, 255, 0.2);
+        color: white;
+        border: none;
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        cursor: pointer;
+        font-size: 1.25rem;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: all 0.2s ease;
+    }
+
+    .cover-modal-close:hover {
+        background: rgba(255, 255, 255, 0.3);
+    }
+
+    .cover-modal-body {
+        padding: 1.5rem 2rem;
+    }
+
+    .cover-section-title {
+        font-size: 1rem;
+        font-weight: 700;
+        color: var(--dark);
+        margin: 1.5rem 0 0.75rem 0;
+    }
+
+    .cover-chain-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.8rem;
+    }
+
+    .cover-chain-table th {
+        background: var(--lighter);
+        padding: 0.5rem;
+        text-align: right;
+        font-weight: 600;
+        border-bottom: 2px solid var(--gray-light);
+    }
+
+    .cover-chain-table th:first-child, .cover-chain-table td:first-child {
+        text-align: left;
+    }
+
+    .cover-chain-table td {
+        padding: 0.5rem;
+        text-align: right;
+        border-bottom: 1px solid var(--lighter);
+        cursor: pointer;
+    }
+
+    .cover-chain-table tr:hover td {
+        background: #EEF2FF;
+    }
+
+    .cover-chain-table tr.cover-row-selected td {
+        background: #C7D2FE;
+    }
+
+    .cover-preset-pill {
+        display: inline-block;
+        padding: 0.15rem 0.5rem;
+        border-radius: var(--radius-md);
+        font-size: 0.65rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        margin-left: 0.375rem;
+    }
+
+    .cover-preset-conservative { background: #D1FAE5; color: #065F46; }
+    .cover-preset-balanced { background: #DBEAFE; color: #1E40AF; }
+    .cover-preset-aggressive { background: #FEE2E2; color: #991B1B; }
+
+    .cover-preview-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+        gap: 0.75rem;
+        margin-top: 0.75rem;
+    }
+
+    .cover-breakeven-callout {
+        background: linear-gradient(135deg, #EEF2FF 0%, #E0E7FF 100%);
+        border: 1px solid #C7D2FE;
+        border-radius: var(--radius-md);
+        padding: 1rem;
+        text-align: center;
+        margin-top: 1rem;
+    }
+
+    .cover-breakeven-callout .value {
+        font-size: 1.75rem;
+        font-weight: 700;
+        color: #4338CA;
+    }
+
+    .cover-warning-item {
+        font-size: 0.8rem;
+        color: #92400E;
+        background: #FEF3C7;
+        padding: 0.5rem 0.75rem;
+        border-radius: var(--radius-md);
+        margin-top: 0.375rem;
+    }
+
+    .cover-blocking-item {
+        font-size: 0.8rem;
+        color: #991B1B;
+        background: #FEE2E2;
+        padding: 0.5rem 0.75rem;
+        border-radius: var(--radius-md);
+        margin-top: 0.375rem;
+    }
+
+    .cover-lot-size-banner {
+        font-size: 0.85rem;
+        font-weight: 600;
+        color: #92400E;
+        background: #FEF3C7;
+        border: 1px solid #F59E0B;
+        padding: 0.75rem 1rem;
+        border-radius: var(--radius-md);
+        margin-bottom: 1rem;
+    }
+
+    .hedge-badge-warning {
+        border-color: #F59E0B !important;
+        background: #FEF3C7 !important;
+        color: #92400E !important;
+    }
+
+    .cover-strike-stepper {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 1.5rem;
+        margin: 0.5rem 0 1rem 0;
+    }
+
+    .cover-strike-stepper-current {
+        text-align: center;
+        min-width: 140px;
+    }
+
+    .cover-strike-stepper-current .strike {
+        font-size: 1.75rem;
+        font-weight: 700;
+        color: #4338CA;
+    }
+
+    .cover-strike-stepper-current .premium {
+        font-size: 0.8rem;
+        color: var(--gray);
+    }
+
+    .cover-graph-card {
+        margin-top: 1.5rem;
+        background: var(--lighter);
+        border: 1px solid #E5E7EB;
+        border-radius: var(--radius-md);
+        padding: 1rem 1.25rem 0.75rem 1.25rem;
+    }
+
+    .cover-graph-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        margin-bottom: 0.5rem;
+    }
+
+    .cover-graph-title {
+        font-size: 0.95rem;
+        font-weight: 700;
+        color: var(--dark);
+    }
+
+    .cover-graph-legend {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.75rem;
+    }
+
+    .cover-graph-legend-item {
+        display: flex;
+        align-items: center;
+        gap: 0.3rem;
+        font-size: 0.7rem;
+        color: var(--gray);
+        white-space: nowrap;
+    }
+
+    .cover-graph-legend-swatch {
+        width: 14px;
+        height: 3px;
+        border-radius: 2px;
+        display: inline-block;
+    }
+
+    .cover-graph-canvas-wrap {
+        position: relative;
+        height: 340px;
+        width: 100%;
+    }
+
+    .cover-graph-caption {
+        font-size: 0.72rem;
+        color: var(--gray);
+        margin-top: 0.5rem;
+        line-height: 1.4;
+    }
+
+    .cover-graph-tooltip {
+        position: absolute;
+        top: 0;
+        left: 0;
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.1s ease;
+        background: white;
+        border: 1px solid #E5E7EB;
+        border-radius: 10px;
+        box-shadow: 0 10px 25px -5px rgba(0,0,0,0.15), 0 4px 6px -2px rgba(0,0,0,0.08);
+        width: 240px;
+        z-index: 20;
+        overflow: hidden;
+        font-size: 0.75rem;
+    }
+
+    .cover-tt-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        padding: 0.6rem 0.75rem 0.4rem 0.75rem;
+        border-bottom: 1px solid #F1F5F9;
+    }
+
+    .cover-tt-spot {
+        font-weight: 700;
+        font-size: 0.85rem;
+        color: var(--dark);
+    }
+
+    .cover-tt-move {
+        font-size: 0.68rem;
+        color: var(--gray);
+    }
+
+    .cover-tt-headline {
+        padding: 0.6rem 0.75rem;
+        text-align: center;
+    }
+
+    .cover-tt-headline .pnl {
+        font-size: 1.35rem;
+        font-weight: 800;
+        line-height: 1.1;
+    }
+
+    .cover-tt-headline .pnl-label {
+        font-size: 0.68rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        margin-top: 0.1rem;
+    }
+
+    .cover-tt-legs {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 0.5rem;
+        padding: 0 0.75rem 0.6rem 0.75rem;
+    }
+
+    .cover-tt-leg {
+        background: var(--lighter);
+        border-radius: 6px;
+        padding: 0.35rem 0.5rem;
+    }
+
+    .cover-tt-leg .leg-label {
+        font-size: 0.62rem;
+        color: var(--gray);
+        text-transform: uppercase;
+        letter-spacing: 0.03em;
+    }
+
+    .cover-tt-leg .leg-value {
+        font-size: 0.78rem;
+        font-weight: 700;
+        margin-top: 0.1rem;
+    }
+
+    .cover-tt-footer {
+        padding: 0.5rem 0.75rem;
+        background: var(--lighter);
+        border-top: 1px solid #F1F5F9;
+    }
+
+    .cover-tt-footer-row {
+        display: flex;
+        align-items: center;
+        gap: 0.35rem;
+        font-size: 0.68rem;
+        color: var(--dark);
+    }
+
+    .cover-tt-footer-row + .cover-tt-footer-row {
+        margin-top: 0.3rem;
+    }
+
+    .cover-tt-badge {
+        display: inline-block;
+        padding: 0.1rem 0.4rem;
+        border-radius: 999px;
+        font-size: 0.62rem;
+        font-weight: 700;
     }
 
     .average-modal-body {
@@ -1079,7 +1471,21 @@
     </div>
 </div>
 
+<!-- Cover Position Modal (Covered Call Protection) -->
+<div class="modal-overlay" id="coverPositionModal" onclick="handleCoverOverlayClick(event)">
+    <div class="cover-modal-content" onclick="event.stopPropagation()">
+        <div class="cover-modal-header">
+            <h2>🛡️ Cover Position — Sell Calls Against This Future</h2>
+            <button class="cover-modal-close" onclick="closeCoverModal()">✕</button>
+        </div>
+        <div class="cover-modal-body" id="coverModalBody">
+            <div class="loading-spinner">Loading option chain...</div>
+        </div>
+    </div>
+</div>
+
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="{% static 'hedging/js/payoff_calculator.js' %}"></script>
 <script>
 let currentPosition = null;
 let isOrderProcessing = false;
@@ -1163,6 +1569,7 @@ document.addEventListener('DOMContentLoaded', async function() {
     await loadPnlSnapshots();
     initPnlChart();
     brokersLoadedThisCycle.clear();
+    await loadActiveHedges();
     loadPositions('breeze');
     loadPositions('neo');
     startAutoRefresh();
@@ -1455,6 +1862,7 @@ function displayPositions(broker, positions) {
                     <tr>
                         <td>
                             <button class="close-btn" onclick="showCloseModal('${broker}', '${pos.trading_symbol || pos.symbol}', positionsCache['${broker}'][${idx}])">Close</button>
+                            ${renderCoverButtonOrBadge(broker, pos, idx)}
                         </td>
                         <td><strong>${pos.symbol}</strong><br><small style="color: var(--gray);">${pos.product}${pos.lot_size ? ' (lot:' + pos.lot_size + ')' : ''}</small></td>
                         <td><span class="direction-${pos.direction.toLowerCase()}">${pos.direction}</span></td>
@@ -2975,6 +3383,828 @@ function showEditAvgModal(tradingSymbol, currentAvg) {
     .catch(err => {
         alert('Network error: ' + err.message);
     });
+}
+
+// ===================== Cover Position (Covered Call Protection) =====================
+// A damage-control tool: sell calls against an existing long futures position to pull
+// the effective breakeven closer to the market. Never sells more calls than uncovered
+// futures lots. Everything here is user-initiated from this page — no Telegram, no
+// automated firing. See apps/hedging/ for the backend.
+
+let activeHedgesCache = {};
+let coverModalState = null;
+let coverExecutionState = { isRunning: false, pollInterval: null, broker: null, symbol: null };
+let coverPayoffChartInstance = null;
+let coverPreviewDebounceTimer = null;
+
+async function loadActiveHedges() {
+    try {
+        const resp = await fetch('/hedging/api/active-status/');
+        const data = await resp.json();
+        if (data.success) {
+            activeHedgesCache = data.active_hedges || {};
+        }
+    } catch (e) {
+        console.warn('Could not load active hedges:', e);
+    }
+}
+
+function coverHedgeKey(broker, symbol, expiryDate) {
+    return `${broker}|${symbol}|${expiryDate}`;
+}
+
+// Called from the row template — shows a "Cover" button for uncovered LONG futures
+// rows, or a breakeven badge (opening the manage view) when a hedge is already active.
+function renderCoverButtonOrBadge(broker, pos, idx) {
+    if (!pos.expiry_date || pos.direction !== 'LONG') return '';
+    if (deriveInstrumentType(pos.trading_symbol || pos.symbol) !== 'FUT') return '';
+
+    const key = coverHedgeKey(broker, pos.symbol, pos.expiry_date);
+    const hedge = activeHedgesCache[key];
+    if (hedge) {
+        const be = hedge.effective_breakeven !== null ? '₹' + parseFloat(hedge.effective_breakeven).toFixed(2) : '—';
+        const warningClass = hedge.lot_size_unconfirmed ? ' hedge-badge-warning' : '';
+        const warningIcon = hedge.lot_size_unconfirmed ? '⚠️ ' : '🛡️ ';
+        const title = hedge.lot_size_unconfirmed ? 'title="Lot size unconfirmed for this symbol — verify before further action"' : '';
+        return `<br><span class="hedge-badge${warningClass}" ${title} onclick="showCoverModal('${broker}', '${pos.trading_symbol || pos.symbol}', positionsCache['${broker}'][${idx}])">${warningIcon}BE: ${be} · ${hedge.lots_covered} lots</span>`;
+    }
+    return `<br><button class="cover-btn" onclick="showCoverModal('${broker}', '${pos.trading_symbol || pos.symbol}', positionsCache['${broker}'][${idx}])">Cover</button>`;
+}
+
+function handleCoverOverlayClick(event) {
+    if (event.target.id === 'coverPositionModal' && !coverExecutionState.isRunning) {
+        closeCoverModal();
+    }
+}
+
+function closeCoverModal() {
+    if (coverExecutionState.isRunning) {
+        console.log('Cannot close modal while an order is being placed.');
+        return;
+    }
+    document.getElementById('coverPositionModal').classList.remove('active');
+    if (coverExecutionState.pollInterval) {
+        clearInterval(coverExecutionState.pollInterval);
+        coverExecutionState.pollInterval = null;
+    }
+    if (coverPayoffChartInstance) {
+        coverPayoffChartInstance.destroy();
+        coverPayoffChartInstance = null;
+    }
+    coverModalState = null;
+}
+
+async function showCoverModal(broker, symbol, posData) {
+    const key = coverHedgeKey(broker, posData.symbol, posData.expiry_date);
+    coverModalState = {
+        broker, symbol, posData,
+        futuresExpiry: posData.expiry_date,
+        activeHedge: activeHedgesCache[key] || null,
+        selectedStrike: null,
+        lots: 1,
+        orderType: 'MARKET',
+        limitPrice: null,
+        chainData: null,
+        lastPreview: null,
+    };
+
+    const modal = document.getElementById('coverPositionModal');
+    const body = document.getElementById('coverModalBody');
+    body.innerHTML = '<div class="loading-spinner">Loading option chain from Breeze...</div>';
+    modal.classList.add('active');
+
+    try {
+        const params = new URLSearchParams({ broker, symbol: posData.symbol, futures_expiry: posData.expiry_date });
+        const resp = await fetch(`/hedging/api/chain-and-recommendations/?${params}`);
+        const data = await resp.json();
+        if (!data.success) {
+            body.innerHTML = `<div class="cover-blocking-item">Failed to load option chain: ${data.error}</div>`;
+            return;
+        }
+        coverModalState.chainData = data;
+        const balanced = data.recommendations && data.recommendations.BALANCED;
+        coverModalState.selectedStrike = balanced ? balanced.strike : ((data.chain[0] || {}).strike || null);
+        coverModalState.lots = Math.max(1, Math.min(data.futures_lots, data.uncovered_lots));
+        renderCoverModalBody();
+    } catch (e) {
+        body.innerHTML = `<div class="cover-blocking-item">Error loading option chain: ${e.message}</div>`;
+    }
+}
+
+function renderCoverModalBody() {
+    const state = coverModalState;
+    const data = state.chainData;
+    const body = document.getElementById('coverModalBody');
+
+    const presetBadgesFor = (strike) => {
+        const badges = [];
+        for (const [presetKey, rec] of Object.entries(data.recommendations || {})) {
+            if (rec && Math.abs(rec.strike - strike) < 0.01) {
+                badges.push(`<span class="cover-preset-pill cover-preset-${presetKey.toLowerCase()}">${presetKey}</span>`);
+            }
+        }
+        return badges.join('');
+    };
+
+    const chainRows = (data.chain || []).map(row => `
+        <tr class="${row.strike === state.selectedStrike ? 'cover-row-selected' : ''}" onclick="selectCoverStrike(${row.strike})">
+            <td>${row.strike.toFixed(0)} ${presetBadgesFor(row.strike)}</td>
+            <td>₹${row.ltp.toFixed(2)}</td>
+            <td>${row.open_interest.toLocaleString('en-IN')}</td>
+            <td>${row.iv !== null ? row.iv.toFixed(1) + '%' : '—'}</td>
+            <td>${row.delta !== null ? row.delta.toFixed(2) : '—'}</td>
+            <td>${row.theta !== null ? row.theta.toFixed(2) : '—'}</td>
+        </tr>
+    `).join('');
+
+    const strikeList = (data.chain || []).map(r => r.strike);
+    const selectedIdx = strikeList.indexOf(state.selectedStrike);
+    const selectedChainRow = selectedIdx >= 0 ? data.chain[selectedIdx] : null;
+    const atFirstStrike = selectedIdx <= 0;
+    const atLastStrike = selectedIdx === -1 || selectedIdx >= strikeList.length - 1;
+
+    let hedgeManageHtml = '';
+    if (state.activeHedge) {
+        const openLegs = (state.activeHedge.legs || []).filter(l => l.status !== 'CANCELLED' && l.status !== 'FAILED');
+        hedgeManageHtml = `
+            <div class="cover-section-title">Existing Hedge on This Position</div>
+            <div class="cover-breakeven-callout">
+                <div style="font-size:0.8rem;color:var(--gray);">Effective Breakeven</div>
+                <div class="value">${state.activeHedge.effective_breakeven !== null ? '₹' + parseFloat(state.activeHedge.effective_breakeven).toFixed(2) : '—'}</div>
+                <div style="font-size:0.8rem;color:var(--gray);">${state.activeHedge.lots_covered} of ${data.futures_lots} lots covered</div>
+            </div>
+            ${openLegs.map(leg => `
+                <div class="modal-info-item" style="margin-top:0.5rem;display:flex;justify-content:space-between;align-items:center;">
+                    <div><strong>${leg.strike.toFixed(0)} CE</strong> × ${leg.lots} lots <small style="color:var(--gray);">(${leg.status})</small></div>
+                    <div>
+                        <button class="btn" style="background:#6366F1;color:white;padding:0.4rem 0.8rem;font-size:0.75rem;" onclick="startRoll(${leg.id}, ${leg.strike})">🔄 Roll</button>
+                        <button class="btn btn-secondary" style="padding:0.4rem 0.8rem;font-size:0.75rem;" onclick="confirmBuyBack(${leg.id})">Buy Back</button>
+                    </div>
+                </div>
+            `).join('')}
+            <hr style="margin:1.25rem 0;border:none;border-top:1px solid var(--lighter);">
+        `;
+    }
+
+    const lotSizeBanner = data.lot_size_unconfirmed ? `
+        <div class="cover-lot-size-banner">
+            ⚠️ Lot size unconfirmed for ${state.posData.symbol} (resolved to ${data.lot_size}). The "lots" figures
+            below may actually be raw units, not true lot counts — the quantity cap and breakeven numbers on this
+            page could be wrong. Verify the real F&amp;O lot size for this symbol before placing any order.
+        </div>
+    ` : '';
+
+    body.innerHTML = `
+        ${lotSizeBanner}
+        <div class="modal-info-grid">
+            <div class="modal-info-item"><div class="modal-info-label">Symbol</div><div class="modal-info-value">${state.posData.symbol}</div></div>
+            <div class="modal-info-item"><div class="modal-info-label">Futures Avg Price</div><div class="modal-info-value">₹${data.futures_avg_price.toFixed(2)}</div></div>
+            <div class="modal-info-item"><div class="modal-info-label">Spot / LTP</div><div class="modal-info-value">₹${data.spot_price.toFixed(2)}</div></div>
+            <div class="modal-info-item"><div class="modal-info-label">Uncovered Lots</div><div class="modal-info-value">${data.uncovered_lots} of ${data.futures_lots}</div></div>
+        </div>
+
+        ${hedgeManageHtml}
+
+        <div class="cover-section-title">Sell a Call — Strike (Expiry: ${data.option_expiry})</div>
+        <div class="cover-strike-stepper">
+            <button class="btn" style="background:#6366F1;color:white;" onclick="stepCoverStrike(-1)" ${atFirstStrike ? 'disabled' : ''} title="Previous strike">◀ Prev</button>
+            <div class="cover-strike-stepper-current">
+                <div class="strike">${state.selectedStrike !== null ? state.selectedStrike.toFixed(0) : '—'} CE</div>
+                <div class="premium">${selectedChainRow ? '₹' + selectedChainRow.ltp.toFixed(2) + ' premium' : ''}</div>
+            </div>
+            <button class="btn" style="background:#6366F1;color:white;" onclick="stepCoverStrike(1)" ${atLastStrike ? 'disabled' : ''} title="Next strike">Next ▶</button>
+        </div>
+
+        <div class="cover-preview-grid">
+            <div>
+                <label class="modal-info-label">Lots to Sell (max ${data.uncovered_lots} lots)</label>
+                <input type="number" id="coverLotsInput" min="1" max="${data.uncovered_lots}" value="${state.lots}"
+                       style="width:100%;padding:0.5rem;border-radius:var(--radius-md);border:1px solid var(--gray-light);"
+                       oninput="updateCoverLots(this.value)">
+                <div style="font-size:0.7rem;color:var(--gray);margin-top:0.25rem;">
+                    1 lot = ${data.lot_size} units &middot; ${state.lots} lot(s) = <span id="coverLotsInUnits">${state.lots * data.lot_size}</span> units
+                </div>
+            </div>
+            <div>
+                <label class="modal-info-label">Order Type</label>
+                <select id="coverOrderType" style="width:100%;padding:0.5rem;border-radius:var(--radius-md);border:1px solid var(--gray-light);" onchange="updateCoverOrderType(this.value)">
+                    <option value="MARKET" ${state.orderType === 'MARKET' ? 'selected' : ''}>Market</option>
+                    <option value="LIMIT" ${state.orderType === 'LIMIT' ? 'selected' : ''}>Limit</option>
+                </select>
+            </div>
+            <div id="coverLimitPriceWrap" style="display:${state.orderType === 'LIMIT' ? 'block' : 'none'};">
+                <label class="modal-info-label">Limit Price</label>
+                <input type="number" id="coverLimitPrice" step="0.05"
+                       style="width:100%;padding:0.5rem;border-radius:var(--radius-md);border:1px solid var(--gray-light);"
+                       oninput="updateCoverLimitPrice(this.value)">
+            </div>
+        </div>
+
+        <div class="cover-preview-grid" id="coverQuickStats" style="margin-top:0.5rem;">
+            <div class="modal-info-item"><div class="modal-info-label">Premium (per unit)</div><div class="modal-info-value" id="coverQuickPremium">${selectedChainRow ? '₹' + selectedChainRow.ltp.toFixed(2) : '—'}</div></div>
+            <div class="modal-info-item"><div class="modal-info-label">Total Premium Collected</div><div class="modal-info-value" id="coverQuickTotalPremium">${selectedChainRow ? '₹' + (selectedChainRow.ltp * data.lot_size * state.lots).toLocaleString('en-IN', {maximumFractionDigits: 0}) : '—'}</div></div>
+        </div>
+        <div style="font-size:0.7rem;color:var(--gray);margin-top:0.15rem;">
+            Total Premium Collected = premium/unit &times; ${data.lot_size} units/lot &times; lots sold (before charges — see charges breakdown below).
+        </div>
+
+        <div class="cover-graph-card">
+            <div class="cover-graph-header">
+                <div class="cover-graph-title">Payoff at Expiry</div>
+                <div class="cover-graph-legend" id="coverGraphLegend"></div>
+            </div>
+            <div class="cover-graph-canvas-wrap">
+                <canvas id="coverPayoffChart"></canvas>
+                <div id="coverGraphTooltip" class="cover-graph-tooltip"></div>
+            </div>
+            <div class="cover-graph-caption">
+                Shows profit/loss if the stock settles at each price <strong>at expiry</strong> (ignores time value
+                between now and then). Green = profit, red = loss. Drag through strikes above to see the shape change instantly.
+            </div>
+        </div>
+
+        <div class="cover-section-title">Full Option Chain — click any strike to jump directly</div>
+        <div style="overflow-x:auto;">
+        <table class="cover-chain-table">
+            <thead><tr><th>Strike</th><th>Premium</th><th>OI</th><th>IV</th><th>Delta</th><th>Theta</th></tr></thead>
+            <tbody>${chainRows || '<tr><td colspan="6">No call strikes available at/above spot.</td></tr>'}</tbody>
+        </table>
+        </div>
+
+        <div id="coverPreviewPanel"></div>
+
+        <div id="coverConfirmSection" class="modal-footer" style="margin-top:1.5rem;">
+            <button class="btn btn-secondary" onclick="closeCoverModal()" id="coverCancelBtn">Cancel</button>
+            <button class="btn" style="background:#6366F1;color:white;" onclick="confirmCoverOrder()" id="coverConfirmBtn" disabled>Sell Call &amp; Cover</button>
+        </div>
+
+        <div id="coverProgressSection" style="display:none;">
+            <h3 style="font-size:1.125rem;margin-bottom:1rem;"><span>🔄</span> Placing Order...</h3>
+            <div style="background:#E5E7EB;border-radius:8px;height:30px;overflow:hidden;margin-bottom:1rem;">
+                <div id="cover-progress-bar" style="width:0%;height:100%;background:linear-gradient(90deg,#6366F1,#4338CA);display:flex;align-items:center;justify-content:center;color:white;font-weight:600;font-size:0.875rem;transition:width 0.3s ease;">
+                    <span id="cover-progress-percent">0%</span>
+                </div>
+            </div>
+            <div id="cover-status-log" style="max-height:150px;overflow-y:auto;font-family:monospace;font-size:0.75rem;background:#F9FAFB;border:1px solid #E5E7EB;border-radius:8px;padding:0.75rem;"></div>
+        </div>
+    `;
+
+    drawCoverPayoffGraph();
+    refreshCoverPreview();
+}
+
+function selectCoverStrike(strike) {
+    coverModalState.selectedStrike = strike;
+    renderCoverModalBody();
+}
+
+// Step to the next/previous strike actually present in the fetched chain
+// (never guesses a strike that doesn't exist) — mirrors the "Prev/Next"
+// stepper pattern used elsewhere for quick strike adjustment, so the
+// payoff graph and quick stats update instantly without re-fetching the
+// whole chain.
+function stepCoverStrike(direction) {
+    const state = coverModalState;
+    const strikeList = (state.chainData.chain || []).map(r => r.strike);
+    const currentIdx = strikeList.indexOf(state.selectedStrike);
+    if (currentIdx === -1) return;
+    const nextIdx = currentIdx + direction;
+    if (nextIdx < 0 || nextIdx >= strikeList.length) return;
+    selectCoverStrike(strikeList[nextIdx]);
+}
+
+// Recomputes the strike-independent quick stats (premium, total premium
+// collected) instantly from client-side data — no network round trip.
+// "Lots" here is always a LOT count; the "= N units" line spells out the
+// unit-level quantity explicitly so the two are never conflated.
+function updateCoverQuickStats() {
+    const state = coverModalState;
+    const data = state.chainData;
+    const chainRow = (data.chain || []).find(r => r.strike === state.selectedStrike);
+    const premium = chainRow ? chainRow.ltp : null;
+
+    const premiumEl = document.getElementById('coverQuickPremium');
+    const totalEl = document.getElementById('coverQuickTotalPremium');
+    const unitsEl = document.getElementById('coverLotsInUnits');
+    if (premiumEl) premiumEl.textContent = premium !== null ? '₹' + premium.toFixed(2) : '—';
+    if (totalEl) totalEl.textContent = premium !== null
+        ? '₹' + (premium * data.lot_size * state.lots).toLocaleString('en-IN', { maximumFractionDigits: 0 })
+        : '—';
+    if (unitsEl) unitsEl.textContent = state.lots * data.lot_size;
+}
+
+function updateCoverLots(value) {
+    const parsed = parseInt(value, 10);
+    const maxLots = coverModalState.chainData.uncovered_lots;
+    coverModalState.lots = isNaN(parsed) ? 1 : Math.max(1, Math.min(parsed, maxLots));
+    updateCoverQuickStats();
+    drawCoverPayoffGraph();
+    refreshCoverPreview();
+}
+
+function updateCoverOrderType(value) {
+    coverModalState.orderType = value;
+    const wrap = document.getElementById('coverLimitPriceWrap');
+    if (wrap) wrap.style.display = value === 'LIMIT' ? 'block' : 'none';
+    refreshCoverPreview();
+}
+
+function updateCoverLimitPrice(value) {
+    coverModalState.limitPrice = parseFloat(value) || null;
+}
+
+// ---- Payoff graph formatting helpers ----
+
+function formatINRCompact(value) {
+    const abs = Math.abs(value);
+    const sign = value < 0 ? '-' : '';
+    if (abs >= 10000000) return `${sign}₹${(abs / 10000000).toFixed(2)}Cr`;
+    if (abs >= 100000) return `${sign}₹${(abs / 100000).toFixed(2)}L`;
+    if (abs >= 1000) return `${sign}₹${(abs / 1000).toFixed(1)}k`;
+    return `${sign}₹${abs.toFixed(0)}`;
+}
+
+function formatINRFull(value) {
+    const sign = value < 0 ? '-' : '';
+    return `${sign}₹${Math.abs(value).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
+}
+
+// Custom Chart.js plugin (no external dependency) drawing dashed vertical
+// reference lines — current spot, futures avg cost, strike/cap, breakeven —
+// with small labels, so the graph reads like a proper trading-desk payoff
+// chart rather than a bare line.
+const coverPayoffReferenceLinesPlugin = {
+    id: 'coverPayoffReferenceLines',
+    afterDatasetsDraw(chart, args, opts) {
+        const { ctx, chartArea, scales } = chart;
+        const lines = opts.lines || [];
+        ctx.save();
+        lines.forEach((line, idx) => {
+            const x = scales.x.getPixelForValue(line.value);
+            if (x < chartArea.left || x > chartArea.right) return;
+
+            ctx.beginPath();
+            ctx.strokeStyle = line.color;
+            ctx.lineWidth = 1.5;
+            ctx.setLineDash([5, 4]);
+            ctx.moveTo(x, chartArea.top);
+            ctx.lineTo(x, chartArea.bottom);
+            ctx.stroke();
+
+            // Stagger label vertical position slightly so overlapping lines
+            // (e.g. breakeven landing very close to avg cost) stay legible.
+            const labelY = chartArea.top + 12 + (idx % 3) * 14;
+            const label = `${line.label} ₹${line.value.toFixed(0)}`;
+            ctx.setLineDash([]);
+            ctx.font = '600 10px system-ui, sans-serif';
+            const textWidth = ctx.measureText(label).width;
+            const boxX = Math.min(Math.max(x - textWidth / 2 - 4, chartArea.left), chartArea.right - textWidth - 8);
+
+            ctx.fillStyle = 'rgba(255,255,255,0.92)';
+            ctx.fillRect(boxX, labelY - 10, textWidth + 8, 14);
+            ctx.fillStyle = line.color;
+            ctx.fillText(label, boxX + 4, labelY);
+        });
+        ctx.restore();
+    },
+};
+
+function renderCoverGraphLegend(lines) {
+    const el = document.getElementById('coverGraphLegend');
+    if (!el) return;
+    el.innerHTML = lines.map(line => `
+        <span class="cover-graph-legend-item">
+            <span class="cover-graph-legend-swatch" style="background:${line.color};"></span>${line.label}
+        </span>
+    `).join('') + `
+        <span class="cover-graph-legend-item">
+            <span class="cover-graph-legend-swatch" style="background:#059669;height:8px;border-radius:2px;"></span>Profit
+        </span>
+        <span class="cover-graph-legend-item">
+            <span class="cover-graph-legend-swatch" style="background:#DC2626;height:8px;border-radius:2px;"></span>Loss
+        </span>
+    `;
+}
+
+function drawCoverPayoffGraph() {
+    const state = coverModalState;
+    const data = state.chainData;
+    const canvas = document.getElementById('coverPayoffChart');
+    if (!state.selectedStrike || !canvas) return;
+
+    const chainRow = (data.chain || []).find(r => r.strike === state.selectedStrike);
+    const premium = chainRow ? chainRow.ltp : 0;
+
+    // Widen the plotted range so every reference line (spot, avg cost,
+    // strike, breakeven) is comfortably visible, not just ±20% of spot.
+    const anchorPrices = [data.spot_price, data.futures_avg_price, state.selectedStrike];
+    const rangeCenter = data.spot_price;
+    const rangeLo = Math.min(...anchorPrices) * 0.90;
+    const rangeHi = Math.max(...anchorPrices) * 1.10;
+    const spread = Math.max((rangeHi - rangeLo) / 2 / rangeCenter, 0.20);
+    const spotRange = HedgingPayoffCalculator.buildSpotRange(rangeCenter, spread, 60);
+
+    const curve = HedgingPayoffCalculator.calculatePayoffAtExpiry(
+        spotRange, data.futures_avg_price, data.futures_lots, data.lot_size,
+        state.selectedStrike, premium, state.lots
+    );
+    const points = curve.map(p => ({ x: p.spot, y: p.total_pnl }));
+
+    const breakevens = HedgingPayoffCalculator.findZeroCrossings(curve);
+    const referenceLines = [
+        { value: data.spot_price, label: 'Spot', color: '#6B7280' },
+        { value: data.futures_avg_price, label: 'Avg Cost', color: '#9333EA' },
+        { value: state.selectedStrike, label: 'Strike (cap)', color: '#DC2626' },
+    ];
+    if (breakevens.length) {
+        referenceLines.push({ value: breakevens[0], label: 'Breakeven', color: '#059669' });
+    }
+    renderCoverGraphLegend(referenceLines);
+
+    if (coverPayoffChartInstance) {
+        coverPayoffChartInstance.destroy();
+    }
+    const tooltipEl = document.getElementById('coverGraphTooltip');
+    if (tooltipEl) tooltipEl.style.opacity = 0;
+
+    coverPayoffChartInstance = new Chart(canvas.getContext('2d'), {
+        type: 'line',
+        data: {
+            datasets: [{
+                label: 'P&L at Expiry',
+                data: points,
+                borderWidth: 2.5,
+                pointRadius: 0,
+                pointHoverRadius: 5,
+                pointHitRadius: 14,
+                tension: 0,
+                fill: { target: { value: 0 } },
+                segment: {
+                    borderColor: (ctx) => (ctx.p0.parsed.y + ctx.p1.parsed.y) / 2 >= 0 ? '#059669' : '#DC2626',
+                    backgroundColor: (ctx) => (ctx.p0.parsed.y + ctx.p1.parsed.y) / 2 >= 0 ? 'rgba(5,150,105,0.12)' : 'rgba(220,38,38,0.12)',
+                },
+            }],
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
+            plugins: {
+                legend: { display: false },
+                coverPayoffReferenceLines: { lines: referenceLines },
+                tooltip: {
+                    enabled: false,
+                    external: externalCoverTooltipHandler,
+                },
+            },
+            scales: {
+                x: {
+                    type: 'linear',
+                    title: { display: true, text: 'Underlying Price at Expiry (₹)', font: { size: 11 } },
+                    ticks: { callback: (v) => '₹' + v, font: { size: 10 } },
+                    grid: { color: '#F1F5F9' },
+                },
+                y: {
+                    title: { display: true, text: 'Profit / Loss', font: { size: 11 } },
+                    ticks: { callback: (v) => formatINRCompact(v), font: { size: 10 } },
+                    grid: {
+                        color: (ctx) => ctx.tick.value === 0 ? '#111827' : '#F1F5F9',
+                        lineWidth: (ctx) => ctx.tick.value === 0 ? 2 : 1,
+                    },
+                },
+            },
+        },
+        plugins: [coverPayoffReferenceLinesPlugin],
+    });
+
+    // Stashed on the instance (not chart options) so the external tooltip
+    // handler can look up the exact futures/call P&L breakdown at whatever
+    // point the user is hovering, without recomputing the curve per frame.
+    coverPayoffChartInstance.$coverPayoffCurve = curve;
+    coverPayoffChartInstance.$coverPayoffBreakevens = breakevens;
+}
+
+// Builds the rich "what's really happening here" hover summary: headline
+// P&L, plain-language futures/call leg breakdown, distance to breakeven,
+// and whether this price is in capped/uncapped/full-premium territory.
+function buildCoverTooltipHTML(point, state, breakevens) {
+    const isProfit = point.total_pnl >= 0;
+    const pnlColor = isProfit ? '#059669' : '#DC2626';
+    const pctMove = ((point.spot - state.chainData.spot_price) / state.chainData.spot_price) * 100;
+    const moveLabel = (pctMove >= 0 ? '+' : '') + pctMove.toFixed(1) + '% from current spot';
+
+    const fullyCapped = HedgingPayoffCalculator.isFullyCapped(state.chainData.futures_lots, state.lots);
+    const isAboveStrike = point.spot > state.selectedStrike;
+    let statusBadge;
+    if (isAboveStrike && fullyCapped) {
+        statusBadge = `<span class="cover-tt-badge" style="background:#FEE2E2;color:#991B1B;">🔒 Capped — call assigned</span>`;
+    } else if (isAboveStrike && !fullyCapped) {
+        statusBadge = `<span class="cover-tt-badge" style="background:#FEF3C7;color:#92400E;">Partial cap — uncovered lots still run</span>`;
+    } else {
+        statusBadge = `<span class="cover-tt-badge" style="background:#D1FAE5;color:#065F46;">✓ Full premium kept</span>`;
+    }
+
+    let breakevenRow = '';
+    if (breakevens && breakevens.length) {
+        const nearestBE = breakevens.reduce((best, be) => Math.abs(be - point.spot) < Math.abs(best - point.spot) ? be : best);
+        const dist = point.spot - nearestBE;
+        const distLabel = (dist >= 0 ? '' : '−') + '₹' + Math.abs(dist).toFixed(2) + (dist >= 0 ? ' above breakeven' : ' below breakeven');
+        breakevenRow = `<div class="cover-tt-footer-row">📍 ${distLabel}</div>`;
+    }
+
+    return `
+        <div class="cover-tt-header">
+            <span class="cover-tt-spot">₹${point.spot.toFixed(2)}</span>
+            <span class="cover-tt-move">${moveLabel}</span>
+        </div>
+        <div class="cover-tt-headline">
+            <div class="pnl" style="color:${pnlColor};">${formatINRFull(point.total_pnl)}</div>
+            <div class="pnl-label" style="color:${pnlColor};">${isProfit ? 'Profit' : 'Loss'}</div>
+        </div>
+        <div class="cover-tt-legs">
+            <div class="cover-tt-leg">
+                <div class="leg-label">📈 Futures</div>
+                <div class="leg-value" style="color:${point.futures_pnl >= 0 ? '#059669' : '#DC2626'};">${formatINRFull(point.futures_pnl)}</div>
+            </div>
+            <div class="cover-tt-leg">
+                <div class="leg-label">📉 Call Sold</div>
+                <div class="leg-value" style="color:${point.call_pnl >= 0 ? '#059669' : '#DC2626'};">${formatINRFull(point.call_pnl)}</div>
+            </div>
+        </div>
+        <div class="cover-tt-footer">
+            ${breakevenRow}
+            <div class="cover-tt-footer-row">${statusBadge}</div>
+        </div>
+    `;
+}
+
+// Chart.js "external" tooltip pattern: we render our own positioned HTML
+// card instead of the default canvas-drawn tooltip, so the hover summary
+// can have real typography/layout instead of a few lines of plain text.
+function externalCoverTooltipHandler(context) {
+    const { chart, tooltip } = context;
+    const tooltipEl = document.getElementById('coverGraphTooltip');
+    if (!tooltipEl) return;
+
+    if (tooltip.opacity === 0) {
+        tooltipEl.style.opacity = 0;
+        return;
+    }
+
+    const dataPoint = tooltip.dataPoints && tooltip.dataPoints[0];
+    const curve = chart.$coverPayoffCurve;
+    if (!dataPoint || !curve || !curve.length) return;
+
+    const targetX = dataPoint.parsed.x;
+    const nearest = curve.reduce((best, p) => Math.abs(p.spot - targetX) < Math.abs(best.spot - targetX) ? p : best, curve[0]);
+
+    tooltipEl.innerHTML = buildCoverTooltipHTML(nearest, coverModalState, chart.$coverPayoffBreakevens);
+
+    const wrap = tooltipEl.parentElement;
+    const wrapWidth = wrap.clientWidth;
+    const wrapHeight = wrap.clientHeight;
+    const tooltipWidth = 240;
+    const tooltipHeight = tooltipEl.offsetHeight || 210;
+
+    let left = tooltip.caretX + 16;
+    if (left + tooltipWidth > wrapWidth) {
+        left = tooltip.caretX - tooltipWidth - 16;
+    }
+    left = Math.max(left, 4);
+
+    let top = tooltip.caretY - tooltipHeight / 2;
+    top = Math.min(Math.max(top, 4), wrapHeight - tooltipHeight - 4);
+
+    tooltipEl.style.left = left + 'px';
+    tooltipEl.style.top = top + 'px';
+    tooltipEl.style.opacity = 1;
+}
+
+function refreshCoverPreview() {
+    if (coverPreviewDebounceTimer) clearTimeout(coverPreviewDebounceTimer);
+    coverPreviewDebounceTimer = setTimeout(fetchCoverPreview, 400);
+}
+
+async function fetchCoverPreview() {
+    const state = coverModalState;
+    if (!state || !state.selectedStrike) return;
+    const panel = document.getElementById('coverPreviewPanel');
+    if (!panel) return;
+    panel.innerHTML = '<div class="loading-spinner">Calculating preview...</div>';
+
+    try {
+        const resp = await fetch('/hedging/api/preview/', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
+            body: JSON.stringify({
+                broker: state.broker, symbol: state.posData.symbol,
+                futures_expiry: state.futuresExpiry, option_expiry: state.chainData.option_expiry,
+                strike: state.selectedStrike, lots: state.lots,
+                order_type: state.orderType, limit_price: state.limitPrice,
+            }),
+        });
+        const data = await resp.json();
+        if (!data.success) {
+            panel.innerHTML = `<div class="cover-blocking-item">⛔ ${data.error}</div>`;
+            document.getElementById('coverConfirmBtn').disabled = true;
+            return;
+        }
+        state.lastPreview = data;
+        renderCoverPreviewPanel(data);
+    } catch (e) {
+        panel.innerHTML = `<div class="cover-blocking-item">Preview failed: ${e.message}</div>`;
+    }
+}
+
+function renderCoverPreviewPanel(data) {
+    const panel = document.getElementById('coverPreviewPanel');
+    if (!panel) return;
+    const warnings = (data.warnings || []).map(w => `<div class="cover-warning-item">⚠️ ${w.message}</div>`).join('');
+    const blocking = (data.blocking_issues || []).map(b => `<div class="cover-blocking-item">⛔ ${b.message}</div>`).join('');
+
+    panel.innerHTML = `
+        <div class="cover-breakeven-callout">
+            <div style="font-size:0.8rem;color:var(--gray);">Effective Breakeven After This Trade</div>
+            <div class="value">₹${data.effective_breakeven.toFixed(2)}</div>
+        </div>
+        <div class="cover-preview-grid">
+            <div class="modal-info-item"><div class="modal-info-label">Premium</div><div class="modal-info-value">₹${data.premium_estimate.toFixed(2)}</div></div>
+            <div class="modal-info-item"><div class="modal-info-label">Net Credit (after charges)</div><div class="modal-info-value">₹${Number(data.charges.net_amount).toLocaleString('en-IN')}</div></div>
+            <div class="modal-info-item"><div class="modal-info-label">Max Profit</div><div class="modal-info-value">${data.max_profit !== null ? '₹' + Number(data.max_profit).toLocaleString('en-IN') : 'Uncapped (partial cover)'}</div></div>
+            <div class="modal-info-item"><div class="modal-info-label">Est. Margin Required</div><div class="modal-info-value">₹${Number(data.margin_required).toLocaleString('en-IN')}</div></div>
+            <div class="modal-info-item"><div class="modal-info-label">Total Charges (est.)</div><div class="modal-info-value">₹${data.charges.total_charges}</div></div>
+            <div class="modal-info-item"><div class="modal-info-label">Loss Protection</div><div class="modal-info-value">${data.protection.protection_pct !== null ? data.protection.protection_pct.toFixed(0) + '%' : 'N/A'}</div></div>
+        </div>
+        ${warnings}
+        ${blocking}
+    `;
+
+    document.getElementById('coverConfirmBtn').disabled = !data.can_place_order;
+}
+
+function startCoverProgressPolling() {
+    if (coverExecutionState.pollInterval) clearInterval(coverExecutionState.pollInterval);
+    coverExecutionState.pollInterval = setInterval(() => {
+        if (!coverExecutionState.isRunning) {
+            clearInterval(coverExecutionState.pollInterval);
+            return;
+        }
+        fetch(`/hedging/api/order-progress/${coverExecutionState.broker}/${encodeURIComponent(coverExecutionState.symbol)}/`)
+            .then(res => res.json())
+            .then(data => {
+                if (!data.success) return;
+                const p = data.progress;
+                const pct = p.total_batches > 0 ? (p.batches_completed / p.total_batches) * 100 : 0;
+                document.getElementById('cover-progress-bar').style.width = pct + '%';
+                document.getElementById('cover-progress-percent').textContent = Math.round(pct) + '%';
+                if (p.last_log_message) {
+                    const log = document.getElementById('cover-status-log');
+                    const entry = document.createElement('div');
+                    entry.textContent = p.last_log_message;
+                    log.appendChild(entry);
+                    log.scrollTop = log.scrollHeight;
+                }
+            })
+            .catch(() => {});
+    }, 1500);
+}
+
+async function confirmCoverOrder() {
+    const state = coverModalState;
+    if (!state || !state.lastPreview || !state.lastPreview.can_place_order) return;
+
+    if (!confirm(`Sell ${state.lots} lot(s) of the ${state.selectedStrike} CE against your ${state.posData.symbol} futures position?\n\nThis places a real order on ${state.broker === 'breeze' ? 'ICICI Breeze' : 'Kotak Neo'}.`)) {
+        return;
+    }
+
+    document.getElementById('coverConfirmSection').style.display = 'none';
+    document.getElementById('coverProgressSection').style.display = 'block';
+
+    coverExecutionState.isRunning = true;
+    coverExecutionState.broker = state.broker;
+    coverExecutionState.symbol = state.posData.symbol;
+    startCoverProgressPolling();
+
+    try {
+        const resp = await fetch('/hedging/api/place-order/', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
+            body: JSON.stringify({
+                broker: state.broker, symbol: state.posData.symbol,
+                futures_expiry: state.futuresExpiry, option_expiry: state.chainData.option_expiry,
+                strike: state.selectedStrike, lots: state.lots,
+                order_type: state.orderType, limit_price: state.limitPrice,
+                confirm: true,
+            }),
+        });
+        const data = await resp.json();
+        coverExecutionState.isRunning = false;
+
+        const log = document.getElementById('cover-status-log');
+        if (data.success) {
+            document.getElementById('cover-progress-bar').style.width = '100%';
+            document.getElementById('cover-progress-percent').textContent = '100%';
+            const entry = document.createElement('div');
+            entry.style.color = '#10B981';
+            entry.textContent = `✅ Cover order placed successfully (${data.legs_placed} leg(s)).`;
+            log.appendChild(entry);
+            await loadActiveHedges();
+            setTimeout(() => { closeCoverModal(); loadPositions(state.broker); }, 1500);
+        } else {
+            const entry = document.createElement('div');
+            entry.style.color = '#EF4444';
+            entry.textContent = `❌ ${data.error}`;
+            log.appendChild(entry);
+            document.getElementById('coverConfirmSection').style.display = 'flex';
+            document.getElementById('coverProgressSection').style.display = 'none';
+        }
+    } catch (e) {
+        coverExecutionState.isRunning = false;
+        document.getElementById('cover-status-log').innerHTML = `<div style="color:#EF4444;">❌ ${e.message}</div>`;
+        document.getElementById('coverConfirmSection').style.display = 'flex';
+        document.getElementById('coverProgressSection').style.display = 'none';
+    }
+}
+
+// ---- Manual roll (buy back current short call, sell a new strike) ----
+
+async function startRoll(legId, currentStrike) {
+    const newStrikeStr = prompt(`Roll the ${currentStrike} CE to which new strike?`, currentStrike);
+    if (!newStrikeStr) return;
+    const newStrike = parseFloat(newStrikeStr);
+    if (isNaN(newStrike)) { alert('Invalid strike.'); return; }
+
+    try {
+        const previewResp = await fetch('/hedging/api/roll/preview/', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
+            body: JSON.stringify({ hedge_leg_id: legId, new_strike: newStrike }),
+        });
+        const preview = await previewResp.json();
+        if (!preview.success) { alert('Roll preview failed: ' + preview.error); return; }
+
+        const msg = `Roll ${currentStrike} CE → ${newStrike} CE\n\n` +
+            `Buy-back cost: ₹${preview.buyback_cost.toFixed(0)}\n` +
+            `New premium: ₹${preview.new_premium.toFixed(0)}\n` +
+            `Net ${preview.net_credit_debit >= 0 ? 'credit' : 'debit'}: ₹${Math.abs(preview.net_credit_debit).toFixed(0)}\n` +
+            `New effective breakeven: ₹${preview.new_effective_breakeven.toFixed(2)}\n\n` +
+            `Proceed with this roll?`;
+        if (!confirm(msg)) return;
+
+        const execResp = await fetch('/hedging/api/roll/execute/', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
+            body: JSON.stringify({ hedge_leg_id: legId, new_strike: newStrike, confirm: true }),
+        });
+        const execData = await execResp.json();
+        if (execData.success) {
+            alert('Roll completed successfully.');
+            await loadActiveHedges();
+            closeCoverModal();
+            loadPositions(coverExecutionState.broker || 'breeze');
+            loadPositions('neo');
+        } else {
+            alert('Roll failed: ' + execData.error);
+        }
+    } catch (e) {
+        alert('Roll failed: ' + e.message);
+    }
+}
+
+// ---- Manual buy-back (undo a hedge leg) ----
+
+async function confirmBuyBack(legId) {
+    try {
+        const previewResp = await fetch('/hedging/api/close-leg/preview/', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
+            body: JSON.stringify({ hedge_leg_id: legId }),
+        });
+        const preview = await previewResp.json();
+        if (!preview.success) { alert('Buy-back preview failed: ' + preview.error); return; }
+
+        const msg = `Buy back this call for ~₹${preview.buyback_cost.toFixed(0)}?\n\n` +
+            `Resulting futures breakeven: ₹${preview.resulting_breakeven_of_underlying_future.toFixed(2)}`;
+        if (!confirm(msg)) return;
+
+        const execResp = await fetch('/hedging/api/close-leg/execute/', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
+            body: JSON.stringify({ hedge_leg_id: legId, confirm: true }),
+        });
+        const execData = await execResp.json();
+        if (execData.success) {
+            alert('Call bought back successfully.');
+            await loadActiveHedges();
+            closeCoverModal();
+            loadPositions('breeze');
+            loadPositions('neo');
+        } else {
+            alert('Buy-back failed: ' + execData.error);
+        }
+    } catch (e) {
+        alert('Buy-back failed: ' + e.message);
+    }
 }
 </script>
 {% endblock %}
