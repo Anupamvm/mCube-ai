@@ -592,6 +592,12 @@ async function pollOtpStatus() {
             // Only focus if user hasn't already started typing
             const inp = document.getElementById('otp-input');
             if (!inp.value) inp.focus();
+        } else if (otpSubmitted) {
+            // Keep the panel (and "completing login..." message) visible until
+            // login_result resolves above — login_running may lag or never be
+            // set depending on which code path triggered this login, so it's
+            // not a reliable signal to hide the panel once OTP was submitted.
+            section.classList.add('active');
         } else if (!data.login_running) {
             section.classList.remove('active');
         }

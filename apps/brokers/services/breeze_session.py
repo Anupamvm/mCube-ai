@@ -258,6 +258,17 @@ class BreezeSessionManager:
             if not creds.api_key:
                 return False, "API key not configured"
 
+            # Report progress via the same NseFlags the web login page polls
+            # (breeze_auto_login_running / breeze_auto_login_result). The web
+            # UI's "Launch Auto-Login" button sets these directly, but logins
+            # triggered implicitly here (e.g. an expired session found during
+            # an unrelated API call) went unreported, leaving the login page
+            # stuck showing "OTP submitted - completing login..." forever
+            # even though this login was proceeding/completing in the background.
+            from apps.core.models import NseFlag
+            NseFlag.set('breeze_auto_login_running', str(time.time()), 'Auto-login start timestamp')
+            NseFlag.set('breeze_auto_login_result', '', 'Pending')
+            outcome = 'failed:login error'
             try:
                 from apps.brokers.services.breeze_auto_login import auto_login_breeze
 
@@ -273,16 +284,23 @@ class BreezeSessionManager:
                 if success:
                     logger.info(f"Breeze auto-login successful: {message}")
                     self._client = None  # Reset cached client
+                    outcome = 'success'
                     return True, message
                 else:
                     logger.error(f"Breeze auto-login failed: {message}")
+                    outcome = f'failed:{message}'
                     return False, message
 
             except ImportError:
+                outcome = 'failed:Selenium not installed'
                 return False, "Selenium not installed - cannot auto-login"
             except Exception as e:
                 logger.error(f"Auto-login error: {e}", exc_info=True)
+                outcome = f'failed:{e}'
                 return False, f"Auto-login error: {e}"
+            finally:
+                NseFlag.set('breeze_auto_login_running', '', 'Auto-login done')
+                NseFlag.set('breeze_auto_login_result', outcome, 'Auto-login result')
 
         finally:
             self._clear_auto_login_lock()
