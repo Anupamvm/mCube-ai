@@ -21,6 +21,57 @@ def format_breeze_expiry(expiry_date: date) -> str:
     return expiry_date.strftime('%d-%b-%Y')
 
 
+def resolve_breeze_stock_code(underlying_symbol: str, expiry_date: date) -> str:
+    """
+    Translate the plain NSE symbol (e.g. 'VBL') carried by Kotak Neo
+    positions into Breeze's own stock_code convention (e.g. 'VARBEV')
+    required for chain/quote calls — Breeze positions already report
+    their native code, so this is a no-op (identity fallback below) for
+    those, but Neo positions are not.
+
+    Two-step resolution, same pattern as futures_analyzer.py's
+    discover_instruments_for_symbol (used by Future Trade / Nifty
+    Strangle):
+    1. apps.brokers.utils.security_master.get_futures_instrument — fast,
+       no network call, but only matches when SecurityMaster's CSV has a
+       FUTSTK row for this exact expiry_date (it doesn't carry every
+       future-dated monthly contract, e.g. an expiry 2+ months out).
+    2. Breeze's own get_names(exchange_code='NSE') lookup — one network
+       call, but expiry-independent and authoritative (same mechanism as
+       apps.trading.services.chart_data_service.resolve_breeze_stock_code).
+    """
+    from django.core.cache import cache
+
+    from apps.brokers.utils.security_master import get_futures_instrument
+
+    instrument = get_futures_instrument(underlying_symbol, format_breeze_expiry(expiry_date))
+    if instrument and instrument.get('source') == 'security_master' and instrument.get('short_name'):
+        return instrument['short_name']
+
+    cache_key = f'hedging:breeze_stock_code:{underlying_symbol}'
+    cached = cache.get(cache_key)
+    if cached:
+        return cached
+
+    try:
+        from apps.brokers.integrations.breeze import get_breeze_client
+
+        breeze = get_breeze_client()
+        result = breeze.get_names(exchange_code='NSE', stock_code=underlying_symbol)
+        if result and result.get('isec_stock_code'):
+            breeze_code = result['isec_stock_code']
+            cache.set(cache_key, breeze_code, 6 * 60 * 60)
+            return breeze_code
+    except Exception as exc:
+        logger.warning(f"Breeze get_names lookup failed for {underlying_symbol!r}: {exc}")
+
+    logger.warning(
+        f"Could not resolve a Breeze stock code for {underlying_symbol!r} "
+        f"(expiry {expiry_date}) — falling back to the symbol as-is."
+    )
+    return underlying_symbol
+
+
 def fetch_covered_call_chain(
     underlying_symbol: str,
     option_expiry_date: date,
@@ -36,18 +87,21 @@ def fetch_covered_call_chain(
 
     `underlying_symbol` is the same plain NSE symbol (e.g. 'NIFTY',
     'RELIANCE') used elsewhere in this codebase for security-master
-    lookups (apps.brokers.utils.security_master.get_option_instrument) —
-    Breeze's `stock_code` param is not a separate code space here.
+    lookups — it is first translated to Breeze's own stock_code via
+    resolve_breeze_stock_code() since Breeze's `stock_code` param IS a
+    separate code space for many stocks (e.g. NSE 'VBL' -> Breeze
+    'VARBEV').
     """
     from apps.brokers.integrations.breeze_module.option_chain import get_and_save_option_chain_quotes
     from apps.brokers.models import OptionChainQuote
     from apps.strategies.services.greeks_calculator import calculate_all_greeks
 
+    breeze_stock_code = resolve_breeze_stock_code(underlying_symbol, option_expiry_date)
     breeze_expiry = format_breeze_expiry(option_expiry_date)
-    get_and_save_option_chain_quotes(underlying_symbol, expiry_date=breeze_expiry, product_type="options")
+    get_and_save_option_chain_quotes(breeze_stock_code, expiry_date=breeze_expiry, product_type="options")
 
     quotes = OptionChainQuote.objects.filter(
-        stock_code=underlying_symbol, expiry_date=option_expiry_date,
+        stock_code=breeze_stock_code, expiry_date=option_expiry_date,
     )
     calls_by_strike = {q.strike_price: q for q in quotes if q.right.lower() == 'call'}
     puts_by_strike = {q.strike_price: q for q in quotes if q.right.lower() == 'put'}

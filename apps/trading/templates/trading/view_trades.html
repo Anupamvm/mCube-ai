@@ -3391,6 +3391,7 @@ function showEditAvgModal(tradingSymbol, currentAvg) {
 // futures lots. Everything here is user-initiated from this page — no Telegram, no
 // automated firing. See apps/hedging/ for the backend.
 
+const BATCH_SIZE_LOTS_CLIENT = 10;  // Mirrors BATCH_SIZE_LOTS in apps/hedging/services/execution_service.py
 let activeHedgesCache = {};
 let coverModalState = null;
 let coverExecutionState = { isRunning: false, pollInterval: null, broker: null, symbol: null };
@@ -3464,6 +3465,7 @@ async function showCoverModal(broker, symbol, posData) {
         lots: 1,
         orderType: 'MARKET',
         limitPrice: null,
+        batchDelaySeconds: 15,
         chainData: null,
         lastPreview: null,
     };
@@ -3485,6 +3487,7 @@ async function showCoverModal(broker, symbol, posData) {
         const balanced = data.recommendations && data.recommendations.BALANCED;
         coverModalState.selectedStrike = balanced ? balanced.strike : ((data.chain[0] || {}).strike || null);
         coverModalState.lots = Math.max(1, Math.min(data.futures_lots, data.uncovered_lots));
+        coverModalState.batchDelaySeconds = data.default_batch_delay_seconds || 15;
         renderCoverModalBody();
     } catch (e) {
         body.innerHTML = `<div class="cover-blocking-item">Error loading option chain: ${e.message}</div>`;
@@ -3597,6 +3600,17 @@ function renderCoverModalBody() {
                 <input type="number" id="coverLimitPrice" step="0.05"
                        style="width:100%;padding:0.5rem;border-radius:var(--radius-md);border:1px solid var(--gray-light);"
                        oninput="updateCoverLimitPrice(this.value)">
+            </div>
+            <div>
+                <label class="modal-info-label">Seconds Between Batches</label>
+                <input type="number" id="coverBatchDelay" min="5" max="120" value="${state.batchDelaySeconds}"
+                       style="width:100%;padding:0.5rem;border-radius:var(--radius-md);border:1px solid var(--gray-light);"
+                       oninput="updateCoverBatchDelay(this.value)">
+                <div style="font-size:0.7rem;color:var(--gray);margin-top:0.25rem;">
+                    Orders over ${BATCH_SIZE_LOTS_CLIENT} lots are split into blocks; the same wait applies
+                    before every next block whether the previous one fully filled, partially filled, or failed
+                    — options can be thin on volume.
+                </div>
             </div>
         </div>
 
@@ -3711,6 +3725,11 @@ function updateCoverOrderType(value) {
 
 function updateCoverLimitPrice(value) {
     coverModalState.limitPrice = parseFloat(value) || null;
+}
+
+function updateCoverBatchDelay(value) {
+    const parsed = parseInt(value, 10);
+    coverModalState.batchDelaySeconds = isNaN(parsed) ? 15 : Math.max(5, Math.min(120, parsed));
 }
 
 // ---- Payoff graph formatting helpers ----
@@ -4094,6 +4113,7 @@ async function confirmCoverOrder() {
                 futures_expiry: state.futuresExpiry, option_expiry: state.chainData.option_expiry,
                 strike: state.selectedStrike, lots: state.lots,
                 order_type: state.orderType, limit_price: state.limitPrice,
+                batch_delay_seconds: state.batchDelaySeconds,
                 confirm: true,
             }),
         });
@@ -4105,8 +4125,12 @@ async function confirmCoverOrder() {
             document.getElementById('cover-progress-bar').style.width = '100%';
             document.getElementById('cover-progress-percent').textContent = '100%';
             const entry = document.createElement('div');
-            entry.style.color = '#10B981';
-            entry.textContent = `✅ Cover order placed successfully (${data.legs_placed} leg(s)).`;
+            const fullyFilled = !data.batch_errors || data.batch_errors.length === 0;
+            entry.style.color = fullyFilled ? '#10B981' : '#F59E0B';
+            entry.textContent = fullyFilled
+                ? `✅ Cover order placed successfully (${data.legs_placed} leg(s), ${data.lots_executed} lots).`
+                : `⚠️ Partially placed: ${data.lots_executed}/${data.lots_requested} lots covered ` +
+                  `(${data.batch_errors.length} batch(es) failed — see logs above for details).`;
             log.appendChild(entry);
             await loadActiveHedges();
             setTimeout(() => { closeCoverModal(); loadPositions(state.broker); }, 1500);

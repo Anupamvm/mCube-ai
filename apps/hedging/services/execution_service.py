@@ -10,6 +10,7 @@ rules) — that is enforced by code-review discipline, not by anything in
 this file itself.
 """
 import logging
+import time
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Optional
@@ -45,8 +46,22 @@ logger = logging.getLogger(__name__)
 
 BATCH_THRESHOLD_LOTS = 10
 BATCH_SIZE_LOTS = 10
-NEO_BATCH_DELAY_SECONDS = 10
-BREEZE_BATCH_DELAY_SECONDS = 40
+MIN_BATCH_DELAY_SECONDS = 5
+MAX_BATCH_DELAY_SECONDS = 120
+
+
+def _resolve_batch_delay_seconds(batch_delay_seconds: Optional[int]) -> int:
+    """
+    User-supplied delay (from the Cover Position modal) wins; falls back to
+    TradingCoreConfig.default_batch_delay_seconds — the same default used by
+    automated futures execution — when the caller doesn't pass one (e.g. a
+    Telegram-triggered path). Clamped to the same bounds as the model field
+    so a bad client value can't turn into a near-zero or hours-long wait.
+    """
+    if batch_delay_seconds is None:
+        from apps.core.models import TradingCoreConfig
+        batch_delay_seconds = TradingCoreConfig.get_instance().default_batch_delay_seconds
+    return max(MIN_BATCH_DELAY_SECONDS, min(MAX_BATCH_DELAY_SECONDS, int(batch_delay_seconds)))
 
 # Maps the hedging app's 'breeze'/'neo' execution-routing string to the
 # apps.core.constants BROKER_CHOICES vocabulary used by BrokerAccount —
@@ -327,9 +342,14 @@ def preview_cover_order(
         account = _get_broker_account(broker)
         margin_ok, margin_message = validate_margin(account, required_margin)
         if not margin_ok:
-            blocking_issues.append({'code': 'INSUFFICIENT_MARGIN', 'message': margin_message})
+            # Non-blocking: required_margin is a crude SPAN-style estimate that
+            # treats this as a naked short call — it doesn't credit the margin
+            # relief a real broker gives for a call sold against the long
+            # future it's covering. Same "don't hard-block a risk-reducing
+            # trade" rationale as assess_liquidity_warnings.
+            warnings.append({'code': 'INSUFFICIENT_MARGIN', 'message': margin_message})
     except HedgeValidationError as exc:
-        blocking_issues.append({'code': exc.code, 'message': exc.message})
+        warnings.append({'code': exc.code, 'message': exc.message})
         margin_message = exc.message
 
     return {
@@ -419,6 +439,7 @@ def place_cover_order(
     order_type: str = 'MARKET',
     limit_price: Optional[float] = None,
     recommendation_snapshot: Optional[dict] = None,
+    batch_delay_seconds: Optional[int] = None,
 ) -> dict:
     """
     Hard-validates and places the SELL order for a covered call. Batches
@@ -427,7 +448,17 @@ def place_cover_order(
     progress into cache under the same shape as the existing close-position
     progress poll. Always requires an authenticated `user` — the concrete
     enforcement point for "no hedge action fires unattended".
+
+    Between batches, always waits `batch_delay_seconds` — regardless of
+    whether the just-placed batch fully filled, partially filled, or failed
+    outright (options can be thin on volume; there is no fill-status check
+    that would justify skipping or shortening the wait). A failed batch does
+    NOT abort the remaining batches — same "keep going, report a partial
+    summary at the end" behavior as place_futures_order_in_batches (Breeze
+    futures) and place_strangle_orders_in_batches (Neo), which this mirrors
+    for consistency across both brokers and all three order types.
     """
+    batch_delay_seconds = _resolve_batch_delay_seconds(batch_delay_seconds)
     if not (user and user.is_authenticated):
         raise HedgeValidationError('AUTH_REQUIRED', "A logged-in user is required to place a hedge order.")
 
@@ -450,9 +481,14 @@ def place_cover_order(
         required_margin = _estimate_option_sell_margin(
             0.0, float(strike), futures_pos['ltp'], lot_size, lots,  # premium unknown pre-fill; conservative $0 baseline handled by SPAN estimate itself
         )
+        # Non-blocking (see preview_cover_order): the estimate is a naked-short-call
+        # SPAN approximation and doesn't credit the margin relief a covered call
+        # against an existing long future actually gets. Logged, not enforced.
         margin_ok, margin_message = validate_margin(account, required_margin)
         if not margin_ok:
-            raise HedgeValidationError('INSUFFICIENT_MARGIN', margin_message)
+            logger.warning(
+                f"Placing covered-call sell for {underlying_symbol} despite margin check: {margin_message}"
+            )
 
         hedge = find_existing_active_hedge(broker, underlying_symbol, futures_expiry_date)
         if not hedge:
@@ -480,9 +516,12 @@ def place_cover_order(
         remaining_lots = lots
         batch_num = 0
         filled_legs = []
+        batch_errors = []
         while remaining_lots > 0:
             batch_num += 1
             batch_lots = min(BATCH_SIZE_LOTS, remaining_lots)
+            remaining_lots -= batch_lots
+            is_last_batch = remaining_lots <= 0
 
             leg = HedgeLeg.objects.create(
                 hedge_position=hedge,
@@ -524,7 +563,7 @@ def place_cover_order(
                     _update_progress(
                         user.id, broker, underlying_symbol,
                         batches_completed=batch_num,
-                        last_log_message=f"Batch {batch_num}/{total_batches} placed successfully.",
+                        last_log_message=f"Batch {batch_num}/{total_batches} placed ({batch_lots} lots).",
                         last_log_type='success',
                     )
             else:
@@ -534,32 +573,64 @@ def place_cover_order(
                     hedge_position=hedge, leg=leg, action=HedgeAuditLog.ACTION_VALIDATION_BLOCKED, user=user,
                     notes=f"Order placement failed: {result.get('error')}", snapshot={'broker_response': result},
                 )
+                batch_errors.append({'batch': batch_num, 'lots': batch_lots, 'error': result.get('error')})
                 if is_batched:
                     _update_progress(
                         user.id, broker, underlying_symbol,
-                        is_complete=True, is_success=False,
-                        last_log_message=f"Batch {batch_num} failed: {result.get('error')}",
+                        batches_completed=batch_num,
+                        last_log_message=f"Batch {batch_num}/{total_batches} failed: {result.get('error')}",
                         last_log_type='error',
                     )
-                raise HedgeValidationError('ORDER_FAILED', f"Batch {batch_num} failed: {result.get('error')}")
+                # Deliberately not raising here — a thin-volume batch failing
+                # shouldn't cancel the rest of the sell. Keep going through
+                # all batches and report a partial summary at the end.
 
-            remaining_lots -= batch_lots
+            # Unconditional wait, whether this batch fully filled, partially
+            # filled, or failed — same rule for every remaining batch.
+            if not is_last_batch:
+                if is_batched:
+                    _update_progress(
+                        user.id, broker, underlying_symbol,
+                        last_log_message=f"Waiting {batch_delay_seconds}s before batch {batch_num + 1}/{total_batches}...",
+                        last_log_type='info',
+                    )
+                time.sleep(batch_delay_seconds)
 
-        hedge.futures_lots_covered = max(hedge.futures_lots_covered, already_covered + lots)
+        lots_executed = sum(leg.lots for leg in filled_legs)
+        overall_success = lots_executed > 0
+
+        hedge.futures_lots_covered = max(hedge.futures_lots_covered, already_covered + lots_executed)
         if recommendation_snapshot:
             hedge.recommendation_snapshot = recommendation_snapshot
         hedge.save(update_fields=['futures_lots_covered', 'recommendation_snapshot'])
 
         if is_batched:
-            _update_progress(user.id, broker, underlying_symbol, is_complete=True, is_success=True,
-                              last_log_message="All batches placed successfully.", last_log_type='success')
+            final_message = (
+                "All batches placed successfully." if not batch_errors
+                else f"Completed with {len(batch_errors)}/{total_batches} batch(es) failed — "
+                     f"{lots_executed}/{lots} lots covered."
+            )
+            _update_progress(user.id, broker, underlying_symbol, is_complete=True, is_success=overall_success,
+                              last_log_message=final_message, last_log_type='success' if not batch_errors else 'error')
+
+        if not overall_success:
+            raise HedgeValidationError(
+                'ORDER_FAILED',
+                f"All {total_batches} batch(es) failed — no lots covered. "
+                f"First error: {batch_errors[0]['error'] if batch_errors else 'unknown'}",
+            )
 
         return {
             'success': True,
             'hedge_position_id': hedge.id,
             'legs_placed': len(filled_legs),
+            'lots_requested': lots,
+            'lots_executed': lots_executed,
+            'lots_pending': lots - lots_executed,
             'total_batches': total_batches,
             'is_batched': is_batched,
+            'batch_delay_seconds': batch_delay_seconds,
+            'batch_errors': batch_errors,
         }
     finally:
         release_placement_lock(lock_key)

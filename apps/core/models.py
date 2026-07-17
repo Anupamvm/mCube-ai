@@ -1284,6 +1284,20 @@ class TradingCoreConfig(TimeStampedModel):
     )
 
     # =========================================================================
+    # ORDER EXECUTION
+    # =========================================================================
+
+    default_batch_delay_seconds = models.IntegerField(
+        default=15,
+        validators=[MinValueValidator(5), MaxValueValidator(120)],
+        help_text="Default seconds to wait between order batches (e.g. 10-lot blocks). "
+                   "The wait always happens regardless of whether the previous batch fully "
+                   "filled, partially filled, or failed — never retried early. Used by "
+                   "Cover Position and automated futures execution; the manual Verify Trade "
+                   "and Strangle forms let the user override this per order."
+    )
+
+    # =========================================================================
     # NOTIFICATION & CONTROL LEVEL
     # =========================================================================
 

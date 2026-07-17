@@ -107,8 +107,11 @@ def chain_and_recommendations(request):
         scored = engine.score_strikes()
         presets = engine.get_presets()
 
+        from apps.core.models import TradingCoreConfig
+
         return JsonResponse({
             'success': True,
+            'default_batch_delay_seconds': TradingCoreConfig.get_instance().default_batch_delay_seconds,
             'spot_price': float(spot_price),
             'futures_avg_price': ctx['average_price'],
             'futures_lots': ctx['lots'],
@@ -161,6 +164,7 @@ def place_cover_order(request):
         if not body.get('confirm'):
             return JsonResponse({'success': False, 'error': "Missing 'confirm: true' — this endpoint places a real order."}, status=400)
 
+        batch_delay_seconds = body.get('batch_delay_seconds')
         result = execution_service.place_cover_order(
             user=request.user,
             broker=body.get('broker', '').lower(),
@@ -172,8 +176,9 @@ def place_cover_order(request):
             order_type=body.get('order_type', 'MARKET'),
             limit_price=body.get('limit_price'),
             recommendation_snapshot=body.get('recommendation_snapshot'),
+            batch_delay_seconds=int(batch_delay_seconds) if batch_delay_seconds is not None else None,
         )
-        return JsonResponse({'success': True, **result})
+        return JsonResponse(result)
     except HedgeValidationError as exc:
         return _error_response(exc)
     except Exception as exc:

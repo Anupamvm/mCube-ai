@@ -3,9 +3,10 @@ Single source of truth for every Cover Position safety rule.
 
 Called as SOFT checks (return warnings, don't block) from preview endpoints,
 and as HARD checks (raise HedgeValidationError) from the actual
-place/roll/close execution paths in execution_service.py. Never trust a
-client-supplied number for a hard check — execution_service re-fetches live
-data (futures qty, margin) before calling into here.
+place/roll/close execution paths in execution_service.py — except
+validate_margin, which is advisory everywhere (see its docstring). Never
+trust a client-supplied number for a hard check — execution_service
+re-fetches live data (futures qty) before calling into here.
 """
 import datetime
 from typing import List, Optional, Tuple
@@ -106,7 +107,14 @@ def find_existing_active_hedge(
 
 
 def validate_margin(account: BrokerAccount, required_margin) -> Tuple[bool, str]:
-    """Hard gate before every sell — delegates to the existing margin service."""
+    """
+    Advisory only, not a hard gate — execution_service surfaces the result as
+    a warning rather than a blocking_issue. check_margin_availability's
+    required_margin estimate treats every sell as a naked short call and
+    doesn't credit the margin relief a real broker gives for a call sold
+    against the long future it's covering, so it can't be trusted to hard-block
+    a risk-reducing covered-call trade (same rationale as assess_liquidity_warnings).
+    """
     from apps.accounts.services.margin_manager import check_margin_availability
     return check_margin_availability(account, required_margin)
 

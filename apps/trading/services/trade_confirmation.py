@@ -1045,10 +1045,15 @@ class TradeConfirmationService:
 
             action = 'buy' if direction == 'LONG' else 'sell'
 
-            # Batching configuration
+            # Batching configuration. This is the Telegram-confirmed automated
+            # execution path (a single button tap, not a form) so there's no
+            # per-order input point for the delay — it always uses the
+            # TradingCoreConfig default (same default Cover Position prefills
+            # in its web form, and the manual Verify Trade / Strangle forms
+            # let a user override per order).
             BATCH_THRESHOLD = 10  # Use batching for orders > 10 lots
             BATCH_SIZE = 10       # Max lots per batch
-            BATCH_DELAY = 10      # Seconds between batches
+            BATCH_DELAY = config.default_batch_delay_seconds  # Seconds between batches
 
             # Create execution control for large orders
             execution_control = None

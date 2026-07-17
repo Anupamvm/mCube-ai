@@ -34,6 +34,10 @@ def _patches():
         patch('apps.hedging.services.execution_service._fetch_live_futures_position', return_value=dict(LIVE_FUTURES_POSITION)),
         patch('apps.hedging.services.chain_service.resolve_execution_symbol', return_value=dict(RESOLVED_SYMBOL)),
         patch('apps.hedging.services.execution_service._dispatch_sell_order', return_value={'success': True, 'order_id': 'TEST123'}),
+        # Batched tests place >10 lots and would otherwise sleep for real
+        # between batches (batch_delay_seconds) — verify the wait is
+        # requested (call count), not its wall-clock duration.
+        patch('apps.hedging.services.execution_service.time.sleep'),
     )
 
 
@@ -104,8 +108,8 @@ class PlaceCoverOrderTests(TestCase):
         )
 
     def test_places_order_and_creates_hedge_position_and_leg(self):
-        p1, p2, p3 = _patches()
-        with p1, p2, p3:
+        p1, p2, p3, p4 = _patches()
+        with p1, p2, p3, p4:
             result = execution_service.place_cover_order(
                 user=self.user, broker='neo', underlying_symbol='RELIANCE',
                 futures_expiry_date=FUTURES_EXPIRY, option_expiry_date=OPTION_EXPIRY,
@@ -125,8 +129,8 @@ class PlaceCoverOrderTests(TestCase):
         self.assertEqual(legs[0].direction, HedgeLeg.DIRECTION_SELL)
 
     def test_audit_log_carries_the_acting_user(self):
-        p1, p2, p3 = _patches()
-        with p1, p2, p3:
+        p1, p2, p3, p4 = _patches()
+        with p1, p2, p3, p4:
             result = execution_service.place_cover_order(
                 user=self.user, broker='neo', underlying_symbol='RELIANCE',
                 futures_expiry_date=FUTURES_EXPIRY, option_expiry_date=OPTION_EXPIRY,
@@ -139,8 +143,8 @@ class PlaceCoverOrderTests(TestCase):
             self.assertEqual(log.user, self.user)
 
     def test_rejects_unauthenticated_user_before_touching_the_db(self):
-        p1, p2, p3 = _patches()
-        with p1, p2, p3:
+        p1, p2, p3, p4 = _patches()
+        with p1, p2, p3, p4:
             with self.assertRaises(HedgeValidationError) as ctx:
                 execution_service.place_cover_order(
                     user=AnonymousUser(), broker='neo', underlying_symbol='RELIANCE',
@@ -151,8 +155,8 @@ class PlaceCoverOrderTests(TestCase):
         self.assertEqual(HedgePosition.objects.count(), 0)
 
     def test_quantity_cap_blocks_before_any_order_is_placed(self):
-        p1, p2, p3 = _patches()
-        with p1, p2, p3:
+        p1, p2, p3, p4 = _patches()
+        with p1, p2, p3, p4:
             with self.assertRaises(HedgeValidationError) as ctx:
                 execution_service.place_cover_order(
                     user=self.user, broker='neo', underlying_symbol='RELIANCE',
@@ -164,15 +168,20 @@ class PlaceCoverOrderTests(TestCase):
         self.assertEqual(HedgeLeg.objects.count(), 0)
 
     def test_large_order_splits_into_batches(self):
-        p1, p2, p3 = _patches()
-        with p1, p2, p3:
+        p1, p2, p3, p4 = _patches()
+        with p1, p2, p3, p4 as sleep_mock:
             result = execution_service.place_cover_order(
                 user=self.user, broker='neo', underlying_symbol='RELIANCE',
                 futures_expiry_date=FUTURES_EXPIRY, option_expiry_date=OPTION_EXPIRY,
-                strike=490, lots=25, order_type='MARKET',  # > BATCH_THRESHOLD_LOTS (10)
+                strike=490, lots=25, order_type='MARKET', batch_delay_seconds=7,  # > BATCH_THRESHOLD_LOTS (10)
             )
         self.assertTrue(result['is_batched'])
         self.assertEqual(result['total_batches'], 3)  # 10 + 10 + 5
+
+        # Waits between batch 1->2 and 2->3, but not after the last batch —
+        # every wait uses the caller-supplied delay, regardless of fill outcome.
+        self.assertEqual(sleep_mock.call_count, 2)
+        sleep_mock.assert_called_with(7)
 
         hedge = HedgePosition.objects.get(id=result['hedge_position_id'])
         legs = list(hedge.legs.order_by('id'))
@@ -180,8 +189,8 @@ class PlaceCoverOrderTests(TestCase):
         self.assertTrue(all(leg.status == HedgeLeg.STATUS_PLACED for leg in legs))
 
     def test_second_hedge_attaches_to_existing_active_hedge_not_a_new_one(self):
-        p1, p2, p3 = _patches()
-        with p1, p2, p3:
+        p1, p2, p3, p4 = _patches()
+        with p1, p2, p3, p4:
             first = execution_service.place_cover_order(
                 user=self.user, broker='neo', underlying_symbol='RELIANCE',
                 futures_expiry_date=FUTURES_EXPIRY, option_expiry_date=OPTION_EXPIRY,
@@ -197,8 +206,8 @@ class PlaceCoverOrderTests(TestCase):
         self.assertEqual(HedgeLeg.objects.filter(hedge_position_id=first['hedge_position_id']).count(), 2)
 
     def test_broker_failure_marks_leg_failed_and_logs_validation_blocked(self):
-        p1, p2, _ = _patches()
-        with p1, p2, patch(
+        p1, p2, _, p4 = _patches()
+        with p1, p2, p4, patch(
             'apps.hedging.services.execution_service._dispatch_sell_order',
             return_value={'success': False, 'error': 'Exchange rejected order'},
         ):
@@ -214,3 +223,39 @@ class PlaceCoverOrderTests(TestCase):
         self.assertTrue(
             HedgeAuditLog.objects.filter(action=HedgeAuditLog.ACTION_VALIDATION_BLOCKED).exists()
         )
+
+    def test_one_failed_batch_does_not_abort_the_remaining_batches(self):
+        """
+        Options can be thin on volume — one batch failing (or only
+        partially filling) must not cancel the rest of the sell. All
+        batches still get attempted, still wait the same delay between
+        each, and the overall call succeeds with a partial-fill summary
+        as long as at least one batch went through.
+        """
+        p1, p2, _, p4 = _patches()
+        dispatch_results = [
+            {'success': True, 'order_id': 'BATCH1'},
+            {'success': False, 'error': 'Exchange rejected order (thin volume)'},
+            {'success': True, 'order_id': 'BATCH3'},
+        ]
+        with p1, p2, p4 as sleep_mock, patch(
+            'apps.hedging.services.execution_service._dispatch_sell_order',
+            side_effect=dispatch_results,
+        ):
+            result = execution_service.place_cover_order(
+                user=self.user, broker='neo', underlying_symbol='RELIANCE',
+                futures_expiry_date=FUTURES_EXPIRY, option_expiry_date=OPTION_EXPIRY,
+                strike=490, lots=25, order_type='MARKET',  # 3 batches: 10 + 10 + 5
+            )
+
+        self.assertTrue(result['success'])
+        self.assertEqual(result['lots_executed'], 15)  # batch 1 (10) + batch 3 (5), batch 2 failed
+        self.assertEqual(result['lots_pending'], 10)
+        self.assertEqual(len(result['batch_errors']), 1)
+        # Still waits before batch 2 and batch 3 — the failure doesn't skip the wait.
+        self.assertEqual(sleep_mock.call_count, 2)
+
+        legs = list(HedgeLeg.objects.order_by('id'))
+        self.assertEqual([leg.status for leg in legs], [
+            HedgeLeg.STATUS_PLACED, HedgeLeg.STATUS_FAILED, HedgeLeg.STATUS_PLACED,
+        ])
