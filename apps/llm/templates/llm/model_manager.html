@@ -149,6 +149,45 @@
     {% csrf_token %}
 
     <div class="card">
+        <h2>🔀 AI Provider</h2>
+        <p class="agent-status">Which LLM serves every request made by mCube system-wide (analyst report summaries, news sentiment, RAG queries, trade validation).</p>
+
+        <div style="display: flex; gap: 20px; margin: 16px 0; flex-wrap: wrap;">
+            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 14px;">
+                <input type="radio" name="provider-choice" value="vllm" id="provider-vllm" onchange="llmProviderToggle()" {% if provider_config.active_provider == 'vllm' %}checked{% endif %}>
+                Local (self-hosted vLLM) {% if provider_config.active_provider == 'vllm' %}<span class="badge badge-active">active</span>{% endif %}
+            </label>
+            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 14px;">
+                <input type="radio" name="provider-choice" value="openai" id="provider-openai" onchange="llmProviderToggle()" {% if provider_config.active_provider == 'openai' %}checked{% endif %}>
+                OpenAI (ChatGPT, cloud) {% if provider_config.active_provider == 'openai' %}<span class="badge badge-active">active</span>{% endif %}
+            </label>
+        </div>
+
+        <div id="openai-config-fields" style="display: none; border-top: 1px solid #edf2f7; padding-top: 16px; margin-top: 4px;">
+            <div style="display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 10px;">
+                <input type="password" id="openai-api-key" placeholder="{% if has_openai_key %}•••• already saved - leave blank to keep it{% else %}sk-... (OpenAI API key){% endif %}"
+                       style="flex: 2; min-width: 260px; padding: 10px 14px; border: 1px solid #cbd5e0; border-radius: 6px; font-size: 14px;">
+                <input type="text" id="openai-model" placeholder="Model (default gpt-4o-mini)" value="{% if provider_config.openai_model != 'gpt-4o-mini' %}{{ provider_config.openai_model }}{% endif %}"
+                       style="flex: 1; min-width: 160px; padding: 10px 14px; border: 1px solid #cbd5e0; border-radius: 6px; font-size: 14px;">
+            </div>
+            {% if not has_openai_key %}
+            <p class="agent-status">No OpenAI API key saved yet - enter one above the first time you switch to OpenAI. It's saved permanently and reused after that.</p>
+            {% endif %}
+            <label style="display: flex; align-items: center; gap: 8px; font-size: 13px; color: #718096; margin-top: 8px;">
+                <input type="checkbox" id="openai-unload-local" checked>
+                Also stop the local vLLM model on the GPU server to free memory (best-effort - requires the update agent to support it)
+            </label>
+        </div>
+
+        <button type="button" class="btn" style="margin-top: 14px;" onclick="llmSaveProvider()">💾 Save &amp; Activate</button>
+        <div id="llm-provider-message" class="agent-status"></div>
+
+        {% if provider_config.switched_at %}
+        <p class="agent-status">Last changed: {{ provider_config.switched_at }}{% if provider_config.switched_by %} by {{ provider_config.switched_by }}{% endif %}</p>
+        {% endif %}
+    </div>
+
+    <div class="card">
         <h2>Add a model</h2>
         <div class="add-model-form" style="flex-wrap: wrap;">
             <select id="model-suggestions" onchange="llmApplySuggestion(this.value)" style="padding: 10px 12px; border: 1px solid #cbd5e0; border-radius: 6px; font-size: 14px;">
@@ -238,6 +277,50 @@
             msgBox.textContent = data.message;
             msgBox.style.color = data.success ? '#22543d' : '#742a2a';
             setTimeout(function() { location.reload(); }, 1200);
+        } catch (e) {
+            msgBox.textContent = 'Request failed: ' + e;
+            msgBox.style.color = '#742a2a';
+        }
+    }
+
+    function llmProviderToggle() {
+        const isOpenAI = document.getElementById('provider-openai').checked;
+        document.getElementById('openai-config-fields').style.display = isOpenAI ? 'block' : 'none';
+    }
+    llmProviderToggle();
+
+    async function llmSaveProvider() {
+        const msgBox = document.getElementById('llm-provider-message');
+        const provider = document.querySelector('input[name="provider-choice"]:checked').value;
+        const body = new URLSearchParams({ provider: provider });
+
+        if (provider === 'openai') {
+            const key = document.getElementById('openai-api-key').value.trim();
+            const model = document.getElementById('openai-model').value.trim();
+            if (key) body.append('openai_api_key', key);
+            if (model) body.append('openai_model', model);
+            body.append('unload_local', document.getElementById('openai-unload-local').checked ? 'true' : 'false');
+
+            if (!key && !{{ has_openai_key|yesno:"true,false" }}) {
+                msgBox.textContent = 'Enter your OpenAI API key first.';
+                msgBox.style.color = '#742a2a';
+                return;
+            }
+        }
+
+        try {
+            const resp = await fetch("{% url 'llm:model_manager_set_provider' %}", {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                    'X-CSRFToken': llmCsrfToken(),
+                },
+                body: body.toString(),
+            });
+            const data = await resp.json();
+            msgBox.textContent = data.message + (data.unload && data.unload.message ? ' | Unload: ' + data.unload.message : '');
+            msgBox.style.color = data.success ? '#22543d' : '#742a2a';
+            if (data.success) setTimeout(function() { location.reload(); }, 1500);
         } catch (e) {
             msgBox.textContent = 'Request failed: ' + e;
             msgBox.style.color = '#742a2a';

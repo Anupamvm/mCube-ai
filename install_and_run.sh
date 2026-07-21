@@ -756,6 +756,52 @@ else
 fi
 
 # ============================================================================
+# Ensure vLLM (GPU LLM server) is running
+# ============================================================================
+# The vllm-70b container can be stopped independently (e.g. from the Model
+# Manager UI to free GPU memory while using OpenAI). On a fresh start of the
+# app we want it back up on the known-good default model rather than left
+# down, since LLM-backed features (news/analyst analysis, trade validation,
+# RAG) silently degrade without it.
+DEFAULT_VLLM_MODEL="hugging-quants/Meta-Llama-3.1-70B-Instruct-AWQ-INT4"
+VLLM_CONTAINER_NAME="${VLLM_CONTAINER_NAME:-vllm-70b}"
+
+if command -v docker &> /dev/null; then
+    echo "Checking vLLM container ($VLLM_CONTAINER_NAME)..."
+    if [ "$(docker inspect -f '{{.State.Running}}' "$VLLM_CONTAINER_NAME" 2>/dev/null)" = "true" ]; then
+        echo "✓ vLLM container is already running"
+    else
+        echo "vLLM container is not running - activating via update agent (default: $DEFAULT_VLLM_MODEL)..."
+        _VLLM_AGENT_URL=$(grep "^VLLM_UPDATE_AGENT_URL=" "$SCRIPT_DIR/.env" 2>/dev/null | cut -d'=' -f2-)
+        _VLLM_AGENT_TOKEN=$(grep "^VLLM_UPDATE_AGENT_TOKEN=" "$SCRIPT_DIR/.env" 2>/dev/null | cut -d'=' -f2-)
+        _VLLM_MODEL=$(grep "^VLLM_MODEL=" "$SCRIPT_DIR/.env" 2>/dev/null | cut -d'=' -f2-)
+        _VLLM_MODEL="${_VLLM_MODEL:-$DEFAULT_VLLM_MODEL}"
+
+        if [ -n "$_VLLM_AGENT_URL" ] && [ -n "$_VLLM_AGENT_TOKEN" ]; then
+            # Activation runs in the background on the agent (model load can take
+            # several minutes) - fire the request and move on rather than blocking
+            # the rest of startup on it.
+            _activate_resp=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$_VLLM_AGENT_URL/models/activate" \
+                -H "Authorization: Bearer $_VLLM_AGENT_TOKEN" \
+                -H "Content-Type: application/json" \
+                -d "{\"model\": \"$_VLLM_MODEL\"}")
+            if [ "$_activate_resp" = "202" ]; then
+                echo "✓ vLLM activation requested (model: $_VLLM_MODEL) - loading in background, can take a few minutes"
+                echo "  Check progress: curl -s -H \"Authorization: Bearer \$VLLM_UPDATE_AGENT_TOKEN\" $_VLLM_AGENT_URL/status"
+            else
+                echo "⚠️  Could not activate vLLM via update agent (HTTP $_activate_resp) - start it manually if needed:"
+                echo "    cd ~/vllm && docker compose up -d"
+            fi
+        else
+            echo "⚠️  VLLM_UPDATE_AGENT_URL/TOKEN not set in .env - skipping auto-start. Start manually if needed:"
+            echo "    cd ~/vllm && docker compose up -d"
+        fi
+    fi
+else
+    echo "Docker not found - skipping vLLM check (LLM features will use fallback provider if configured)"
+fi
+
+# ============================================================================
 # Stop any existing services first
 # ============================================================================
 echo "Stopping any existing services..."

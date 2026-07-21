@@ -90,3 +90,49 @@ class LLMPrompt(TimeStampedModel):
 
     def __str__(self):
         return f"{self.name} (v{self.version})"
+
+
+class LLMProviderConfig(TimeStampedModel):
+    """
+    Singleton: which LLM provider currently serves ALL requests system-wide.
+
+    Set from /llm/models/. When active_provider='openai', every service that
+    calls apps.llm.services.llm_router.get_active_llm_client() (instead of
+    reaching for a specific vllm/ollama client directly) is redirected to
+    OpenAI, regardless of which local backend it would normally use.
+    """
+
+    PROVIDER_CHOICES = [
+        ('vllm', 'Local (self-hosted vLLM)'),
+        ('openai', 'OpenAI (ChatGPT, cloud)'),
+    ]
+
+    active_provider = models.CharField(max_length=20, choices=PROVIDER_CHOICES, default='vllm')
+
+    # Stored plainly, same convention as apps.core.models.CredentialStore - no
+    # encryption layer exists elsewhere in this codebase for API keys either.
+    openai_api_key = models.CharField(max_length=200, blank=True, help_text="OpenAI API key")
+    openai_model = models.CharField(max_length=100, default='gpt-4o-mini')
+
+    switched_at = models.DateTimeField(null=True, blank=True)
+    switched_by = models.ForeignKey(
+        'auth.User', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='+'
+    )
+
+    class Meta:
+        db_table = 'llm_provider_config'
+        verbose_name = 'LLM Provider Config'
+        verbose_name_plural = 'LLM Provider Config'
+
+    def __str__(self):
+        return f"Active LLM provider: {self.get_active_provider_display()}"
+
+    def save(self, *args, **kwargs):
+        self.pk = 1
+        super().save(*args, **kwargs)
+
+    @classmethod
+    def get_settings(cls):
+        obj, _ = cls.objects.get_or_create(pk=1)
+        return obj

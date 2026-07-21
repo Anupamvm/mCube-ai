@@ -47,6 +47,7 @@ urlpatterns = [
     path('risk/', include('apps.risk.urls')),
     path('alerts/', include('apps.alerts.urls')),
     path('llm/', include('apps.llm.urls')),
+    path('llmskill/', include('apps.llmskill.urls')),
     path('trading/', include('apps.trading.urls')),
     path('hedging/', include('apps.hedging.urls')),
 

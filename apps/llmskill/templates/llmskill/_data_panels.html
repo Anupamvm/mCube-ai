@@ -1,0 +1,39 @@
+{% load static %}
+{# Shared "Get Data" button + result panels, included by both llmskill/verify_trade.html
+   and trading/analysis_detail.html. Requires `symbol` and `expiry_date` in context;
+   `position_id` is optional. #}
+<style>
+.llmskill-section { background: white; border-radius: 0.75rem; padding: 1.5rem; margin-bottom: 1.25rem; box-shadow: 0 1px 3px rgba(0,0,0,0.07); }
+.llmskill-section-title { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; font-size: 1rem; font-weight: 700; color: #374151; margin-bottom: 0.35rem; padding-bottom: 0.75rem; border-bottom: 2px solid #f3f4f6; }
+.llmskill-table-tag { font-size: 0.7rem; font-weight: 600; color: #6b7280; background: #f3f4f6; padding: 2px 8px; border-radius: 999px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; white-space: nowrap; }
+.llmskill-source-meta { font-size: 0.78rem; color: #9ca3af; margin-bottom: 0.85rem; }
+.llmskill-row { border: 1px solid #f3f4f6; border-radius: 0.5rem; padding: 0.6rem 0.75rem; margin-bottom: 0.6rem; display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 0.35rem 1rem; }
+.llmskill-row:last-child { margin-bottom: 0; }
+.llmskill-kv { font-size: 0.78rem; overflow-wrap: anywhere; }
+.llmskill-kv-key { color: #9ca3af; margin-right: 0.4rem; }
+.llmskill-kv-val { color: #1f2937; font-weight: 600; }
+.llmskill-empty { color: #9ca3af; font-size: 0.85rem; }
+.llmskill-error { background: #fef2f2; color: #dc2626; border: 1px solid #fca5a5; border-radius: 0.5rem; padding: 0.75rem 1rem; margin-bottom: 1rem; font-size: 0.85rem; }
+.llmskill-getdata-bar { display: flex; align-items: center; gap: 1rem; margin-bottom: 1.25rem; }
+.llmskill-btn { background: #3b82f6; color: white; border: none; padding: 0.65rem 1.5rem; border-radius: 0.5rem; font-size: 0.9rem; font-weight: 600; cursor: pointer; }
+.llmskill-btn:hover { background: #2563eb; }
+.llmskill-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+.llmskill-btn-ai { background: #9ca3af; cursor: not-allowed; }
+</style>
+
+<div class="llmskill-getdata-bar">
+    <button id="llmskill-get-data-btn" class="llmskill-btn" title="Reads only what's already stored in the database - makes no live API calls">📊 Get Data (stored data only)</button>
+    <button class="llmskill-btn llmskill-btn-ai" disabled title="LLM trade verification — coming soon">✨ Verify with AI (coming soon)</button>
+</div>
+<div id="llmskill-panels"></div>
+
+<script src="{% static 'llmskill/data_panel.js' %}"></script>
+<script>
+    LLMSkill.init({
+        symbol: '{{ symbol|escapejs }}',
+        expiryDate: '{{ expiry_date|escapejs }}',
+        positionId: {% if position_id %}'{{ position_id }}'{% else %}null{% endif %},
+        buttonId: 'llmskill-get-data-btn',
+        containerId: 'llmskill-panels',
+    });
+</script>

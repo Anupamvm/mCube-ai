@@ -46,6 +46,37 @@ logger = logging.getLogger(__name__)
 AUTO_LOGIN_LOCK_FLAG = 'breeze_auto_login_lock'
 AUTO_LOGIN_LOCK_TIMEOUT = 300  # seconds - max time an auto-login should take
 
+SESSION_ERROR_KEYWORDS = (
+    'session', 'expired', 'unauthorized', 'invalid',
+    'resource not available', 'authenticate', 'credential',
+)
+
+
+def is_session_error(e: Exception) -> bool:
+    """
+    True if an exception raised by a breeze_connect API call indicates the
+    session token was rejected by ICICI's backend.
+
+    Covers two cases:
+    1. The error message contains an auth/session-related keyword.
+    2. breeze_connect's get_funds()/get_portfolio_positions()/etc. swallow
+       the real cause and raise a bare "Exception: <method>() Error" when
+       ICICI returns a non-JSON body (typically an HTML error page) for a
+       stale/rejected session token, so `response.json()` blows up with a
+       JSONDecodeError inside the SDK. The SDK's error_exception() strips
+       the useful message, but the JSONDecodeError is still chained as
+       __context__/__cause__, so check that instead.
+    """
+    error_str = str(e).lower()
+    if any(kw in error_str for kw in SESSION_ERROR_KEYWORDS):
+        return True
+
+    cause = e.__cause__ or e.__context__
+    if cause is not None and 'JSONDecodeError' in type(cause).__name__:
+        return True
+
+    return False
+
 
 class BreezeSessionManager:
     """
@@ -124,8 +155,7 @@ class BreezeSessionManager:
                 client.get_customer_details()
                 return True, "Session valid (API verified)"
             except Exception as e:
-                error_str = str(e).lower()
-                if any(kw in error_str for kw in ['session', 'expired', 'unauthorized', 'invalid', 'login']):
+                if is_session_error(e) or 'login' in str(e).lower():
                     return False, f"Session invalid: {e}"
                 # Other errors don't necessarily mean session is invalid
                 return True, f"Session likely valid (API error: {e})"
@@ -388,10 +418,8 @@ class BreezeSessionManager:
             return client
 
         except Exception as e:
-            error_str = str(e).lower()
-
             # Check if it's a session/auth error
-            if any(kw in error_str for kw in ['session', 'expired', 'unauthorized', 'invalid', 'resource not available', 'authenticate', 'credential']):
+            if is_session_error(e):
                 logger.warning(f"Breeze session token rejected by API: {e}")
 
                 # Token is invalid — clear it from DB to prevent future false-valid checks

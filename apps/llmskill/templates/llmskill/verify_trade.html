@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Verify Trade: {{ symbol }}</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f3f4f6;
+            line-height: 1.6;
+            color: #1f2937;
+        }
+        .container { max-width: 1100px; margin: 0 auto; padding: 1.5rem; }
+        .page-header {
+            border-radius: 0.75rem; padding: 1.75rem 2rem; margin-bottom: 1.5rem;
+            color: white; background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+        }
+        .header-symbol { font-size: 2rem; font-weight: 800; }
+        .header-meta { display: flex; gap: 1.5rem; margin-top: 1rem; flex-wrap: wrap; }
+        .header-meta-item { font-size: 0.9rem; }
+        .header-meta-item strong { font-weight: 700; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <div class="page-header">
+        <div class="header-symbol">{{ symbol }}</div>
+        <div class="header-meta">
+            <div class="header-meta-item">Expiry: <strong>{{ expiry_date|default:"—" }}</strong></div>
+            <div class="header-meta-item">Position: <strong>{{ position.label }}</strong></div>
+            <div class="header-meta-item">Direction: <strong>{{ position.direction }}</strong></div>
+            <div class="header-meta-item">Status: <strong>{{ position.status }}</strong></div>
+        </div>
+    </div>
+
+    {% include "llmskill/_data_panels.html" with symbol=symbol expiry_date=expiry_date position_id=position.id %}
+</div>
+</body>
+</html>

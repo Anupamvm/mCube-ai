@@ -18,7 +18,6 @@ Features:
 import logging
 from typing import Dict, Optional, Tuple
 
-from apps.llm.services.ollama_client import get_ollama_client
 from apps.llm.services.rag_system import get_rag_system
 
 logger = logging.getLogger(__name__)
@@ -37,8 +36,14 @@ class TradeValidator:
 
     def __init__(self):
         """Initialize trade validator"""
-        self.llm_client = get_ollama_client()
         self.rag_system = get_rag_system()
+
+    @property
+    def llm_client(self):
+        """Resolved fresh on each access so a provider switch (e.g. to OpenAI
+        at /llm/models/) takes effect without restarting this process."""
+        from apps.llm.services.llm_router import get_active_llm_client
+        return get_active_llm_client('ollama')
 
     def validate_trade(
         self,

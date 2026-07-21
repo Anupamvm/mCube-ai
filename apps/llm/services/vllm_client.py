@@ -69,8 +69,6 @@ class VLLMClient:
 
     def _connect(self):
         """(Re)establish a connection, discovering whichever model the server is currently serving."""
-        self._last_recheck = time.time()
-
         for url in self._urls_to_try:
             logger.info(f"Trying vLLM server at {url}...")
             try:
@@ -95,6 +93,17 @@ class VLLMClient:
             except Exception as e:
                 logger.warning(f"Failed to connect to {url}: {str(e)}")
                 continue
+            finally:
+                # Set at completion, not start: a connect attempt against an
+                # unreachable server can itself take longer than
+                # MODEL_RECHECK_SECONDS (SDK-level retries + a fallback probe
+                # per URL). Stamping this at the start let every _refresh_if_stale()
+                # call made by a caller that hit this same slow path immediately
+                # see itself as "stale" again and kick off another full
+                # multi-URL connect attempt - e.g. system_test_page() calls
+                # is_enabled() 5x while testing vLLM, which serialized into 5+
+                # minutes of blocking retries with the server down.
+                self._last_recheck = time.time()
 
         logger.warning("Could not connect to any vLLM server")
         self.enabled = False

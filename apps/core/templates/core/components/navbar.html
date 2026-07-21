@@ -142,7 +142,7 @@
        ======================================== */
 
     .main-header {
-        background: var(--gradient-dark);
+        background: var(--gradient-dark, linear-gradient(135deg, #0f172a 0%, #1e293b 100%));
         color: var(--white);
         box-shadow: var(--shadow-md);
         position: sticky;
@@ -249,7 +249,7 @@
         left: 0;
         background: var(--white);
         border-radius: var(--radius-md);
-        box-shadow: var(--shadow-xl);
+        box-shadow: var(--shadow-xl, 0 20px 25px -5px rgba(0, 0, 0, 0.1));
         min-width: 220px;
         margin-top: 0.5rem;
         padding: 0.5rem 0;
@@ -364,7 +364,7 @@
     .user-badge {
         font-size: 11px;
         padding: 3px 8px;
-        border-radius: var(--radius-full);
+        border-radius: var(--radius-full, 9999px);
         background: rgba(255, 255, 255, 0.2);
         color: var(--white);
         font-weight: 600;

@@ -90,6 +90,7 @@ INSTALLED_APPS = [
     'apps.risk.apps.RiskConfig',
     'apps.data.apps.DataConfig',
     'apps.llm.apps.LlmConfig',
+    'apps.llmskill.apps.LlmskillConfig',
     'apps.analytics.apps.AnalyticsConfig',
     'apps.alerts.apps.AlertsConfig',
     'apps.brokers.apps.BrokersConfig',

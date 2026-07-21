@@ -37,10 +37,12 @@ class AnalystReportAnalyzer:
     - catalysts: List of positive catalysts
     """
 
-    def __init__(self):
-        """Initialize with vLLM client"""
-        from apps.llm.services.vllm_client import get_vllm_client
-        self.llm_client = get_vllm_client()
+    @property
+    def llm_client(self):
+        """Resolved fresh on each access so a provider switch (e.g. to OpenAI
+        at /llm/models/) takes effect without restarting this process."""
+        from apps.llm.services.llm_router import get_active_llm_client
+        return get_active_llm_client('vllm')
 
     def analyze_report(
         self,
@@ -360,9 +362,9 @@ def get_quick_report_summary(
             - summary_points: List of 5 bullet points
             - sentiment: BULLISH/NEUTRAL/BEARISH
     """
-    from apps.llm.services.vllm_client import get_vllm_client
+    from apps.llm.services.llm_router import get_active_llm_client
 
-    llm_client = get_vllm_client()
+    llm_client = get_active_llm_client('vllm')
 
     if not llm_client.is_enabled():
         logger.warning("LLM not available for quick summary")

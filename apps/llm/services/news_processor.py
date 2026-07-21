@@ -25,7 +25,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from apps.data.models import NewsArticle, KnowledgeBase
-from apps.llm.services.ollama_client import get_ollama_client, generate_embedding
+from apps.llm.services.ollama_client import generate_embedding
 from apps.llm.services.vector_store import get_vector_store, COLLECTION_NEWS
 
 
@@ -49,9 +49,12 @@ class NewsProcessor:
     Processes news articles with LLM analysis and stores them for RAG
     """
 
-    def __init__(self):
-        """Initialize news processor"""
-        self.llm_client = get_ollama_client()
+    @property
+    def llm_client(self):
+        """Resolved fresh on each access so a provider switch (e.g. to OpenAI
+        at /llm/models/) takes effect without restarting this process."""
+        from apps.llm.services.llm_router import get_active_llm_client
+        return get_active_llm_client('ollama')
         self.vector_store = get_vector_store()
 
     def process_article(

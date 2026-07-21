@@ -280,6 +280,35 @@ def do_activate(target_model):
         pass
 
 
+def do_stop():
+    """Stop the vLLM container without starting another model, to free GPU
+    memory (e.g. when mCube has switched to OpenAI and isn't using it)."""
+    with activate_lock:
+        activate_state['status'] = 'running'
+        activate_state['started_at'] = datetime.now(timezone.utc).isoformat()
+        activate_state['finished_at'] = None
+        activate_state['log'] = ''
+        activate_state['target_model'] = None
+
+    _append_log('\nStopping vLLM container...\n')
+    ok = _run('docker compose stop')
+    if ok:
+        _append_log('\nvLLM container stopped.\n')
+
+    with activate_lock:
+        activate_state['status'] = 'success' if ok else 'failed'
+        activate_state['finished_at'] = datetime.now(timezone.utc).isoformat()
+        snapshot = dict(activate_state)
+
+    try:
+        with open(LOG_FILE, 'a') as f:
+            f.write(
+                f"\n=== Stop {snapshot['finished_at']} status={snapshot['status']} ===\n{snapshot['log']}\n"
+            )
+    except OSError:
+        pass
+
+
 def _log_tail(max_bytes=20000):
     try:
         with open(LOG_FILE, 'rb') as f:
@@ -364,6 +393,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if ok:
                 return self._send(200, {'status': 'deleted', 'model': model})
             return self._send(500, {'error': error})
+
+        if self.path == '/models/stop':
+            with activate_lock:
+                already_running = activate_state['status'] == 'running'
+            if already_running:
+                return self._send(409, {'error': 'an activate/stop is already in progress'})
+            threading.Thread(target=do_stop, daemon=True).start()
+            return self._send(202, {'status': 'started'})
 
         # Backward-compatible alias for the old single-model UI
         if self.path == '/update':

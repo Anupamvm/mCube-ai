@@ -15,7 +15,7 @@ Features:
 import logging
 from typing import Dict, List, Optional, Tuple
 
-from apps.llm.services.ollama_client import get_ollama_client, generate_embedding
+from apps.llm.services.ollama_client import generate_embedding
 from apps.llm.services.vector_store import get_vector_store, COLLECTION_KNOWLEDGE, COLLECTION_NEWS
 
 logger = logging.getLogger(__name__)
@@ -28,8 +28,16 @@ class RAGSystem:
 
     def __init__(self):
         """Initialize RAG system"""
-        self.llm_client = get_ollama_client()
         self.vector_store = get_vector_store()
+
+    @property
+    def llm_client(self):
+        """Resolved fresh on each access so a provider switch (e.g. to OpenAI
+        at /llm/models/) takes effect without restarting this process.
+        Embeddings still always use Ollama - OpenAIClient doesn't implement
+        embedding generation and the vector store is built on Ollama's."""
+        from apps.llm.services.llm_router import get_active_llm_client
+        return get_active_llm_client('ollama')
 
     def query(
         self,

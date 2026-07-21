@@ -74,6 +74,25 @@ def delete_model(model, timeout=30):
         return False, f'Could not reach update agent at {AGENT_BASE_URL}: {e}'
 
 
+def stop_model(timeout=15):
+    """Stop the live vLLM container without starting another model, to free
+    GPU memory when requests are being routed elsewhere (e.g. OpenAI).
+
+    Requires the agent to expose POST /models/stop - see do_stop() in
+    scripts/gpu_server/vllm_update_agent.py. Older/undeployed agents will
+    404, which is reported as a normal failure rather than raised, since
+    this is a best-effort call from the provider-switch flow."""
+    try:
+        resp = requests.post(f'{AGENT_BASE_URL}/models/stop', json={}, headers=_headers(), timeout=timeout)
+        if resp.status_code == 202:
+            return True, 'Stop requested on GPU server'
+        if resp.status_code == 404:
+            return False, 'Update agent does not support /models/stop yet (needs redeploying)'
+        return False, _error_message(resp)
+    except requests.RequestException as e:
+        return False, f'Could not reach update agent at {AGENT_BASE_URL}: {e}'
+
+
 def get_status(timeout=10):
     """Fetch current/last activate-operation status from the agent. Returns (success, status_dict)."""
     try:

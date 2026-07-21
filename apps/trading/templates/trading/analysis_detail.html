@@ -272,6 +272,11 @@
 <!-- Result state -->
 <div id="result-state" class="container"></div>
 
+<!-- Stored/verification data (llmskill) -->
+<div class="container">
+    {% include "llmskill/_data_panels.html" with symbol=symbol expiry_date=expiry %}
+</div>
+
 <script>
 const SYMBOL = '{{ symbol }}';
 const EXPIRY = '{{ expiry }}';  // YYYY-MM-DD

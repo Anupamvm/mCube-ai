@@ -412,17 +412,81 @@ def model_manager(request):
     GPU server's vLLM update agent.
     """
     from apps.llm.services.vllm_updater import list_models, get_status
+    from apps.llm.models import LLMProviderConfig
 
     models_ok, models_or_error = list_models()
     status_ok, status = get_status()
+    provider_config = LLMProviderConfig.get_settings()
 
     context = {
         'agent_reachable': models_ok,
         'models': models_or_error if models_ok else [],
         'agent_error': models_or_error if not models_ok else None,
         'activate_status': status if status_ok else None,
+        'provider_config': provider_config,
+        'has_openai_key': bool(provider_config.openai_api_key),
     }
     return render(request, 'llm/model_manager.html', context)
+
+
+@login_required
+@require_http_methods(["POST"])
+def model_manager_set_provider(request):
+    """
+    Switch which LLM provider serves ALL requests system-wide (see
+    apps.llm.services.llm_router.get_active_llm_client()).
+
+    Request body (POST form data):
+        provider: 'vllm' or 'openai'
+        openai_api_key: optional - only overwrites the saved key if non-empty,
+            so re-saving without retyping it keeps the existing key
+        openai_model: optional - defaults to gpt-4o-mini if never set
+        unload_local: 'true' to also best-effort stop the GPU server's vLLM
+            container when switching to openai (frees GPU memory; requires
+            the update agent to support POST /models/stop)
+
+    Returns JSON: {success, message, unload}
+    """
+    from apps.llm.models import LLMProviderConfig
+    from apps.llm.services.openai_client import reset_openai_client
+    from apps.llm.services.vllm_updater import stop_model
+
+    provider = (request.POST.get('provider') or '').strip()
+    if provider not in ('vllm', 'openai'):
+        return JsonResponse({'success': False, 'message': 'provider must be "vllm" or "openai"'})
+
+    cfg = LLMProviderConfig.get_settings()
+
+    if provider == 'openai':
+        posted_key = (request.POST.get('openai_api_key') or '').strip()
+        posted_model = (request.POST.get('openai_model') or '').strip()
+
+        if posted_key:
+            cfg.openai_api_key = posted_key
+        if posted_model:
+            cfg.openai_model = posted_model
+
+        if not cfg.openai_api_key:
+            return JsonResponse({'success': False, 'message': 'An OpenAI API key is required to switch to OpenAI'})
+
+    previous_provider = cfg.active_provider
+    cfg.active_provider = provider
+    cfg.switched_at = timezone.now()
+    cfg.switched_by = request.user
+    cfg.save()
+
+    reset_openai_client()
+
+    unload_result = None
+    if provider == 'openai' and previous_provider != 'openai' and request.POST.get('unload_local') == 'true':
+        ok, msg = stop_model()
+        unload_result = {'attempted': True, 'success': ok, 'message': msg}
+
+    return JsonResponse({
+        'success': True,
+        'message': f'Active LLM provider set to {cfg.get_active_provider_display()}',
+        'unload': unload_result,
+    })
 
 
 @login_required

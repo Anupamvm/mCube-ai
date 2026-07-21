@@ -617,8 +617,27 @@ def fetch_and_save_breeze_data():
     Raises:
         Exception: If API call or database save fails
     """
+    from apps.brokers.services.breeze_session import is_session_error
+
     breeze = get_breeze_client()
-    funds_resp = breeze.get_funds()
+    try:
+        funds_resp = breeze.get_funds()
+    except Exception as e:
+        if not is_session_error(e):
+            raise
+        # breeze_connect's get_funds() can fail with a bare "get_funds() Error"
+        # (a JSONDecodeError from ICICI returning a non-JSON body) even when
+        # our session_token looked valid (present + issued today). That check
+        # doesn't catch mid-day invalidation, so force a fresh login here and
+        # retry once instead of surfacing this as a generic connection error.
+        logger.warning(f"Breeze get_funds() failed with session-like error, forcing re-login: {e}")
+        creds = get_credentials('breeze')
+        if creds:
+            creds.session_token = ''
+            creds.last_session_update = None
+            creds.save(update_fields=['session_token', 'last_session_update'])
+        breeze = get_breeze_client()
+        funds_resp = breeze.get_funds()
     funds = funds_resp.get('Success') or {}
 
     # Use centralized credential loading and API patterns

@@ -34,10 +34,12 @@ class NewsImpactAnalyzer:
     BLOCK_THRESHOLD = -0.6   # Highly negative - blocks trade (no override)
     WARNING_THRESHOLD = -0.3  # Negative - shows warning
 
-    def __init__(self):
-        """Initialize with vLLM client"""
-        from apps.llm.services.vllm_client import get_vllm_client
-        self.llm_client = get_vllm_client()
+    @property
+    def llm_client(self):
+        """Resolved fresh on each access so a provider switch (e.g. to OpenAI
+        at /llm/models/) takes effect without restarting this process."""
+        from apps.llm.services.llm_router import get_active_llm_client
+        return get_active_llm_client('vllm')
 
     def _get_impact_label(self, score: float) -> str:
         """Convert impact score to label"""
