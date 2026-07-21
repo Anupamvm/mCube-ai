@@ -2016,6 +2016,29 @@ def test_accounts(request=None):
     return {'category': 'Accounts', 'tests': tests}
 
 
+# Shown on /system/test/ when the vLLM connection test fails. Kept as a module
+# constant (not inline per-branch) after the 2026-07-21 GPU-driver incident,
+# where `runtime: nvidia` in docker-compose.yml (redundant with the modern
+# `deploy.resources.reservations.devices` GPU block) caused every container
+# start to fail with "Error 803: unsupported display driver / cuda driver
+# combination" even though the host driver/image were fine - `docker compose
+# pull` was NOT the cause (same failure with the old, previously-working
+# image), so pull is deliberately left out of the happy path below to avoid
+# drifting to a newer, potentially incompatible `vllm/vllm-openai:latest`.
+_VLLM_START_INSTRUCTIONS = (
+    '<b>Start LLM server:</b>'
+    '<br><code>docker ps --filter name=vllm-70b</code>'
+    '<br><code>nvidia-smi</code>'
+    '<br><code>cd ~/vllm && docker compose up -d</code>'
+    '<br><code>docker logs -f vllm-70b</code>'
+    '<br><br><i>Model takes 2-3 min to load. Wait for "Application startup complete" in logs.</i>'
+    '<br><br><b>If it fails with "unsupported display driver / cuda driver combination":</b>'
+    '<br>Remove any stray <code>runtime: nvidia</code> line from <code>~/vllm/docker-compose.yml</code> - '
+    'that legacy runtime path breaks on this host even though the driver, GPU, and image are fine:'
+    '<br><code>sed -i "/runtime: nvidia/d" ~/vllm/docker-compose.yml && cd ~/vllm && docker compose up -d</code>'
+)
+
+
 def test_llm():
     """Test LLM integration functionalities with comprehensive vLLM tests"""
     tests = []
@@ -2051,14 +2074,7 @@ def test_llm():
                 'name': '🔌 vLLM Server Connection',
                 'status': 'fail',
                 'message': '✗ LLM server is not running or unreachable',
-                'description': (
-                    '<b>Start LLM server:</b>'
-                    '<br><code>docker ps --filter name=vllm-70b</code>'
-                    '<br><code>nvidia-smi</code>'
-                    '<br><code>cd /home/anupamvm/vllm && docker compose up -d</code>'
-                    '<br><code>docker logs -f vllm-70b</code>'
-                    '<br><br><i>Model takes 2-3 min to load. Wait for "Application startup complete" in logs.</i>'
-                ),
+                'description': _VLLM_START_INSTRUCTIONS,
                 'trigger_url': reverse('llm:test_connection'),
                 'trigger_label': '🔄 Retry Connection',
             })
@@ -2067,13 +2083,7 @@ def test_llm():
             'name': '🔌 vLLM Server Connection',
             'status': 'fail',
             'message': f'✗ Error: {str(e)}',
-            'description': (
-                '<b>Start LLM server:</b>'
-                '<br><code>docker ps --filter name=vllm-70b</code>'
-                '<br><code>nvidia-smi</code>'
-                '<br><code>cd /home/anupamvm/vllm && docker compose up -d</code>'
-                '<br><code>docker logs -f vllm-70b</code>'
-            ),
+            'description': _VLLM_START_INSTRUCTIONS,
         })
 
     # Test 1b: Update LLM (model/engine refresh via GPU-server update agent)

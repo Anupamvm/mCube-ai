@@ -199,6 +199,30 @@ def _set_model_in_compose(new_model):
         f.write(new_content)
 
 
+def _strip_legacy_nvidia_runtime():
+    """Remove any `runtime: nvidia` line from docker-compose.yml, if present.
+
+    On this host that legacy runtime path (vs. the modern `deploy.resources.
+    reservations.devices` GPU block, which is sufficient on its own) makes
+    the container fail with "Error 803: unsupported display driver / cuda
+    driver combination" even though the host driver, GPU, and image are all
+    fine (diagnosed 2026-07-21 - see memory). It was removed by hand once;
+    this makes every future activate self-heal if it ever comes back
+    (restored backup, manual edit, etc.) instead of silently reintroducing
+    the same failure.
+    """
+    try:
+        with open(COMPOSE_FILE) as f:
+            lines = f.readlines()
+    except OSError:
+        return
+    filtered = [ln for ln in lines if ln.strip() != 'runtime: nvidia']
+    if len(filtered) != len(lines):
+        with open(COMPOSE_FILE, 'w') as f:
+            f.writelines(filtered)
+        _append_log('\nRemoved legacy `runtime: nvidia` line from docker-compose.yml (breaks GPU init on this host).\n')
+
+
 def _wait_for_health(timeout):
     deadline = time.time() + timeout
     while time.time() < deadline:
@@ -250,6 +274,9 @@ def do_activate(target_model):
         except Exception as e:
             ok = False
             _append_log(f'\nFailed to update docker-compose.yml: {e}\n')
+
+    if ok:
+        _strip_legacy_nvidia_runtime()
 
     if ok:
         ok = _run('docker compose pull')
