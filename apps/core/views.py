@@ -2077,13 +2077,24 @@ def test_llm():
                 'description': _VLLM_START_INSTRUCTIONS,
                 'trigger_url': reverse('llm:test_connection'),
                 'trigger_label': '🔄 Retry Connection',
+                # Chat is provider-aware (vLLM or OpenAI, whichever is active at
+                # /llm/models/) so it's still worth offering even when this
+                # vLLM-specific check fails - OpenAI may be the active provider.
+                'link_url': reverse('llm:chat'),
+                'link_label': '💬 Open LLM Chat',
             })
     except Exception as e:
+        # Re-import locally: the try block's own `from django.urls import
+        # reverse` may never have run if the failure happened before it
+        # (e.g. get_vllm_client import itself raising).
+        from django.urls import reverse
         tests.append({
             'name': '🔌 vLLM Server Connection',
             'status': 'fail',
             'message': f'✗ Error: {str(e)}',
             'description': _VLLM_START_INSTRUCTIONS,
+            'link_url': reverse('llm:chat'),
+            'link_label': '💬 Open LLM Chat',
         })
 
     # Test 1b: Update LLM (model/engine refresh via GPU-server update agent)

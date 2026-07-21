@@ -20,6 +20,7 @@ import logging
 
 from apps.data.models import NewsArticle, InvestorCall, KnowledgeBase
 from apps.llm.services.vllm_client import get_vllm_client
+from apps.llm.services.llm_router import get_active_llm_client
 
 logger = logging.getLogger(__name__)
 
@@ -41,9 +42,9 @@ def llm_dashboard(request):
         recent_news = NewsArticle.objects.filter(processed=True).order_by('-processed_at')[:5]
         recent_calls = InvestorCall.objects.filter(processed=True).order_by('-processed_at')[:5]
 
-        # Get LLM stats
-        vllm_client = get_vllm_client()
-        llm_enabled = vllm_client.is_enabled()
+        # Get LLM stats (whichever provider is actually active - vLLM or OpenAI)
+        llm_client = get_active_llm_client()
+        llm_enabled = llm_client.is_enabled()
 
         context.update({
             'news_count': news_count,
@@ -52,7 +53,7 @@ def llm_dashboard(request):
             'recent_news': recent_news,
             'recent_calls': recent_calls,
             'llm_enabled': llm_enabled,
-            'llm_model': vllm_client.model if llm_enabled else 'N/A',
+            'llm_model': llm_client.model if llm_enabled else 'N/A',
         })
 
     except Exception as e:
@@ -76,15 +77,15 @@ def chat_interface(request):
             temperature = float(data.get('temperature', 0.7))
             max_tokens = int(data.get('max_tokens', 1000))
 
-            vllm_client = get_vllm_client()
+            llm_client = get_active_llm_client()
 
-            if not vllm_client.is_enabled():
+            if not llm_client.is_enabled():
                 return JsonResponse({
                     'success': False,
-                    'error': 'vLLM client is not enabled'
+                    'error': 'LLM provider is not enabled'
                 })
 
-            success, response, metadata = vllm_client.chat(
+            success, response, metadata = llm_client.chat(
                 messages=messages,
                 temperature=temperature,
                 max_tokens=max_tokens
@@ -105,9 +106,9 @@ def chat_interface(request):
             })
 
     # GET request - show chat UI
-    vllm_client = get_vllm_client()
-    context['llm_enabled'] = vllm_client.is_enabled()
-    context['llm_model'] = vllm_client.model
+    llm_client = get_active_llm_client()
+    context['llm_enabled'] = llm_client.is_enabled()
+    context['llm_model'] = llm_client.model
 
     return render(request, 'llm/chat.html', context)
 
