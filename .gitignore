@@ -100,3 +100,12 @@ trendlyne_data/forecaster/*.csv
 
 # Celery sqlite variants
 celerybeat-schedule*
+
+# portfolio_frontend (Next.js) - track source, ignore deps/build output
+portfolio_frontend/node_modules/
+portfolio_frontend/.next/
+portfolio_frontend/out/
+portfolio_frontend/.vercel/
+portfolio_frontend/*.tsbuildinfo
+portfolio_frontend/next-env.d.ts
+portfolio_frontend/.env*.local

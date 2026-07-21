@@ -11,10 +11,12 @@ import time
 from typing import Dict, List, Optional, Tuple
 from openai import OpenAI
 
+from apps.llm.services.llm_text_analysis import LLMTextAnalysisMixin
+
 logger = logging.getLogger(__name__)
 
 
-class OpenAIClient:
+class OpenAIClient(LLMTextAnalysisMixin):
     """
     Client for OpenAI's cloud ChatGPT API.
 
@@ -25,7 +27,20 @@ class OpenAIClient:
         OPENAI_API_KEY / OPENAI_MODEL env vars - fallback for local/dev use.
     """
 
+    # How often a long-running process (Django, Celery worker/beat, Telegram
+    # bot) re-reads LLMProviderConfig for a changed key/model. Each of those
+    # is a separate process with its own cached OpenAIClient singleton, so a
+    # switch made from the /llm/models/ UI (possibly on another device) only
+    # calls reset_openai_client() in whichever process served that request -
+    # every other process would otherwise keep using stale credentials until
+    # restarted. Mirrors VLLMClient.MODEL_RECHECK_SECONDS.
+    CONFIG_RECHECK_SECONDS = 30
+
     def __init__(self):
+        self._load_config()
+        self._last_config_check = time.time()
+
+    def _load_config(self):
         api_key = ''
         model = os.getenv('OPENAI_MODEL', 'gpt-4o-mini')
         try:
@@ -47,8 +62,28 @@ class OpenAIClient:
         if not self.enabled:
             logger.warning("No OpenAI API key configured (LLMProviderConfig or OPENAI_API_KEY) - OpenAIClient disabled")
 
+    def _refresh_if_stale(self):
+        """Re-read LLMProviderConfig at most every CONFIG_RECHECK_SECONDS and
+        reconnect if the key/model changed - see class docstring."""
+        if time.time() - self._last_config_check < self.CONFIG_RECHECK_SECONDS:
+            return
+        self._last_config_check = time.time()
+
+        try:
+            from apps.llm.models import LLMProviderConfig
+            cfg = LLMProviderConfig.get_settings()
+            new_key = cfg.openai_api_key or os.getenv('OPENAI_API_KEY', '')
+            new_model = cfg.openai_model or os.getenv('OPENAI_MODEL', 'gpt-4o-mini')
+        except Exception:
+            return
+
+        if new_key != self.api_key or new_model != self.model:
+            logger.info("OpenAI config changed (key/model updated elsewhere) - reconnecting client")
+            self._load_config()
+
     def is_enabled(self) -> bool:
-        """Check if OpenAI client is enabled (API key configured)."""
+        """Check if OpenAI client is enabled (re-verifies periodically - see CONFIG_RECHECK_SECONDS)."""
+        self._refresh_if_stale()
         return self.enabled
 
     def chat(
@@ -64,6 +99,7 @@ class OpenAIClient:
         Returns:
             Tuple[bool, str, Dict]: (success, response_text, metadata)
         """
+        self._refresh_if_stale()
         if not self.enabled:
             return False, "", {"error": "OpenAI client not enabled (missing OPENAI_API_KEY)"}
 

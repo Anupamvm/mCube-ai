@@ -49,13 +49,15 @@ class NewsProcessor:
     Processes news articles with LLM analysis and stores them for RAG
     """
 
+    def __init__(self):
+        self.vector_store = get_vector_store()
+
     @property
     def llm_client(self):
         """Resolved fresh on each access so a provider switch (e.g. to OpenAI
         at /llm/models/) takes effect without restarting this process."""
         from apps.llm.services.llm_router import get_active_llm_client
         return get_active_llm_client('ollama')
-        self.vector_store = get_vector_store()
 
     def process_article(
         self,

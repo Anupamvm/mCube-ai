@@ -19,7 +19,6 @@ import json
 import logging
 
 from apps.data.models import NewsArticle, InvestorCall, KnowledgeBase
-from apps.llm.services.vllm_client import get_vllm_client
 from apps.llm.services.llm_router import get_active_llm_client
 
 logger = logging.getLogger(__name__)
@@ -253,12 +252,12 @@ def analyze_document(request):
         doc_type = data.get('doc_type')  # 'news' or 'call'
         doc_id = data.get('doc_id')
 
-        vllm_client = get_vllm_client()
+        llm_client = get_active_llm_client()
 
-        if not vllm_client.is_enabled():
+        if not llm_client.is_enabled():
             return JsonResponse({
                 'success': False,
-                'error': 'vLLM client is not enabled'
+                'error': 'LLM client is not enabled'
             })
 
         if doc_type == 'news':
@@ -274,13 +273,13 @@ def analyze_document(request):
             })
 
         # Analyze sentiment
-        success_sent, sentiment, _ = vllm_client.analyze_sentiment(text)
+        success_sent, sentiment, _ = llm_client.analyze_sentiment(text)
 
         # Generate summary
-        success_summ, summary, _ = vllm_client.summarize(text, max_length=150)
+        success_summ, summary, _ = llm_client.summarize(text, max_length=150)
 
         # Extract insights
-        success_ins, insights, _ = vllm_client.extract_insights(text, num_insights=5)
+        success_ins, insights, _ = llm_client.extract_insights(text, num_insights=5)
 
         # Update the document
         if doc_type == 'news':
@@ -360,12 +359,12 @@ def ask_question(request):
         # TODO: Implement proper RAG with vector search
         # For now, do simple text search and answer
 
-        vllm_client = get_vllm_client()
+        llm_client = get_active_llm_client()
 
-        if not vllm_client.is_enabled():
+        if not llm_client.is_enabled():
             return JsonResponse({
                 'success': False,
-                'error': 'vLLM client is not enabled'
+                'error': 'LLM client is not enabled'
             })
 
         # Find relevant documents
@@ -380,7 +379,7 @@ def ask_question(request):
             context = "No relevant information found in the knowledge base."
 
         # Ask LLM
-        success, answer, metadata = vllm_client.answer_question(
+        success, answer, metadata = llm_client.answer_question(
             question=question,
             context=context
         )

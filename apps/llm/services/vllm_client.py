@@ -14,10 +14,12 @@ import time
 from typing import Dict, List, Optional, Tuple
 from openai import OpenAI
 
+from apps.llm.services.llm_text_analysis import LLMTextAnalysisMixin
+
 logger = logging.getLogger(__name__)
 
 
-class VLLMClient:
+class VLLMClient(LLMTextAnalysisMixin):
     """
     Client for interacting with vLLM server using OpenAI-compatible API
 
@@ -256,167 +258,6 @@ class VLLMClient:
         messages.append({"role": "user", "content": prompt})
 
         return self.chat(messages, temperature=temperature, max_tokens=max_tokens)
-
-    def analyze_sentiment(
-        self,
-        text: str
-    ) -> Tuple[bool, Dict, Dict]:
-        """
-        Analyze sentiment of text using vLLM
-
-        Args:
-            text: Text to analyze
-
-        Returns:
-            Tuple[bool, Dict, Dict]: (success, sentiment_data, metadata)
-            sentiment_data contains: label, score, confidence
-        """
-        system_prompt = """You are a financial sentiment analysis expert.
-Analyze the sentiment of the given text and respond ONLY with a JSON object in this exact format:
-{
-  "label": "POSITIVE" or "NEUTRAL" or "NEGATIVE",
-  "score": a number between -1.0 (very negative) and 1.0 (very positive),
-  "confidence": a number between 0.0 and 1.0 indicating your confidence
-}"""
-
-        success, response, metadata = self.generate(
-            prompt=text,
-            system=system_prompt,
-            temperature=0.1,
-            max_tokens=100
-        )
-
-        if not success:
-            return False, {}, metadata
-
-        # Parse JSON response
-        import json
-        try:
-            # Try to extract JSON from response
-            response = response.strip()
-            if response.startswith("```json"):
-                response = response[7:]
-            if response.endswith("```"):
-                response = response[:-3]
-            response = response.strip()
-
-            sentiment_data = json.loads(response)
-            return True, sentiment_data, metadata
-        except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse sentiment response: {response}")
-            return False, {}, {"error": f"JSON parse error: {str(e)}"}
-
-    def summarize(
-        self,
-        text: str,
-        max_length: int = 200
-    ) -> Tuple[bool, str, Dict]:
-        """
-        Generate a summary of the text
-
-        Args:
-            text: Text to summarize
-            max_length: Maximum length of summary in words
-
-        Returns:
-            Tuple[bool, str, Dict]: (success, summary, metadata)
-        """
-        system_prompt = f"""You are a financial analysis expert.
-Summarize the following text concisely in about {max_length} words or less.
-Focus on key financial facts, numbers, and important insights."""
-
-        return self.generate(
-            prompt=text,
-            system=system_prompt,
-            temperature=0.3,
-            max_tokens=int(max_length * 1.5)  # Roughly 1.5 tokens per word
-        )
-
-    def extract_insights(
-        self,
-        text: str,
-        num_insights: int = 5
-    ) -> Tuple[bool, List[str], Dict]:
-        """
-        Extract key insights from text
-
-        Args:
-            text: Text to analyze
-            num_insights: Number of insights to extract
-
-        Returns:
-            Tuple[bool, List[str], Dict]: (success, insights_list, metadata)
-        """
-        system_prompt = f"""You are a financial analysis expert.
-Extract the top {num_insights} key insights from the following text.
-Respond ONLY with a JSON array of strings, each string being one insight.
-Example: ["Insight 1", "Insight 2", "Insight 3"]"""
-
-        success, response, metadata = self.generate(
-            prompt=text,
-            system=system_prompt,
-            temperature=0.3,
-            max_tokens=500
-        )
-
-        if not success:
-            return False, [], metadata
-
-        # Parse JSON response
-        import json
-        try:
-            response = response.strip()
-            if response.startswith("```json"):
-                response = response[7:]
-            if response.endswith("```"):
-                response = response[:-3]
-            response = response.strip()
-
-            insights = json.loads(response)
-            if isinstance(insights, list):
-                return True, insights, metadata
-            else:
-                logger.error(f"Insights response is not a list: {response}")
-                return False, [], {"error": "Invalid response format"}
-        except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse insights response: {response}")
-            return False, [], {"error": f"JSON parse error: {str(e)}"}
-
-    def answer_question(
-        self,
-        question: str,
-        context: str,
-        temperature: float = 0.3
-    ) -> Tuple[bool, str, Dict]:
-        """
-        Answer a question based on provided context (for RAG)
-
-        Args:
-            question: Question to answer
-            context: Context information to use
-            temperature: Sampling temperature
-
-        Returns:
-            Tuple[bool, str, Dict]: (success, answer, metadata)
-        """
-        system_prompt = """You are a financial analysis assistant.
-Answer the question based ONLY on the provided context.
-If the context doesn't contain enough information, say so.
-Be concise and factual."""
-
-        prompt = f"""Context:
-{context}
-
-Question: {question}
-
-Answer:"""
-
-        return self.generate(
-            prompt=prompt,
-            system=system_prompt,
-            temperature=temperature,
-            max_tokens=500
-        )
 
 
 # Global instance

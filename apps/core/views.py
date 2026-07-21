@@ -2017,14 +2017,23 @@ def test_accounts(request=None):
 
 
 # Shown on /system/test/ when the vLLM connection test fails. Kept as a module
-# constant (not inline per-branch) after the 2026-07-21 GPU-driver incident,
-# where `runtime: nvidia` in docker-compose.yml (redundant with the modern
-# `deploy.resources.reservations.devices` GPU block) caused every container
-# start to fail with "Error 803: unsupported display driver / cuda driver
-# combination" even though the host driver/image were fine - `docker compose
-# pull` was NOT the cause (same failure with the old, previously-working
-# image), so pull is deliberately left out of the happy path below to avoid
-# drifting to a newer, potentially incompatible `vllm/vllm-openai:latest`.
+# constant (not inline per-branch). Two distinct incidents on 2026-07-21 have
+# produced the identical "Error 803: unsupported display driver / cuda driver
+# combination" message with different root causes, so both fixes are listed -
+# check cause 2 (image/CUDA drift) first, since docker-compose.yml is now
+# pinned specifically to prevent it from recurring silently:
+#   1. (morning) A stray `runtime: nvidia` line, redundant with the modern
+#      `deploy.resources.reservations.devices` GPU block, broke container
+#      startup even though host driver/GPU/image were fine.
+#   2. (afternoon) `docker compose pull` picked up a new `vllm/vllm-openai:
+#      latest` build shipping PyTorch cu130 (needs CUDA 13, i.e. driver
+#      ~570/580+); this host's driver (560.35.03) only supports up to CUDA
+#      12.6, so cudaGetDeviceCount() failed on every attempt regardless of
+#      restarts. Fixed by pinning docker-compose.yml's image to the last
+#      known-good cached build (retagged `vllm/vllm-openai:cu129-good`) with
+#      `pull_policy: never`, so future `docker compose pull` calls (including
+#      from vllm_update_agent.py's activate flow) skip re-pulling instead of
+#      drifting onto another incompatible `:latest`.
 _VLLM_START_INSTRUCTIONS = (
     '<b>Start LLM server:</b>'
     '<br><code>docker ps --filter name=vllm-70b</code>'
@@ -2033,8 +2042,17 @@ _VLLM_START_INSTRUCTIONS = (
     '<br><code>docker logs -f vllm-70b</code>'
     '<br><br><i>Model takes 2-3 min to load. Wait for "Application startup complete" in logs.</i>'
     '<br><br><b>If it fails with "unsupported display driver / cuda driver combination":</b>'
-    '<br>Remove any stray <code>runtime: nvidia</code> line from <code>~/vllm/docker-compose.yml</code> - '
-    'that legacy runtime path breaks on this host even though the driver, GPU, and image are fine:'
+    '<br><br><b>1) Check for image/CUDA drift first</b> (most likely cause now - a re-pulled '
+    '<code>:latest</code> image can silently need a newer driver than this host has):'
+    '<br><code>docker exec vllm-70b python3 -c "import torch; print(torch.version.cuda)"</code>'
+    '<br>Compare against the host\'s max supported CUDA version (<code>nvidia-smi</code> "CUDA Version" field, '
+    'currently 12.6). If the container reports 13.x or higher, the pin was lost - restore it:'
+    '<br><code>grep -E "image:|pull_policy:" ~/vllm/docker-compose.yml</code> should show '
+    '<code>image: vllm/vllm-openai:cu129-good</code> and <code>pull_policy: never</code>; if not, '
+    'put those two lines back and run:'
+    '<br><code>cd ~/vllm && docker compose up -d --force-recreate</code>'
+    '<br><br><b>2) Stray <code>runtime: nvidia</code> line</b> (redundant with the modern '
+    '<code>deploy.resources.reservations.devices</code> GPU block):'
     '<br><code>sed -i "/runtime: nvidia/d" ~/vllm/docker-compose.yml && cd ~/vllm && docker compose up -d</code>'
 )
 
