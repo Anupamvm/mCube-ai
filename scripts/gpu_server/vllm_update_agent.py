@@ -258,6 +258,23 @@ def _container_info():
     return {}
 
 
+def _bring_up_and_wait():
+    """Pull + force-recreate the container per whatever's currently in
+    docker-compose.yml, then wait for it to report healthy. Returns bool."""
+    ok = _run('docker compose pull')
+    ok = _run('docker compose up -d --force-recreate') and ok
+    if not ok:
+        return False
+    _append_log('\nWaiting for vLLM API to become healthy...\n')
+    healthy = _wait_for_health(HEALTH_TIMEOUT_SECONDS)
+    if not healthy:
+        _append_log(f'\nTimed out waiting for {HEALTH_URL} after {HEALTH_TIMEOUT_SECONDS}s\n')
+        _run(f'docker logs --tail 100 {CONTAINER_NAME}')
+        return False
+    _append_log('\nvLLM API is responding - update successful.\n')
+    return True
+
+
 def do_activate(target_model):
     with activate_lock:
         activate_state['status'] = 'running'
@@ -265,6 +282,8 @@ def do_activate(target_model):
         activate_state['finished_at'] = None
         activate_state['log'] = ''
         activate_state['target_model'] = target_model
+
+    previous_model = _current_model()
 
     ok = True
     if target_model:
@@ -279,18 +298,33 @@ def do_activate(target_model):
         _strip_legacy_nvidia_runtime()
 
     if ok:
-        ok = _run('docker compose pull')
-        ok = _run('docker compose up -d --force-recreate') and ok
+        # Explicit unload before loading the new model, rather than relying
+        # solely on `--force-recreate`'s implicit stop - makes the swap
+        # atomic-ish and guarantees the old model's GPU memory is freed
+        # before the new one tries to load. Harmless no-op if nothing was
+        # running (e.g. first-ever activation).
+        _append_log('\nUnloading current model (if running)...\n')
+        _run('docker compose stop')
+        ok = _bring_up_and_wait()
 
-    if ok:
-        _append_log('\nWaiting for vLLM API to become healthy...\n')
-        healthy = _wait_for_health(HEALTH_TIMEOUT_SECONDS)
-        if not healthy:
-            ok = False
-            _append_log(f'\nTimed out waiting for {HEALTH_URL} after {HEALTH_TIMEOUT_SECONDS}s\n')
-            _run(f'docker logs --tail 100 {CONTAINER_NAME}')
-        else:
-            _append_log('\nvLLM API is responding - update successful.\n')
+    if not ok:
+        # Don't leave a broken/unsupported model crash-looping forever via
+        # restart: unless-stopped - stop it, and if something was working
+        # before this attempt, roll back to it so the system isn't left
+        # with no LLM at all.
+        _append_log('\nActivation failed - stopping the failed container.\n')
+        _run('docker compose stop')
+
+        if target_model and previous_model and previous_model != target_model:
+            _append_log(f'\nRolling back to previously active model: {previous_model}\n')
+            try:
+                _set_model_in_compose(previous_model)
+                if _bring_up_and_wait():
+                    _append_log(f'\nRolled back successfully - {previous_model} is running again.\n')
+                else:
+                    _append_log(f'\nRollback to {previous_model} also failed to come up healthy - manual intervention needed.\n')
+            except Exception as e:
+                _append_log(f'\nRollback failed: {e}\n')
 
     with activate_lock:
         activate_state['status'] = 'success' if ok else 'failed'
