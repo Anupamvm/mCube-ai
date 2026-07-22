@@ -44,10 +44,13 @@ def trigger_vllm_connection_test(request):
                     'commands': [
                         'docker ps --filter name=vllm-70b',
                         'nvidia-smi',
-                        'cd /home/anupamvm/vllm && docker compose up -d',
+                        'cd /home/anupamvm/vllm && docker compose up -d --force-recreate',
                         'docker logs -f vllm-70b',
                     ],
-                    'note': 'Model takes 2-3 minutes to load. Wait for "Application startup complete" in logs.',
+                    'note': 'Model takes 2-3 minutes to load. Wait for "Application startup complete" in logs. '
+                            'Always use --force-recreate, even if the container already exists - a plain '
+                            '"up -d" reuses stale NVIDIA driver-library mounts and can fail with '
+                            '"unsupported display driver / cuda driver combination".',
                 },
             })
     except Exception as e:

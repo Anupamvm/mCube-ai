@@ -31,10 +31,16 @@ TEST_DESCRIPTIONS = {
             <ol>
                 <li>Check if container exists: <code>docker ps -a --filter name=vllm-70b</code></li>
                 <li>Check GPU: <code>nvidia-smi</code></li>
-                <li>Start the container: <code>cd /home/anupamvm/vllm && docker compose up -d</code></li>
+                <li>Start the container: <code>cd /home/anupamvm/vllm && docker compose up -d --force-recreate</code></li>
                 <li>Watch logs: <code>docker logs -f vllm-70b</code></li>
                 <li>Wait for "Application startup complete" (2-3 minutes for 70B model)</li>
             </ol>
+            <br>
+            <strong>Always use <code>--force-recreate</code></strong>, even if the container
+            already exists - the NVIDIA container-toolkit only binds fresh driver libraries into
+            the container at creation time, not on a plain restart. Skipping it can reproduce
+            "Error 803: unsupported display driver / cuda driver combination" even when
+            <code>nvidia-smi</code> on the host is healthy.
         ''',
         'expected_output': 'Network type (Local/Public), server URL, and model name (Meta-Llama-3.1-70B-Instruct-AWQ-INT4)'
     },
