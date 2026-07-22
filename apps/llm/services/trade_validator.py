@@ -19,6 +19,7 @@ import logging
 from typing import Dict, Optional, Tuple
 
 from apps.llm.services.rag_system import get_rag_system
+from apps.llm.services.response_parsing import normalize_line, match_bullet
 
 logger = logging.getLogger(__name__)
 
@@ -40,10 +41,12 @@ class TradeValidator:
 
     @property
     def llm_client(self):
-        """Resolved fresh on each access so a provider switch (e.g. to OpenAI
-        at /llm/models/) takes effect without restarting this process."""
-        from apps.llm.services.llm_router import get_active_llm_client
-        return get_active_llm_client('ollama')
+        """Resolved fresh on each access so a routing change (e.g. to Online
+        at /llm/models/) takes effect without restarting this process. Trade/
+        position validation is classified as 'evaluation' - the higher-stakes
+        task type, routed to the stronger model by default."""
+        from apps.llm.services.llm_router import get_llm_client_for_task
+        return get_llm_client_for_task('evaluation')
 
     def validate_trade(
         self,
@@ -295,8 +298,11 @@ What is the outlook and guidance?"""
         lines = llm_response.split('\n')
         current_section = None
 
-        for line in lines:
-            line = line.strip()
+        for raw_line in lines:
+            # Strip markdown bold from headers (**DECISION:** -> DECISION:) so
+            # parsing doesn't depend on which LLM answered - Claude/GPT often
+            # bold plain-text headers even when told to use a plain format.
+            line = normalize_line(raw_line)
 
             if not line:
                 continue
@@ -329,9 +335,9 @@ What is the outlook and guidance?"""
             elif line.startswith('ALTERNATIVES:'):
                 current_section = 'alternatives'
 
-            # Section content
-            elif line.startswith('-'):
-                item = line.lstrip('- ').strip()
+            # Section content - tolerates -, *, •, and numbered ("1.") bullets
+            elif match_bullet(line)[0]:
+                item = match_bullet(line)[1]
                 if current_section == 'risks':
                     result['risks'].append(item)
                 elif current_section == 'opportunities':
@@ -476,8 +482,19 @@ SUGGESTED_ACTION: [Specific action to take]
         if not llm_success:
             return self._error_result("LLM exit analysis failed")
 
+        # Parse the RECOMMENDATION: line as documented in the prompt above,
+        # rather than a naive 'EXIT' in llm_response substring check - that
+        # false-positives on reasoning text like "no clear exit signal" or
+        # "PARTIAL_EXIT is not warranted" (which also contains "EXIT").
+        recommendation = 'HOLD'
+        for raw_line in llm_response.split('\n'):
+            line = normalize_line(raw_line)
+            if line.startswith('RECOMMENDATION:'):
+                recommendation = line.split(':', 1)[1].strip().upper()
+                break
+
         return {
-            'exit_recommended': 'EXIT' in llm_response,
+            'exit_recommended': recommendation in ('EXIT', 'PARTIAL_EXIT'),
             'analysis': answer,
             'llm_recommendation': llm_response,
             'sources_used': len(sources)

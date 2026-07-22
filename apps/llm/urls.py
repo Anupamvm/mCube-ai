@@ -49,5 +49,6 @@ urlpatterns = [
     path('models/download/', views.model_manager_download, name='model_manager_download'),
     path('models/activate/', views.model_manager_activate, name='model_manager_activate'),
     path('models/delete/', views.model_manager_delete, name='model_manager_delete'),
-    path('models/set-provider/', views.model_manager_set_provider, name='model_manager_set_provider'),
+    path('models/set-online-provider/', views.model_manager_set_online_provider, name='model_manager_set_online_provider'),
+    path('models/set-routing/', views.model_manager_set_routing, name='model_manager_set_routing'),
 ]

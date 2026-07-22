@@ -19,7 +19,7 @@ import json
 import logging
 
 from apps.data.models import NewsArticle, InvestorCall, KnowledgeBase
-from apps.llm.services.llm_router import get_active_llm_client
+from apps.llm.services.llm_router import get_llm_client_for_task
 
 logger = logging.getLogger(__name__)
 
@@ -41,9 +41,13 @@ def llm_dashboard(request):
         recent_news = NewsArticle.objects.filter(processed=True).order_by('-processed_at')[:5]
         recent_calls = InvestorCall.objects.filter(processed=True).order_by('-processed_at')[:5]
 
-        # Get LLM stats (whichever provider is actually active - vLLM or OpenAI)
-        llm_client = get_active_llm_client()
-        llm_enabled = llm_client.is_enabled()
+        # Show both task-routed tiers separately - understanding and
+        # evaluation can be pointed at different tiers (local vLLM / online
+        # OpenAI-or-Claude), so a single status no longer tells the full story.
+        understanding_client = get_llm_client_for_task('understanding')
+        evaluation_client = get_llm_client_for_task('evaluation')
+        understanding_enabled = understanding_client.is_enabled()
+        evaluation_enabled = evaluation_client.is_enabled()
 
         context.update({
             'news_count': news_count,
@@ -51,8 +55,10 @@ def llm_dashboard(request):
             'kb_count': kb_count,
             'recent_news': recent_news,
             'recent_calls': recent_calls,
-            'llm_enabled': llm_enabled,
-            'llm_model': llm_client.model if llm_enabled else 'N/A',
+            'understanding_enabled': understanding_enabled,
+            'understanding_model': understanding_client.model if understanding_enabled else 'N/A',
+            'evaluation_enabled': evaluation_enabled,
+            'evaluation_model': evaluation_client.model if evaluation_enabled else 'N/A',
         })
 
     except Exception as e:
@@ -76,7 +82,7 @@ def chat_interface(request):
             temperature = float(data.get('temperature', 0.7))
             max_tokens = int(data.get('max_tokens', 1000))
 
-            llm_client = get_active_llm_client()
+            llm_client = get_llm_client_for_task('evaluation')
 
             if not llm_client.is_enabled():
                 return JsonResponse({
@@ -105,7 +111,7 @@ def chat_interface(request):
             })
 
     # GET request - show chat UI
-    llm_client = get_active_llm_client()
+    llm_client = get_llm_client_for_task('evaluation')
     context['llm_enabled'] = llm_client.is_enabled()
     context['llm_model'] = llm_client.model
 
@@ -252,7 +258,7 @@ def analyze_document(request):
         doc_type = data.get('doc_type')  # 'news' or 'call'
         doc_id = data.get('doc_id')
 
-        llm_client = get_active_llm_client()
+        llm_client = get_llm_client_for_task('understanding')
 
         if not llm_client.is_enabled():
             return JsonResponse({
@@ -359,7 +365,7 @@ def ask_question(request):
         # TODO: Implement proper RAG with vector search
         # For now, do simple text search and answer
 
-        llm_client = get_active_llm_client()
+        llm_client = get_llm_client_for_task('understanding')
 
         if not llm_client.is_enabled():
             return JsonResponse({
@@ -425,39 +431,47 @@ def model_manager(request):
         'activate_status': status if status_ok else None,
         'provider_config': provider_config,
         'has_openai_key': bool(provider_config.openai_api_key),
+        'has_anthropic_key': bool(provider_config.anthropic_api_key),
     }
     return render(request, 'llm/model_manager.html', context)
 
 
 @login_required
 @require_http_methods(["POST"])
-def model_manager_set_provider(request):
+def model_manager_set_online_provider(request):
     """
-    Switch which LLM provider serves ALL requests system-wide (see
-    apps.llm.services.llm_router.get_active_llm_client()).
+    Configure the Online tier's active vendor (OpenAI or Claude) and its key/
+    model. This does not switch anything "on" by itself - which tasks
+    actually use the Online tier is decided separately by the task routing
+    (see model_manager_set_routing) - it just says which cloud vendor serves
+    the Online tier whenever a task is routed there.
 
     Request body (POST form data):
-        provider: 'vllm' or 'openai'
-        openai_api_key: optional - only overwrites the saved key if non-empty,
-            so re-saving without retyping it keeps the existing key
-        openai_model: optional - defaults to gpt-4o-mini if never set
+        online_provider: 'openai' or 'anthropic'
+        openai_api_key / anthropic_api_key: optional - only overwrites the
+            saved key if non-empty, so re-saving without retyping it keeps
+            the existing key
+        openai_model / anthropic_model: optional - defaults to gpt-4o-mini /
+            claude-opus-4-8 if never set
         unload_local: 'true' to also best-effort stop the GPU server's vLLM
-            container when switching to openai (frees GPU memory; requires
-            the update agent to support POST /models/stop)
+            container (frees GPU memory - only makes sense if nothing is
+            currently routed to Local; requires the update agent to support
+            POST /models/stop)
 
     Returns JSON: {success, message, unload}
     """
     from apps.llm.models import LLMProviderConfig
     from apps.llm.services.openai_client import reset_openai_client
+    from apps.llm.services.anthropic_client import reset_anthropic_client
     from apps.llm.services.vllm_updater import stop_model
 
-    provider = (request.POST.get('provider') or '').strip()
-    if provider not in ('vllm', 'openai'):
-        return JsonResponse({'success': False, 'message': 'provider must be "vllm" or "openai"'})
+    online_provider = (request.POST.get('online_provider') or '').strip()
+    if online_provider not in ('openai', 'anthropic'):
+        return JsonResponse({'success': False, 'message': 'online_provider must be "openai" or "anthropic"'})
 
     cfg = LLMProviderConfig.get_settings()
 
-    if provider == 'openai':
+    if online_provider == 'openai':
         posted_key = (request.POST.get('openai_api_key') or '').strip()
         posted_model = (request.POST.get('openai_model') or '').strip()
 
@@ -467,25 +481,75 @@ def model_manager_set_provider(request):
             cfg.openai_model = posted_model
 
         if not cfg.openai_api_key:
-            return JsonResponse({'success': False, 'message': 'An OpenAI API key is required to switch to OpenAI'})
+            return JsonResponse({'success': False, 'message': 'An OpenAI API key is required to use OpenAI as the Online vendor'})
 
-    previous_provider = cfg.active_provider
-    cfg.active_provider = provider
+    if online_provider == 'anthropic':
+        posted_key = (request.POST.get('anthropic_api_key') or '').strip()
+        posted_model = (request.POST.get('anthropic_model') or '').strip()
+
+        if posted_key:
+            cfg.anthropic_api_key = posted_key
+        if posted_model:
+            cfg.anthropic_model = posted_model
+
+        if not cfg.anthropic_api_key:
+            return JsonResponse({'success': False, 'message': 'An Anthropic API key is required to use Claude as the Online vendor'})
+
+    cfg.online_provider = online_provider
     cfg.switched_at = timezone.now()
     cfg.switched_by = request.user
     cfg.save()
 
     reset_openai_client()
+    reset_anthropic_client()
 
     unload_result = None
-    if provider == 'openai' and previous_provider != 'openai' and request.POST.get('unload_local') == 'true':
+    if request.POST.get('unload_local') == 'true':
         ok, msg = stop_model()
         unload_result = {'attempted': True, 'success': ok, 'message': msg}
 
     return JsonResponse({
         'success': True,
-        'message': f'Active LLM provider set to {cfg.get_active_provider_display()}',
+        'message': f'Online vendor set to {cfg.get_online_provider_display()}',
         'unload': unload_result,
+    })
+
+
+@login_required
+@require_http_methods(["POST"])
+def model_manager_set_routing(request):
+    """
+    Set which tier (Local vLLM or Online) handles each task type.
+
+    Request body (POST form data):
+        understanding_target: 'local' or 'online' - news/report
+            comprehension (sentiment, summaries, insights, RAG Q&A)
+        evaluation_target: 'local' or 'online' - trade/position validation
+            and the interactive chat interface
+
+    Returns JSON: {success, message}
+    """
+    from apps.llm.models import LLMProviderConfig
+
+    understanding_target = (request.POST.get('understanding_target') or '').strip()
+    evaluation_target = (request.POST.get('evaluation_target') or '').strip()
+
+    if understanding_target not in ('local', 'online') or evaluation_target not in ('local', 'online'):
+        return JsonResponse({'success': False, 'message': 'understanding_target and evaluation_target must each be "local" or "online"'})
+
+    cfg = LLMProviderConfig.get_settings()
+    cfg.understanding_target = understanding_target
+    cfg.evaluation_target = evaluation_target
+    cfg.switched_at = timezone.now()
+    cfg.switched_by = request.user
+    cfg.save()
+
+    return JsonResponse({
+        'success': True,
+        'message': (
+            f'Understanding -> {cfg.get_understanding_target_display()}, '
+            f'Evaluation -> {cfg.get_evaluation_target_display()}'
+        ),
     })
 
 

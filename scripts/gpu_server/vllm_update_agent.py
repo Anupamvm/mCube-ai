@@ -67,7 +67,10 @@ HEALTH_TIMEOUT_SECONDS = int(os.environ.get('VLLM_HEALTH_TIMEOUT_SECONDS', '600'
 MODEL_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9_.\-]*/[A-Za-z0-9][A-Za-z0-9_.\-]*$')
 
 activate_lock = threading.Lock()
-activate_state = {'status': 'idle', 'started_at': None, 'finished_at': None, 'log': '', 'target_model': None}
+activate_state = {
+    'status': 'idle', 'started_at': None, 'finished_at': None, 'log': '',
+    'target_model': None, 'rolled_back_to': None,
+}
 
 downloads_lock = threading.Lock()
 downloads = {}  # repo_id -> {'status', 'started_at', 'finished_at', 'error'}
@@ -105,6 +108,10 @@ def list_models():
     disk_models = _scan_downloaded_models()
     current = _current_model()
 
+    with activate_lock:
+        activating = activate_state['status'] == 'running'
+        activating_target = activate_state['target_model']
+
     result = {}
     for repo_id, size in disk_models.items():
         result[repo_id] = {'repo_id': repo_id, 'status': 'downloaded', 'size_bytes': size, 'size': _human_size(size)}
@@ -116,7 +123,17 @@ def list_models():
                 entry.update(info)
                 result[repo_id] = entry
 
-    if current:
+    if activating and activating_target:
+        # docker-compose.yml's --model line is rewritten to the target before
+        # the container is even stopped, let alone health-checked - so
+        # _current_model() would already say "target" here even though
+        # nothing has confirmed it's actually serving yet (it might be
+        # crash-looping). Only report "active" once the activate/rollback
+        # attempt has fully resolved and we can trust _current_model() again.
+        entry = result.get(activating_target, {'repo_id': activating_target, 'size_bytes': None, 'size': None})
+        entry['status'] = 'activating'
+        result[activating_target] = entry
+    elif current:
         if current not in result:
             result[current] = {'repo_id': current, 'status': 'active', 'size_bytes': None, 'size': None}
         else:
@@ -282,6 +299,7 @@ def do_activate(target_model):
         activate_state['finished_at'] = None
         activate_state['log'] = ''
         activate_state['target_model'] = target_model
+        activate_state['rolled_back_to'] = None
 
     previous_model = _current_model()
 
@@ -321,6 +339,8 @@ def do_activate(target_model):
                 _set_model_in_compose(previous_model)
                 if _bring_up_and_wait():
                     _append_log(f'\nRolled back successfully - {previous_model} is running again.\n')
+                    with activate_lock:
+                        activate_state['rolled_back_to'] = previous_model
                 else:
                     _append_log(f'\nRollback to {previous_model} also failed to come up healthy - manual intervention needed.\n')
             except Exception as e:

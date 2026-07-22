@@ -27,6 +27,7 @@ from django.utils import timezone
 from apps.data.models import NewsArticle, KnowledgeBase
 from apps.llm.services.ollama_client import generate_embedding
 from apps.llm.services.vector_store import get_vector_store, COLLECTION_NEWS
+from apps.llm.services.response_parsing import normalize_line, match_bullet
 
 
 def _get_source_quality(source: str) -> float:
@@ -54,10 +55,10 @@ class NewsProcessor:
 
     @property
     def llm_client(self):
-        """Resolved fresh on each access so a provider switch (e.g. to OpenAI
+        """Resolved fresh on each access so a routing change (e.g. to Online
         at /llm/models/) takes effect without restarting this process."""
-        from apps.llm.services.llm_router import get_active_llm_client
-        return get_active_llm_client('ollama')
+        from apps.llm.services.llm_router import get_llm_client_for_task
+        return get_llm_client_for_task('understanding')
 
     def process_article(
         self,
@@ -190,7 +191,7 @@ Consider:
         sentiment_score = 0.0
 
         for line in response.split('\n'):
-            line = line.strip()
+            line = normalize_line(line)
             if line.startswith('SENTIMENT:'):
                 sentiment_label = line.split(':', 1)[1].strip()
             elif line.startswith('SCORE:'):
@@ -259,11 +260,9 @@ Key Insights:
         # Parse insights
         insights = []
         for line in response.split('\n'):
-            line = line.strip()
-            if line.startswith('-'):
-                insight = line.lstrip('- ').strip()
-                if insight:
-                    insights.append(insight)
+            is_bullet, insight = match_bullet(line)
+            if is_bullet and insight:
+                insights.append(insight)
 
         return insights[:5]  # Limit to 5 insights
 

@@ -13,6 +13,8 @@ import json
 import logging
 from typing import Dict, List, Tuple
 
+from apps.llm.services.response_parsing import extract_json
+
 logger = logging.getLogger(__name__)
 
 
@@ -47,14 +49,7 @@ Analyze the sentiment of the given text and respond ONLY with a JSON object in t
             return False, {}, metadata
 
         try:
-            response = response.strip()
-            if response.startswith("```json"):
-                response = response[7:]
-            if response.endswith("```"):
-                response = response[:-3]
-            response = response.strip()
-
-            sentiment_data = json.loads(response)
+            sentiment_data = extract_json(response)
             return True, sentiment_data, metadata
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse sentiment response: {response}")
@@ -109,14 +104,7 @@ Example: ["Insight 1", "Insight 2", "Insight 3"]"""
             return False, [], metadata
 
         try:
-            response = response.strip()
-            if response.startswith("```json"):
-                response = response[7:]
-            if response.endswith("```"):
-                response = response[:-3]
-            response = response.strip()
-
-            insights = json.loads(response)
+            insights = extract_json(response)
             if isinstance(insights, list):
                 return True, insights, metadata
             else:

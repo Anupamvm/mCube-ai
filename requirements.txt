@@ -29,6 +29,7 @@ ta>=0.11.0  # Technical Analysis library
 chromadb==0.4.18
 sentence-transformers==2.2.2
 openai>=1.0.0  # OpenAI client for vLLM and LLM services
+anthropic>=0.40.0  # Claude API client
 
 # Web Scraping
 beautifulsoup4>=4.12.2

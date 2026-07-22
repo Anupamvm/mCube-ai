@@ -32,12 +32,13 @@ class RAGSystem:
 
     @property
     def llm_client(self):
-        """Resolved fresh on each access so a provider switch (e.g. to OpenAI
+        """Resolved fresh on each access so a routing change (e.g. to Online
         at /llm/models/) takes effect without restarting this process.
-        Embeddings still always use Ollama - OpenAIClient doesn't implement
-        embedding generation and the vector store is built on Ollama's."""
-        from apps.llm.services.llm_router import get_active_llm_client
-        return get_active_llm_client('ollama')
+        Embeddings still always use Ollama regardless - none of the LLM
+        provider clients implement embedding generation and the vector
+        store is built on Ollama's."""
+        from apps.llm.services.llm_router import get_llm_client_for_task
+        return get_llm_client_for_task('understanding')
 
     def query(
         self,

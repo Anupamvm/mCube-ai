@@ -110,6 +110,7 @@
     .badge-active { background: #c6f6d5; color: #22543d; }
     .badge-downloaded { background: #bee3f8; color: #2a4365; }
     .badge-downloading { background: #feebc8; color: #744210; }
+    .badge-activating { background: #feebc8; color: #744210; }
     .badge-failed { background: #fed7d7; color: #742a2a; }
 
     .actions-cell { display: flex; gap: 6px; }
@@ -149,17 +150,17 @@
     {% csrf_token %}
 
     <div class="card">
-        <h2>🔀 AI Provider</h2>
-        <p class="agent-status">Which LLM serves every request made by mCube system-wide (analyst report summaries, news sentiment, RAG queries, trade validation).</p>
+        <h2>🌐 Online Vendor</h2>
+        <p class="agent-status">Which cloud vendor serves the Online tier whenever a task is routed there (see Task Routing below). This can be configured independently of Local - both tiers can be active at the same time.</p>
 
         <div style="display: flex; gap: 20px; margin: 16px 0; flex-wrap: wrap;">
             <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 14px;">
-                <input type="radio" name="provider-choice" value="vllm" id="provider-vllm" onchange="llmProviderToggle()" {% if provider_config.active_provider == 'vllm' %}checked{% endif %}>
-                Local (self-hosted vLLM) {% if provider_config.active_provider == 'vllm' %}<span class="badge badge-active">active</span>{% endif %}
+                <input type="radio" name="online-provider-choice" value="openai" id="provider-openai" onchange="llmProviderToggle()" {% if provider_config.online_provider == 'openai' %}checked{% endif %}>
+                OpenAI (ChatGPT) {% if provider_config.online_provider == 'openai' %}<span class="badge badge-active">current</span>{% endif %}
             </label>
             <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 14px;">
-                <input type="radio" name="provider-choice" value="openai" id="provider-openai" onchange="llmProviderToggle()" {% if provider_config.active_provider == 'openai' %}checked{% endif %}>
-                OpenAI (ChatGPT, cloud) {% if provider_config.active_provider == 'openai' %}<span class="badge badge-active">active</span>{% endif %}
+                <input type="radio" name="online-provider-choice" value="anthropic" id="provider-anthropic" onchange="llmProviderToggle()" {% if provider_config.online_provider == 'anthropic' %}checked{% endif %}>
+                Claude (Anthropic) {% if provider_config.online_provider == 'anthropic' %}<span class="badge badge-active">current</span>{% endif %}
             </label>
         </div>
 
@@ -171,16 +172,56 @@
                        style="flex: 1; min-width: 160px; padding: 10px 14px; border: 1px solid #cbd5e0; border-radius: 6px; font-size: 14px;">
             </div>
             {% if not has_openai_key %}
-            <p class="agent-status">No OpenAI API key saved yet - enter one above the first time you switch to OpenAI. It's saved permanently and reused after that.</p>
+            <p class="agent-status">No OpenAI API key saved yet - enter one above the first time you use OpenAI. It's saved permanently and reused after that.</p>
             {% endif %}
-            <label style="display: flex; align-items: center; gap: 8px; font-size: 13px; color: #718096; margin-top: 8px;">
-                <input type="checkbox" id="openai-unload-local" checked>
-                Also stop the local vLLM model on the GPU server to free memory (best-effort - requires the update agent to support it)
-            </label>
         </div>
 
-        <button type="button" class="btn" style="margin-top: 14px;" onclick="llmSaveProvider()">💾 Save &amp; Activate</button>
+        <div id="anthropic-config-fields" style="display: none; border-top: 1px solid #edf2f7; padding-top: 16px; margin-top: 4px;">
+            <div style="display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 10px;">
+                <input type="password" id="anthropic-api-key" placeholder="{% if has_anthropic_key %}•••• already saved - leave blank to keep it{% else %}sk-ant-... (Anthropic API key){% endif %}"
+                       style="flex: 2; min-width: 260px; padding: 10px 14px; border: 1px solid #cbd5e0; border-radius: 6px; font-size: 14px;">
+                <input type="text" id="anthropic-model" placeholder="Model (default claude-opus-4-8)" value="{% if provider_config.anthropic_model != 'claude-opus-4-8' %}{{ provider_config.anthropic_model }}{% endif %}"
+                       style="flex: 1; min-width: 160px; padding: 10px 14px; border: 1px solid #cbd5e0; border-radius: 6px; font-size: 14px;">
+            </div>
+            {% if not has_anthropic_key %}
+            <p class="agent-status">No Anthropic API key saved yet - enter one above the first time you use Claude. It's saved permanently and reused after that.</p>
+            {% endif %}
+        </div>
+
+        <label style="display: flex; align-items: center; gap: 8px; font-size: 13px; color: #718096; margin-top: 14px;">
+            <input type="checkbox" id="online-unload-local">
+            Also stop the local vLLM model on the GPU server to free memory (only makes sense if nothing below is routed to Local - best-effort, requires the update agent to support it)
+        </label>
+
+        <button type="button" class="btn" style="margin-top: 14px;" onclick="llmSaveProvider()">💾 Save Online Vendor</button>
         <div id="llm-provider-message" class="agent-status"></div>
+    </div>
+
+    <div class="card">
+        <h2>🔀 Task Routing</h2>
+        <p class="agent-status">Which tier - Local (vLLM) or Online (the vendor above) - handles each kind of request. Both tiers can be active at once; if the assigned tier isn't reachable/configured, the system automatically falls back to the other one for that call.</p>
+
+        <div style="display: flex; gap: 24px; flex-wrap: wrap; margin: 16px 0;">
+            <div style="min-width: 260px;">
+                <label style="display: block; font-size: 13px; font-weight: 600; color: #4a5568; margin-bottom: 6px;">Understanding (news &amp; report comprehension)</label>
+                <p class="agent-status" style="margin-top: 0; margin-bottom: 8px;">Sentiment, summaries, insight extraction, knowledge-base Q&amp;A.</p>
+                <select id="understanding-target" style="width: 100%; padding: 10px 12px; border: 1px solid #cbd5e0; border-radius: 6px; font-size: 14px;">
+                    <option value="local" {% if provider_config.understanding_target == 'local' %}selected{% endif %}>Local (vLLM)</option>
+                    <option value="online" {% if provider_config.understanding_target == 'online' %}selected{% endif %}>Online ({{ provider_config.get_online_provider_display }})</option>
+                </select>
+            </div>
+            <div style="min-width: 260px;">
+                <label style="display: block; font-size: 13px; font-weight: 600; color: #4a5568; margin-bottom: 6px;">Evaluation (trade/position validation &amp; chat)</label>
+                <p class="agent-status" style="margin-top: 0; margin-bottom: 8px;">Trade/exit validation, and the interactive chat interface.</p>
+                <select id="evaluation-target" style="width: 100%; padding: 10px 12px; border: 1px solid #cbd5e0; border-radius: 6px; font-size: 14px;">
+                    <option value="local" {% if provider_config.evaluation_target == 'local' %}selected{% endif %}>Local (vLLM)</option>
+                    <option value="online" {% if provider_config.evaluation_target == 'online' %}selected{% endif %}>Online ({{ provider_config.get_online_provider_display }})</option>
+                </select>
+            </div>
+        </div>
+
+        <button type="button" class="btn" onclick="llmSaveRouting()">💾 Save Routing</button>
+        <div id="llm-routing-message" class="agent-status"></div>
 
         {% if provider_config.switched_at %}
         <p class="agent-status">Last changed: {{ provider_config.switched_at }}{% if provider_config.switched_by %} by {{ provider_config.switched_by }}{% endif %}</p>
@@ -192,7 +233,7 @@
         <div class="add-model-form" style="flex-wrap: wrap;">
             <select id="model-suggestions" onchange="llmApplySuggestion(this.value)" style="padding: 10px 12px; border: 1px solid #cbd5e0; border-radius: 6px; font-size: 14px;">
                 <option value="">Suggested models...</option>
-                <option value="Qwen/Qwen3.6-27B">Qwen/Qwen3.6-27B - best all-around fit for a single 48GB GPU</option>
+                <option value="Qwen/Qwen3-32B-AWQ">Qwen/Qwen3-32B-AWQ - best all-around fit for a single 48GB GPU</option>
                 <option value="Qwen/Qwen3-VL-32B">Qwen/Qwen3-VL-32B - vision-language, reads PDF tables/charts directly</option>
                 <option value="__custom__">Other (type a custom repo below)</option>
             </select>
@@ -223,10 +264,12 @@
                 <td>{{ m.size|default:"-" }}</td>
                 <td class="actions-cell">
                     {% if m.status == 'downloaded' %}
-                    <button type="button" class="btn btn-small" onclick="llmActivate('{{ m.repo_id }}')">🚀 Activate</button>
+                    <button type="button" class="btn btn-small" onclick="llmActivate('{{ m.repo_id }}')" {% if activate_status.status == 'running' %}disabled{% endif %}>🚀 Activate</button>
                     <button type="button" class="btn btn-small btn-danger" onclick="llmDelete('{{ m.repo_id }}')">🗑 Delete</button>
                     {% elif m.status == 'active' %}
                     <button class="btn btn-small" disabled>✓ Serving now</button>
+                    {% elif m.status == 'activating' %}
+                    <button class="btn btn-small" disabled>⏳ Loading... (page auto-refreshes)</button>
                     {% elif m.status == 'downloading' %}
                     <span class="agent-status">Downloading... reload to check progress</span>
                     {% elif m.status == 'failed' %}
@@ -244,10 +287,25 @@
     {% if activate_status and activate_status.status != 'idle' %}
     <div class="card">
         <h2>Last activation</h2>
-        <p><b>Status:</b> {{ activate_status.status }}</p>
-        {% if activate_status.target_model %}<p><b>Target model:</b> {{ activate_status.target_model }}</p>{% endif %}
-        {% if activate_status.started_at %}<p><b>Started:</b> {{ activate_status.started_at }}</p>{% endif %}
-        {% if activate_status.finished_at %}<p><b>Finished:</b> {{ activate_status.finished_at }}</p>{% endif %}
+        {% if activate_status.status == 'running' %}
+        <div class="alert" style="background: #feebc8; color: #744210;">
+            ⏳ Loading <b>{{ activate_status.target_model }}</b>... this can take a few minutes for larger models.
+            This page auto-refreshes every 15s - or refresh manually any time to check.
+        </div>
+        {% elif activate_status.status == 'success' %}
+        <div class="alert alert-success">✅ <b>{{ activate_status.target_model }}</b> is up and serving requests.</div>
+        {% elif activate_status.status == 'failed' and activate_status.rolled_back_to %}
+        <div class="alert alert-error">
+            ❌ <b>{{ activate_status.target_model }}</b> failed to come up - see log below for why.
+            Automatically rolled back to <b>{{ activate_status.rolled_back_to }}</b>, which is serving again.
+        </div>
+        {% elif activate_status.status == 'failed' %}
+        <div class="alert alert-error">
+            ❌ <b>{{ activate_status.target_model }}</b> failed to come up - see log below for why.
+            {% if activate_status.target_model %}No previous model to automatically roll back to, or the rollback itself failed - the GPU server may currently have no LLM running. Manual intervention needed.{% endif %}
+        </div>
+        {% endif %}
+        {% if activate_status.started_at %}<p class="agent-status"><b>Started:</b> {{ activate_status.started_at }}{% if activate_status.finished_at %} · <b>Finished:</b> {{ activate_status.finished_at }}{% endif %}</p>{% endif %}
         {% if activate_status.log_tail %}
         <pre style="max-height:300px; overflow-y:auto; background:#1a202c; color:#e2e8f0; padding:12px; border-radius:6px; font-size:12px; white-space:pre-wrap; margin-top:10px;">{{ activate_status.log_tail }}</pre>
         {% endif %}
@@ -285,21 +343,23 @@
 
     function llmProviderToggle() {
         const isOpenAI = document.getElementById('provider-openai').checked;
+        const isAnthropic = document.getElementById('provider-anthropic').checked;
         document.getElementById('openai-config-fields').style.display = isOpenAI ? 'block' : 'none';
+        document.getElementById('anthropic-config-fields').style.display = isAnthropic ? 'block' : 'none';
     }
     llmProviderToggle();
 
     async function llmSaveProvider() {
         const msgBox = document.getElementById('llm-provider-message');
-        const provider = document.querySelector('input[name="provider-choice"]:checked').value;
-        const body = new URLSearchParams({ provider: provider });
+        const onlineProvider = document.querySelector('input[name="online-provider-choice"]:checked').value;
+        const body = new URLSearchParams({ online_provider: onlineProvider });
+        body.append('unload_local', document.getElementById('online-unload-local').checked ? 'true' : 'false');
 
-        if (provider === 'openai') {
+        if (onlineProvider === 'openai') {
             const key = document.getElementById('openai-api-key').value.trim();
             const model = document.getElementById('openai-model').value.trim();
             if (key) body.append('openai_api_key', key);
             if (model) body.append('openai_model', model);
-            body.append('unload_local', document.getElementById('openai-unload-local').checked ? 'true' : 'false');
 
             if (!key && !{{ has_openai_key|yesno:"true,false" }}) {
                 msgBox.textContent = 'Enter your OpenAI API key first.';
@@ -308,8 +368,21 @@
             }
         }
 
+        if (onlineProvider === 'anthropic') {
+            const key = document.getElementById('anthropic-api-key').value.trim();
+            const model = document.getElementById('anthropic-model').value.trim();
+            if (key) body.append('anthropic_api_key', key);
+            if (model) body.append('anthropic_model', model);
+
+            if (!key && !{{ has_anthropic_key|yesno:"true,false" }}) {
+                msgBox.textContent = 'Enter your Anthropic API key first.';
+                msgBox.style.color = '#742a2a';
+                return;
+            }
+        }
+
         try {
-            const resp = await fetch("{% url 'llm:model_manager_set_provider' %}", {
+            const resp = await fetch("{% url 'llm:model_manager_set_online_provider' %}", {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/x-www-form-urlencoded',
@@ -321,6 +394,32 @@
             msgBox.textContent = data.message + (data.unload && data.unload.message ? ' | Unload: ' + data.unload.message : '');
             msgBox.style.color = data.success ? '#22543d' : '#742a2a';
             if (data.success) setTimeout(function() { location.reload(); }, 1500);
+        } catch (e) {
+            msgBox.textContent = 'Request failed: ' + e;
+            msgBox.style.color = '#742a2a';
+        }
+    }
+
+    async function llmSaveRouting() {
+        const msgBox = document.getElementById('llm-routing-message');
+        const body = new URLSearchParams({
+            understanding_target: document.getElementById('understanding-target').value,
+            evaluation_target: document.getElementById('evaluation-target').value,
+        });
+
+        try {
+            const resp = await fetch("{% url 'llm:model_manager_set_routing' %}", {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                    'X-CSRFToken': llmCsrfToken(),
+                },
+                body: body.toString(),
+            });
+            const data = await resp.json();
+            msgBox.textContent = data.message;
+            msgBox.style.color = data.success ? '#22543d' : '#742a2a';
+            if (data.success) setTimeout(function() { location.reload(); }, 1200);
         } catch (e) {
             msgBox.textContent = 'Request failed: ' + e;
             msgBox.style.color = '#742a2a';

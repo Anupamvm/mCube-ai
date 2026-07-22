@@ -94,25 +94,48 @@ class LLMPrompt(TimeStampedModel):
 
 class LLMProviderConfig(TimeStampedModel):
     """
-    Singleton: which LLM provider currently serves ALL requests system-wide.
+    Singleton: LLM provider configuration and per-task routing.
 
-    Set from /llm/models/. When active_provider='openai', every service that
-    calls apps.llm.services.llm_router.get_active_llm_client() (instead of
-    reaching for a specific vllm/ollama client directly) is redirected to
-    OpenAI, regardless of which local backend it would normally use.
+    Two tiers are configured independently and can both be active at once:
+      - Local: the self-hosted vLLM server (just one - no vendor choice).
+      - Online: exactly one cloud vendor at a time (OpenAI or Anthropic),
+        chosen via online_provider, each with its own key/model.
+
+    Rather than one global switch, individual call sites are classified into
+    a task type and each task type is routed to whichever tier fits it best:
+      - understanding_target: news/report comprehension (sentiment,
+        summaries, insight extraction, RAG Q&A) - local by default, since
+        it's high-volume and vLLM handles it fine at no per-call cost.
+      - evaluation_target: higher-stakes reasoning (trade/position
+        validation, ad-hoc chat) - online by default, for a stronger model.
+
+    See apps.llm.services.llm_router.get_llm_client_for_task(), which reads
+    these fields and falls back to the other tier if the assigned one isn't
+    currently reachable/configured.
     """
 
-    PROVIDER_CHOICES = [
-        ('vllm', 'Local (self-hosted vLLM)'),
-        ('openai', 'OpenAI (ChatGPT, cloud)'),
+    TASK_TARGET_CHOICES = [
+        ('local', 'Local (self-hosted vLLM)'),
+        ('online', 'Online (cloud)'),
     ]
 
-    active_provider = models.CharField(max_length=20, choices=PROVIDER_CHOICES, default='vllm')
+    ONLINE_PROVIDER_CHOICES = [
+        ('openai', 'OpenAI (ChatGPT)'),
+        ('anthropic', 'Claude (Anthropic)'),
+    ]
+
+    online_provider = models.CharField(max_length=20, choices=ONLINE_PROVIDER_CHOICES, default='openai')
+
+    understanding_target = models.CharField(max_length=10, choices=TASK_TARGET_CHOICES, default='local')
+    evaluation_target = models.CharField(max_length=10, choices=TASK_TARGET_CHOICES, default='online')
 
     # Stored plainly, same convention as apps.core.models.CredentialStore - no
     # encryption layer exists elsewhere in this codebase for API keys either.
     openai_api_key = models.CharField(max_length=200, blank=True, help_text="OpenAI API key")
     openai_model = models.CharField(max_length=100, default='gpt-4o-mini')
+
+    anthropic_api_key = models.CharField(max_length=200, blank=True, help_text="Anthropic (Claude) API key")
+    anthropic_model = models.CharField(max_length=100, default='claude-opus-4-8')
 
     switched_at = models.DateTimeField(null=True, blank=True)
     switched_by = models.ForeignKey(
@@ -126,7 +149,11 @@ class LLMProviderConfig(TimeStampedModel):
         verbose_name_plural = 'LLM Provider Config'
 
     def __str__(self):
-        return f"Active LLM provider: {self.get_active_provider_display()}"
+        return (
+            f"Understanding -> {self.get_understanding_target_display()}, "
+            f"Evaluation -> {self.get_evaluation_target_display()} "
+            f"(online vendor: {self.get_online_provider_display()})"
+        )
 
     def save(self, *args, **kwargs):
         self.pk = 1
