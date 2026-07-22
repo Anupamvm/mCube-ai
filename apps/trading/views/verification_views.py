@@ -235,6 +235,106 @@ def get_historical_market_news(limit: int = 5):
         }
 
 
+def save_news_articles_to_db(articles, category, news_type, symbols=None, sectors=None, search_keywords=None):
+    """Persist GNews-format articles into NewsArticle, deduping on url.
+
+    Articles may be raw GNews dicts or LLM-enriched (carrying impact_score /
+    impact_label / impact_reasoning / impact_confidence from
+    NewsImpactAnalyzer) - when enrichment is present it's saved directly so
+    the article shows up already-analyzed under "Get Data" instead of needing
+    a separate processing pass.
+    """
+    from apps.data.models import NewsArticle
+    from datetime import datetime
+    from django.utils import timezone as django_timezone
+
+    saved_count = 0
+    for article in articles:
+        try:
+            published_at = article.get('publishedAt')
+            if published_at:
+                published_dt = datetime.fromisoformat(published_at.replace('Z', '+00:00'))
+                if django_timezone.is_naive(published_dt):
+                    published_dt = django_timezone.make_aware(published_dt)
+            else:
+                published_dt = django_timezone.now()
+
+            if NewsArticle.objects.filter(url=article['url']).exists():
+                logger.debug(f"[News Save] Article already exists: {article['url']}")
+                continue
+
+            impact_score = article.get('impact_score')
+            sentiment_label = None
+            if impact_score is not None:
+                sentiment_label = 'NEGATIVE' if impact_score < -0.3 else ('POSITIVE' if impact_score > 0.3 else 'NEUTRAL')
+
+            NewsArticle.objects.create(
+                title=article.get('title', '')[:500],
+                source=article.get('source', {}).get('name', 'GNews')[:100],
+                author='',
+                published_at=published_dt,
+                url=article['url'],
+                image_url=article.get('image', ''),
+                summary=article.get('description', '')[:1000],
+                content=article.get('content', ''),
+                category=category,
+                news_type=news_type,
+                tags=[],
+                symbols_mentioned=symbols or [],
+                sectors_mentioned=sectors or [],
+                search_keywords=search_keywords or [],
+                sentiment_score=impact_score,
+                sentiment_label=sentiment_label,
+                sentiment_confidence=article.get('impact_confidence'),
+                impact_reasoning=article.get('impact_reasoning', ''),
+                llm_summary=article.get('llm_summary', ''),
+                event_type=article.get('event_type', ''),
+                source_quality_score=article.get('source_quality_score', 0.6),
+                processed=impact_score is not None,
+                processed_at=django_timezone.now() if impact_score is not None else None,
+            )
+            saved_count += 1
+        except Exception as e:
+            logger.error(f"[News Save] Error saving article: {e}")
+            continue
+
+    return saved_count
+
+
+def annotate_articles_with_impact(articles, stock_symbol, stock_name, direction, industry_name=None, max_articles=3):
+    """
+    Run NewsImpactAnalyzer over the first `max_articles` and attach impact_score/
+    impact_label/impact_reasoning/impact_confidence in place, so save_news_articles_to_db()
+    persists them as real (not None) sentiment - otherwise _score_news_sentiment()
+    silently skips any article with sentiment_score=None from its weighted average,
+    i.e. saved-but-unanalyzed articles are invisible to the score despite being in the DB.
+
+    Capped at max_articles (each call is a ~10-15s LLM round trip) to bound how much
+    this adds to the verification request.
+    """
+    from apps.llm.services.news_impact_analyzer import get_news_impact_analyzer
+
+    analyzer = get_news_impact_analyzer()
+    for article in articles[:max_articles]:
+        try:
+            impact = analyzer.analyze_article_impact(
+                article=article,
+                stock_symbol=stock_symbol,
+                stock_name=stock_name,
+                trade_direction=direction,
+                industry_name=industry_name,
+            )
+            article['impact_score'] = impact['impact_score']
+            article['impact_label'] = impact['impact_label']
+            article['impact_reasoning'] = impact['reasoning']
+            article['impact_confidence'] = impact['confidence']
+            article['llm_summary'] = impact.get('summary', '')
+        except Exception as e:
+            logger.warning(f"[News Save] Impact analysis failed for '{article.get('title', '')[:50]}': {e}")
+
+    return articles
+
+
 def ajax_login_required(view_func):
     """
     Decorator that returns JSON response for unauthenticated AJAX requests
@@ -905,6 +1005,22 @@ def verify_future_trade(request):
 
                 logger.info(f"[Verify Trade] News impact: trade_allowed={impact_result['trade_allowed']}, "
                            f"blocking={len(impact_result['blocking_articles'])}, warnings={len(impact_result['warning_articles'])}")
+
+                # Persist the LLM-analyzed articles so they show up under "Get Data" -
+                # this fetch previously only cached results transiently and never wrote
+                # to NewsArticle, leaving the analysis page's news panel permanently empty.
+                try:
+                    saved = save_news_articles_to_db(
+                        impact_result['stock_news'].get('articles', []),
+                        category='Stock',
+                        news_type='STOCK',
+                        symbols=[stock_symbol],
+                        sectors=[industry_name] if industry_name else [],
+                        search_keywords=[stock_symbol, stock_name] if stock_name else [stock_symbol]
+                    )
+                    logger.info(f"[Verify Trade] Saved {saved} news article(s) to database for {stock_symbol}")
+                except Exception as save_err:
+                    logger.warning(f"[Verify Trade] Failed to save news articles: {save_err}")
             else:
                 logger.info(f"[Verify Trade] No news articles found for {stock_symbol}")
                 news_verification['success'] = True
@@ -1046,7 +1162,7 @@ def verify_future_trade(request):
                                 symbol=stock_symbol,
                                 trendlyne_id=trendlyne_id,
                                 months_back=3,
-                                download_pdfs=False  # Skip PDF download for speed during verification
+                                download_pdfs=True  # Download all report PDFs, not just the top 3 the fallback below covers
                             )
 
                             analyst_verification['debug_info'].append(f"Fetch result success: {fetch_result.get('success')}")
@@ -1185,6 +1301,166 @@ def verify_future_trade(request):
                                         logger.warning(f"[Verify Trade] Error saving report: {re}")
 
                                 logger.info(f"[Verify Trade] Saved {reports_saved} analyst reports for {stock_symbol}")
+
+                                # ===== CORPORATE ANNOUNCEMENTS (Trendlyne "Corporate Filings") =====
+                                # Reuses the same authenticated session to pull the stock's BSE-sourced
+                                # filings (results, AGM outcomes, investor-meet updates, etc.) and save
+                                # them as NewsArticle rows (source='BSE') so they surface under "Get
+                                # Data" -> NSE/BSE Corporate Announcements alongside the periodic
+                                # exchange-wide scraper's output.
+                                try:
+                                    from apps.data.services.exchange_filings_client import _classify_event_type
+
+                                    filings_result = provider.fetch_corporate_filings(
+                                        symbol=stock_symbol,
+                                        trendlyne_id=extracted_id,
+                                    )
+                                    filing_articles = []
+                                    for filing in filings_result.get('filings', []):
+                                        filing_url = filing['pdf_url'] or (
+                                            f"{filings_result.get('source_url', '')}"
+                                            f"#{filing.get('date')}-{filing['title'][:80]}"
+                                        )
+                                        filing_articles.append({
+                                            'title': f"[BSE] {stock_symbol}: {filing['title']}"[:500],
+                                            'description': filing['title'][:500],
+                                            'content': filing.get('details', ''),
+                                            'url': filing_url,
+                                            'publishedAt': filing.get('date'),
+                                            'source': {'name': 'BSE'},
+                                            'event_type': _classify_event_type(filing['title']),
+                                            'source_quality_score': 1.0,
+                                        })
+
+                                    # Most-recent-first from the scraper, so the top 3 are the
+                                    # freshest/most relevant filings worth spending an LLM call on.
+                                    annotate_articles_with_impact(
+                                        filing_articles, stock_symbol, stock_name, direction,
+                                        industry_name=industry_name if 'industry_name' in dir() else None,
+                                    )
+
+                                    filings_saved = save_news_articles_to_db(
+                                        filing_articles,
+                                        category='Stock',
+                                        news_type='STOCK',
+                                        symbols=[stock_symbol],
+                                        search_keywords=[stock_symbol, stock_name] if stock_name else [stock_symbol],
+                                    )
+                                    logger.info(
+                                        f"[Verify Trade] Saved {filings_saved}/{len(filing_articles)} corporate "
+                                        f"filings for {stock_symbol} from Trendlyne"
+                                    )
+                                except Exception as filings_err:
+                                    logger.warning(f"[Verify Trade] Corporate filings fetch failed: {filings_err}")
+
+                                # ===== TRENDLYNE NEWS FEED =====
+                                # Curated press articles (Business Line, Economic Times, Business
+                                # Standard, etc.) surfaced under the equity page's News tab - a
+                                # different source pool than GNews, saved the same way.
+                                try:
+                                    news_feed_result = provider.fetch_news_feed(
+                                        symbol=stock_symbol,
+                                        trendlyne_id=extracted_id,
+                                    )
+                                    feed_articles = [{
+                                        'title': a['title'][:500],
+                                        'description': a['excerpt'][:500],
+                                        'content': a['excerpt'],
+                                        'url': a['url'],
+                                        'publishedAt': a.get('date'),
+                                        'source': {'name': a['source']},
+                                    } for a in news_feed_result.get('articles', [])]
+
+                                    annotate_articles_with_impact(
+                                        feed_articles, stock_symbol, stock_name, direction,
+                                        industry_name=industry_name if 'industry_name' in dir() else None,
+                                    )
+
+                                    feed_saved = save_news_articles_to_db(
+                                        feed_articles,
+                                        category='Stock',
+                                        news_type='STOCK',
+                                        symbols=[stock_symbol],
+                                        search_keywords=[stock_symbol, stock_name] if stock_name else [stock_symbol],
+                                    )
+                                    logger.info(
+                                        f"[Verify Trade] Saved {feed_saved}/{len(feed_articles)} Trendlyne "
+                                        f"news feed articles for {stock_symbol}"
+                                    )
+                                except Exception as feed_err:
+                                    logger.warning(f"[Verify Trade] Trendlyne news feed fetch failed: {feed_err}")
+
+                                # ===== EARNINGS CALL TRANSCRIPTS -> InvestorCall =====
+                                # Downloads the most recent transcript(s), runs LLM tone/signal
+                                # analysis, and saves to InvestorCall - this is what feeds
+                                # EnhancedFuturesAnalyzer._score_investor_calls() (10-pt component
+                                # that silently defaults to neutral whenever this table is empty,
+                                # which until now was always, since nothing populated it).
+                                try:
+                                    from apps.data.models import InvestorCall
+                                    from apps.llm.services.investor_call_analyzer import analyze_earnings_call
+                                    from datetime import date as _date
+                                    from django.utils import timezone as django_timezone
+
+                                    calls_result = provider.fetch_earnings_calls(
+                                        symbol=stock_symbol,
+                                        trendlyne_id=extracted_id,
+                                        max_calls=1,  # only the latest - _score_investor_calls only reads calls[:3] within 90 days
+                                    )
+                                    calls_saved = 0
+                                    for call in calls_result.get('calls', []):
+                                        if not call.get('call_date') or not call.get('transcript_text'):
+                                            continue
+
+                                        call_date_obj = _date.fromisoformat(call['call_date'])
+                                        already_processed = InvestorCall.objects.filter(
+                                            symbol=stock_symbol, call_date=call_date_obj, processed=True
+                                        ).exists()
+                                        if already_processed:
+                                            continue
+
+                                        analysis = analyze_earnings_call(
+                                            call['transcript_text'], stock_symbol, call['call_date']
+                                        )
+
+                                        # Some companies file only a cover letter with BSE linking out
+                                        # to their own IR site for the actual transcript (seen live for
+                                        # ADANIENT - a 1-page notice, no call content). The LLM correctly
+                                        # returns a low confidence_score for these; only mark processed=True
+                                        # above a threshold so _score_investor_calls() falls back to its
+                                        # neutral default instead of scoring a content-free "NEUTRAL" signal
+                                        # as if it were real data (which scored worse than having no data).
+                                        is_meaningful = (
+                                            analysis.get('success')
+                                            and (analysis.get('confidence_score') or 0) >= 0.3
+                                        )
+
+                                        InvestorCall.objects.update_or_create(
+                                            symbol=stock_symbol,
+                                            call_date=call_date_obj,
+                                            call_type='EARNINGS',
+                                            defaults={
+                                                'company': stock_name or stock_symbol,
+                                                'transcript': call['transcript_text'],
+                                                'executive_summary': analysis.get('executive_summary', ''),
+                                                'key_highlights': analysis.get('key_highlights', []),
+                                                'management_tone': analysis.get('management_tone'),
+                                                'outlook': analysis.get('outlook', ''),
+                                                'concerns_raised': analysis.get('concerns_raised', []),
+                                                'trading_signal': analysis.get('trading_signal'),
+                                                'confidence_score': analysis.get('confidence_score'),
+                                                'processed': is_meaningful,
+                                                'processed_at': django_timezone.now() if is_meaningful else None,
+                                            }
+                                        )
+                                        calls_saved += 1
+
+                                    logger.info(
+                                        f"[Verify Trade] Saved {calls_saved} earnings call transcript(s) "
+                                        f"for {stock_symbol}"
+                                    )
+                                except Exception as calls_err:
+                                    logger.warning(f"[Verify Trade] Earnings call fetch/analysis failed: {calls_err}")
 
                                 # Download PDFs for top 3 reports (for LLM summaries)
                                 # Using S3 redirect approach - navigate to PDF URL to get pre-signed S3 URL
@@ -2210,51 +2486,7 @@ def fetch_trade_news(request):
 
         # Step 6: Save articles to database
         from apps.data.models import NewsArticle
-        from datetime import datetime
         from django.utils import timezone as django_timezone
-
-        def save_articles_to_db(articles, category, news_type, symbols=None, sectors=None, search_keywords=None):
-            """Save articles to NewsArticle model with extended fields"""
-            saved_count = 0
-            for article in articles:
-                try:
-                    # Parse published date
-                    published_at = article.get('publishedAt')
-                    if published_at:
-                        # GNews returns ISO format
-                        published_dt = datetime.fromisoformat(published_at.replace('Z', '+00:00'))
-                    else:
-                        published_dt = django_timezone.now()
-
-                    # Check if article already exists
-                    if NewsArticle.objects.filter(url=article['url']).exists():
-                        logger.debug(f"[Trade News] Article already exists: {article['url']}")
-                        continue
-
-                    # Create article with extended fields
-                    NewsArticle.objects.create(
-                        title=article.get('title', '')[:500],
-                        source=article.get('source', {}).get('name', 'GNews')[:100],
-                        author='',
-                        published_at=published_dt,
-                        url=article['url'],
-                        image_url=article.get('image', ''),
-                        summary=article.get('description', '')[:1000],
-                        content=article.get('content', ''),
-                        category=category,
-                        news_type=news_type,
-                        tags=[],
-                        symbols_mentioned=symbols or [],
-                        sectors_mentioned=sectors or [],
-                        search_keywords=search_keywords or [],
-                        processed=False
-                    )
-                    saved_count += 1
-                except Exception as e:
-                    logger.error(f"[Trade News] Error saving article: {e}")
-                    continue
-
-            return saved_count
 
         def update_article_with_analysis(article_url, impact_data):
             """Update an existing article with LLM analysis results"""
@@ -2285,7 +2517,7 @@ def fetch_trade_news(request):
             return False
 
         # Save stock news
-        stock_articles_saved = save_articles_to_db(
+        stock_articles_saved = save_news_articles_to_db(
             stock_news_result.get('articles', []),
             category='Stock',
             news_type='STOCK',
@@ -2296,7 +2528,7 @@ def fetch_trade_news(request):
         logger.info(f"[Trade News] Saved {stock_articles_saved} stock articles to database")
 
         # Save industry news
-        industry_articles_saved = save_articles_to_db(
+        industry_articles_saved = save_news_articles_to_db(
             industry_news_result.get('articles', []),
             category='Industry',
             news_type='INDUSTRY',
@@ -2307,7 +2539,7 @@ def fetch_trade_news(request):
         logger.info(f"[Trade News] Saved {industry_articles_saved} industry articles to database")
 
         # Save competitor news
-        competitor_articles_saved = save_articles_to_db(
+        competitor_articles_saved = save_news_articles_to_db(
             competitor_news_result.get('articles', []),
             category='Competitor',
             news_type='COMPETITOR',

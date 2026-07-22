@@ -969,12 +969,34 @@ class TrendlyneProvider(BaseWebScraper):
             # Use authenticated Selenium session to get S3 redirect URL
             if hasattr(self, 'driver') and self.driver:
                 self.logger.info(f"Downloading PDF via authenticated session: {pdf_url[:80]}...")
-                self.driver.get(pdf_url)
-                time.sleep(2)
-                s3_url = self.driver.current_url
 
-                # Download from S3 (pre-signed URL, no auth needed)
-                response = requests.get(s3_url, timeout=30)
+                # The redirect to the S3 pre-signed URL isn't always resolved within
+                # 2s (observed intermittently landing back on trendlyne.com instead of
+                # s3.amazonaws.com for otherwise-valid reports) - retry once with a
+                # longer wait before giving up on this document.
+                s3_url = None
+                for attempt in range(2):
+                    self.driver.get(pdf_url)
+                    time.sleep(3)
+                    current = self.driver.current_url
+                    if 'amazonaws.com' in current:
+                        s3_url = current
+                        break
+                    self.logger.warning(
+                        f"PDF redirect landed on {current[:80]} instead of S3 "
+                        f"(attempt {attempt + 1}/2): {pdf_url[:80]}"
+                    )
+
+                if not s3_url:
+                    self.logger.warning(f"PDF redirect never resolved to S3 - report may be inaccessible: {pdf_url[:80]}")
+                    return None
+
+                # Download from S3 (pre-signed URL, no auth needed - but a bare
+                # requests.get() with no User-Agent gets a 403 here).
+                response = requests.get(s3_url, timeout=30, headers={
+                    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 '
+                                  '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                })
                 if response.status_code == 200 and len(response.content) > 5000 and response.content[:5] == b'%PDF-':
                     with open(local_path, 'wb') as f:
                         f.write(response.content)
@@ -1830,6 +1852,403 @@ class TrendlyneProvider(BaseWebScraper):
                 'symbol': symbol,
                 'error': str(e),
                 'reports': []
+            }
+
+    def _resolve_stock_slug(self, symbol: str, trendlyne_id: int) -> Optional[str]:
+        """
+        The /latest-news/... routes 404 without the company's URL slug (unlike
+        /equity/{id}/{symbol}/, which redirects fine without one). Discover it
+        by loading the equity page and reading the slug off its redirect target.
+        """
+        try:
+            if not self.driver:
+                self.init_driver()
+
+            self.driver.get(f"{self.BASE_URL}/equity/{trendlyne_id}/{symbol.upper()}/")
+            time.sleep(3)
+            match = re.search(rf'/equity/{trendlyne_id}/{symbol.upper()}/([^/]+)/', self.driver.current_url, re.I)
+            return match.group(1) if match else None
+        except Exception as e:
+            self.logger.warning(f"Could not resolve stock slug for {symbol}: {e}")
+            return None
+
+    def _parse_post_cards(self, soup) -> list:
+        """
+        Parse the repeating "panel-post" feed cards used by Trendlyne's stock
+        News-menu pages (News / Earnings Calls / Corporate Announcements all
+        share this same card layout - only the URL's feed filter differs).
+
+        Returns list of dicts: {post_id, title, url, source, excerpt, date}
+        where date is a datetime.date or None, url is the external/PDF link
+        the card points to (not the Trendlyne post permalink).
+        """
+        import re as _re
+
+        cards = []
+        for post in soup.find_all('div', class_='panel-post'):
+            try:
+                link = post.find('a', class_='newslink')
+                source_div = post.find('div', class_='rsssource')
+                excerpt_div = post.find('div', class_='card-blockquote')
+                date_el = post.find(attrs={'title': _re.compile(r'\d{1,2} \w{3}, \d{4} at')})
+
+                post_date = None
+                if date_el:
+                    date_str = date_el.get('title', '').split(' at')[0]
+                    for fmt in ['%d %b, %Y', '%d %B, %Y']:
+                        try:
+                            post_date = datetime.strptime(date_str, fmt).date()
+                            break
+                        except ValueError:
+                            continue
+
+                cards.append({
+                    'post_id': post.get('id', '').replace('post-', ''),
+                    'title': link.get_text(strip=True) if link else '',
+                    'url': link.get('href', '') if link else '',
+                    'source': source_div.get_text(strip=True) if source_div else '',
+                    'excerpt': excerpt_div.get_text(strip=True) if excerpt_div else '',
+                    'date': post_date,
+                })
+            except Exception as e:
+                self.logger.warning(f"Error parsing post card: {e}")
+                continue
+
+        return cards
+
+    def fetch_news_feed(
+        self,
+        symbol: str,
+        trendlyne_id: int = None,
+    ) -> Dict:
+        """
+        Fetch Trendlyne's curated press-news feed for a stock (the "News" tab
+        under the equity page's News menu) - real external articles (Business
+        Line, Economic Times, Business Standard, etc.), distinct from GNews's
+        source pool. Trendlyne-internal cards (price alerts, broker-report
+        promo posts with no byline) are filtered out.
+
+        Args:
+            symbol: Stock symbol (NSE code)
+            trendlyne_id: Optional Trendlyne internal ID
+
+        Returns:
+            dict: {success, symbol, trendlyne_id, articles: [{title, url,
+                   source, excerpt, date}], count, source_url}
+        """
+        try:
+            slug = self._resolve_stock_slug(symbol, trendlyne_id) if trendlyne_id else None
+            if trendlyne_id and slug:
+                url = f"{self.BASE_URL}/latest-news/only-news/{trendlyne_id}/{symbol.upper()}/{slug}/"
+            elif trendlyne_id:
+                url = f"{self.BASE_URL}/latest-news/only-news/{trendlyne_id}/{symbol.upper()}/"
+            else:
+                url = f"{self.BASE_URL}/latest-news/only-news/{symbol.upper()}/"
+
+            self.logger.info(f"Fetching news feed for {symbol} from {url}")
+
+            if not self.driver:
+                self.init_driver()
+
+            self.driver.get(url)
+            time.sleep(4)
+            current_url = self.driver.current_url
+
+            soup = BeautifulSoup(self.driver.page_source, 'html5lib')
+            cards = self._parse_post_cards(soup)
+
+            articles = []
+            for card in cards:
+                # Real press articles only: has a byline and an external link
+                # (not a trendlyne.com-hosted PDF/report promo).
+                if card['source'] and card['url'] and 'trendlyne.com' not in card['url']:
+                    articles.append({
+                        'title': card['title'],
+                        'url': card['url'],
+                        'source': card['source'],
+                        'excerpt': card['excerpt'],
+                        'date': card['date'].isoformat() if card['date'] else None,
+                    })
+
+            self.logger.info(f"Found {len(articles)} news articles for {symbol} (of {len(cards)} feed cards)")
+
+            return {
+                'success': True,
+                'symbol': symbol.upper(),
+                'trendlyne_id': trendlyne_id,
+                'articles': articles,
+                'count': len(articles),
+                'source_url': current_url,
+            }
+
+        except Exception as e:
+            self.logger.error(f"Error fetching news feed for {symbol}: {e}")
+            return {
+                'success': False,
+                'symbol': symbol,
+                'error': str(e),
+                'articles': [],
+            }
+
+    def fetch_earnings_calls(
+        self,
+        symbol: str,
+        trendlyne_id: int = None,
+        max_calls: int = 3,
+        download_transcripts: bool = True,
+    ) -> Dict:
+        """
+        Fetch earnings call transcripts for a stock (the "Earnings Calls" tab).
+        Trendlyne mirrors the BSE-filed "Earnings Call Transcript" PDF as a feed
+        card (source="BSE India"); this downloads and extracts the text of the
+        most recent `max_calls` so callers can run tone/signal analysis on them.
+
+        Args:
+            symbol: Stock symbol (NSE code)
+            trendlyne_id: Optional Trendlyne internal ID
+            max_calls: How many of the most recent transcripts to download (default: 3)
+            download_transcripts: Whether to download+extract PDF text
+
+        Returns:
+            dict: {success, symbol, trendlyne_id, calls: [{call_date, title,
+                   pdf_url, pdf_local_path, transcript_text}], count, source_url}
+        """
+        try:
+            slug = self._resolve_stock_slug(symbol, trendlyne_id) if trendlyne_id else None
+            if trendlyne_id and slug:
+                url = f"{self.BASE_URL}/latest-news/analyst-calls/{trendlyne_id}/{symbol.upper()}/{slug}/"
+            elif trendlyne_id:
+                url = f"{self.BASE_URL}/latest-news/analyst-calls/{trendlyne_id}/{symbol.upper()}/"
+            else:
+                url = f"{self.BASE_URL}/latest-news/analyst-calls/{symbol.upper()}/"
+
+            self.logger.info(f"Fetching earnings calls for {symbol} from {url}")
+
+            if not self.driver:
+                self.init_driver()
+
+            self.driver.get(url)
+            time.sleep(4)
+            current_url = self.driver.current_url
+
+            soup = BeautifulSoup(self.driver.page_source, 'html5lib')
+            cards = self._parse_post_cards(soup)
+
+            calls = []
+            for card in cards:
+                # BSE-filed transcript cards only (source == "BSE India" with a
+                # PDF link) - other cards on this tab are Trendlyne's own
+                # promo posts pointing at the audio webcast, not a transcript.
+                if card['source'] != 'BSE India' or not card['url']:
+                    continue
+                if len(calls) >= max_calls:
+                    break
+
+                call = {
+                    'symbol': symbol.upper(),
+                    'trendlyne_id': trendlyne_id,
+                    'call_date': card['date'].isoformat() if card['date'] else None,
+                    'title': card['title'],
+                    'pdf_url': card['url'],
+                    'pdf_local_path': '',
+                    'transcript_text': '',
+                }
+
+                if download_transcripts and card['date']:
+                    local_path = self._download_investor_call_pdf(
+                        card['url'], symbol, card['date'].isoformat()
+                    )
+                    if local_path:
+                        call['pdf_local_path'] = local_path
+                        # Cap at 60000 chars (~20 pages) for raw storage - the LLM
+                        # analyzer applies its own tighter truncation for the prompt.
+                        from apps.data.utils.pdf_extractor import extract_pdf_text_truncated
+                        success, text, _ = extract_pdf_text_truncated(local_path, max_chars=60000)
+                        if success:
+                            call['transcript_text'] = text
+
+                calls.append(call)
+
+            self.logger.info(f"Found {len(calls)} earnings call transcripts for {symbol}")
+
+            return {
+                'success': True,
+                'symbol': symbol.upper(),
+                'trendlyne_id': trendlyne_id,
+                'calls': calls,
+                'count': len(calls),
+                'source_url': current_url,
+            }
+
+        except Exception as e:
+            self.logger.error(f"Error fetching earnings calls for {symbol}: {e}")
+            return {
+                'success': False,
+                'symbol': symbol,
+                'error': str(e),
+                'calls': [],
+            }
+
+    def _download_investor_call_pdf(self, pdf_url: str, symbol: str, call_date: str) -> Optional[str]:
+        """Download an earnings-call transcript PDF via the authenticated session (same S3-redirect approach as _download_pdf, separate folder)."""
+        if not pdf_url:
+            return None
+
+        try:
+            import requests
+
+            calls_dir = os.path.join(self.download_dir, 'investor_calls', symbol.upper())
+            os.makedirs(calls_dir, exist_ok=True)
+            local_path = os.path.join(calls_dir, f"{symbol.upper()}_{call_date}.pdf")
+
+            if os.path.exists(local_path) and os.path.getsize(local_path) > 5000:
+                with open(local_path, 'rb') as f:
+                    if f.read(5) == b'%PDF-':
+                        return local_path
+                os.remove(local_path)
+
+            if not self.driver:
+                return None
+
+            self.driver.get(pdf_url)
+            time.sleep(2)
+            # Unlike analyst-report PDFs (S3 pre-signed URL, no auth), earnings-call
+            # transcripts redirect to bseindia.com, which 403s a bare requests.get()
+            # with no User-Agent.
+            redirect_url = self.driver.current_url
+            response = requests.get(redirect_url, timeout=30, headers={
+                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 '
+                              '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            })
+            if response.status_code == 200 and len(response.content) > 5000 and response.content[:5] == b'%PDF-':
+                with open(local_path, 'wb') as f:
+                    f.write(response.content)
+                self.logger.info(f"Transcript PDF saved ({len(response.content)} bytes): {local_path}")
+                return local_path
+
+            self.logger.warning(
+                f"Transcript PDF download failed: status={response.status_code}, "
+                f"size={len(response.content) if response.content else 0}"
+            )
+            return None
+
+        except Exception as e:
+            self.logger.warning(f"Error downloading transcript PDF: {e}")
+            return None
+
+    def fetch_corporate_filings(
+        self,
+        symbol: str,
+        trendlyne_id: int = None,
+    ) -> Dict:
+        """
+        Fetch corporate announcements/filings for a stock from its Trendlyne
+        equity page ("{Company} Corporate Filings" table - BSE-sourced AGM
+        outcomes, results, investor-meet updates, etc. with PDF links).
+
+        Args:
+            symbol: Stock symbol (NSE code)
+            trendlyne_id: Optional Trendlyne internal ID
+
+        Returns:
+            dict: {success, symbol, trendlyne_id, filings: [{date, title,
+                   details, pdf_url}], count, source_url}
+        """
+        try:
+            if trendlyne_id:
+                url = f"{self.BASE_URL}/equity/{trendlyne_id}/{symbol.upper()}/"
+            else:
+                url = f"{self.BASE_URL}/equity/{symbol.upper()}/"
+
+            self.logger.info(f"Fetching corporate filings for {symbol} from {url}")
+
+            if not self.driver:
+                self.init_driver()
+
+            self.driver.get(url)
+            time.sleep(4)
+
+            current_url = self.driver.current_url
+            if not trendlyne_id:
+                match = re.search(r'/equity/(\d+)/', current_url)
+                if match:
+                    trendlyne_id = int(match.group(1))
+
+            soup = BeautifulSoup(self.driver.page_source, 'html5lib')
+
+            # Class names are webpack-hashed and change across Trendlyne
+            # deploys, so locate the table by its header text instead.
+            filings_table = None
+            for table in soup.find_all('table'):
+                thead = table.find('thead')
+                if thead and re.search(r'announcement title', thead.get_text(), re.I):
+                    filings_table = table
+                    break
+
+            filings = []
+            if filings_table:
+                tbody = filings_table.find('tbody')
+                rows = tbody.find_all('tr') if tbody else []
+                self.logger.info(f"Found {len(rows)} corporate filing rows for {symbol}")
+
+                for row in rows:
+                    try:
+                        cells = row.find_all('td')
+                        if len(cells) < 3:
+                            continue
+
+                        date_text = cells[0].get_text(strip=True)
+                        filing_date = None
+                        for fmt in ['%d %b %Y', '%d-%b-%Y', '%d/%m/%Y', '%Y-%m-%d']:
+                            try:
+                                filing_date = datetime.strptime(date_text, fmt).date()
+                                break
+                            except ValueError:
+                                continue
+
+                        title = cells[1].get_text(strip=True)
+                        details = cells[2].get_text(strip=True) if len(cells) > 2 else ''
+
+                        pdf_url = ''
+                        if len(cells) > 3:
+                            pdf_link = cells[3].find('a', href=True)
+                            if pdf_link:
+                                href = pdf_link.get('href', '')
+                                pdf_url = href if href.startswith('http') else urljoin(self.BASE_URL, href)
+
+                        if not title:
+                            continue
+
+                        filings.append({
+                            'symbol': symbol.upper(),
+                            'trendlyne_id': trendlyne_id,
+                            'date': filing_date.isoformat() if filing_date else None,
+                            'title': title,
+                            'details': details[:3000],
+                            'pdf_url': pdf_url,
+                        })
+                    except Exception as e:
+                        self.logger.warning(f"Error parsing filing row: {e}")
+                        continue
+            else:
+                self.logger.warning(f"Corporate filings table not found for {symbol}")
+
+            return {
+                'success': True,
+                'symbol': symbol.upper(),
+                'trendlyne_id': trendlyne_id,
+                'filings': filings,
+                'count': len(filings),
+                'source_url': current_url,
+            }
+
+        except Exception as e:
+            self.logger.error(f"Error fetching corporate filings for {symbol}: {e}")
+            return {
+                'success': False,
+                'symbol': symbol,
+                'error': str(e),
+                'filings': [],
             }
 
     def fetch_analyst_data(

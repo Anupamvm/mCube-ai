@@ -87,6 +87,7 @@ def get_verification_data(symbol: str, expiry_date: str = None) -> Dict[str, Any
         _dump_investor_calls,
         _dump_oi_intelligence,
         _dump_oi_history,
+        _dump_exchange_announcements,
     ]
 
     for build_fn in builders:
@@ -95,8 +96,6 @@ def get_verification_data(symbol: str, expiry_date: str = None) -> Dict[str, Any
         except Exception as e:
             logger.warning(f"{build_fn.__name__} failed for {symbol}: {e}", exc_info=True)
             result['errors'].append(f"{build_fn.__name__}: {e}")
-
-    result['sources'].append(_announcements_placeholder())
 
     return result
 
@@ -172,8 +171,11 @@ def _dump_option_chain_quotes(symbol: str, expiry_date: str):
 def _dump_news_articles(symbol: str, expiry_date: str):
     from apps.data.models import NewsArticle
 
-    # SQLite JSONField doesn't support __contains for arrays; use __icontains string match
-    qs = NewsArticle.objects.filter(symbols_mentioned__icontains=f'"{symbol}"').order_by('-published_at')[:20]
+    # SQLite JSONField doesn't support __contains for arrays; use __icontains string match.
+    # Exclude NSE/BSE filings - those get their own section via _dump_exchange_announcements.
+    qs = NewsArticle.objects.filter(
+        symbols_mentioned__icontains=f'"{symbol}"'
+    ).exclude(source__in=['NSE', 'BSE']).order_by('-published_at')[:20]
 
     return _dump_source('News Articles (with LLM sentiment/impact)', NewsArticle, qs)
 
@@ -210,13 +212,15 @@ def _dump_oi_history(symbol: str, expiry_date: str):
     return _dump_source('OI History Snapshots (daily, raw)', OIHistorySnapshot, qs)
 
 
-def _announcements_placeholder():
-    return {
-        'label': 'NSE/BSE Corporate Announcements',
-        'model': None,
-        'table': None,
-        'count': 0,
-        'last_updated': None,
-        'rows': [],
-        'note': 'Not currently captured by this system - no model or scraper exists for NSE/BSE announcements yet.',
-    }
+def _dump_exchange_announcements(symbol: str, expiry_date: str):
+    # NSE/BSE filings are stored as NewsArticle rows (source='NSE'/'BSE') by
+    # ExchangeFilingsClient - split out from _dump_news_articles into their own
+    # section so exchange-grade announcements aren't buried among GNews articles.
+    from apps.data.models import NewsArticle
+
+    qs = NewsArticle.objects.filter(
+        source__in=['NSE', 'BSE'],
+        symbols_mentioned__icontains=f'"{symbol}"',
+    ).order_by('-published_at')[:20]
+
+    return _dump_source('NSE/BSE Corporate Announcements', NewsArticle, qs)

@@ -18,6 +18,8 @@ import logging
 from typing import Dict, Optional
 from datetime import timedelta
 
+from apps.llm.services.response_parsing import extract_json
+
 logger = logging.getLogger(__name__)
 
 # Cache duration for LLM analysis - reports don't change, so 8 hours is reasonable
@@ -39,10 +41,10 @@ class AnalystReportAnalyzer:
 
     @property
     def llm_client(self):
-        """Resolved fresh on each access so a provider switch (e.g. to OpenAI
+        """Resolved fresh on each access so a routing change (e.g. to Online
         at /llm/models/) takes effect without restarting this process."""
-        from apps.llm.services.llm_router import get_active_llm_client
-        return get_active_llm_client('vllm')
+        from apps.llm.services.llm_router import get_llm_client_for_task
+        return get_llm_client_for_task('understanding')
 
     def analyze_report(
         self,
@@ -153,20 +155,7 @@ Always respond with valid JSON only, no markdown formatting or code blocks."""
     def _parse_llm_response(self, response: str) -> Dict:
         """Parse and validate LLM JSON response"""
         try:
-            # Clean up response
-            response = response.strip()
-
-            # Remove markdown code blocks if present
-            if response.startswith("```json"):
-                response = response[7:]
-            elif response.startswith("```"):
-                response = response[3:]
-            if response.endswith("```"):
-                response = response[:-3]
-            response = response.strip()
-
-            # Parse JSON
-            data = json.loads(response)
+            data = extract_json(response)
 
             # Validate and normalize sentiment score
             sentiment_score = float(data.get('sentiment_score', 0.0))
@@ -362,9 +351,9 @@ def get_quick_report_summary(
             - summary_points: List of 5 bullet points
             - sentiment: BULLISH/NEUTRAL/BEARISH
     """
-    from apps.llm.services.llm_router import get_active_llm_client
+    from apps.llm.services.llm_router import get_llm_client_for_task
 
-    llm_client = get_active_llm_client('vllm')
+    llm_client = get_llm_client_for_task('understanding')
 
     if not llm_client.is_enabled():
         logger.warning("LLM not available for quick summary")
@@ -410,11 +399,15 @@ Return ONLY valid JSON (no markdown):
 Keep each point to 1 short sentence (max 15 words). Focus on: key thesis, target rationale, risks, catalysts, and overall stance."""
 
     try:
+        # 1500, not 400: the served model (Qwen3) emits a <think>...</think>
+        # reasoning block before the JSON answer, which alone routinely runs
+        # ~350-400 tokens - a tight budget hit finish_reason='length' mid-<think>
+        # or mid-JSON almost every time, leaving nothing parseable.
         success, response, _ = llm_client.generate(
             prompt=prompt,
             system="You are a financial analyst. Provide concise, actionable summaries. Return only valid JSON.",
             temperature=0.3,
-            max_tokens=400
+            max_tokens=1500
         )
 
         if not success:
@@ -425,15 +418,7 @@ Keep each point to 1 short sentence (max 15 words). Focus on: key thesis, target
                 'error': 'LLM call failed'
             }
 
-        # Parse response
-        response = response.strip()
-        if response.startswith("```"):
-            response = response.split("```")[1]
-            if response.startswith("json"):
-                response = response[4:]
-        response = response.strip()
-
-        data = json.loads(response)
+        data = extract_json(response)
 
         return {
             'success': True,
@@ -510,7 +495,15 @@ def get_quick_summaries_for_reports(reports: list, symbol: str, max_reports: int
             'report_date': str(report_date) if report_date else None,
             'summary_points': [],
             'sentiment': 'NEUTRAL',
-            'success': False
+            'success': False,
+            # Aliases the analysis-detail page's renderAnalyst() reads directly
+            # (report_name/summary/recommendation_type/sentiment_score) so a
+            # successful summary actually renders instead of showing "Report" /
+            # "No summary available" despite summary_points being populated.
+            'report_name': author,
+            'recommendation_type': recommendation,
+            'summary': '',
+            'sentiment_score': None,
         }
 
         # Check if we have cached analysis within 8 hours
@@ -528,6 +521,8 @@ def get_quick_summaries_for_reports(reports: list, symbol: str, max_reports: int
                     summary_data['sentiment'] = 'NEUTRAL'
                 summary_data['success'] = True
                 summary_data['cached'] = True
+                summary_data['summary'] = '\n'.join(f'• {p}' for p in summary_data['summary_points'])
+                summary_data['sentiment_score'] = {'BULLISH': 0.6, 'BEARISH': -0.6}.get(summary_data['sentiment'], 0.0)
                 summaries.append(summary_data)
                 continue
 
@@ -564,6 +559,8 @@ def get_quick_summaries_for_reports(reports: list, symbol: str, max_reports: int
             if not result.get('success'):
                 summary_data['error'] = result.get('error', 'LLM analysis failed')
             else:
+                summary_data['summary'] = '\n'.join(f'• {p}' for p in summary_data['summary_points'])
+                summary_data['sentiment_score'] = {'BULLISH': 0.6, 'BEARISH': -0.6}.get(summary_data['sentiment'], 0.0)
                 # Cache the analysis in the model if possible
                 if is_model and result.get('success'):
                     try:

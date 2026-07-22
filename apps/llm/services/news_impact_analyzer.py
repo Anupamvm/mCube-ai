@@ -15,6 +15,8 @@ import json
 import logging
 from typing import Dict, List, Optional
 
+from apps.llm.services.response_parsing import extract_json
+
 logger = logging.getLogger(__name__)
 
 
@@ -36,10 +38,10 @@ class NewsImpactAnalyzer:
 
     @property
     def llm_client(self):
-        """Resolved fresh on each access so a provider switch (e.g. to OpenAI
+        """Resolved fresh on each access so a routing change (e.g. to Online
         at /llm/models/) takes effect without restarting this process."""
-        from apps.llm.services.llm_router import get_active_llm_client
-        return get_active_llm_client('vllm')
+        from apps.llm.services.llm_router import get_llm_client_for_task
+        return get_llm_client_for_task('understanding')
 
     def _get_impact_label(self, score: float) -> str:
         """Convert impact score to label"""
@@ -135,16 +137,22 @@ Consider:
 5. Macroeconomic factors
 
 Return ONLY a valid JSON object (no markdown, no explanation):
-{{"event_type": "<EARNINGS|GUIDANCE|ACQUISITION|MERGER|REGULATORY|LEGAL|MACRO|SECTOR|PRODUCT|MANAGEMENT|INSTITUTIONAL|OPINION|GENERAL>", "impact_score": <-1.0 to 1.0>, "impact_label": "<HIGHLY_NEGATIVE|NEGATIVE|NEUTRAL|POSITIVE|HIGHLY_POSITIVE>", "already_priced_in": <true|false>, "time_horizon": "<INTRADAY|SWING|POSITION>", "magnitude": "<LOW|MEDIUM|HIGH>", "reasoning": "<one sentence explaining the impact>", "confidence": <0.0 to 1.0>}}"""
+{{"summary": "<2-3 sentence neutral summary of what the article actually reports>", "event_type": "<EARNINGS|GUIDANCE|ACQUISITION|MERGER|REGULATORY|LEGAL|MACRO|SECTOR|PRODUCT|MANAGEMENT|INSTITUTIONAL|OPINION|GENERAL>", "impact_score": <-1.0 to 1.0>, "impact_label": "<HIGHLY_NEGATIVE|NEGATIVE|NEUTRAL|POSITIVE|HIGHLY_POSITIVE>", "already_priced_in": <true|false>, "time_horizon": "<INTRADAY|SWING|POSITION>", "magnitude": "<LOW|MEDIUM|HIGH>", "reasoning": "<one sentence explaining the impact>", "confidence": <0.0 to 1.0>}}"""
 
         system_prompt = "You are a financial news analyst. Respond ONLY with valid JSON, no markdown formatting."
 
         try:
+            # 1500, not 200: the served model (Qwen3) emits a <think>...</think>
+            # reasoning block before the JSON answer whose length varies run to
+            # run (temperature=0.2 still allows this) - observed anywhere from
+            # ~350 to 600+ tokens just for thinking, so even 800 truncated
+            # intermittently. The caller can't tell "real neutral" from "parse
+            # failed", since both fall through to the same 0.0/0.0 default.
             success, response, metadata = self.llm_client.generate(
                 prompt=prompt,
                 system=system_prompt,
                 temperature=0.2,
-                max_tokens=200
+                max_tokens=1500
             )
 
             if not success:
@@ -172,26 +180,14 @@ Return ONLY a valid JSON object (no markdown, no explanation):
     def _parse_llm_response(self, response: str) -> Dict:
         """Parse LLM JSON response with fallback handling"""
         try:
-            # Clean up response
-            response = response.strip()
-
-            # Remove markdown code blocks if present
-            if response.startswith("```json"):
-                response = response[7:]
-            elif response.startswith("```"):
-                response = response[3:]
-            if response.endswith("```"):
-                response = response[:-3]
-            response = response.strip()
-
-            # Parse JSON
-            data = json.loads(response)
+            data = extract_json(response)
 
             # Validate and normalize
             impact_score = float(data.get('impact_score', 0.0))
             impact_score = max(-1.0, min(1.0, impact_score))  # Clamp to [-1, 1]
 
             return {
+                'summary': data.get('summary', ''),
                 'impact_score': impact_score,
                 'impact_label': data.get('impact_label', self._get_impact_label(impact_score)),
                 'reasoning': data.get('reasoning', 'No reasoning provided'),
@@ -210,6 +206,7 @@ Return ONLY a valid JSON object (no markdown, no explanation):
     def _default_result(self, reason: str) -> Dict:
         """Return default neutral result"""
         return {
+            'summary': '',
             'impact_score': 0.0,
             'impact_label': 'NEUTRAL',
             'blocks_trade': False,
@@ -286,6 +283,7 @@ Return ONLY a valid JSON object (no markdown, no explanation):
                 # Add impact data to article
                 enriched_article = {
                     **article,
+                    'llm_summary': impact.get('summary', ''),
                     'impact_score': impact['impact_score'],
                     'impact_label': impact['impact_label'],
                     'impact_reasoning': impact['reasoning'],
@@ -413,11 +411,12 @@ Return ONLY valid JSON (no markdown):
         system_prompt = "You are a financial market analyst. Respond ONLY with valid JSON."
 
         try:
+            # See analyze_article_impact() above for why this is 1500, not 200.
             success, response, metadata = self.llm_client.generate(
                 prompt=prompt,
                 system=system_prompt,
                 temperature=0.2,
-                max_tokens=200
+                max_tokens=1500
             )
 
             if not success:
@@ -436,16 +435,7 @@ Return ONLY valid JSON (no markdown):
     def _parse_market_llm_response(self, response: str) -> Dict:
         """Parse LLM JSON response for market news"""
         try:
-            response = response.strip()
-            if response.startswith("```json"):
-                response = response[7:]
-            elif response.startswith("```"):
-                response = response[3:]
-            if response.endswith("```"):
-                response = response[:-3]
-            response = response.strip()
-
-            data = json.loads(response)
+            data = extract_json(response)
 
             impact_score = float(data.get('impact_score', 0.0))
             impact_score = max(-1.0, min(1.0, impact_score))

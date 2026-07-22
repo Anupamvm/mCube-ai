@@ -4902,6 +4902,25 @@ const TradeVerification = {
             </div>
         `;
 
+        // View Data — opens the tabbed "Get Data" page (stored news/reports/
+        // announcements/investor calls/etc. saved by this verify run) in a new tab.
+        // Sticky so it stays visible while scrolling through the long list of
+        // collapsible sections below (component scores, historical data, news,
+        // analyst reports, ...) rather than being scrolled past and forgotten.
+        {
+            const viewDataExpiry = (data.analysis || {}).expiry_date || '';
+            html += `
+                <div style="position: sticky; top: 10px; z-index: 50; margin-bottom: 25px; display: flex; justify-content: flex-end;">
+                    <a href="/llmskill/data-view/?symbol=${encodeURIComponent(data.symbol || '')}&expiry_date=${encodeURIComponent(viewDataExpiry)}"
+                       target="_blank" rel="noopener"
+                       title="Opens in a new tab - reads only what's already stored in the database, makes no live API calls"
+                       style="background:#3b82f6;color:white;border:none;padding:0.7rem 1.4rem;border-radius:999px;font-size:0.85rem;font-weight:700;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;gap:0.4rem;box-shadow:0 4px 14px rgba(59,130,246,0.45);">
+                        📊 View Data (stored data only) ↗
+                    </a>
+                </div>
+            `;
+        }
+
         // News Warning Banner (soft block — user can still proceed)
         const newsWarning = (data.enhanced_analysis || {}).news_warning;
         if (newsWarning) {

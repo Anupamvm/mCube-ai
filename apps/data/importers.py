@@ -328,8 +328,11 @@ class ContractStockDataImporter:
         and save to ContractStockData
         """
         from django.db.models import Sum, Avg
+        from django.utils import timezone
+        from .models import OIHistorySnapshot
 
         stocks = ContractData.objects.values_list('symbol', flat=True).distinct()
+        today = timezone.localdate()
 
         created_count = 0
         updated_count = 0
@@ -350,12 +353,78 @@ class ContractStockDataImporter:
                 total_call_vol = call_contracts.aggregate(Sum('traded_contracts'))['traded_contracts__sum'] or 0
                 total_put_vol = put_contracts.aggregate(Sum('traded_contracts'))['traded_contracts__sum'] or 0
 
+                total_oi = total_call_oi + total_put_oi
+
                 # Calculate PCR
                 pcr_oi = total_put_oi / total_call_oi if total_call_oi > 0 else 0
                 pcr_vol = total_put_vol / total_call_vol if total_call_vol > 0 else 0
 
                 # Get average IV for volatility (IV is already in percentage form)
                 avg_iv = contracts.filter(iv__isnull=False).aggregate(Avg('iv'))['iv__avg'] or 0
+
+                # Previously these fields were hardcoded to 0 ("placeholder"), which
+                # meant every *_change_pct was always exactly 0 - collapsing OI
+                # buildup detection to permanently NEUTRAL for every stock, every
+                # day, including downstream in OIHistorySnapshot/OIIntelligence
+                # (both read fno_total_oi_change_pct from this row).
+                #
+                # The prev-day baseline for total OI / PCR comes from
+                # OIHistorySnapshot - a date-keyed table written once/day (see
+                # oi_intelligence_engine.capture_snapshot, 9:15 AM) - rather than
+                # "whatever's currently in this row". This function itself gets
+                # called from more than one place (daily import, on-demand via
+                # broker_integration.calculate_and_update_derived_metrics), so a
+                # same-row diff would compare against a stale intraday value on
+                # any call after the first one that day, not a genuine prior
+                # trading day - confirmed live: total_oi and prev_day_total_oi
+                # came out identical when two calls landed close together.
+                existing = ContractStockData.objects.filter(nse_code=symbol).first()
+                prev_call_vol = existing.fno_total_call_vol if existing else 0
+                prev_put_vol  = existing.fno_total_put_vol  if existing else 0
+                prev_pcr_vol  = existing.fno_pcr_vol        if existing else 0
+
+                prev_snapshot = OIHistorySnapshot.objects.filter(
+                    symbol=symbol, trading_date__lt=today
+                ).order_by('-trading_date').first()
+
+                if prev_snapshot and prev_snapshot.total_fno_oi:
+                    prev_total_oi = prev_snapshot.total_fno_oi
+                    prev_pcr_oi = prev_snapshot.pcr_oi or 0
+                    # OIHistorySnapshot doesn't retain the put/call split, only the
+                    # total - reconstruct it from the total + PCR (pcr = put/call).
+                    if prev_pcr_oi > 0:
+                        prev_call_oi = round(prev_total_oi / (1 + prev_pcr_oi))
+                        prev_put_oi = prev_total_oi - prev_call_oi
+                    else:
+                        prev_call_oi, prev_put_oi = prev_total_oi, 0
+                else:
+                    # No snapshot history yet (e.g. first day for this symbol) -
+                    # same-row fallback is better than nothing, with the same
+                    # caveat above about multiple same-day calls.
+                    prev_total_oi = existing.fno_total_oi      if existing else 0
+                    prev_call_oi  = existing.fno_total_call_oi if existing else 0
+                    prev_put_oi   = existing.fno_total_put_oi  if existing else 0
+                    prev_pcr_oi   = existing.fno_pcr_oi        if existing else 0
+
+                def _pct_change(curr, prev):
+                    return round((curr - prev) / prev * 100, 2) if prev else 0
+
+                # Rollover: compare OI across the two nearest FUTURE expiries - a
+                # rising share in the next-month contract as near-month expiry
+                # approaches reflects positions rolling over. cost_of_carry on the
+                # next-month leg (already scraped per-contract) approximates the
+                # rollover cost/basis spread.
+                futures_qs = contracts.filter(
+                    option_type__in=['FUT', 'FUTURE', 'FUTURES'], oi__isnull=False
+                ).order_by('expiry')
+                rollover_pct = 0
+                rollover_cost_pct = 0
+                if futures_qs.count() >= 2:
+                    near, nxt = futures_qs[0], futures_qs[1]
+                    near_oi, next_oi = near.oi or 0, nxt.oi or 0
+                    if (near_oi + next_oi) > 0:
+                        rollover_pct = round(next_oi / (near_oi + next_oi) * 100, 2)
+                    rollover_cost_pct = nxt.cost_of_carry or 0
 
                 stock_data, created = ContractStockData.objects.update_or_create(
                     nse_code=symbol,
@@ -365,7 +434,7 @@ class ContractStockDataImporter:
                         'industry_name': tl_stock.industry_name if tl_stock else '',
                         'annualized_volatility': avg_iv,  # IV is already percentage
 
-                        'fno_total_oi': total_call_oi + total_put_oi,
+                        'fno_total_oi': total_oi,
                         'fno_total_call_oi': total_call_oi,
                         'fno_total_put_oi': total_put_oi,
                         'fno_total_call_vol': total_call_vol,
@@ -374,27 +443,33 @@ class ContractStockDataImporter:
                         'fno_pcr_oi': pcr_oi,
                         'fno_pcr_vol': pcr_vol,
 
-                        # Placeholder for other fields - update with actual calculations
-                        'fno_prev_day_total_oi': 0,
-                        'fno_prev_day_call_oi': 0,
-                        'fno_prev_day_put_oi': 0,
-                        'fno_prev_day_call_vol': 0,
-                        'fno_prev_day_put_vol': 0,
-                        'fno_pcr_oi_prev': 0,
-                        'fno_pcr_vol_prev': 0,
-                        'fno_pcr_oi_change_pct': 0,
-                        'fno_pcr_vol_change_pct': 0,
+                        'fno_prev_day_total_oi': prev_total_oi,
+                        'fno_prev_day_call_oi': prev_call_oi,
+                        'fno_prev_day_put_oi': prev_put_oi,
+                        'fno_prev_day_call_vol': prev_call_vol,
+                        'fno_prev_day_put_vol': prev_put_vol,
+                        'fno_pcr_oi_prev': prev_pcr_oi,
+                        'fno_pcr_vol_prev': prev_pcr_vol,
+                        'fno_pcr_oi_change_pct': _pct_change(pcr_oi, prev_pcr_oi),
+                        'fno_pcr_vol_change_pct': _pct_change(pcr_vol, prev_pcr_vol),
+                        'fno_total_oi_change_pct': _pct_change(total_oi, prev_total_oi),
+                        'fno_put_oi_change_pct': _pct_change(total_put_oi, prev_put_oi),
+                        'fno_call_oi_change_pct': _pct_change(total_call_oi, prev_call_oi),
+                        'fno_put_vol_change_pct': _pct_change(total_put_vol, prev_put_vol),
+                        'fno_call_vol_change_pct': _pct_change(total_call_vol, prev_call_vol),
+
+                        'fno_rollover_pct': rollover_pct,
+                        'fno_rollover_cost_pct': rollover_cost_pct,
+                        'fno_rollover_cost': rollover_cost_pct,
+
+                        # MWPL (Market Wide Position Limit) is an exchange-published
+                        # regulatory value, not derivable from our own OI aggregation -
+                        # we don't currently scrape it from anywhere. Left at 0 rather
+                        # than fabricated; _score_oi_fno() treats 0 as neutral/unknown,
+                        # not "safe", to avoid a false-safe reading (see that function).
                         'fno_mwpl': 0,
                         'fno_mwpl_pct': 0,
                         'fno_mwpl_prev_pct': 0,
-                        'fno_total_oi_change_pct': 0,
-                        'fno_put_oi_change_pct': 0,
-                        'fno_call_oi_change_pct': 0,
-                        'fno_put_vol_change_pct': 0,
-                        'fno_call_vol_change_pct': 0,
-                        'fno_rollover_cost': 0,
-                        'fno_rollover_cost_pct': 0,
-                        'fno_rollover_pct': 0,
                     }
                 )
 

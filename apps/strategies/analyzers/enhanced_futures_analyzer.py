@@ -285,14 +285,21 @@ class EnhancedFuturesAnalyzer:
             }
             return
 
+        # MWPL (Market Wide Position Limit) is an exchange-published regulatory
+        # value we don't currently scrape from anywhere - fno_mwpl_pct is always 0
+        # (unknown), never a real reading. This check can therefore never actually
+        # catch a stock near F&O ban risk; it only guards against a value we do
+        # have. Flagged loudly rather than silently passing so the gap stays
+        # visible until a real MWPL data source is added.
         mwpl_pct = self._contract_stock_data.fno_mwpl_pct or 0
-        passed = mwpl_pct < self.MAX_MWPL_PCT
+        has_real_data = mwpl_pct > 0
+        passed = (not has_real_data) or mwpl_pct < self.MAX_MWPL_PCT
 
         self.details['hard_reject_checks']['mwpl'] = {
             'passed': passed,
             'value': mwpl_pct,
             'threshold': self.MAX_MWPL_PCT,
-            'reason': f"MWPL at {mwpl_pct:.1f}%"
+            'reason': f"MWPL at {mwpl_pct:.1f}%" if has_real_data else 'MWPL data unavailable - check cannot verify ban risk',
         }
 
         if not passed:
@@ -300,7 +307,10 @@ class EnhancedFuturesAnalyzer:
                 f"MWPL too high: {mwpl_pct:.1f}% (max {self.MAX_MWPL_PCT}%) - near ban risk"
             )
 
-        logger.info(f"  MWPL: {mwpl_pct:.1f}% < {self.MAX_MWPL_PCT}% - PASS")
+        if has_real_data:
+            logger.info(f"  MWPL: {mwpl_pct:.1f}% < {self.MAX_MWPL_PCT}% - PASS")
+        else:
+            logger.warning("  MWPL: no data available - hard-reject check cannot verify ban risk for this stock")
 
     def _check_volatility(self):
         """Check annualized volatility"""
@@ -671,8 +681,14 @@ class EnhancedFuturesAnalyzer:
         details['pcr'] = {'value': pcr, 'score': pcr_score}
 
         # ── MWPL scoring (5 pts) — same for both paths ─────────────────────
+        # fno_mwpl_pct is 0 whenever we have no real MWPL reading (see
+        # _check_mwpl() above - we don't scrape this from anywhere yet), which is
+        # indistinguishable from a genuine 0%. Treat 0 as neutral/unknown rather
+        # than "safest possible" so missing data doesn't masquerade as a clean
+        # bill of health.
         mwpl_pct = csd.fno_mwpl_pct or 0
-        if mwpl_pct < 30:    mwpl_score = 5
+        if mwpl_pct <= 0:    mwpl_score = 3   # unknown - neutral, not a false "safe"
+        elif mwpl_pct < 30:  mwpl_score = 5
         elif mwpl_pct < 50:  mwpl_score = 4
         elif mwpl_pct < 70:  mwpl_score = 2
         else:                mwpl_score = 0

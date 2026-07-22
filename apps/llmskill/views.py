@@ -37,6 +37,25 @@ def verify_trade_page(request, position_id):
 
 
 @login_required
+def get_data_view(request):
+    """Standalone "Get Data" results page, opened in a new tab from the
+    Get Data button. Fetches from get_data_api client-side on load so the
+    tab shows a loading state immediately rather than waiting on a click.
+
+    Query params: symbol, expiry_date, position_id (optional)
+    """
+    symbol = request.GET.get('symbol', '').strip().upper()
+    expiry_date = request.GET.get('expiry_date', '').strip()
+    position_id = request.GET.get('position_id') or None
+
+    return render(request, 'llmskill/data_view.html', {
+        'symbol': symbol,
+        'expiry_date': expiry_date,
+        'position_id': position_id,
+    })
+
+
+@login_required
 @require_POST
 def get_data_api(request):
     """Aggregate and return all stored/computed verification data for a symbol+expiry.
