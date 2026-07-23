@@ -32,7 +32,7 @@ def trigger_futures_algorithm(request):
         {
             "this_month_volume": 1000,  # Volume threshold for current month contracts
             "next_month_volume": 800,   # Volume threshold for next month contracts
-            "confirmed": false          # User confirmation if >15 contracts found
+            "confirmed": false          # User confirmation if >200 contracts found
         }
 
     Returns:
@@ -65,8 +65,8 @@ def trigger_futures_algorithm(request):
 
         logger.info(f"Found {contract_count} contracts matching volume criteria")
 
-        # Ask confirmation if > 15 contracts (keep existing UX)
-        if contract_count > 15 and not confirmed:
+        # Ask confirmation if > 200 contracts (keep existing UX)
+        if contract_count > 200 and not confirmed:
             return JsonResponse({
                 'success': False,
                 'requires_confirmation': True,

@@ -966,26 +966,53 @@ class TrendlyneProvider(BaseWebScraper):
                 self.logger.warning(f"Existing file is not a valid PDF, re-downloading: {local_path}")
                 os.remove(local_path)
 
-            # Use authenticated Selenium session to get S3 redirect URL
+            # Use authenticated Selenium session to get S3 redirect URL.
+            #
+            # Two real bugs made this unreliable before:
+            # (1) a bare requests.get() with no User-Agent gets a 403 from S3 - fixed
+            #     by sending a normal browser User-Agent below.
+            # (2) driver.current_url can be *stale* right after navigating to a
+            #     PDF-serving URL: Chrome's built-in PDF viewer doesn't always update
+            #     it on the very next navigation, so a check right after navigating to
+            #     report B can still read report A's S3 URL from the previous call,
+            #     silently downloading the wrong document. Forcing a real navigation to
+            #     about:blank first flushes that state so the following check reflects
+            #     the current request, not a leftover one.
+            #
+            # (A native Chrome download via CDP's Page.setDownloadBehavior was also
+            # tried here instead of this redirect-sniffing approach, but Chrome would
+            # intermittently save an unrelated "downloads.html" placeholder instead of
+            # the real PDF on the 3rd+ request in a session - worse than this.)
             if hasattr(self, 'driver') and self.driver:
                 self.logger.info(f"Downloading PDF via authenticated session: {pdf_url[:80]}...")
 
-                # The redirect to the S3 pre-signed URL isn't always resolved within
-                # 2s (observed intermittently landing back on trendlyne.com instead of
-                # s3.amazonaws.com for otherwise-valid reports) - retry once with a
-                # longer wait before giving up on this document.
+                # The live "/report/pdf/<id>/" endpoint proxies to the broker's own
+                # copy and sometimes just bounces back to trendlyne.com (access-denied
+                # style redirect) even though the report is otherwise accessible.
+                # "/report/cached_pdf/<id>/" serves Trendlyne's own S3-cached copy of
+                # the same document and reliably redirects to S3, so try it as a
+                # fallback whenever the live endpoint doesn't resolve.
+                candidate_urls = [pdf_url]
+                if '/report/pdf/' in pdf_url:
+                    candidate_urls.append(pdf_url.replace('/report/pdf/', '/report/cached_pdf/'))
+
                 s3_url = None
-                for attempt in range(2):
-                    self.driver.get(pdf_url)
-                    time.sleep(3)
-                    current = self.driver.current_url
-                    if 'amazonaws.com' in current:
-                        s3_url = current
+                for candidate_url in candidate_urls:
+                    for attempt in range(2):
+                        self.driver.get('about:blank')
+                        time.sleep(0.5)
+                        self.driver.get(candidate_url)
+                        time.sleep(3)
+                        current = self.driver.current_url
+                        if 'amazonaws.com' in current:
+                            s3_url = current
+                            break
+                        self.logger.warning(
+                            f"PDF redirect landed on {current[:80]} instead of S3 "
+                            f"(attempt {attempt + 1}/2): {candidate_url[:80]}"
+                        )
+                    if s3_url:
                         break
-                    self.logger.warning(
-                        f"PDF redirect landed on {current[:80]} instead of S3 "
-                        f"(attempt {attempt + 1}/2): {pdf_url[:80]}"
-                    )
 
                 if not s3_url:
                     self.logger.warning(f"PDF redirect never resolved to S3 - report may be inaccessible: {pdf_url[:80]}")

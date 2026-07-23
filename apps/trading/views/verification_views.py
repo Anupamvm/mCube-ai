@@ -1462,57 +1462,39 @@ def verify_future_trade(request):
                                 except Exception as calls_err:
                                     logger.warning(f"[Verify Trade] Earnings call fetch/analysis failed: {calls_err}")
 
-                                # Download PDFs for top 3 reports (for LLM summaries)
-                                # Using S3 redirect approach - navigate to PDF URL to get pre-signed S3 URL
+                                # Download PDFs for all reports missing them (for LLM summaries).
+                                # Delegates to provider._download_pdf(), which retries the S3
+                                # redirect and sends a User-Agent on the S3 GET - a bare
+                                # requests.get() with no User-Agent gets a 403 from S3, which
+                                # was silently swallowing downloads (worked fine in a real
+                                # browser, failed headless) before this used the shared method.
                                 try:
-                                    import requests as req_lib
                                     from django.db.models import Q
 
                                     reports_to_download = AnalystReport.objects.filter(
                                         nse_code__iexact=stock_symbol
                                     ).filter(
                                         Q(pdf_local_path__isnull=True) | Q(pdf_local_path='')
-                                    ).exclude(pdf_url='').order_by('-report_date')[:3]
-
-                                    import os
-                                    import re as regex
-                                    reports_dir = os.path.join(settings.BASE_DIR, 'apps', 'data', 'tldata', 'analyst_reports', stock_symbol.upper())
-                                    os.makedirs(reports_dir, exist_ok=True)
+                                    ).exclude(pdf_url='').order_by('-report_date')
 
                                     pdfs_downloaded = 0
                                     for rpt in reports_to_download:
                                         if rpt.pdf_url:
                                             try:
-                                                safe_author = regex.sub(r'[^\w\-]', '_', rpt.author or 'unknown')[:50]
-                                                safe_date = str(rpt.report_date).replace('-', '_')
-                                                filename = f"{stock_symbol}_{safe_date}_{safe_author}.pdf"
-                                                local_path = os.path.join(reports_dir, filename)
-
-                                                # Skip if valid PDF exists
-                                                if os.path.exists(local_path) and os.path.getsize(local_path) > 5000:
-                                                    with open(local_path, 'rb') as f:
-                                                        if f.read(5) == b'%PDF-':
-                                                            rpt.pdf_local_path = local_path
-                                                            rpt.pdf_download_success = True
-                                                            rpt.save(update_fields=['pdf_local_path', 'pdf_download_success'])
-                                                            pdfs_downloaded += 1
-                                                            continue
-
-                                                # Navigate to PDF URL to get S3 redirect
-                                                provider.driver.get(rpt.pdf_url)
-                                                time.sleep(2)
-                                                s3_url = provider.driver.current_url
-
-                                                # Download from S3 (pre-signed URL, no auth needed)
-                                                resp = req_lib.get(s3_url, timeout=30)
-                                                if resp.status_code == 200 and len(resp.content) > 5000 and resp.content[:5] == b'%PDF-':
-                                                    with open(local_path, 'wb') as f:
-                                                        f.write(resp.content)
+                                                local_path = provider._download_pdf(
+                                                    rpt.pdf_url,
+                                                    stock_symbol,
+                                                    str(rpt.report_date),
+                                                    rpt.author or 'unknown'
+                                                )
+                                                if local_path:
                                                     rpt.pdf_local_path = local_path
                                                     rpt.pdf_download_success = True
                                                     rpt.save(update_fields=['pdf_local_path', 'pdf_download_success'])
                                                     pdfs_downloaded += 1
-                                                    logger.info(f"[Verify Trade] Downloaded PDF: {filename}")
+                                                    logger.info(f"[Verify Trade] Downloaded PDF for {rpt.author}")
+                                                else:
+                                                    logger.warning(f"[Verify Trade] PDF download failed for {rpt.author}: no local path returned")
                                             except Exception as pdf_err:
                                                 logger.warning(f"[Verify Trade] PDF download failed for {rpt.author}: {pdf_err}")
 
@@ -1569,8 +1551,6 @@ def verify_future_trade(request):
             try:
                 from apps.llm.services.analyst_report_analyzer import get_quick_summaries_for_reports
                 from django.db.models import Q
-                import os
-                import re as regex
 
                 # Get latest 3 reports from database
                 recent_reports = AnalystReport.objects.filter(
@@ -1584,45 +1564,36 @@ def verify_future_trade(request):
                     if reports_needing_pdf:
                         preserved_debug_info.append(f"Need to download {len(reports_needing_pdf)} PDFs for summaries")
 
-                        # Download PDFs using authenticated session
-                        # Navigate to PDF URL to get S3 redirect, then download from S3
+                        # Download PDFs using authenticated session, via the shared
+                        # provider._download_pdf() (retries the S3 redirect and sends a
+                        # User-Agent on the S3 GET - a bare requests.get() with no
+                        # User-Agent gets a 403 from S3, silently leaving pdf_local_path
+                        # unset; the inline reimplementation that used to live here hit
+                        # exactly that, which is why downloads worked in a real browser
+                        # but not headless).
                         try:
                             from apps.data.providers.trendlyne import TrendlyneProvider
-                            import requests as req_lib
-                            import time
 
                             with TrendlyneProvider(headless=True) as provider:
                                 provider.init_driver()
                                 if provider.login():
-                                    reports_dir = os.path.join(settings.BASE_DIR, 'apps', 'data', 'tldata', 'analyst_reports', stock_symbol.upper())
-                                    os.makedirs(reports_dir, exist_ok=True)
-
                                     pdfs_downloaded = 0
                                     for rpt in reports_needing_pdf:
                                         try:
-                                            # Navigate to PDF URL to get S3 redirect
-                                            provider.driver.get(rpt.pdf_url)
-                                            time.sleep(2)
-
-                                            # Get the redirected S3 URL
-                                            s3_url = provider.driver.current_url
-
-                                            # Download from S3 (pre-signed URL, no auth needed)
-                                            resp = req_lib.get(s3_url, timeout=30)
-
-                                            if resp.status_code == 200 and len(resp.content) > 5000 and resp.content[:5] == b'%PDF-':
-                                                safe_author = regex.sub(r'[^\w\-]', '_', rpt.author or 'unknown')[:50]
-                                                safe_date = str(rpt.report_date).replace('-', '_')
-                                                filename = f"{stock_symbol}_{safe_date}_{safe_author}.pdf"
-                                                local_path = os.path.join(reports_dir, filename)
-
-                                                with open(local_path, 'wb') as f:
-                                                    f.write(resp.content)
+                                            local_path = provider._download_pdf(
+                                                rpt.pdf_url,
+                                                stock_symbol,
+                                                str(rpt.report_date),
+                                                rpt.author or 'unknown'
+                                            )
+                                            if local_path:
                                                 rpt.pdf_local_path = local_path
                                                 rpt.pdf_download_success = True
                                                 rpt.save(update_fields=['pdf_local_path', 'pdf_download_success'])
                                                 pdfs_downloaded += 1
-                                                logger.info(f"[Verify Trade] Downloaded PDF for summary: {filename}")
+                                                logger.info(f"[Verify Trade] Downloaded PDF for summary: {rpt.author}")
+                                            else:
+                                                logger.warning(f"[Verify Trade] PDF download for summary failed for {rpt.author}: no local path returned")
                                         except Exception as pdf_err:
                                             logger.warning(f"[Verify Trade] PDF download error for {rpt.author}: {pdf_err}")
 
