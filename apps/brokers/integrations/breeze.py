@@ -22,7 +22,7 @@ from django.utils import timezone as dj_timezone
 from decimal import Decimal
 
 from apps.core.constants import BROKER_ICICI
-from apps.brokers.models import BrokerLimit, BrokerPosition, OptionChainQuote, HistoricalPrice
+from apps.brokers.models import BrokerLimit, BrokerPosition, OptionChainQuote, HistoricalPrice, PositionAvgOverride
 from apps.brokers.exceptions import BreezeAuthenticationError
 from apps.brokers.utils.common import parse_float as _parse_float
 from apps.brokers.utils.auth_manager import (
@@ -680,13 +680,6 @@ def fetch_and_save_breeze_data():
             ltp_val = _parse_float(p.get('ltp') or p.get('price'))
             buy_qty = quantity if quantity > 0 else 0
             sell_qty = abs(quantity) if quantity < 0 else 0
-            buy_amt = buy_qty * avg_price_val
-            sell_amt = sell_qty * avg_price_val
-
-            # Use common pattern for P&L calculation
-            unrealized_pnl_val, realized_pnl_val = calculate_position_pnl(
-                quantity, avg_price_val, ltp_val
-            )
 
             stock_code = p.get('stock_code') or ''
             symbol = stock_code or f"{p.get('underlying', '')} {p.get('strike_price', '')} {p.get('right', '')}".strip()
@@ -701,6 +694,21 @@ def fetch_and_save_breeze_data():
                 stock_code, expiry_date, product_type,
                 strike_price=p.get('strike_price'),
                 right=p.get('right'),
+            )
+
+            # Manual average price override takes precedence over broker's raw value
+            avg_price_source = 'broker'
+            override = PositionAvgOverride.objects.filter(trading_symbol=trading_symbol).first()
+            if override:
+                avg_price_val = float(override.manual_avg_price)
+                avg_price_source = 'manual override'
+
+            buy_amt = buy_qty * avg_price_val
+            sell_amt = sell_qty * avg_price_val
+
+            # Use common pattern for P&L calculation
+            unrealized_pnl_val, realized_pnl_val = calculate_position_pnl(
+                quantity, avg_price_val, ltp_val
             )
 
             # Convert to Decimal for database
@@ -722,6 +730,7 @@ def fetch_and_save_breeze_data():
                 unrealized_pnl=unrealized_pnl_val,
                 expiry_date=expiry_date,
             )
+            pos.avg_price_source = avg_price_source  # transient attr, not persisted
             pos_objs.append(pos)
         except (ValueError, Exception) as e:
             logger.error(f"Error processing Breeze position {p.get('stock_code', 'UNKNOWN')}: {e}")

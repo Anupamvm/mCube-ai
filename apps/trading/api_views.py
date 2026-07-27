@@ -1866,6 +1866,7 @@ def get_active_positions(request):
                         'total_pnl': round(unrealized_pnl, 2),
                         'pnl_percentage': round(pnl_pct, 2),
                         'expiry_date': pos.expiry_date.strftime('%Y-%m-%d') if pos.expiry_date else None,
+                        'avg_price_source': getattr(pos, 'avg_price_source', 'broker'),
                     })
 
             except BreezeAuthenticationError as e:
@@ -3419,7 +3420,6 @@ def update_position_avg_price(request):
             return JsonResponse({'success': False, 'error': 'Invalid avg_price value'})
 
         from apps.brokers.models import PositionAvgOverride, BrokerPosition
-        from apps.core.constants import BROKER_KOTAK
 
         # Create or update the override
         override, created = PositionAvgOverride.objects.update_or_create(
@@ -3427,9 +3427,8 @@ def update_position_avg_price(request):
             defaults={'manual_avg_price': avg_price, 'notes': f'Set via UI by {request.user}'},
         )
 
-        # Also update the latest BrokerPosition so the DB chain is fixed going forward
+        # Also update the latest BrokerPosition (any broker) so the DB chain is fixed going forward
         latest_pos = BrokerPosition.objects.filter(
-            broker=BROKER_KOTAK,
             trading_symbol=trading_symbol,
         ).order_by('-fetched_at').first()
         if latest_pos:
